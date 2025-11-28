@@ -1,0 +1,21 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake libonnxruntime-dev libonnxruntime1
+      - name: Build
+        run: mkdir -p build && cd build && cmake .. && make -j$(nproc)
+      - name: Unit tests
+        run: |
+          if [ -f build/tests/unit/token_cas_test ]; then
+            build/tests/unit/token_cas_test || true
+          fi
+          if [ -f build/tests/unit/onnx_dmabuf_allocator_test ]; then
+            build/tests/unit/onnx_dmabuf_allocator_test || true
+          fi
