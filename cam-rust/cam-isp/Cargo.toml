@@ -1,0 +1,22 @@
+[package]
+name = "cam-isp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cam-types = { path = "../cam-types" }
+serde = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+cc = "1"
+
+[features]
+default = []
+ort = ["dep:ort"]
+mnn = []
+
+[dependencies.ort]
+version = "2.0.0-rc.12"
+optional = true

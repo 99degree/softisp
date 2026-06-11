@@ -1,0 +1,18 @@
+[package]
+name = "cam-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cam-types = { path = "../cam-types" }
+cam-isp = { path = "../cam-isp" }
+cam-hal = { path = "../cam-hal" }
+cam-hal-android = { path = "../cam-hal-android", optional = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+env_logger = "0.10"
+
+[features]
+default = []
+android = ["cam-hal-android"]

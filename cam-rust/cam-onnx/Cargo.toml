@@ -1,0 +1,10 @@
+[package]
+name = "cam-onnx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cam-types = { path = "../cam-types" }
+log = { workspace = true }
+# TODO: Use `ort` crate for ONNX Runtime bindings
+# ort = "2"
