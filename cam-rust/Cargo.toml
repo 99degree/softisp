@@ -5,6 +5,7 @@ members = [
     "cam-isp",
     "cam-hal",
     "cam-hal-android",
+    "cam-hal-linux",
     "cam-core",
     "cam-onnx",
     "cam-motion",
