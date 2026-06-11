@@ -152,3 +152,31 @@ int mnn_tensor_set_shape(MnnTensor tensor, const int* dims, int ndim) {
     t->resize(shape);
     return 0;
 }
+
+// ── Model buffer / conversion ───────────────────────────────────────────
+
+const void* mnn_interpreter_get_model_buffer(MnnInterpreter interpreter, size_t* out_size) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    if (!net || !out_size) return nullptr;
+    
+    auto buffer = net->getModelBuffer();
+    *out_size = buffer.second;
+    return buffer.first;
+}
+
+int mnn_interpreter_save_model(MnnInterpreter interpreter, const char* path) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    if (!net || !path) return -1;
+    
+    auto buffer = net->getModelBuffer();
+    if (!buffer.first || buffer.second == 0) return -1;
+    
+    FILE* f = fopen(path, "wb");
+    if (!f) return -1;
+    
+    size_t written = fwrite(buffer.first, 1, buffer.second, f);
+    fclose(f);
+    
+    return (written == buffer.second) ? 0 : -1;
+}
+

@@ -257,6 +257,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cam-hal-linux"
+version = "0.1.0"
+dependencies = [
+ "cam-core",
+ "cam-hal",
+ "cam-isp",
+ "cam-types",
+ "log",
+ "rscam",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "cam-isp"
 version = "0.1.0"
 dependencies = [
@@ -1458,6 +1471,15 @@ dependencies = [
  "serde",
  "tera",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "rscam"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89056084211cd54924fedf2e2199b906409d1f795cfd8e7e3271061742457018"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

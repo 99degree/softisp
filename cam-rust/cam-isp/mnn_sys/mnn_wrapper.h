@@ -84,12 +84,20 @@ int mnn_session_resize(MnnInterpreter interpreter, MnnSession session);
 int mnn_session_run(MnnInterpreter interpreter, MnnSession session);
 
 /**
- * Get an input tensor by name.
+ * Get an input tensor by name (deprecated - use V2).
  * @param session  Session handle.
  * @param name     Tensor name (can be NULL for first input).
  * @return Opaque tensor handle, or NULL.
  */
 MnnTensor mnn_session_get_input(MnnSession session, const char* name);
+
+/**
+ * Get an output tensor by name (deprecated - use V2).
+ * @param session  Session handle.
+ * @param name     Tensor name (can be NULL for first output).
+ * @return Opaque tensor handle, or NULL.
+ */
+MnnTensor mnn_session_get_output(MnnSession session, const char* name);
 
 /**
  * Get an output tensor by name.
@@ -128,6 +136,26 @@ float* mnn_tensor_get_host_data(MnnTensor tensor);
  * @return 0 on success.
  */
 int mnn_tensor_set_shape(MnnTensor tensor, const int* dims, int ndim);
+
+/**
+ * Get the model buffer for saving in MNN format.
+ * After loading an ONNX model via mnn_interpreter_create_from_buffer,
+ * this returns the internal MNN format buffer.
+ * @param interpreter  Interpreter handle.
+ * @param out_size     Output parameter for buffer size.
+ * @return Pointer to model buffer, or NULL on failure.
+ *         The pointer is valid until interpreter is destroyed.
+ */
+const void* mnn_interpreter_get_model_buffer(MnnInterpreter interpreter, size_t* out_size);
+
+/**
+ * Save model buffer to file.
+ * Convenience function to write the model buffer to disk.
+ * @param interpreter  Interpreter handle.
+ * @param path         File path to save.
+ * @return 0 on success, non-zero on failure.
+ */
+int mnn_interpreter_save_model(MnnInterpreter interpreter, const char* path);
 
 #ifdef __cplusplus
 }
