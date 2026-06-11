@@ -3,6 +3,7 @@
 
 use log::{info, warn, error};
 use cam_types::{FrameFormat, ToneParams};
+use std::sync::Mutex;
 
 use crate::engine::IspEngine;
 use crate::pipeline::{IspBlock, IspFrame, IspAuxOutput};
@@ -52,9 +53,7 @@ impl MnnBackend {
 #[cfg(feature = "mnn")]
 struct MnnSessionWrapper {
     interpreter: MnnInterpreterSafe,
-    session: MnnSessionSafe,
-    input_tensor: Option<crate::mnn_sys::MnnTensorSafe>,
-    output_tensor: Option<crate::mnn_sys::MnnTensorSafe>,
+    session: Mutex<MnnSessionSafe>,
 }
 
 #[cfg(feature = "mnn")]
@@ -63,29 +62,24 @@ impl MnnSessionWrapper {
         let session = interpreter.create_session(backend, 4)?;
         Some(Self {
             interpreter,
-            session,
-            input_tensor: None,
-            output_tensor: None,
+            session: Mutex::new(session),
         })
     }
 
-    fn get_input_tensor(&mut self, name: &str) -> Option<crate::mnn_sys::MnnTensorSafe> {
-        if self.input_tensor.is_none() {
-            self.input_tensor = self.interpreter.get_input(&self.session, name);
-        }
-        self.input_tensor.clone()
+    fn get_input_tensor(&self, name: &str) -> Option<crate::mnn_sys::MnnTensorSafe> {
+        let session = self.session.lock().ok()?;
+        self.interpreter.get_input(&session, name)
     }
 
-    fn get_output_tensor(&mut self, name: &str) -> Option<crate::mnn_sys::MnnTensorSafe> {
-        if self.output_tensor.is_none() {
-            self.output_tensor = self.interpreter.get_output(&self.session, name);
-        }
-        self.output_tensor.clone()
+    fn get_output_tensor(&self, name: &str) -> Option<crate::mnn_sys::MnnTensorSafe> {
+        let session = self.session.lock().ok()?;
+        self.interpreter.get_output(&session, name)
     }
 
-    fn run(&mut self) -> Result<(), String> {
-        self.session.resize()?;
-        self.session.run()
+    fn run(&self) -> Result<(), String> {
+        let mut session = self.session.lock().map_err(|_| "MNN session lock poisoned")?;
+        session.resize()?;
+        session.run()
     }
 }
 
@@ -95,9 +89,9 @@ pub struct MnnEngine {
     initialized: bool,
     /// Composed ONNX model bytes (built by `build`).
     model_bytes: Option<Vec<u8>>,
-    /// MNN interpreter handle (feature-gated).
+    /// MNN session wrapper (feature-gated).
     #[cfg(feature = "mnn")]
-    session: Option<MnnSessionWrapper>,
+    session: Option<Mutex<MnnSessionWrapper>>,
 }
 
 impl MnnEngine {
@@ -155,7 +149,7 @@ impl IspEngine for MnnEngine {
             let session_wrapper = MnnSessionWrapper::new(interpreter, backend_type)
                 .ok_or_else(|| "Failed to create MNN session")?;
 
-            self.session = Some(session_wrapper);
+            self.session = Some(Mutex::new(session_wrapper));
         }
 
         self.model_bytes = Some(model);
@@ -188,64 +182,57 @@ impl IspEngine for MnnEngine {
 
         #[cfg(feature = "mnn")]
         {
-            // Use interior mutability - session needs mut for run()
-            use std::sync::atomic::{AtomicPtr, Ordering};
-            use std::ptr;
-            // We'll use unsafe to get mutable ref from Option
-            let session_ptr = &self.session as *const Option<MnnSessionWrapper>;
-            let session_wrapper = unsafe { &mut (*session_ptr).as_mut() };
-            if let Some(ref mut sw) = session_wrapper {
-                info!("MnnEngine({}) running inference {}x{} -> {}x{}",
-                    self.backend.id(), width, height, target_width, height);
+            let session_wrapper = self.session.as_ref()
+                .ok_or_else(|| "MNN session not created".to_string())?;
 
-                // Get input tensor (RawInputBlock/frame) - expects INT16
-                let input_tensor = sw.get_input_tensor("RawInputBlock/frame")
-                    .ok_or_else(|| "Input tensor 'RawInputBlock/frame' not found".to_string())?;
+            info!("MnnEngine({}) running inference {}x{} -> {}x{}",
+                self.backend.id(), width, height, target_width, height);
 
-                // Copy raw INT16 buffer into input tensor
-                let input_data = buf;
-                let input_ptr = input_tensor.as_mut_ptr();
-                let input_size = input_tensor.data_size();
-                if input_data.len() != input_size {
-                    warn!("Input size mismatch: got {} expected {}", input_data.len(), input_size);
-                }
-                let copy_len = std::cmp::min(input_data.len(), input_size);
-                unsafe { ptr::copy_nonoverlapping(input_data.as_ptr(), input_ptr as *mut u8, copy_len); }
+            // Get input tensor (RawInputBlock/frame) - expects INT16
+            let input_tensor = session_wrapper.get_input_tensor("RawInputBlock/frame")
+                .ok_or_else(|| "Input tensor 'RawInputBlock/frame' not found".to_string())?;
 
-                // Run inference
-                sw.run()?;
-
-                // Get output tensor (DisplayBlock/frame) - UINT8 BGRA
-                let output_tensor = sw.get_output_tensor("DisplayBlock/frame")
-                    .ok_or_else(|| "Output tensor 'DisplayBlock/frame' not found".to_string())?;
-
-                let output_shape = output_tensor.shape();
-                let output_size = output_tensor.data_size();
-                let mut output_data = vec![0u8; output_size];
-                unsafe {
-                    ptr::copy_nonoverlapping(output_tensor.as_ptr(), output_data.as_mut_ptr() as *const u8, output_size);
-                }
-
-                info!("MnnEngine({}) inference done, output shape={:?} bytes={}",
-                    self.backend.id(), output_shape, output_size);
-
-                // Construct IspFrame
-                let mut frame = IspFrame::new(target_width, height, FrameFormat::Rgba8888);
-                frame.data = output_data;
-                frame.aux = Some(IspAuxOutput {
-                    channel_means: Some([0.5, 0.5, 0.5]),
-                    tone_stats: None,
-                    wb_gains: None,
-                    histogram: None,
-                    zone_stats: None,
-                    focus_metric: None,
-                    cct: None,
-                    ae_gain: None,
-                });
-                return Ok(frame);
-            } else {
-                error!("MNN session not created");
+            // Copy raw INT16 buffer into input tensor (zero-copy not possible due to external buffer)
+            let input_data = buf;
+            let input_size = input_tensor.data_size();
+            if input_data.len() != input_size {
+                warn!("Input size mismatch: got {} expected {}", input_data.len(), input_size);
             }
+            let input_bytes = input_tensor.as_bytes_mut().ok_or("Input tensor not mutable")?;
+            let copy_len = std::cmp::min(input_data.len(), input_bytes.len());
+            input_bytes[..copy_len].copy_from_slice(&input_data[..copy_len]);
+
+            // Run inference
+            session_wrapper.run()?;
+
+            // Get output tensor (DisplayBlock/frame) - UINT8 BGRA
+            let output_tensor = session_wrapper.get_output_tensor("DisplayBlock/frame")
+                .ok_or_else(|| "Output tensor 'DisplayBlock/frame' not found".to_string())?;
+
+            let output_shape = output_tensor.shape();
+            let output_size = output_tensor.data_size();
+            let mut output_data = vec![0u8; output_size];
+            unsafe {
+                std::ptr::copy_nonoverlapping(output_tensor.as_ptr(), output_data.as_mut_ptr() as *const u8, output_size);
+            }
+
+            info!("MnnEngine({}) inference done, output shape={:?} bytes={}",
+                self.backend.id(), output_shape, output_size);
+
+            // Construct IspFrame
+            let mut frame = IspFrame::new(target_width, height, FrameFormat::Rgba8888);
+            frame.data = output_data;
+            frame.aux = Some(IspAuxOutput {
+                channel_means: Some([0.5, 0.5, 0.5]),
+                tone_stats: None,
+                wb_gains: None,
+                histogram: None,
+                zone_stats: None,
+                focus_metric: None,
+                cct: None,
+                ae_gain: None,
+            });
+            return Ok(frame);
         }
 
         #[cfg(not(feature = "mnn"))]
