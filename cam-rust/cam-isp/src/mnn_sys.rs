@@ -72,6 +72,8 @@ extern "C" {
     fn mnn_tensor_get_shape(tensor: *mut c_void, dims: *mut c_int, max_dims: c_int) -> c_int;
     fn mnn_tensor_get_type(tensor: *mut c_void) -> c_int;
     fn mnn_tensor_get_host_data(tensor: *mut c_void) -> *mut f32;
+    fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
+    fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
     fn mnn_tensor_set_shape(tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
 }
 
@@ -201,6 +203,22 @@ impl MnnTensorSafe {
     pub fn set_shape(&self, dims: &[i32]) -> Result<(), String> {
         let ret = unsafe { mnn_tensor_set_shape(self.inner, dims.as_ptr(), dims.len() as i32) };
         if ret == 0 { Ok(()) } else { Err("Tensor set_shape failed".to_string()) }
+    }
+
+    /// Get a raw pointer to the tensor's data buffer (any element type).
+    /// Use with caution - you must know the element type from get_type().
+    pub fn as_ptr(&self) -> *const u8 {
+        unsafe { mnn_tensor_get_host_data_raw(self.inner) as *const u8 }
+    }
+
+    /// Get a mutable raw pointer to the tensor's data buffer.
+    pub fn as_mut_ptr(&self) -> *mut u8 {
+        unsafe { mnn_tensor_get_host_data_raw(self.inner) as *mut u8 }
+    }
+
+    /// Get the size of the tensor data in bytes.
+    pub fn data_size(&self) -> usize {
+        unsafe { mnn_tensor_get_data_size(self.inner) }
     }
 }
 
