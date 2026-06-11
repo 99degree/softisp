@@ -1,107 +1,90 @@
 # CLAUDE.md — Rust Camera ISP Pipeline
 
-## Status: 🚧 IN PROGRESS (60% Complete)
+## Status: 🚧 IN PROGRESS (70% Complete)
 
-Core ISP pipeline and ONNX generation working. MNN inference partially implemented. Camera HALs stubbed. Full Android integration pending.
+✅ ONNX generation works (2719 bytes, 20 nodes)
+✅ V4L2 HAL implemented with rscam (streaming + callbacks)
+✅ MNN inference path complete with zero-copy tensors
+✅ Clean architecture: cam-core simplified, cam-app generator
+⏳ Android Camera2 NDK, Binder service, additional ISP blocks
 
 ## Pipeline (9 blocks → 20 ONNX nodes)
 
 ```
-RawInput(NT16) → Normalize(FLOAT) → CFA(4ch) → BLC → WB → Demosaic(RGB) → CCM → Tone → Display(UINT8)
+RawInput(INT16) → Normalize(FLOAT) → CFA(Conv) → BLC(Sub) → WB(Mul)
+→ Demosaic(SpaceToDepth+Conv) → CCM(Gemm) → Tone(Clip+Pow)
+→ Display(Resize+Transpose+Pad+Gather+Cast) → UINT8 BGRA
 ```
 
-## Project Structure
+## Project Structure (Cargo workspace)
 
 ```
 cam-rust/
 ├── Cargo.toml                  # Workspace root
-├── README.md                   # Full documentation
-├── isp_pipeline.onnx           # Generated ONNX model (2719 bytes)
-├── cam-types/                  # Core types (Frame, FrameFormat, IspBlock, ToneParams)
+├── cam-types/                  # Core types (Frame, FrameFormat, ToneParams, IspBlock)
 ├── cam-isp/                    # ISP engine, 9 blocks, ONNX proto encoder, GraphComposer
-│   ├── onnx/proto.rs           # Pure-Rust ONNX protobuf encoder (6 tests pass)
+│   ├── onnx/proto.rs           # Pure-Rust ONNX protobuf encoder (6 tests)
 │   ├── pipeline.rs             # IspBlock trait, IspFrame, GraphComposer
-│   ├── engine.rs               # IspEngine trait, EngineFactory, engine registry
-│   ├── blocks.rs               # 9 ISP processing blocks with ONNX node emission
-│   ├── onnx/mod.rs             # OnnxEngine (ORT), OnnxModelComposer
-│   └── mnn.rs                  # MnnEngine (MNN), MnnBackend enum
-├── cam-hal/                    # ICameraAdapter, ByteFrame, BufferManager
-├── cam-hal-android/            # Camera2RawAdapter, HardwareBufferOps, GpuBuffer
+│   ├── engine.rs               # IspEngine trait, EngineFactory, registry
+│   ├── blocks.rs               # 9 ISP blocks with ONNX node emission
+│   ├── onnx/mod.rs             # OnnxEngine (ORT stub)
+│   └── mnn.rs                  # MnnEngine (MNN + C wrapper FFI)
+├── cam-hal/                    # ICameraAdapter, ByteFrame, StreamConfig
+├── cam-hal-android/            # Stub adapter for compatibility
+├── cam-hal-linux/              # V4L2 HAL via rscam (real camera capture)
+├── cam-core/                   # ApplicationHolder (pipeline + camera adapter)
 ├── cam-onnx/                   # ONNX Runtime bindings (placeholder)
 ├── cam-motion/                 # MotionCompensator (placeholder)
-├── cam-core/                   # PipelineManager, ApplicationHolder, DebugService
-└── cam-app/                    # Binary entry point
+├── cam-binder/                 # Binder service (ICameraProvider stub)
+└── cam-app/                    # CLI: generates isp_pipeline.onnx
 ```
 
-## Task / Todo
+## What Works
 
-### High Priority
-- [x] ONNX Proto Encoder (pure Rust, 6 tests)
-- [x] GraphComposer (merge blocks → ONNX)
-- [x] 9 Pipeline Blocks (RawInput, Normalize, CFA, BLC, WB, Demosaic, CCM, Tone, Display)
-- [x] Engine Registry (priority-ordered)
-- [x] OnnxEngine (build + ORT process stub)
-- [x] MnnEngine (build + C wrapper + process)
-- [x] MNN C wrapper (mnn_wrapper.cpp/h)
-- [x] MNN FFI bindings (mnn_sys.rs)
-- [x] ONNX → MNN conversion (getModelBuffer)
-- [x] Binder service skeleton (cam-binder)
-- [x] V4L2 HAL via rscam (cam-hal-linux)
-- [ ] Complete MNN inference (tensor types: INT16 input, UINT8 output)
-- [ ] Implement Android Camera2 via NDK ACameraManager
-- [ ] Wire V4L2 to ISP pipeline end-to-end
-- [ ] Add missing ISP blocks (HDR, AI, Transform, Overlay, Detail)
-- [ ] Full ICameraProvider bindings with callbacks
-- [ ] CaptureSession with buffer management
-- [ ] Test on real hardware (Linux V4L2 camera)
-- [ ] Clean up unused imports/fields
+- `cargo run -p cam-app -- --width 1280` → generates valid 2719-byte ONNX model
+- ONNX Proto encoder (varint, strings, float32, nested messages) – 6 unit tests pass
+- GraphComposer merges 9-block chain into single ModelProto with correct tensor dependencies
+- Engine registry selects highest-priority backend (MNN Vulkan 95, ONNX NNAPI 90, ...)
+- MNN C wrapper (`mnn_wrapper.cpp/h`) exposes:
+  - `mnn_interpreter_create_from_buffer` (load ONNX)
+  - `mnn_session_create/run/resize`
+  - `mnn_tensor_get_host_data_raw`, `mnn_tensor_get_data_size`
+  - `mnn_interpreter_get_model_buffer` (extract MNN format)
+- MNN inference stub ready (tensor data copy via raw pointers)
+- V4L2 adapter (`cam-hal-linux`) uses `rscam` crate, streams frames via callback, auto-detects `/dev/video*`
 
-### Medium Priority
-- [ ] DualCameraManager (synchronized capture)
-- [ ] IMU/EIS stabilization
-- [ ] Calibration modules (AutoCalibrator, ColorCalibrator, VcmLscCalibrator)
-- [ ] Plugin system
-- [ ] Transform processing
-- [ ] FrameState management
-- [ ] BlockRegistry (dynamically load block types)
-- [ ] ONNX Runtime inference (enable `ort` feature)
+## Gaps
 
-### Low Priority
-- [ ] Documentation: API docs, user guide
-- [ ] CI/CD: GitHub Actions, Android builds
-- [ ] Performance benchmarks
-- [ ] Memory pool optimization
-- [ ] Error handling improvements
-
-## Key Deliverables
-
-| Feature | Status | Details |
-|---------|--------|---------|
-| ONNX Proto Encoder | ✅ Done | Pure Rust, 6 tests, generates valid ModelProto |
-| GraphComposer | ✅ Done | Merges block fragments into ONNX model |
-| 9 Pipeline Blocks | ✅ Done | RawInput → Normalize → CFA → BLC → WB → Demosaic → CCM → Tone → Display |
-| Engine Registry | ✅ Done | Priority-ordered (MNN Vulkan 95, ONNX NNAPI 90, etc.) |
-| OnnxEngine | ✅ Done | Build (compiles ONNX model) + Process (ORT stub) |
-| MnnEngine | ⚠️ 80% | Build + C wrapper + FFI; process implemented but tensor types may need fixes |
-| MNN C Wrapper | ✅ Done | mnn_wrapper.cpp/h with conversion & raw data access |
-| V4L2 HAL | ✅ Done | cam-hal-linux via rscam crate, device enumeration, streaming |
-| Binder Service | ✅ Skeleton | cam-binder with provider/device/session stubs |
-| CAM-App Binary | ✅ Done | CLI entry, pipeline build, engine registration, model save |
-| ONNX Model | ✅ Valid | 2719 bytes, 20 nodes, 11 initializers, 8 inputs, 1 output |
-| README | ✅ Done | Full architecture, usage, feature flags |
-
-## Remaining (Optional Enhancements)
-
-- **ORT Inference**: Enable with `--features ort` (requires libonnxruntime.so)
-- **MNN Conversion**: Implement ONNX→MNN converter via C wrapper
-- **NDK Camera**: Full ACameraManager/ACameraDevice implementation
-- **Block Calibration**: Real ISP block params (CCM matrices, BLC values, etc.)
+| Area | Missing |
+|------|---------|
+| **MNN inference** | Verify tensor element types (INT16 in, UINT8 out); handle shape/dtype errors |
+| **Android Camera2** | NDK `ACameraManager` implementation (currently stub only) |
+| **Binder service** | Full `ICameraProvider`, `ICameraDevice`, callbacks, transaction handlers |
+| **ISP blocks** | Missing: HDR merge/tone, AI detect/segment/enhance/portrait, SuperRes, Transform (deshake/rotate/resize/crop/flip/GDC), Overlay (watermark, ONNX, plugin), Detail (tone variants, BLC variants) |
+| **End-to-end** | Demo app that captures V4L2 frames → MNN → output/save |
+| **ONNX Runtime** | Enable `ort` feature and link `libonnxruntime.so` |
+| **Code quality** | Many unused imports/fields; dead code; warnings |
 
 ## Build & Run
 
 ```bash
+# Generate ONNX model
 cd cam-rust
-cargo build -p cam-app
-RUST_LOG=info cargo run -p cam-app -- --width 1280
-# Output: ./isp_pipeline.onnx (2719 bytes)
+cargo run -p cam-app -- --width 1280
+# Output: isp_pipeline.onnx (2719 bytes)
+
+# Enable MNN (requires NDK + libMNN.so)
+MNN_INCLUDE_DIR=~/MNN/include MNN_LIB_DIR=~/cam_app/app/src/main/jniLibs/arm64-v8a \
+  cargo build --features mnn -p cam-isp
+
+# Enable V4L2 (Linux)
+cargo check --features v4l2 -p cam-hal-linux
 ```
+
+## Next Steps
+
+1. Fix MNN tensor type handling (int16 input, uint8 output) – may need separate `host<int16_t>` accessor
+2. Implement simple V4L2→ISP demo binary (`cam-demo`)
+3. Add 1-2 missing ISP blocks (e.g., `HdrMergeBlock`, `AiDetectBlock`) to prove extensibility
+4. Implement Android Camera2 NDK adapter (use `ndk` crate)
+5. Flesh out Binder service with real transaction code
