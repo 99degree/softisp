@@ -1,5 +1,4 @@
 //! Core ISP pipeline manager.
-//! Ported from com.camcore
 
 pub mod pipeline;
 pub mod debug;
@@ -9,10 +8,10 @@ use std::sync::{Arc, Mutex};
 use log::{info, error};
 use cam_isp::engine::{IspEngine, select_engine};
 use cam_isp::pipeline::IspFrame;
-use cam_types::{Frame, FrameFormat, CameraSourceType};
 use cam_hal::ICameraAdapter;
+use cam_types::{ToneParams};
 
-/// Application holder for the camera ISP pipeline.
+/// Central application holder.
 pub struct ApplicationHolder {
     pub isp_pipeline: Arc<Mutex<Option<Box<dyn IspEngine>>>>,
     pub camera_adapter: Arc<Mutex<Option<Box<dyn ICameraAdapter>>>>,
@@ -26,15 +25,14 @@ impl ApplicationHolder {
         }
     }
 
-    /// Initialize the ISP pipeline.
+    /// Initialize ISP pipeline only.
     pub fn init_pipeline(&self) -> Result<(), String> {
+        info!("Initializing ISP pipeline...");
         let mut pipeline = self.isp_pipeline.lock().unwrap();
         if pipeline.is_some() {
             info!("Pipeline already initialized");
             return Ok(());
         }
-
-        // Select best available engine
         match select_engine() {
             Some(engine) => {
                 info!("Selected engine: {}", engine.backend_name());
@@ -42,14 +40,19 @@ impl ApplicationHolder {
                 Ok(())
             }
             None => {
-                let err = "No suitable ISP engine available".to_string();
-                error!("{}", err);
-                Err(err)
+                error!("No ISP engine available");
+                Err("No ISP engine".into())
             }
         }
     }
 
-    /// Process a frame through the ISP pipeline.
+    /// Set the camera adapter (must be called before use).
+    pub fn set_camera_adapter(&self, adapter: Box<dyn ICameraAdapter>) {
+        *self.camera_adapter.lock().unwrap() = Some(adapter);
+        info!("Camera adapter set");
+    }
+
+    /// Process a frame through ISP pipeline.
     pub fn process_frame(
         &self,
         width: u32,
@@ -62,28 +65,17 @@ impl ApplicationHolder {
         let pipeline = self.isp_pipeline.lock().unwrap();
         match pipeline.as_ref() {
             Some(engine) => {
-                // Use default tone params
-                let tone_params = cam_types::ToneParams::default();
-                match engine.process(
+                let tone_params = ToneParams::default();
+                engine.process(
                     width, height, stride, buf, sensor_max, target_width,
                     None, &tone_params, None, None, 1.0, 0.0, None, None, None,
-                ) {
-                    Ok(frame) => Some(frame),
-                    Err(e) => {
-                        error!("Pipeline processing failed: {}", e);
-                        None
-                    }
-                }
+                ).ok()
             }
             None => {
-                error!("Pipeline not initialized");
+                error!("ISP pipeline not initialized");
                 None
             }
         }
     }
 
-    /// Register camera adapter.
-    pub fn set_camera_adapter(&self, adapter: Box<dyn ICameraAdapter>) {
-        *self.camera_adapter.lock().unwrap() = Some(adapter);
-    }
 }

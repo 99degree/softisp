@@ -6,15 +6,16 @@ edition = "2021"
 [dependencies]
 cam-types = { path = "../cam-types" }
 cam-isp = { path = "../cam-isp" }
-cam-hal = { path = "../cam-hal" }
 cam-core = { path = "../cam-core" }
 cam-onnx = { path = "../cam-onnx" }
 cam-motion = { path = "../cam-motion" }
-cam-binder = { path = "../cam-binder" }
+
 log = { workspace = true }
 env_logger = "0.10"
 clap = { version = "4", features = ["derive"] }
 
 [features]
-android = ["cam-core/android"]
-default = ["android"]
+default = []
+mnn = ["cam-isp/mnn"]
+v4l2 = []  # placeholder for future camera integration
+binder = [] # placeholder for binder service
