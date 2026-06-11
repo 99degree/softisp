@@ -5,13 +5,14 @@ edition = "2021"
 
 [dependencies]
 cam-types = { path = "../cam-types" }
-cam-isp = { path = "../cam-isp" }
-cam-hal = { path = "../cam-hal" }
 cam-core = { path = "../cam-core" }
+cam-hal-linux = { path = "../cam-hal-linux" }
 log = { workspace = true }
+thiserror = { workspace = true }
 
-# The binder crate provides the IPC transport
-rsbinder = { version = "0.8", optional = true }
+[dependencies.rsbinder]
+version = "0.8"
+optional = true
 
 [features]
 default = []
