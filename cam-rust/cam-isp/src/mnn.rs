@@ -192,13 +192,17 @@ impl IspEngine for MnnEngine {
             let input_tensor = session_wrapper.get_input_tensor("RawInputBlock/frame")
                 .ok_or_else(|| "Input tensor 'RawInputBlock/frame' not found".to_string())?;
 
-            // Copy raw INT16 buffer into input tensor (zero-copy not possible due to external buffer)
+            // Set input shape: [1, 1, height, width]
+            let input_shape = &[1i32, 1i32, height as i32, width as i32];
+            input_tensor.set_shape(input_shape)
+                .map_err(|e| format!("Failed to set input shape: {}", e))?;
+
+            // Copy raw INT16 buffer into input tensor
             let input_data = buf;
-            let input_size = input_tensor.data_size();
-            if input_data.len() != input_size {
-                warn!("Input size mismatch: got {} expected {}", input_data.len(), input_size);
-            }
             let input_bytes = input_tensor.as_bytes_mut().ok_or("Input tensor not mutable")?;
+            if input_data.len() != input_bytes.len() {
+                warn!("Input size mismatch: got {} expected {}", input_data.len(), input_bytes.len());
+            }
             let copy_len = std::cmp::min(input_data.len(), input_bytes.len());
             input_bytes[..copy_len].copy_from_slice(&input_data[..copy_len]);
 
