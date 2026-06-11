@@ -1,47 +1,40 @@
-//! Android Camera HAL binder service.
+//! Android Camera HAL Binder Service.
 //!
-//! Implements the `android.hardware.camera.provider.ICameraProvider` AIDL
-//! interface using the `binder` crate. Registers with the Android service
-//! manager as "media.camera" (the standard camera HAL service name).
+//! Registers as `android.hardware.camera.provider.ICameraProvider` with the
+//! Android service manager. Provides camera device binders that can use V4L2
+//! capture via cam-hal-linux.
 //!
-//! ## Architecture
-//!
-//! ```text
-//! BnCameraProvider (binder service)
-//!   ├─ setCallback(ICameraProviderCallback)
-//!   ├─ getCameraIdList() → [String]
-//!   ├─ getCameraDeviceInterface(id) → ICameraDevice
-//!   ├─ notifyDeviceStateChange(state)
-//!   └─ getVendorTags() → [VendorTag]
-//!
-//! BnCameraDevice (binder service, one per camera)
-//!   ├─ open() → ICameraDeviceSession
-//!   ├─ getCharacteristics() → CameraCharacteristics
-//!   └─ close()
-//!
-//! BnCameraDeviceSession (binder service, per session)
-//!   ├─ processCaptureRequest(request) → CaptureResult
-//!   ├─ flush()
-//!   └─ close()
+//! ## Building
+//! ```bash
+//! cargo build --features android -p cam-binder
 //! ```
-//!
-//! Each session owns an IspEngine instance and an IspBlock pipeline.
-//! Raw frames from the camera are fed through the pipeline to produce
-//! the output frames sent back as CaptureResults.
+//! Requires Android NDK with `libbinder_ndk.so`.
 
-#![allow(dead_code)]
-
-use log::{info, warn, error};
-use std::sync::{Arc, Mutex};
-
+#[cfg(feature = "android")]
 pub mod provider;
+#[cfg(feature = "android")]
 pub mod device;
+#[cfg(feature = "android")]
 pub mod session;
 
-// Re-export the key types
-pub use provider::CameraProviderService;
-pub use device::CameraDeviceService;
-pub use session::CameraDeviceSession;
+use log::info;
 
-/// The standard service name for the camera HAL.
-pub const CAMERA_HAL_SERVICE_NAME: &str = "media.camera";
+#[cfg(feature = "android")]
+use rsbinder::{ServiceManager, Binder};
+
+/// Register the camera HAL service with the Android service manager.
+#[cfg(feature = "android")]
+pub fn register_service() -> Result<(), String> {
+    let provider = provider::CameraProviderService::new();
+    let binder = Binder::new(provider);
+    ServiceManager::add_service("media.camera", binder)
+        .map_err(|e| format!("Failed to register camera service: {:?}", e))?;
+    info!("Camera HAL service registered as 'media.camera'");
+    Ok(())
+}
+
+#[cfg(not(feature = "android"))]
+pub fn register_service() -> Result<(), String> {
+    info!("Binder service registration skipped (android feature disabled)");
+    Ok(())
+}
