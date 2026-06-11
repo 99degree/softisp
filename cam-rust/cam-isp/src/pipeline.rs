@@ -323,3 +323,38 @@ impl GraphComposer {
         Ok(chain)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::blocks::*;
+
+    #[test]
+    fn test_default_pipeline_composition() {
+        // Build the standard 9-block pipeline
+        let mut raw = RawInputBlock::new();
+        let mut norm = NormalizeBlock::new();
+        let mut cfa = CfaBlock::new();
+        let mut blc = BlcBlock::new();
+        let mut wb = BayerWbBlock::new();
+        let mut dem = DemosaicBlock::new(2); // GBRG
+        let mut ccm = CcmBlock::new();
+        let mut tone = ToneBlock::new();
+        let mut disp = DisplayBlock::new(1280);
+
+        // Link blocks
+        norm.set_input_source(raw.frame_tensor().unwrap_or(""));
+        cfa.set_input_source(norm.frame_tensor().unwrap_or(""));
+        blc.set_input_source(cfa.frame_tensor().unwrap_or(""));
+        wb.set_input_source(blc.frame_tensor().unwrap_or(""));
+        dem.set_input_source(wb.frame_tensor().unwrap_or(""));
+        ccm.set_input_source(dem.frame_tensor().unwrap_or(""));
+        tone.set_input_source(ccm.frame_tensor().unwrap_or(""));
+        disp.set_input_source(tone.frame_tensor().unwrap_or(""));
+
+        let pipeline: Vec<&dyn IspBlock> = vec![&raw, &norm, &cfa, &blc, &wb, &dem, &ccm, &tone, &disp];
+        let model = GraphComposer::compose_from_vec(&pipeline, &[], 16).expect("Compose failed");
+        assert!(!model.is_empty());
+        assert!(model.len() > 2000); // Expected ~2719 bytes
+    }
+}
