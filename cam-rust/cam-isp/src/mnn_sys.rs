@@ -176,27 +176,25 @@ impl MnnTensorSafe {
         dims[..n as usize].to_vec()
     }
 
-    /// Get a mutable reference to the tensor's host data (float32).
-    pub fn host_data_f32(&self) -> Option<&[f32]> {
-        let ptr = unsafe { mnn_tensor_get_host_data(self.inner) };
+    /// Get a reference to the tensor's host data (any type) as bytes.
+    /// This is zero-copy - the slice points to MNN's internal buffer.
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        let ptr = unsafe { mnn_tensor_get_host_data_raw(self.inner) };
         if ptr.is_null() {
             return None;
         }
-        // Determine length from shape
-        let shape = self.shape();
-        let len: usize = shape.iter().map(|&d| d as usize).product();
-        Some(unsafe { std::slice::from_raw_parts(ptr, len) })
+        let size = unsafe { mnn_tensor_get_data_size(self.inner) };
+        Some(unsafe { std::slice::from_raw_parts(ptr as *const u8, size) })
     }
 
-    /// Get a mutable reference to the tensor's host data (float32, mutable).
-    pub fn host_data_f32_mut(&self) -> Option<&mut [f32]> {
-        let ptr = unsafe { mnn_tensor_get_host_data(self.inner) };
+    /// Get a mutable reference to the tensor's host data as bytes.
+    pub fn as_bytes_mut(&self) -> Option<&mut [u8]> {
+        let ptr = unsafe { mnn_tensor_get_host_data_raw(self.inner) };
         if ptr.is_null() {
             return None;
         }
-        let shape = self.shape();
-        let len: usize = shape.iter().map(|&d| d as usize).product();
-        Some(unsafe { std::slice::from_raw_parts_mut(ptr, len) })
+        let size = unsafe { mnn_tensor_get_data_size(self.inner) };
+        Some(unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) })
     }
 
     /// Set the shape of the tensor.
