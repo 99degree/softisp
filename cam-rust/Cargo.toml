@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "cam-types",
+    "cam-isp",
+    "cam-hal",
+    "cam-hal-android",
+    "cam-core",
+    "cam-onnx",
+    "cam-motion",
+    "cam-binder",
+    "cam-app",
+]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+thiserror = "2"
+once_cell = "1"
+env_logger = "0.10"

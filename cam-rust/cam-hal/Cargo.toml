@@ -1,0 +1,9 @@
+[package]
+name = "cam-hal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cam-types = { path = "../cam-types" }
+log = { workspace = true }
+thiserror = { workspace = true }
