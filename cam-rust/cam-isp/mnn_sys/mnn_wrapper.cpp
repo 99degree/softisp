@@ -153,6 +153,39 @@ int mnn_tensor_set_shape(MnnTensor tensor, const int* dims, int ndim) {
     return 0;
 }
 
+// ── Raw data access ───────────────────────────────────────────────────────
+
+void* mnn_tensor_get_host_data_raw(MnnTensor tensor) {
+    auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
+    if (!t) return nullptr;
+    // MNN::Tensor::host<T>() returns T*
+    // We can just return the buffer pointer as void*
+    // Note: This works because host<float>() etc. all return the same underlying pointer
+    // But we need to actually call a template. Let's use reinterpret_cast hack.
+    // The MNN Tensor stores data in a Buffer. We can access via t->host<void>()
+    // However, MNN doesn't have host<void>(). We'll use the float pointer and cast.
+    // This is safe because the buffer is contiguous.
+    return const_cast<void*>(t->host<float>());
+}
+
+size_t mnn_tensor_get_data_size(MnnTensor tensor) {
+    auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
+    if (!t) return 0;
+    auto shape = t->shape();
+    size_t element_count = 1;
+    for (auto d : shape) {
+        element_count *= static_cast<size_t>(d);
+    }
+    auto type = t->getType();
+    size_t element_size = 4; // default to float32
+    if (type.code == halide_type_float) element_size = 4;
+    else if (type.code == halide_type_int) element_size = 4; // int32
+    else if (type.code == halide_type_uint) element_size = 1; // uint8
+    else if (type.code == halide_type_int && type.bits == 16) element_size = 2; // int16
+    else if (type.code == halide_type_int && type.bits == 64) element_size = 8; // int64
+    return element_count * element_size;
+}
+
 // ── Model buffer / conversion ───────────────────────────────────────────
 
 const void* mnn_interpreter_get_model_buffer(MnnInterpreter interpreter, size_t* out_size) {

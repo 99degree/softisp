@@ -37,6 +37,15 @@ typedef enum {
 } MnnBackendType;
 
 /**
+ * MNN data types (matching MNN::Tensor::getType().code)
+ */
+#define MNN_DATA_TYPE_FLOAT  1
+#define MNN_DATA_TYPE_INT32 3
+#define MNN_DATA_TYPE_UINT8 5
+#define MNN_DATA_TYPE_INT16 6
+#define MNN_DATA_TYPE_INT64 8
+
+/**
  * Opaque handles for MNN objects.
  */
 typedef void* MnnInterpreter;
@@ -136,6 +145,22 @@ float* mnn_tensor_get_host_data(MnnTensor tensor);
  * @return 0 on success.
  */
 int mnn_tensor_set_shape(MnnTensor tensor, const int* dims, int ndim);
+
+/**
+ * Get raw host data pointer (void*) for any tensor element type.
+ * The pointer is valid until the tensor is destroyed or resized.
+ * Use mnn_tensor_get_type() to interpret the data correctly.
+ * @param tensor Tensor handle.
+ * @return Pointer to data, or NULL if not host-accessible.
+ */
+void* mnn_tensor_get_host_data_raw(MnnTensor tensor);
+
+/**
+ * Get the size in bytes of the tensor's data buffer.
+ * @param tensor Tensor handle.
+ * @return Size in bytes, or 0 on error.
+ */
+size_t mnn_tensor_get_data_size(MnnTensor tensor);
 
 /**
  * Get the model buffer for saving in MNN format.
