@@ -89,6 +89,9 @@ impl IspEngine for CpuEngine {
         // ── 2b. Defective pixel correction (hot pixel removal) ──
         let dpc_data = apply_dpc(&float, width as usize, height as usize, _lsc_gains.map(|g| g[0]).unwrap_or(0.15));
 
+        // ── 2c. Gaussian denoise (optional, light blend) ──
+        let denoised = apply_gaussian_denoise(&dpc_data, width as usize, height as usize, 0.3);
+
         // ── 3. Auto white balance (use controller if no external gains) ──
         let awb_gains = if let Some(g) = awb_gains { *g } else {
             let ctrl = self.controller.lock().unwrap();
@@ -104,7 +107,7 @@ impl IspEngine for CpuEngine {
 
         // ── 4. Apply BLC + WB per-pixel on raw CFA ──
         let blc = *blc_values.unwrap_or(&[0.0, 0.0, 0.0, 0.0]);
-        let blc_wb = apply_blc_wb_raw(&dpc_data, width as usize, height as usize, &blc, wb_gains);
+        let blc_wb = apply_blc_wb_raw(&denoised, width as usize, height as usize, &blc, wb_gains);
 
         // ── 4b. Lens shading correction (vignetting removal) ──
         let lsc_k = _lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15);
@@ -116,10 +119,12 @@ impl IspEngine for CpuEngine {
         // ── 5b. Compute stats from RGB and update controller ──
         let channel_means = compute_channel_means(&rgb);
         let tone_stats = compute_tone_stats(&rgb);
+        let histogram = compute_histogram(&rgb);
         let ctrl_ccm = {
             let mut ctrl = self.controller.lock().unwrap();
             ctrl.update_channel_stats(&channel_means);
             ctrl.update_tone_stats(&tone_stats);
+            ctrl.update_histogram(&histogram);
             info!("Ctrl AWB gains: {:.3} {:.3} {:.3}, CCT: {:?}, AE gain: {:.3}",
                 ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2],
                 ctrl.estimated_cct, ctrl.get_effective_exposure_gain());
@@ -643,6 +648,52 @@ fn compute_tone_stats(rgb: &[f32]) -> [f32; 3] {
     }
     mean_lum /= n as f32;
     [mean_lum, min_lum, max_lum]
+}
+
+/// Compute 256-bin luminance histogram from an RGB float buffer.
+/// Uses standard BT.601 luma weights.
+fn compute_histogram(rgb: &[f32]) -> [f32; 256] {
+    let mut hist = [0.0f32; 256];
+    let n = rgb.len() / 3;
+    if n == 0 { return hist; }
+    for i in 0..n {
+        let r = rgb[i * 3];
+        let g = rgb[i * 3 + 1];
+        let b = rgb[i * 3 + 2];
+        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        let bin = (lum * 255.0).round() as usize;
+        let bin = bin.min(255);
+        hist[bin] += 1.0;
+    }
+    // Normalize to sum = 1.0
+    let total: f32 = hist.iter().sum();
+    if total > 0.0 {
+        for v in hist.iter_mut() { *v /= total; }
+    }
+    hist
+}
+
+/// Apply 3×3 Gaussian blur for denoising (raw Bayer domain).
+/// Kernel: [1 2 1; 2 4 2; 1 2 1] / 16
+/// Only applied when `strength > 0.0`.
+fn apply_gaussian_denoise(raw: &[f32], w: usize, h: usize, strength: f32) -> Vec<f32> {
+    if strength <= 0.0 || w < 3 || h < 3 {
+        return raw.to_vec();
+    }
+    let k = if strength >= 1.0 { 1.0 } else { strength }; // blend factor
+    let mut out = raw.to_vec();
+    for y in 1..h-1 {
+        for x in 1..w-1 {
+            let idx = y * w + x;
+            let val = (
+                raw[(y-1)*w + (x-1)] * 1.0 + raw[(y-1)*w + x] * 2.0 + raw[(y-1)*w + (x+1)] * 1.0 +
+                raw[y*w + (x-1)]     * 2.0 + raw[y*w + x]     * 4.0 + raw[y*w + (x+1)]     * 2.0 +
+                raw[(y+1)*w + (x-1)] * 1.0 + raw[(y+1)*w + x] * 2.0 + raw[(y+1)*w + (x+1)] * 1.0
+            ) / 16.0;
+            out[idx] = raw[idx] + (val - raw[idx]) * k;
+        }
+    }
+    out
 }
 
 /// Display output: resize to target width and convert to UINT8 BGRA.
