@@ -3,17 +3,21 @@ name = "cam-binder"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "cam-demo"
+path = "src/bin/demo.rs"
+
 [dependencies]
 cam-types = { path = "../cam-types" }
 cam-core = { path = "../cam-core" }
-cam-hal-linux = { path = "../cam-hal-linux" }
+cam-hal = { path = "../cam-hal" }
+cam-hal-linux = { path = "../cam-hal-linux", optional = true }
 log = { workspace = true }
 thiserror = { workspace = true }
-
-[dependencies.rsbinder]
-version = "0.8"
-optional = true
+env_logger = "0.11"
+clap = { version = "4", features = ["derive"] }
 
 [features]
 default = []
-android = ["rsbinder"]
+v4l2 = ["dep:cam-hal-linux"]
+android = []

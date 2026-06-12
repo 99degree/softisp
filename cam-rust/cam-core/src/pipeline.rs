@@ -27,7 +27,7 @@ impl Default for PipelineConfig {
 pub struct PipelineManager {
     pub config: PipelineConfig,
     chain: Option<Vec<Box<dyn IspBlock>>>,
-    head: Option<Box<dyn IspBlock>>,
+    _head: Option<Box<dyn IspBlock>>,
 }
 
 impl PipelineManager {
@@ -35,7 +35,7 @@ impl PipelineManager {
         Self {
             config,
             chain: None,
-            head: None,
+            _head: None,
         }
     }
 

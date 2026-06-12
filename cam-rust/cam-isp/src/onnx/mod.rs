@@ -4,7 +4,7 @@
 pub mod proto;
 
 
-use log::{info, warn};
+use log::info;
 use cam_types::{FrameFormat, ToneParams};
 
 use crate::engine::IspEngine;

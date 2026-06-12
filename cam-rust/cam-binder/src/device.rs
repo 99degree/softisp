@@ -1,50 +1,122 @@
-//! Camera Device service.
+//! ICameraDevice -- AIDL Camera Device implementation.
+//!
+//! Matches `android.hardware.camera.device.ICameraDevice`.
+//!
+//! Flow:
+//! 1. open(callback) -> onOpened callback with session
+//! 2. session.configureStreams(configs)
+//! 3. session.processCaptureRequest(request) -> fills buffers
+//! 4. session.flush() / session.close()
 
-use log::{info, warn};
-use rsbinder::{Binder, Interface, Parcel, Status, StatusCode};
-use crate::session;
+use std::sync::{Arc, Mutex};
 
-const OPEN: u32 = 1;
-const GET_CHARACTERISTICS: u32 = 2;
-const CLOSE: u32 = 3;
+use log::info;
 
-pub struct CameraDeviceService {
+use crate::types::*;
+use crate::callback::ICameraDeviceCallback;
+use crate::session::CameraDeviceSession;
+
+/// ICameraDevice implementation.
+pub struct CameraDevice {
     camera_id: String,
+    device_path: String,
+    info: CameraInfo,
+    opened: Arc<Mutex<bool>>,
+    session: Arc<Mutex<Option<Arc<Mutex<CameraDeviceSession>>>>>,
+    callback: Arc<Mutex<Option<Arc<dyn ICameraDeviceCallback>>>>,
 }
 
-impl CameraDeviceService {
-    pub fn new(camera_id: String) -> Self {
-        Self { camera_id }
+impl CameraDevice {
+    pub fn new(camera_id: String, device_path: String, info: CameraInfo) -> Self {
+        Self {
+            camera_id,
+            device_path,
+            info,
+            opened: Arc::new(Mutex::new(false)),
+            session: Arc::new(Mutex::new(None)),
+            callback: Arc::new(Mutex::new(None)),
+        }
     }
-}
 
-impl Interface for CameraDeviceService {
-    fn on_transact(&mut self, code: u32, msg: &mut Parcel, reply: &mut Parcel) -> Status<()> {
-        match code {
-            OPEN => {
-                info!("CameraDevice({}): open", self.camera_id);
-                // Return a session binder
-                let session = session::CameraDeviceSession::new(self.camera_id.clone());
-                let binder = Binder::new(session);
-                reply.write_binder(binder).map_err(|_| StatusCode::UNKNOWN_ERROR)?;
-                Status::success(())
-            }
-            GET_CHARACTERISTICS => {
-                info!("CameraDevice({}): getCharacteristics", self.camera_id);
-                // Return a stub CameraMetadata as raw bytes (empty)
-                // In real impl, would be a Parcelable CameraMetadata
-                reply.write_i32(0); // empty byte array length
-                Status::success(())
-            }
-            CLOSE => {
-                info!("CameraDevice({}): close", self.camera_id);
-                // nothing to clean
-                Status::success(())
-            }
-            _ => {
-                warn!("CameraDevice: unknown transaction code: {}", code);
-                Status::from_error(StatusCode::UNKNOWN_TRANSACTION)
-            }
+    pub fn camera_id(&self) -> &str { &self.camera_id }
+    pub fn info(&self) -> &CameraInfo { &self.info }
+    pub fn device_path(&self) -> &str { &self.device_path }
+    pub fn is_opened(&self) -> bool { *self.opened.lock().unwrap() }
+
+    /// Open the camera device.
+    ///
+    /// Creates a capture session and delivers it via the callback's onOpened().
+    pub fn open(&self, callback: Arc<dyn ICameraDeviceCallback>) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
+        if *self.opened.lock().unwrap() {
+            return Err(format!("Camera {} already opened", self.camera_id));
+        }
+
+        // Clone before moving into self.callback
+        let callback_for_session = callback.clone();
+        *self.callback.lock().unwrap() = Some(callback);
+
+        // Create a new session for this device
+        let session = Arc::new(Mutex::new(CameraDeviceSession::new(
+            self.camera_id.clone(),
+            self.device_path.clone(),
+            self.info.clone(),
+        )));
+        *self.session.lock().unwrap() = Some(session.clone());
+        *self.opened.lock().unwrap() = true;
+
+        // Give the session a reference to the same callback
+        session.lock().unwrap().set_callback(callback_for_session);
+
+        info!("CameraDevice({}): opened", self.camera_id);
+
+        // Notify callback
+        if let Some(cb) = self.callback.lock().unwrap().as_ref() {
+            cb.on_opened(&self.camera_id);
+        }
+
+        Ok(session)
+    }
+
+    /// Close the camera and all sessions.
+    pub fn close(&self) {
+        if !*self.opened.lock().unwrap() {
+            return;
+        }
+
+        // Close the session
+        if let Some(session) = self.session.lock().unwrap().take() {
+            session.lock().unwrap().close();
+        }
+
+        *self.opened.lock().unwrap() = false;
+        info!("CameraDevice({}): closed", self.camera_id);
+    }
+
+    /// Get camera characteristics.
+    pub fn get_camera_characteristics(&self) -> CameraCharacteristics {
+        CameraCharacteristics {
+            camera_id: self.camera_id.clone(),
+            info: self.info.clone(),
+            raw_metadata: Vec::new(),
+        }
+    }
+
+    /// Get the current session (if any).
+    pub fn get_session(&self) -> Option<Arc<Mutex<CameraDeviceSession>>> {
+        self.session.lock().unwrap().clone()
+    }
+
+    /// Set torch mode.
+    pub fn set_torch_mode(&self, _on: bool) {
+        info!("CameraDevice({}): torch not implemented", self.camera_id);
+    }
+
+    pub fn is_torch_supported(&self) -> bool { false }
+
+    /// Flush all pending requests.
+    pub fn flush(&self) {
+        if let Some(session) = self.session.lock().unwrap().as_ref() {
+            session.lock().unwrap().flush();
         }
     }
 }
