@@ -1,14 +1,18 @@
 //! MNN inference engine for the ISP pipeline.
 //! Ported from com.camcore.isp.mnn.MnnEngine
 
-use log::info;
+use log::{info};
 use cam_types::{FrameFormat, ToneParams};
 
 use crate::engine::IspEngine;
 use crate::pipeline::{IspBlock, IspFrame, IspAuxOutput};
 
 #[cfg(feature = "mnn")]
-use crate::mnn_sys::{MnnInterpreterSafe, MnnBackendType};
+use log::warn;
+#[cfg(feature = "mnn")]
+use std::sync::Mutex;
+#[cfg(feature = "mnn")]
+use crate::mnn_sys::{MnnInterpreterSafe, MnnBackendType, MnnSessionSafe};
 
 /// Available MNN backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,18 +69,41 @@ impl MnnSessionWrapper {
         })
     }
 
-    fn get_input_tensor(&self, name: &str) -> Option<crate::mnn_sys::MnnTensorSafe> {
-        let session = self.session.lock().ok()?;
-        self.interpreter.get_input(&session, name)
+    fn set_input_shape(&self, name: &str, shape: &[i32]) -> Result<(), String> {
+        let session = self.session.lock().map_err(|_| "MNN session lock poisoned")?;
+        let tensor = self.interpreter.get_input(&session, name)
+            .ok_or_else(|| format!("Input tensor '{}' not found", name))?;
+        tensor.set_shape(self.interpreter.as_ptr(), session.as_ptr(), shape)
     }
 
-    fn get_output_tensor(&self, name: &str) -> Option<crate::mnn_sys::MnnTensorSafe> {
-        let session = self.session.lock().ok()?;
-        self.interpreter.get_output(&session, name)
+    fn copy_input(&self, name: &str, data: &[u8]) -> Result<(), String> {
+        let session = self.session.lock().map_err(|_| "MNN session lock poisoned")?;
+        let tensor = self.interpreter.get_input(&session, name)
+            .ok_or_else(|| format!("Input tensor '{}' not found", name))?;
+        let bytes = tensor.as_bytes_mut()
+            .ok_or("Input tensor not mutable")?;
+        if data.len() != bytes.len() {
+            warn!("Input size mismatch: got {} expected {}", data.len(), bytes.len());
+        }
+        let copy_len = std::cmp::min(data.len(), bytes.len());
+        bytes[..copy_len].copy_from_slice(&data[..copy_len]);
+        Ok(())
+    }
+
+    fn read_output(&self, name: &str) -> Result<Vec<u8>, String> {
+        let session = self.session.lock().map_err(|_| "MNN session lock poisoned")?;
+        let tensor = self.interpreter.get_output(&session, name)
+            .ok_or_else(|| format!("Output tensor '{}' not found", name))?;
+        let size = tensor.data_size();
+        let mut out = vec![0u8; size];
+        unsafe {
+            std::ptr::copy_nonoverlapping(tensor.as_ptr(), out.as_mut_ptr(), size);
+        }
+        Ok(out)
     }
 
     fn run(&self) -> Result<(), String> {
-        let mut session = self.session.lock().map_err(|_| "MNN session lock poisoned")?;
+        let session = self.session.lock().map_err(|_| "MNN session lock poisoned")?;
         session.resize()?;
         session.run()
     }
@@ -162,7 +189,8 @@ impl IspEngine for MnnEngine {
         width: u32,
         height: u32,
         _stride_width: u32,
-        _buf: &[u8],
+        #[allow(unused)]
+        buf: &[u8],
         _sensor_max: f32,
         target_width: u32,
         _ccm_matrix: Option<&[f32; 9]>,
@@ -183,44 +211,28 @@ impl IspEngine for MnnEngine {
         {
             let session_wrapper = self.session.as_ref()
                 .ok_or_else(|| "MNN session not created".to_string())?;
+            let wrapper = session_wrapper.lock()
+                .map_err(|_| "MNN session lock poisoned".to_string())?;
 
             info!("MnnEngine({}) running inference {}x{} -> {}x{}",
                 self.backend.id(), width, height, target_width, height);
 
-            // Get input tensor (RawInputBlock/frame) - expects INT16
-            let input_tensor = session_wrapper.get_input_tensor("RawInputBlock/frame")
-                .ok_or_else(|| "Input tensor 'RawInputBlock/frame' not found".to_string())?;
-
             // Set input shape: [1, 1, height, width]
             let input_shape = &[1i32, 1i32, height as i32, width as i32];
-            input_tensor.set_shape(input_shape)
-                .map_err(|e| format!("Failed to set input shape: {}", e))?;
+            wrapper.set_input_shape("RawInputBlock/frame", input_shape)?;
 
             // Copy raw INT16 buffer into input tensor
-            let input_data = buf;
-            let input_bytes = input_tensor.as_bytes_mut().ok_or("Input tensor not mutable")?;
-            if input_data.len() != input_bytes.len() {
-                warn!("Input size mismatch: got {} expected {}", input_data.len(), input_bytes.len());
-            }
-            let copy_len = std::cmp::min(input_data.len(), input_bytes.len());
-            input_bytes[..copy_len].copy_from_slice(&input_data[..copy_len]);
+            wrapper.copy_input("RawInputBlock/frame", buf)?;
 
             // Run inference
-            session_wrapper.run()?;
+            wrapper.run()?;
 
-            // Get output tensor (DisplayBlock/frame) - UINT8 BGRA
-            let output_tensor = session_wrapper.get_output_tensor("DisplayBlock/frame")
-                .ok_or_else(|| "Output tensor 'DisplayBlock/frame' not found".to_string())?;
+            // Read output tensor
+            let output_data = wrapper.read_output("DisplayBlock/frame")?;
+            let output_size = output_data.len();
 
-            let output_shape = output_tensor.shape();
-            let output_size = output_tensor.data_size();
-            let mut output_data = vec![0u8; output_size];
-            unsafe {
-                std::ptr::copy_nonoverlapping(output_tensor.as_ptr(), output_data.as_mut_ptr() as *const u8, output_size);
-            }
-
-            info!("MnnEngine({}) inference done, output shape={:?} bytes={}",
-                self.backend.id(), output_shape, output_size);
+            info!("MnnEngine({}) inference done, bytes={}",
+                self.backend.id(), output_size);
 
             // Construct IspFrame
             let mut frame = IspFrame::new(target_width, height, FrameFormat::Rgba8888);

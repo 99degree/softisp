@@ -16,7 +16,6 @@
 #![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
-use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
 
 // ── Backend enum ─────────────────────────────────────────────────────────
@@ -74,7 +73,7 @@ extern "C" {
     fn mnn_tensor_get_host_data(tensor: *mut c_void) -> *mut f32;
     fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
     fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
-    fn mnn_tensor_set_shape(tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
+    fn mnn_tensor_set_shape(interpreter: *mut c_void, session: *mut c_void, tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
 }
 
 // ── Safe Rust wrappers ───────────────────────────────────────────────────
@@ -83,6 +82,11 @@ extern "C" {
 pub struct MnnInterpreterSafe {
     inner: *mut c_void,
 }
+
+// MNN C API is thread-safe for read operations; interpreter/session handles
+// are protected by Mutex in MnnSessionWrapper.
+unsafe impl Send for MnnInterpreterSafe {}
+unsafe impl Sync for MnnInterpreterSafe {}
 
 impl MnnInterpreterSafe {
     /// Create an Interpreter from a model buffer.
@@ -93,6 +97,11 @@ impl MnnInterpreterSafe {
         } else {
             Some(Self { inner: ptr })
         }
+    }
+
+    /// Get raw interpreter pointer (for C FFI calls).
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.inner
     }
 
     /// Create a session with the given backend.
@@ -143,7 +152,15 @@ pub struct MnnSessionSafe {
     inner: *mut c_void,
 }
 
+unsafe impl Send for MnnSessionSafe {}
+unsafe impl Sync for MnnSessionSafe {}
+
 impl MnnSessionSafe {
+    /// Get raw session pointer (for C FFI calls).
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.inner
+    }
+
     /// Resize the session for current input shapes.
     pub fn resize(&self) -> Result<(), String> {
         let ret = unsafe { mnn_session_resize(self.interpreter, self.inner) };
@@ -167,6 +184,9 @@ impl Drop for MnnSessionSafe {
 pub struct MnnTensorSafe {
     inner: *mut c_void,
 }
+
+unsafe impl Send for MnnTensorSafe {}
+unsafe impl Sync for MnnTensorSafe {}
 
 impl MnnTensorSafe {
     /// Get the shape of the tensor.
@@ -197,10 +217,28 @@ impl MnnTensorSafe {
         Some(unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) })
     }
 
-    /// Set the shape of the tensor.
-    pub fn set_shape(&self, dims: &[i32]) -> Result<(), String> {
-        let ret = unsafe { mnn_tensor_set_shape(self.inner, dims.as_ptr(), dims.len() as i32) };
-        if ret == 0 { Ok(()) } else { Err("Tensor set_shape failed".to_string()) }
+    /// Set the shape of the tensor (requires interpreter + session).
+    /// Caller must hold references to both that outlive this call.
+    pub fn set_shape(
+        &self,
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        dims: &[i32],
+    ) -> Result<(), String> {
+        let ret = unsafe {
+            mnn_tensor_set_shape(
+                interpreter,
+                session,
+                self.inner,
+                dims.as_ptr(),
+                dims.len() as i32,
+            )
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err("Tensor set_shape failed".to_string())
+        }
     }
 
     /// Get a raw pointer to the tensor's data buffer (any element type).
