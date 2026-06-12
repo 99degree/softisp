@@ -1,0 +1,202 @@
+//! Pipeline configuration — editable snapshot of ISP feature flags.
+//!
+//! Ported from `com.camcore.isp.pipeline.PipelineConfig` (Java).
+//! Represents a complete, immutable pipeline configuration that can be
+//! edited via builder methods and applied to the pipeline manager.
+
+use crate::profile::{DemosaicQuality, PipelineProfile};
+
+/// Complete pipeline configuration — which blocks to include.
+///
+/// Create from a profile with `PipelineConfig::from_profile()`, then
+/// override individual flags with builder methods.
+#[derive(Debug, Clone)]
+pub struct PipelineConfig {
+    /// Base profile.
+    pub profile: PipelineProfile,
+    /// Enable defective pixel correction.
+    pub use_bad_pixel: bool,
+    /// Demosaic quality level.
+    pub demosaic_quality: DemosaicQuality,
+    /// Enable local contrast enhancement.
+    pub use_local_contrast: bool,
+    /// Enable unsharp mask.
+    pub use_unsharp: bool,
+    /// Enable lens shading correction.
+    pub use_lsc: bool,
+    /// Enable geometric warp correction (EIS/deshake).
+    pub use_warp: bool,
+    /// Enable HDR merge.
+    pub use_hdr: bool,
+    /// Human-readable label.
+    pub label: String,
+}
+
+impl PipelineConfig {
+    /// Predefined LITE config.
+    pub const LITE: Self = Self {
+        profile: PipelineProfile::LITE,
+        use_bad_pixel: false,
+        demosaic_quality: DemosaicQuality::HqLinear,
+        use_local_contrast: false,
+        use_unsharp: false,
+        use_lsc: false,
+        use_warp: false,
+        use_hdr: false,
+        label: String::new(),
+    };
+
+    /// Create a config from a base profile.
+    pub fn from_profile(profile: PipelineProfile) -> Self {
+        Self {
+            profile,
+            use_bad_pixel: profile.use_bad_pixel,
+            demosaic_quality: profile.demosaic_quality,
+            use_local_contrast: profile.use_local_contrast,
+            use_unsharp: profile.use_unsharp,
+            use_lsc: profile.use_lsc,
+            use_warp: profile.use_warp,
+            use_hdr: profile.use_hdr,
+            label: profile.label.to_string(),
+        }
+    }
+
+    /// Whether this config differs from its base profile (custom variant).
+    pub fn is_custom(&self) -> bool {
+        self.use_bad_pixel != self.profile.use_bad_pixel
+            || self.demosaic_quality != self.profile.demosaic_quality
+            || self.use_local_contrast != self.profile.use_local_contrast
+            || self.use_unsharp != self.profile.use_unsharp
+            || self.use_lsc != self.profile.use_lsc
+            || self.use_warp != self.profile.use_warp
+            || self.use_hdr != self.profile.use_hdr
+    }
+
+    /// Build a human-readable block chain preview string.
+    ///
+    /// Example: `"Raw → Norm → CFA → BLC → BayerWB → Debayer → CCM → Tone → Display"`
+    pub fn block_chain_preview(&self) -> String {
+        let mut b: Vec<&str> = Vec::new();
+        b.push("Raw");
+        b.push("Norm");
+        if self.use_bad_pixel {
+            b.push("DPC");
+        }
+        b.push("CFA");
+        b.push("BLC");
+        if self.use_lsc {
+            b.push("LSC");
+        }
+        b.push("BayerWB");
+        match self.demosaic_quality {
+            DemosaicQuality::Standard => b.push("Debayer"),
+            DemosaicQuality::HqLinear => b.push("HqLinDemosaic"),
+            DemosaicQuality::Edge => b.push("EdgeDemosaic"),
+        }
+        if self.use_warp {
+            b.push("Warp");
+        }
+        if self.use_hdr {
+            b.push("HDR");
+        }
+        b.push("CCM");
+        b.push("Tone");
+        if self.use_local_contrast {
+            b.push("LocalC");
+        }
+        if self.use_unsharp {
+            b.push("Unsharp");
+        }
+        b.push("Display");
+        b.join(" → ")
+    }
+
+    /// Number of blocks in this config.
+    pub fn block_count(&self) -> usize {
+        let mut count: usize = 9; // base blocks
+        if self.use_bad_pixel { count += 1; }
+        if self.use_lsc { count += 1; }
+        if self.use_local_contrast { count += 1; }
+        if self.use_unsharp { count += 1; }
+        if self.use_warp { count += 1; }
+        if self.use_hdr { count += 1; }
+        count
+    }
+
+    // ── Builder methods ──
+
+    pub fn with_bad_pixel(mut self, v: bool) -> Self { self.use_bad_pixel = v; self }
+    pub fn with_demosaic_quality(mut self, v: DemosaicQuality) -> Self { self.demosaic_quality = v; self }
+    pub fn with_local_contrast(mut self, v: bool) -> Self { self.use_local_contrast = v; self }
+    pub fn with_unsharp(mut self, v: bool) -> Self { self.use_unsharp = v; self }
+    pub fn with_lsc(mut self, v: bool) -> Self { self.use_lsc = v; self }
+    pub fn with_warp(mut self, v: bool) -> Self { self.use_warp = v; self }
+    pub fn with_hdr(mut self, v: bool) -> Self { self.use_hdr = v; self }
+    pub fn with_label(mut self, v: impl Into<String>) -> Self { self.label = v.into(); self }
+
+    /// Set label from profile name + custom markers.
+    pub fn auto_label(&self) -> String {
+        if self.is_custom() {
+            format!("{} (custom)", self.profile.label)
+        } else {
+            self.profile.label.to_string()
+        }
+    }
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self { Self::from_profile(PipelineProfile::MED) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_profile() {
+        let cfg = PipelineConfig::from_profile(PipelineProfile::HEAVY);
+        assert!(cfg.use_bad_pixel);
+        assert!(cfg.use_unsharp);
+        assert!(cfg.use_lsc);
+        assert!(!cfg.is_custom(), "Should match profile defaults");
+    }
+
+    #[test]
+    fn test_custom_override() {
+        let cfg = PipelineConfig::from_profile(PipelineProfile::LITE)
+            .with_unsharp(true)
+            .with_bad_pixel(true);
+        assert!(cfg.is_custom());
+        assert!(cfg.use_unsharp);
+        assert!(cfg.use_bad_pixel);
+        assert_eq!(cfg.auto_label(), "LITE (custom)");
+    }
+
+    #[test]
+    fn test_block_chain_preview_lite() {
+        let cfg = PipelineConfig::from_profile(PipelineProfile::LITE);
+        let preview = cfg.block_chain_preview();
+        assert!(preview.contains("Raw"));
+        assert!(preview.contains("Display"));
+        assert!(!preview.contains("DPC"));
+        assert!(!preview.contains("LSC"));
+    }
+
+    #[test]
+    fn test_block_chain_preview_heavy() {
+        let cfg = PipelineConfig::from_profile(PipelineProfile::HEAVY);
+        let preview = cfg.block_chain_preview();
+        assert!(preview.contains("DPC"));
+        assert!(preview.contains("LSC"));
+        assert!(preview.contains("Unsharp"));
+        assert!(preview.contains("EdgeDemosaic"));
+    }
+
+    #[test]
+    fn test_block_count() {
+        let lite = PipelineConfig::from_profile(PipelineProfile::LITE);
+        let heavy = PipelineConfig::from_profile(PipelineProfile::HEAVY);
+        assert_eq!(lite.block_count(), 9);
+        assert!(heavy.block_count() > lite.block_count());
+    }
+}
