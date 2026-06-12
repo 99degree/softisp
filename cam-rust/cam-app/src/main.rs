@@ -6,7 +6,6 @@
 use log::{info, warn, error};
 use clap::Parser;
 
-use cam_isp::engine::*;
 use cam_isp::mnn::MnnBackend;
 use cam_isp::onnx::OrtBackend;
 use cam_isp::pipeline::{GraphComposer, IspBlock};
@@ -28,7 +27,7 @@ struct Args {
 
 /// Build the 9-block ISP pipeline and compose the ONNX model.
 fn build_pipeline(width: u32) -> Result<Vec<u8>, String> {
-    let mut raw_input = RawInputBlock::new();
+    let raw_input = RawInputBlock::new();
     let mut normalize = NormalizeBlock::new();
     let mut cfa = CfaBlock::new();
     let mut blc = BlcBlock::new();
@@ -48,7 +47,7 @@ fn build_pipeline(width: u32) -> Result<Vec<u8>, String> {
     tone.set_input_source(ccm.frame_tensor().unwrap_or(""));
     display.set_input_source(tone.frame_tensor().unwrap_or(""));
 
-    let pipeline: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![
+    let pipeline: Vec<&dyn IspBlock> = vec![
         &raw_input, &normalize, &cfa, &blc, &bayer_wb,
         &demosaic, &ccm, &tone, &display,
     ];
