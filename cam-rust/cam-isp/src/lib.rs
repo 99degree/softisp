@@ -22,6 +22,10 @@ pub mod predictor;
 pub mod regression;
 pub mod store;
 pub mod genetic;
+pub mod demosaic;
+pub mod isp_ops;
+pub mod warp;
+pub mod stats;
 
 use std::sync::Once;
 
