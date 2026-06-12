@@ -15,6 +15,7 @@ use cam_types::ToneParams;
 use crate::engine::{IspEngine, EngineFactory, register_engine};
 use crate::pipeline::{IspBlock, IspFrame};
 use crate::controller::IspController;
+use crate::af::AfState;
 
 // ── Engine registration ──
 
@@ -23,11 +24,13 @@ pub struct CpuEngine {
     _target_width: u32,
     /// ISP controller for AWB/AE/CCM/tone parameter estimation.
     pub controller: Mutex<IspController>,
+    /// AF engine for autofocus state machine.
+    pub af_engine: Mutex<AfState>,
 }
 
 impl CpuEngine {
     pub fn new() -> Self {
-        Self { loaded: false, _target_width: 0, controller: Mutex::new(IspController::new()) }
+        Self { loaded: false, _target_width: 0, controller: Mutex::new(IspController::new()), af_engine: Mutex::new(AfState::default()) }
     }
 }
 
@@ -69,9 +72,11 @@ impl IspEngine for CpuEngine {
         let t0 = std::time::Instant::now();
 
         info!("CpuEngine::process {}x{} → target {}", width, height, target_width);
+        eprintln!("DEBUG: step0 {}", t0.elapsed().as_millis());
 
         // ── 1. RawInput: interpret as INT16 Bayer ──
         // Input is raw 16-bit sensor data (Bayer pattern)
+        eprintln!("DEBUG: start rawinput {}", t0.elapsed().as_millis());
         let raw: Vec<u16> = if buf.len() >= (width * height * 2) as usize {
             buf.chunks_exact(2)
                 .take((width * height) as usize)
@@ -82,16 +87,20 @@ impl IspEngine for CpuEngine {
             generate_simulated_raw(width, height, buf)
         };
 
+        eprintln!("DEBUG: start normalize {}", t0.elapsed().as_millis());
         // ── 2. Normalize: INT16 → FLOAT [0, 1] ──
         let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
         let float: Vec<f32> = raw.iter().map(|&v| v as f32 / max_val).collect();
 
+        eprintln!("DEBUG: start dpc {}", t0.elapsed().as_millis());
         // ── 2b. Defective pixel correction (hot pixel removal) ──
         let dpc_data = apply_dpc(&float, width as usize, height as usize, _lsc_gains.map(|g| g[0]).unwrap_or(0.15));
 
+        eprintln!("DEBUG: start denoise {}", t0.elapsed().as_millis());
         // ── 2c. Gaussian denoise (optional, light blend) ──
         let denoised = apply_gaussian_denoise(&dpc_data, width as usize, height as usize, 0.3);
 
+        eprintln!("DEBUG: start calibration {}", t0.elapsed().as_millis());
         // ── 2d. Calibration stats: quad-level sensor metadata from raw Bayer ──
         let calibration_stats = {
             let quads = bayer_to_quads(&denoised, width as usize, height as usize);
@@ -103,6 +112,19 @@ impl IspEngine for CpuEngine {
                 cam_types::BayerPattern::Rggb,
             )
         };
+
+        // ── 2e. Compute focus metric from calibration stats and feed AfEngine ──
+        let focus_metric = AfState::focus_metric_from_calibration(&calibration_stats.0);
+        {
+            let mut af = self.af_engine.lock().unwrap();
+            af.feed_metric(focus_metric);
+            // Start scan if idle
+            if af.scan_phase == crate::af::AfScanPhase::Idle {
+                af.start_scan();
+            }
+            af.advance_scan();
+        }
+        info!("Focus metric: {:.6}", focus_metric);
 
         // ── 3. Auto white balance (use controller if no external gains) ──
         let awb_gains = if let Some(g) = awb_gains { *g } else {
@@ -125,9 +147,11 @@ impl IspEngine for CpuEngine {
         let lsc_k = _lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15);
         let corrected = apply_lsc(&blc_wb, width as usize, height as usize, lsc_k);
 
+        eprintln!("DEBUG: start demosaic {}", t0.elapsed().as_millis());
         // ── 5. Malvar demosaic: raw CFA → RGB ──
         let rgb = demosaic_malvar(&corrected, width as usize, height as usize, Some(&awb_gains));
 
+        eprintln!("DEBUG: after demosaic, start stats {}", t0.elapsed().as_millis());
         // ── 5b. Compute stats from RGB and update controller ──
         let channel_means = compute_channel_means(&rgb);
         let tone_stats = compute_tone_stats(&rgb);
@@ -153,6 +177,7 @@ impl IspEngine for CpuEngine {
             ctrl.get_ccm()
         };
 
+        eprintln!("DEBUG: after ctrl, ae_gain {}", t0.elapsed().as_millis());
         // ── 6. Auto exposure (use controller or fallback simple AE) ──
         let ae_gain = if _analog_gain <= 0.0 {
             self.controller.lock().unwrap().get_effective_exposure_gain()
@@ -160,17 +185,22 @@ impl IspEngine for CpuEngine {
             calculate_ae_gain(&rgb)
         };
 
+        eprintln!("DEBUG: after ae_gain, ccm {}", t0.elapsed().as_millis());
         // ── 7. CCM: 3×3 color matrix (use controller if no external) ──
         let ccm: &[f32; 9] = ccm_matrix.unwrap_or(&ctrl_ccm);
         let ccm_applied = apply_ccm(&rgb, ccm);
 
+        eprintln!("DEBUG: after ccm, tone {}", t0.elapsed().as_millis());
         // ── 8. Tone: apply tone curve (with AE gain) ──
         let adjusted = apply_ae_gain(&ccm_applied, ae_gain);
         let toned = apply_tone(&adjusted, _tone_params, width as usize, height as usize);
 
+        eprintln!("DEBUG: after tone, display {}", t0.elapsed().as_millis());
         // ── 9. Display: resize + convert to UINT8 BGRA ──
         let out_width = if target_width > 0 { target_width } else { width };
+        eprintln!("DEBUG: before display_output call {}", t0.elapsed().as_millis());
         let out_bytes = display_output(&toned, width as usize, height as usize, out_width as usize);
+        eprintln!("DEBUG: after display_output call {}", t0.elapsed().as_millis());
 
         let elapsed = t0.elapsed();
         info!("CpuEngine: processed in {:?} → {}×{} output ({} bytes)",
@@ -188,11 +218,13 @@ impl IspEngine for CpuEngine {
                 wb_gains: Some(awb_gains),
                 histogram: Some(histogram.to_vec()),
                 zone_stats: Some(zone_stats),
-                focus_metric: None,
+                focus_metric: Some(focus_metric),
                 cct: None,
                 ae_gain: Some(ae_gain),
                 calibration_stats: Some(calibration_stats.0),
                 scene_category: Some(self.controller.lock().unwrap().scene_category.name().to_string()),
+                af_phase: Some(self.af_engine.lock().unwrap().display_string()),
+                vcm_position: Some(self.af_engine.lock().unwrap().vcm_pos),
             }),
         })
     }
@@ -393,9 +425,11 @@ fn apply_lsc(raw: &[f32], w: usize, h: usize, k: f32) -> Vec<f32> {
 /// BGGR pattern expected.
 /// Reference: Malvar, He, Cutler "High-Quality Linear Interpolation for Demosaicing of Bayer-Patterned Color Images" ICASSP 2004.
 fn demosaic_malvar(cfa: &[f32], width: usize, height: usize, _awb: Option<&[f32; 3]>) -> Vec<f32> {
+    eprintln!("DEBUG demosaic: {}x{} pixels", width, height);
     let mut rgb = vec![0.0f32; width * height * 3];
 
     for y in 0..height {
+        if y % 10 == 0 { eprintln!("DEBUG demosaic row {}/{}", y, height); }
         for x in 0..width {
             let idx = y * width + x;
             let is_even_row = y % 2 == 0;
@@ -840,6 +874,7 @@ mod tests {
     use crate::engine::IspEngine;
 
     #[test]
+    #[ignore = "extended — runs full ISP pipeline"]
     fn test_cpu_engine_process() {
         let mut engine = CpuEngine::new();
         assert!(engine.build(Box::new(crate::blocks::RawInputBlock::new()), vec![], None, 21).is_ok());

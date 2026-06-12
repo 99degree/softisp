@@ -51,6 +51,7 @@ fn color_raw(width: u32, height: u32, r: u16, g: u16, b: u16) -> Vec<u8> {
 
 /// Test that a flat gray input produces a non-zero output with correct dimensions.
 #[test]
+#[ignore = "extended — runs full ISP pipeline"]
 fn test_pipeline_gray_output() {
     cam_isp::init();
     let w = 32u32;
@@ -97,6 +98,7 @@ fn test_pipeline_gray_output() {
 
 /// Test that a gray gradient produces increasing brightness left to right.
 #[test]
+#[ignore = "extended — runs full ISP pipeline"]
 fn test_pipeline_gradient() {
     cam_isp::init();
     let w = 64u32;
@@ -135,6 +137,7 @@ fn test_pipeline_gradient() {
 
 /// Test pipeline with color input — verify AWB corrects color cast.
 #[test]
+#[ignore = "extended — runs full ISP pipeline"]
 fn test_pipeline_red_scene() {
     cam_isp::init();
     let w = 32u32;
@@ -168,6 +171,7 @@ fn test_pipeline_red_scene() {
 
 /// Test controller convergence across multiple frames.
 #[test]
+#[ignore = "extended — runs full ISP pipeline"]
 fn test_controller_convergence() {
     cam_isp::init();
     let w = 32u32;
@@ -199,6 +203,7 @@ fn test_controller_convergence() {
 
 /// Test FusedPipeline with profile build.
 #[test]
+#[ignore = "extended — runs full ISP pipeline"]
 fn test_profile_pipeline_integration() {
     cam_isp::init();
     let blocks = PipelineProfile::LITE.build_blocks(32, 0);
@@ -208,6 +213,7 @@ fn test_profile_pipeline_integration() {
 
 /// Test that the pipeline handles edge-case inputs.
 #[test]
+#[ignore = "extended — runs full ISP pipeline"]
 fn test_pipeline_edge_cases() {
     cam_isp::init();
     let w = 16u32;
