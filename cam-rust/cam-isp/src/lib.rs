@@ -13,6 +13,7 @@ pub mod fused;
 pub mod manager;
 pub mod onnx;
 pub mod mnn;
+pub mod ccm_engine;
 
 use std::sync::Once;
 
