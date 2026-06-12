@@ -78,16 +78,22 @@ impl IspEngine for CpuEngine {
         };
 
         // ── 2. Normalize: INT16 → FLOAT [0, 1] ──
-        let max_val = 65535.0f32;
+        let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
         let float: Vec<f32> = raw.iter().map(|&v| v as f32 / max_val).collect();
 
-        // ── 3. Apply BLC + WB per-pixel on raw CFA ──
-        let blc = *blc_values.unwrap_or(&[0.0, 0.0, 0.0, 0.0]);
-        let wb_gains = *bayer_gains.unwrap_or(&[1.0, 1.0, 1.0, 1.0]);
-        let corrected = apply_blc_wb_raw(&float, width as usize, height as usize, &blc, &wb_gains);
+        // ── 3. Auto white balance (if no gains provided) ──
+        let default_gains = calculate_awb_gains(&float, width as usize, height as usize);
+        let wb_gains: &[f32; 4] = bayer_gains.unwrap_or(&default_gains);
 
-        // ── 4. Malvar demosaic: raw CFA → RGB ──
+        // ── 4. Apply BLC + WB per-pixel on raw CFA ──
+        let blc = *blc_values.unwrap_or(&[0.0, 0.0, 0.0, 0.0]);
+        let corrected = apply_blc_wb_raw(&float, width as usize, height as usize, &blc, wb_gains);
+
+        // ── 5. Malvar demosaic: raw CFA → RGB ──
         let rgb = demosaic_malvar(&corrected, width as usize, height as usize, awb_gains);
+
+        // ── 6. Auto exposure (compute target brightness) ──
+        let ae_gain = calculate_ae_gain(&rgb);
 
         // ── 7. CCM: 3×3 color matrix ──
         let ccm = ccm_matrix.unwrap_or(&[
@@ -95,10 +101,11 @@ impl IspEngine for CpuEngine {
             0.0, 1.0, 0.0,
             0.0, 0.0, 1.0,
         ]);
-        let corrected = apply_ccm(&rgb, ccm);
+        let ccm_applied = apply_ccm(&rgb, ccm);
 
-        // ── 8. Tone: apply tone curve ──
-        let toned = apply_tone(&corrected, tone_params);
+        // ── 8. Tone: apply tone curve (with AE gain) ──
+        let adjusted = apply_ae_gain(&ccm_applied, ae_gain);
+        let toned = apply_tone(&adjusted, tone_params);
 
         // ── 9. Display: resize + convert to UINT8 BGRA ──
         let out_width = if target_width > 0 { target_width } else { width };
@@ -141,6 +148,85 @@ fn generate_simulated_raw(width: u32, height: u32, rgba: &[u8]) -> Vec<u16> {
         }
     }
     raw
+}
+
+/// Calculate auto white balance gains using gray world assumption on raw CFA.
+/// Works on the normalized float CFA (BGGR pattern).
+/// Returns [R_gain, Gr_gain, Gb_gain, B_gain].
+fn calculate_awb_gains(cfa: &[f32], width: usize, height: usize) -> [f32; 4] {
+    let mut sum_r = 0.0f32;
+    let mut sum_gr = 0.0f32;
+    let mut sum_gb = 0.0f32;
+    let mut sum_b = 0.0f32;
+    let mut count_r = 0u32;
+    let mut count_gr = 0u32;
+    let mut count_gb = 0u32;
+    let mut count_b = 0u32;
+
+    for y in 0..height {
+        for x in 0..width {
+            let v = cfa[y * width + x];
+            if y % 2 == 0 {
+                if x % 2 == 0 { sum_b += v; count_b += 1; }
+                else { sum_gb += v; count_gb += 1; }
+            } else {
+                if x % 2 == 0 { sum_gr += v; count_gr += 1; }
+                else { sum_r += v; count_r += 1; }
+            }
+        }
+    }
+
+    let avg_r = sum_r / count_r as f32;
+    let avg_gr = sum_gr / count_gr as f32;
+    let avg_gb = sum_gb / count_gb as f32;
+    let avg_b = sum_b / count_b as f32;
+
+    // Average of all green
+    let avg_g = (avg_gr + avg_gb) * 0.5;
+
+    // Gains to make each channel equal to green
+    // Clamp to prevent division by zero or extreme gains
+    let eps = 0.001;
+    let gain_r = if avg_r > eps { avg_g / avg_r } else { 1.0 };
+    let gain_gr = if avg_gr > eps { avg_g / avg_gr } else { 1.0 };
+    let gain_gb = if avg_gb > eps { avg_g / avg_gb } else { 1.0 };
+    let gain_b = if avg_b > eps { avg_g / avg_b } else { 1.0 };
+
+    // Limit to reasonable range
+    [
+        gain_r.min(4.0).max(0.25),
+        gain_gr.min(4.0).max(0.25),
+        gain_gb.min(4.0).max(0.25),
+        gain_b.min(4.0).max(0.25),
+    ]
+}
+
+/// Calculate auto exposure gain to bring scene to target brightness (18% gray = 0.18).
+fn calculate_ae_gain(rgb: &[f32]) -> f32 {
+    let count = rgb.len() / 3;
+    if count == 0 { return 1.0; }
+
+    // Compute average luminance
+    let mut total_luma = 0.0f32;
+    for i in 0..count {
+        let r = rgb[i * 3];
+        let g = rgb[i * 3 + 1];
+        let b = rgb[i * 3 + 2];
+        total_luma += 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+    let avg_luma = total_luma / count as f32;
+
+    let target_luma = 0.18;
+    if avg_luma > 0.001 {
+        (target_luma / avg_luma).min(8.0).max(0.125)
+    } else {
+        1.0
+    }
+}
+
+/// Apply auto exposure gain to RGB data.
+fn apply_ae_gain(rgb: &[f32], gain: f32) -> Vec<f32> {
+    rgb.iter().map(|&v| (v * gain).max(0.0).min(1.0)).collect()
 }
 
 /// Apply black level correction and white balance on raw CFA data.
