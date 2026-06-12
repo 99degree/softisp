@@ -1,9 +1,8 @@
 //! MNN inference engine for the ISP pipeline.
 //! Ported from com.camcore.isp.mnn.MnnEngine
 
-use log::{info, warn, error};
-use cam_types::{FrameFormat, ToneParams};
-use std::sync::Mutex;
+use log::info;
+use cam_types::ToneParams;
 
 use crate::engine::IspEngine;
 use crate::pipeline::{IspBlock, IspFrame, IspAuxOutput};
@@ -122,8 +121,8 @@ impl IspEngine for MnnEngine {
     fn build(
         &mut self,
         pipeline_head: Box<dyn IspBlock>,
-        aux_blocks: Vec<Box<dyn IspBlock>>,
-        warpbock: Option<Box<dyn IspBlock>>,
+        _aux_blocks: Vec<Box<dyn IspBlock>>,
+        _warp_block: Option<Box<dyn IspBlock>>,
         opset_version: i64,
     ) -> Result<(), String> {
         info!("Building MNN engine with backend={}", self.backend.id());
@@ -162,19 +161,19 @@ impl IspEngine for MnnEngine {
         &self,
         width: u32,
         height: u32,
-        stride_width: u32,
-        buf: &[u8],
-        sensor_max: f32,
+        _stride_width: u32,
+        _buf: &[u8],
+        _sensor_max: f32,
         target_width: u32,
-        ccm_matrix: Option<&[f32; 9]>,
-        tone_params: &ToneParams,
-        bayer_gains: Option<&[f32; 4]>,
-        awb_gains: Option<&[f32; 3]>,
-        analog_gain: f32,
-        scene_change: f32,
-        lsc_gains: Option<&[f32]>,
-        blc_values: Option<&[f32; 4]>,
-        warp_grid: Option<&[f32]>,
+        _ccm_matrix: Option<&[f32; 9]>,
+        _tone_params: &ToneParams,
+        _bayer_gains: Option<&[f32; 4]>,
+        _awb_gains: Option<&[f32; 3]>,
+        _analog_gain: f32,
+        _scene_change: f32,
+        _lsc_gains: Option<&[f32]>,
+        _blc_values: Option<&[f32; 4]>,
+        _warp_grid: Option<&[f32]>,
     ) -> Result<IspFrame, String> {
         if !self.initialized {
             return Err("Engine not initialized".to_string());

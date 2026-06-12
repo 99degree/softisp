@@ -1,40 +1,24 @@
-//! Android Camera HAL Binder Service.
+//! Android Camera HAL Binder Interfaces.
 //!
-//! Registers as `android.hardware.camera.provider.ICameraProvider` with the
-//! Android service manager. Provides camera device binders that can use V4L2
-//! capture via cam-hal-linux.
+//! Implements the AIDL interfaces matching:
+//! - `android.hardware.camera.provider.ICameraProvider`
+//! - `android.hardware.camera.provider.ICameraProviderCallback`
+//! - `android.hardware.camera.device.ICameraDevice`
+//! - `android.hardware.camera.device.ICameraDeviceCallback`
+//! - `android.hardware.camera.device.ICameraDeviceSession`
 //!
-//! ## Building
-//! ```bash
-//! cargo build --features android -p cam-binder
-//! ```
-//! Requires Android NDK with `libbinder_ndk.so`.
+//! On Android, these are backed by the real `binder` crate (AOSP).
+//! On host (Linux), we provide a local simulated binder using channels,
+//! so the demo app can run without Android framework.
 
-#[cfg(feature = "android")]
 pub mod provider;
-#[cfg(feature = "android")]
 pub mod device;
-#[cfg(feature = "android")]
 pub mod session;
+pub mod types;
+pub mod callback;
+pub mod service;
 
-use log::info;
-
-#[cfg(feature = "android")]
-use rsbinder::{ServiceManager, Binder};
-
-/// Register the camera HAL service with the Android service manager.
-#[cfg(feature = "android")]
-pub fn register_service() -> Result<(), String> {
-    let provider = provider::CameraProviderService::new();
-    let binder = Binder::new(provider);
-    ServiceManager::add_service("media.camera", binder)
-        .map_err(|e| format!("Failed to register camera service: {:?}", e))?;
-    info!("Camera HAL service registered as 'media.camera'");
-    Ok(())
-}
-
-#[cfg(not(feature = "android"))]
-pub fn register_service() -> Result<(), String> {
-    info!("Binder service registration skipped (android feature disabled)");
-    Ok(())
-}
+pub use provider::CameraProvider;
+pub use device::CameraDevice;
+pub use session::CameraDeviceSession;
+pub use service::CameraHalService;

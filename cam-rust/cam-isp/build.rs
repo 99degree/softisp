@@ -10,7 +10,7 @@
 
 fn main() {
     // Check if MNN wrapper should be compiled
-    let mnn_include = std::env::var("MNN_INCLUDE_DIR").unwrap_or_else(|_| {
+    let _mnn_include = std::env::var("MNN_INCLUDE_DIR").unwrap_or_else(|_| {
         // Default: look for the MNN headers in the user's home
         let home = std::env::var("HOME").unwrap_or_else(|_| "/data/data/com.termux/files/home".to_string());
         format!("{}/MNN/include", home)

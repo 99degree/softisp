@@ -13,13 +13,13 @@ pub struct MotionVectors {
 
 /// Motion compensator for handshake stabilization (EIS).
 pub struct MotionCompensator {
-    accumulated_vectors: Vec<MotionVectors>,
+    _accumulated_vectors: Vec<MotionVectors>,
 }
 
 impl MotionCompensator {
     pub fn new() -> Self {
         Self {
-            accumulated_vectors: Vec::new(),
+            _accumulated_vectors: Vec::new(),
         }
     }
 
