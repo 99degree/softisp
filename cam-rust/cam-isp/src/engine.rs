@@ -8,6 +8,17 @@ use cam_types::ToneParams;
 
 use crate::pipeline::{IspBlock, IspFrame};
 
+/// Default tone parameters for the ISP pipeline.
+pub fn default_tone_params() -> ToneParams {
+    ToneParams {
+        contrast: 1.2,
+        brightness: 0.05,
+        gamma_recip: 2.2,
+        saturation: 1.3,
+        ..Default::default()
+    }
+}
+
 /// Factory for creating an IspEngine instance.
 #[derive(Clone)]
 pub struct EngineFactory {
