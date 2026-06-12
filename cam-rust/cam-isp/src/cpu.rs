@@ -105,7 +105,7 @@ impl IspEngine for CpuEngine {
 
         // ── 8. Tone: apply tone curve (with AE gain) ──
         let adjusted = apply_ae_gain(&ccm_applied, ae_gain);
-        let toned = apply_tone(&adjusted, tone_params);
+        let toned = apply_tone(&adjusted, tone_params, width as usize, height as usize);
 
         // ── 9. Display: resize + convert to UINT8 BGRA ──
         let out_width = if target_width > 0 { target_width } else { width };
@@ -436,9 +436,11 @@ fn apply_ccm(rgb: &[f32], matrix: &[f32; 9]) -> Vec<f32> {
     corrected
 }
 
-/// Apply tone curve: power + clip.
-fn apply_tone(rgb: &[f32], params: &ToneParams) -> Vec<f32> {
-    let gamma = if params.gamma_recip > 0.0 { 1.0 / params.gamma_recip } else { 1.0 };
+/// Apply tone curve: gamma + contrast + brightness + saturation + sharpen.
+/// Apply tone curve: gamma + contrast + brightness + saturation + unsharp mask.
+fn apply_tone(rgb: &[f32], params: &ToneParams, w: usize, h: usize) -> Vec<f32> {
+    let gamma_recip = params.gamma_recip;
+    let gamma = if gamma_recip > 0.0 { 1.0 / gamma_recip } else { 1.0 };
     let contrast = params.contrast;
     let brightness = params.brightness;
     let saturation = params.saturation;
@@ -478,7 +480,39 @@ fn apply_tone(rgb: &[f32], params: &ToneParams) -> Vec<f32> {
         toned.push(g.max(0.0).min(1.0));
         toned.push(b.max(0.0).min(1.0));
     }
+
+    // Unsharp mask (3×3 separable, strength proportional to sharpness param)
+    if params.sharpness > 0.0 && w >= 3 && h >= 3 {
+        let strength = params.sharpness * 0.15;
+        apply_unsharp_mask(&mut toned, w, h, strength);
+    }
     toned
+}
+
+/// Apply unsharp mask to RGB buffer for edge enhancement.
+/// Uses a separable 3×3 Laplacian kernel blended with the original.
+fn apply_unsharp_mask(rgb: &mut [f32], w: usize, h: usize, strength: f32) {
+    let original = rgb.to_vec();
+    let get = |x: usize, y: usize, ch: usize| -> f32 {
+        original[(y * w + x) * 3 + ch]
+    };
+
+    for y in 1..h-1 {
+        for x in 1..w-1 {
+            for ch in 0..3 {
+                let center = original[(y * w + x) * 3 + ch];
+                let laplacian =
+                    -get(x-1, y, ch) - get(x+1, y, ch)
+                    -get(x, y-1, ch) - get(x, y+1, ch)
+                    + 4.0 * center;
+
+                // Add detail: sharpened = original + strength * detail
+                let detail = center - laplacian; // center - lowpass = highpass
+                let val = center + strength * detail;
+                rgb[(y * w + x) * 3 + ch] = val.max(0.0).min(1.0);
+            }
+        }
+    }
 }
 
 /// Display output: resize to target width and convert to UINT8 BGRA.
