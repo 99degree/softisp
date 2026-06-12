@@ -5,6 +5,7 @@ pub mod engine;
 pub mod pipeline;
 pub mod blocks;
 pub mod cpu;
+pub mod controller;
 pub mod onnx;
 pub mod mnn;
 
