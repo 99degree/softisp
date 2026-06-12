@@ -228,13 +228,38 @@ impl IspEngine for CpuEngine {
         let ldci_strength = 0.3; // 0..1, moderate by default
         let toned = apply_ldci(&toned, width as usize, height as usize, ldci_strength);
 
-        // ── 8b. False Color Suppression (edge-aware chroma desaturation) ──
-        let fcs_strength = 0.4; // 0..1, moderate by default
-        let toned = apply_fcs(&toned, width as usize, height as usize, fcs_strength);
-
-        // ── 8c. Local Dynamic Contrast Improvement ──
-        let ldci_strength = 0.3; // 0..1, moderate by default
-        let toned = apply_ldci(&toned, width as usize, height as usize, ldci_strength);
+        // ── 8d. Warp: apply EIS compensation or external warp grid ──
+        let toned = {
+            if let Some(comp) = eis_compensation {
+                // Build warp grid from EIS compensation (inverse transform)
+                let identity = generate_identity_grid(height as usize, width as usize);
+                let dx = comp[0];
+                let dy = comp[1];
+                let roll_rad = comp[2].to_radians();
+                let mut warp = identity.clone();
+                let cos_r = roll_rad.cos();
+                let sin_r = roll_rad.sin();
+                let hf = height as f32 / 2.0;
+                let wf = width as f32 / 2.0;
+                for idx in (0..warp.len()).step_by(2) {
+                    if idx + 1 >= warp.len() { break; }
+                    // Center coordinates
+                    let cy = warp[idx];
+                    let cx = warp[idx + 1];
+                    // Apply inverse rotation
+                    let ry = cy * cos_r - cx * sin_r;
+                    let rx = cy * sin_r + cx * cos_r;
+                    // Apply inverse translation (in normalized space)
+                    warp[idx]     = (ry * hf - dy) / hf;
+                    warp[idx + 1] = (rx * wf - dx) / wf;
+                }
+                warp_image(&toned, &warp, height as usize, width as usize)
+            } else if let Some(grid) = _warp_grid {
+                warp_image(&toned, grid, height as usize, width as usize)
+            } else {
+                toned
+            }
+        };
 
         // ── 9. Display: resize + convert to UINT8 BGRA ──
         let out_width = if target_width > 0 { target_width } else { width };
@@ -1035,6 +1060,120 @@ fn apply_ldci(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<f32> {
     out
 }
 
+/// Generate an identity warp grid of shape [H, W, 2].
+///
+/// Each [y,x] maps to normalized coordinates [-1, 1] where:
+///   - grid[y][x][0] = y normalized (row)
+///   - grid[y][x][1] = x normalized (col)
+///
+/// Ported from `WarpBlock.identityGrid()`.
+pub fn generate_identity_grid(h: usize, w: usize) -> Vec<f32> {
+    let mut grid = vec![0.0f32; h * w * 2];
+    let mut idx = 0;
+    for y in 0..h {
+        let ny = 2.0 * y as f32 / (h.max(1) - 1) as f32 - 1.0;
+        for x in 0..w {
+            let nx = 2.0 * x as f32 / (w.max(1) - 1) as f32 - 1.0;
+            grid[idx] = ny;     // y coordinate (row)
+            grid[idx + 1] = nx; // x coordinate (col)
+            idx += 2;
+        }
+    }
+    grid
+}
+
+/// Apply radial distortion correction to an identity grid.
+///
+/// Uses the division model: r' = r / (1 + k1·r² + k2·r⁴ + k3·r⁶)
+/// where k1,k2,k3 are radial distortion coefficients.
+///
+/// Ported from `WarpBlock.applyDistortion()`.
+pub fn apply_radial_distortion(
+    identity: &[f32], h: usize, w: usize,
+    k1: f32, k2: f32, k3: f32,
+    cx: f32, cy: f32,
+) -> Vec<f32> {
+    let mut grid = identity.to_vec();
+    let mut idx = 0;
+    for _y in 0..h {
+        for _x in 0..w {
+            if idx + 1 >= grid.len() { break; }
+            let ny = grid[idx];
+            let nx = grid[idx + 1];
+            let dx = nx - cx;
+            let dy = ny - cy;
+            let r2 = dx * dx + dy * dy;
+            let r4 = r2 * r2;
+            let r6 = r4 * r2;
+            let dist = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+            if dist.abs() > 1e-8 {
+                grid[idx]     = cy + dy / dist;
+                grid[idx + 1] = cx + dx / dist;
+            }
+            idx += 2;
+        }
+    }
+    grid
+}
+
+/// Apply a warp grid to an RGB image via bilinear sampling.
+///
+/// `rgb` is [H*W*3] float array.
+/// `grid` is [H*W*2] float array of normalized coordinates [-1,1].
+///   grid[y*W+x][0] = y-norm  (maps to input row)
+///   grid[y*W+x][1] = x-norm  (maps to input col)
+///
+/// Returns warped RGB image [H*W*3].
+pub fn warp_image(rgb: &[f32], grid: &[f32], h: usize, w: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; rgb.len()];
+
+    for y in 0..h {
+        for x in 0..w {
+            let g_idx = (y * w + x) * 2;
+            if g_idx + 1 >= grid.len() { continue; }
+
+            // Map normalized coords [-1,1] → pixel coords [0, w-1], [0, h-1]
+            let ny = grid[g_idx];
+            let nx = grid[g_idx + 1];
+            let src_x = (nx + 1.0) * 0.5 * (w - 1) as f32;
+            let src_y = (ny + 1.0) * 0.5 * (h - 1) as f32;
+
+            // Bilinear interpolation
+            let x0 = src_x.floor() as isize;
+            let y0 = src_y.floor() as isize;
+            let x1 = (x0 + 1).min(w as isize - 1);
+            let y1 = (y0 + 1).min(h as isize - 1);
+            let x0 = x0.max(0);
+            let y0 = y0.max(0);
+
+            let fx = src_x - x0 as f32;
+            let fy = src_y - y0 as f32;
+
+            let p00 = (y0 as usize * w + x0 as usize) * 3;
+            let p01 = (y0 as usize * w + x1 as usize) * 3;
+            let p10 = (y1 as usize * w + x0 as usize) * 3;
+            let p11 = (y1 as usize * w + x1 as usize) * 3;
+
+            let out_idx = (y * w + x) * 3;
+            if out_idx + 2 >= out.len() { continue; }
+
+            for c in 0..3 {
+                if p00 + c >= rgb.len() || p01 + c >= rgb.len()
+                    || p10 + c >= rgb.len() || p11 + c >= rgb.len() {
+                    continue;
+                }
+                let v = (1.0 - fx) * (1.0 - fy) * rgb[p00 + c]
+                      + fx * (1.0 - fy) * rgb[p01 + c]
+                      + (1.0 - fx) * fy * rgb[p10 + c]
+                      + fx * fy * rgb[p11 + c];
+                out[out_idx + c] = v.clamp(0.0, 1.0);
+            }
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1074,5 +1213,56 @@ mod tests {
         assert!(!frame.data.is_empty());
         // First pixel's red channel should be > 0
         assert!(frame.data[0] > 0);
+    }
+
+    #[test]
+    fn test_identity_grid_dimensions() {
+        let grid = generate_identity_grid(4, 5);
+        assert_eq!(grid.len(), 4 * 5 * 2);
+        // Top-left should be (-1, -1)
+        assert!((grid[0] - (-1.0)).abs() < 0.01);
+        assert!((grid[1] - (-1.0)).abs() < 0.01);
+        // Bottom-right should be (1, 1)
+        let last_idx = (4 * 5 - 1) * 2;
+        assert!((grid[last_idx] - 1.0).abs() < 0.01);
+        assert!((grid[last_idx + 1] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_radial_distortion_identity() {
+        let h = 8;
+        let w = 8;
+        let identity = generate_identity_grid(h, w);
+        // Zero distortion coefficients → grid unchanged
+        let corrected = apply_radial_distortion(&identity, h, w, 0.0, 0.0, 0.0, 0.0, 0.0);
+        for i in 0..identity.len() {
+            assert!((corrected[i] - identity[i]).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_radial_distortion_barrel() {
+        let h = 8;
+        let w = 8;
+        let identity = generate_identity_grid(h, w);
+        // Barrel distortion: k1 > 0, corners move outward
+        let corrected = apply_radial_distortion(&identity, h, w, 0.1, 0.0, 0.0, 0.0, 0.0);
+        // Center pixel should stay near identity
+        let center_idx = (4 * w + 4) * 2;
+        assert!((corrected[center_idx] - identity[center_idx]).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_warp_image_preserves_size() {
+        let h = 10;
+        let w = 10;
+        let rgb = vec![0.5f32; h * w * 3];
+        let identity = generate_identity_grid(h, w);
+        let warped = warp_image(&rgb, &identity, h, w);
+        assert_eq!(warped.len(), rgb.len());
+        // Identity warp should produce identical output
+        for i in 0..rgb.len() {
+            assert!((warped[i] - rgb[i]).abs() < 0.001);
+        }
     }
 }
