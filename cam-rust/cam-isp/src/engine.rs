@@ -103,3 +103,19 @@ pub fn select_engine() -> Option<Box<dyn IspEngine>> {
     }
     None
 }
+
+/// Select a specific engine by name (cpu, ort, mnn, or auto for best available).
+pub fn select_engine_by_name(name: &str) -> Option<Box<dyn IspEngine>> {
+    let registry = REGISTRY.lock().unwrap();
+    let name_lower = name.to_lowercase();
+    for factory in registry.iter() {
+        if name_lower == "auto" || factory.name.to_lowercase().contains(&name_lower) {
+            let engine = (factory.create_fn)();
+            info!("Selected engine: {} (priority={})", factory.name, factory.priority);
+            if engine.priority() > 0 {
+                return Some(engine);
+            }
+        }
+    }
+    None
+}

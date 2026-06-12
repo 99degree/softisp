@@ -13,6 +13,7 @@ mod ee;
 mod fcs;
 mod ldci;
 mod warp;
+mod identity;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -27,6 +28,7 @@ pub use ee::EeBlock;
 pub use fcs::FcsBlock;
 pub use ldci::LdciBlock;
 pub use warp::WarpBlock;
+pub use identity::{IdentityBlock, FastDemosaicBlock};
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.

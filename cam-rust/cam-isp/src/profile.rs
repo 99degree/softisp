@@ -109,8 +109,21 @@ impl PipelineProfile {
         use_hdr: true,
     };
 
+    /// Test profile: minimal identity blocks for fast ONNX path verification.
+    pub const TEST: Self = Self {
+        label: "TEST",
+        level: PipelineLevel::Lite,
+        use_bad_pixel: false,
+        demosaic_quality: DemosaicQuality::Standard,
+        use_local_contrast: false,
+        use_unsharp: false,
+        use_lsc: false,
+        use_warp: false,
+        use_hdr: false,
+    };
+
     /// All built-in profiles.
-    pub const ALL: [Self; 4] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO];
+    pub const ALL: [Self; 5] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::TEST];
 
     /// Create a custom profile with override flags.
     pub const fn custom(
@@ -142,6 +155,11 @@ impl PipelineProfile {
     /// Returns `(head, blocks)` where `head` is the first block
     /// and `blocks` is the full ordered list for `GraphComposer::compose_from_vec()`.
     pub fn build_blocks(&self, target_width: u32, bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
+        // TEST profile: use minimal identity blocks for fast ONNX path verification
+        if self.label == "TEST" {
+            return self.build_test_blocks(target_width, bayer_pattern);
+        }
+
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
 
         // ── Raw input ──
@@ -194,6 +212,25 @@ impl PipelineProfile {
         }
 
         // ── Display output ──
+        blocks.push(Box::new(DisplayBlock::new(target_width)));
+
+        blocks
+    }
+
+    /// Build minimal identity blocks for TEST profile — fast ONNX path verification.
+    /// Pipeline: RawInput → Identity(normalize) → Identity(cfa) → Identity(blc) → 
+    /// Identity(wb) → FastDemosaic → Identity(ccm) → Identity(tone) → Display
+    fn build_test_blocks(&self, target_width: u32, bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
+        let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
+
+        blocks.push(Box::new(RawInputBlock::new()));
+        blocks.push(Box::new(IdentityBlock::new("normalize")));
+        blocks.push(Box::new(IdentityBlock::new("cfa")));
+        blocks.push(Box::new(IdentityBlock::new("blc")));
+        blocks.push(Box::new(IdentityBlock::new("wb")));
+        blocks.push(Box::new(FastDemosaicBlock::new("demosaic").with_pattern(bayer_pattern)));
+        blocks.push(Box::new(IdentityBlock::new("ccm")));
+        blocks.push(Box::new(IdentityBlock::new("tone")));
         blocks.push(Box::new(DisplayBlock::new(target_width)));
 
         blocks
