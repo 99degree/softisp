@@ -210,6 +210,9 @@ version = "0.1.0"
 dependencies = [
  "cam-types",
  "cc",
+ "clap",
+ "env_logger 0.10.2",
+ "image",
  "log",
  "ort",
  "serde",
