@@ -7,6 +7,7 @@
 
 use cam_types::ToneParams;
 use crate::ae::AutoExposureState;
+use crate::ccm_engine::{self, select_ccm};
 
 /// Smoothing mode for temporal filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,9 +18,7 @@ pub enum SmoothingMode {
     Slow,
 }
 
-/// CCM clamp feedback flags.
-const CCM_R_OUT_NEGATIVE: i32 = 0x01;
-const CCM_DIAGONAL_EXTREME: i32 = 0x02;
+// CCM clamp feedback flags — imported from ccm_engine module
 
 /// ISP Controller — state container + orchestrator for ISP parameters.
 ///
@@ -125,8 +124,8 @@ impl IspController {
             estimated_cct: None,
             awb_prior_r: [3.2e-08, -4.2e-04, 2.60],
             awb_prior_b: [3.8e-08, -3.1e-04, 1.50],
-            smoothed_ccm: IDENTITY_CCM,
-            ccm_matrix: DEFAULT_SENSOR_CCM,
+            smoothed_ccm: ccm_engine::identity_ccm(),
+            ccm_matrix: ccm_engine::default_sensor_ccm(),
             clamp_flags: 0,
             clamp_cct_ref: 0,
             tone_contrast: 1.0,
@@ -197,7 +196,7 @@ impl IspController {
         let b = channel_means[2].max(min_rgb);
 
         // Handle clamp feedback: if CCM was broken at previous CCT, reset
-        if self.clamp_flags & (CCM_R_OUT_NEGATIVE | CCM_DIAGONAL_EXTREME) != 0 {
+        if self.clamp_flags & (ccm_engine::CCM_R_OUT_NEGATIVE | ccm_engine::CCM_DIAGONAL_EXTREME) != 0 {
             log::warn!("CCM clamp flags=0x{:x} at CCT={} -> resetting CCT to 5500",
                 self.clamp_flags, self.clamp_cct_ref);
             self.estimated_cct = Some(5500);
@@ -239,6 +238,17 @@ impl IspController {
         let avg_rg = self.avg_r / self.avg_g;
         let avg_bg = self.avg_b / self.avg_g;
         self.estimated_cct = Some(Self::estimate_cct(avg_rg, avg_bg));
+
+        // Select CCM from estimated CCT
+        if let Some(cct) = self.estimated_cct {
+            let mut ccm = select_ccm(cct);
+            ccm_engine::sanitize_ccm(
+                &mut ccm, cct, "awb",
+                Some(&mut self.clamp_flags),
+                Some(&mut self.clamp_cct_ref),
+            );
+            self.smoothed_ccm = ccm;
+        }
     }
 
     // ── Tone update ──
@@ -269,6 +279,62 @@ impl IspController {
             self.tone_contrast += (contrast - self.tone_contrast) * alpha;
         }
 
+        // ── Dim-scene aggressiveness factor ──
+        let dim_factor = (((self.avg_lum_mean - 0.05) / 0.15).clamp(0.0, 1.0)).powi(2);
+
+        // ── Exposure gain — exponential target luminance ──
+        let max_gain = 1.0 + dim_factor;
+        let target_lum_base = 0.35 * (1.0 - (-self.avg_lum_mean * 8.0).exp()).max(0.02);
+        let lum_bias = (self.brightness_bias - 0.5) * 0.2; // map 0..1 to -0.1..+0.1
+        let target_lum = (target_lum_base + lum_bias).clamp(0.02, 0.6);
+        let raw_ae_gain = (target_lum / self.avg_lum_mean.max(0.005)).clamp(0.5, max_gain);
+        self.exposure_gain += (raw_ae_gain - self.exposure_gain) * alpha;
+
+        // Blend with histogram-constrained gain
+        let hist_weight = (self.highlight_ratio * 3.0).clamp(0.0, 0.6);
+        let blended_gain = self.exposure_gain * (1.0 - hist_weight) + self.hist_constrained_gain * hist_weight;
+        self.exposure_gain = blended_gain.clamp(0.5, 8.0);
+
+        // ── Brightness ──
+        let max_brightness = dim_factor * 0.03;
+        let eff_mean = (self.avg_lum_mean * self.exposure_gain).min(1.0);
+        let raw_brightness = ((target_lum - eff_mean) * 0.4).clamp(-max_brightness, max_brightness);
+        self.tone_brightness += (raw_brightness - self.tone_brightness) * alpha;
+
+        // ── Contrast ──
+        let dynamic_range = (self.avg_lum_max - self.avg_lum_min).max(0.01);
+        let max_contrast = 1.0 + dim_factor * 0.5;
+        let raw_contrast = (0.85 / dynamic_range).clamp(0.7, max_contrast);
+        self.tone_contrast += (raw_contrast - self.tone_contrast) * alpha;
+
+        // ── Gamma (centered on normalized mid-tone) ──
+        let normalized_mean = if dynamic_range > 0.01 {
+            (self.avg_lum_mean - self.avg_lum_min) / dynamic_range
+        } else {
+            0.5
+        };
+        let gamma_center = 2.2 + 0.6 * (normalized_mean - 0.5);
+        let gamma_floor = if self.avg_lum_mean < 0.2 { 2.0 } else { gamma_center };
+        self.tone_gamma += (gamma_floor.clamp(2.0, 2.6) - self.tone_gamma) * alpha * 0.5;
+
+        // ── S-curve: shadow lift + highlight roll ──
+        let raw_shadow_lift = (0.04 + 0.08 * (-self.avg_lum_mean * 5.0).exp()).clamp(0.02, 0.12);
+        let target_shadow_lift = raw_shadow_lift * dim_factor;
+        let target_highlight_roll = (0.05 + 0.15 * (1.0 - (-self.avg_lum_mean * 3.0).exp())).clamp(0.04, 0.20);
+        self.tone_shadow_lift += (target_shadow_lift - self.tone_shadow_lift) * alpha;
+        self.tone_highlight_roll += (target_highlight_roll - self.tone_highlight_roll) * alpha;
+
+        // ── LSC strength from exposure gain ──
+        let raw_lsc = ((self.exposure_gain - 1.0).clamp(0.0, 1.0)) * 0.5;
+        self.lsc_strength += (raw_lsc - self.lsc_strength) * 0.05;
+
+        // ── Saturation ──
+        let raw_sat = (1.0 + 0.3 * (1.0 - (-self.avg_lum_mean * 4.0).exp())).clamp(1.0, 1.3);
+        self.tone_saturation += (raw_sat - self.tone_saturation) * 0.03;
+
+        // Clamp everything
+        self.sanitize_tone("tone");
+
         // Scene luminance for display
         self.scene_luminance = self.avg_lum_mean;
     }
@@ -278,26 +344,33 @@ impl IspController {
     /// Update histogram-based exposure control.
     ///
     /// `hist` — 256-bin luminance histogram (normalized, sum = 1.0).
+    /// Ported from ToneEngine.updateHistogram().
     pub fn update_histogram(&mut self, hist: &[f32]) {
-        if hist.len() < 256 { return; }
+        let n_bins = hist.len();
+        if n_bins < 4 { return; }
 
-        // Compute highlight and shadow ratios
-        let highlight_bins: f32 = hist[192..].iter().sum();
-        let shadow_bins: f32 = hist[..64].iter().sum();
+        // Compute highlight (top 2 bins) and shadow (bottom 2 bins) ratios
+        let hl_ratio = (hist[n_bins - 1] + hist[n_bins - 2]).clamp(0.0, 1.0);
+        let sh_ratio = (hist[0] + hist[1]).clamp(0.0, 1.0);
 
-        self.highlight_ratio = highlight_bins;
-        self.shadow_ratio = shadow_bins;
+        let ha = 0.3;
+        self.highlight_ratio += (hl_ratio - self.highlight_ratio) * ha;
+        self.shadow_ratio += (sh_ratio - self.shadow_ratio) * ha;
 
-        // Reduce exposure if too many highlights
-        if highlight_bins > 0.05 {
-            let reduction = 1.0 - ((highlight_bins - 0.05) / 0.15).clamp(0.0, 0.5);
-            self.hist_constrained_gain = reduction;
-        } else if shadow_bins > 0.3 {
-            let boost = 1.0 + ((shadow_bins - 0.3) / 0.3).clamp(0.0, 1.0);
-            self.hist_constrained_gain = boost;
+        // Constrain gain based on highlight/shadow excess
+        let hl_excess = (self.highlight_ratio - 0.05).max(0.0);
+        let hl_gain_reduction = 1.0 / (1.0 + hl_excess * 30.0);
+        let sh_excess = (self.shadow_ratio - 0.30).max(0.0);
+        let sh_gain_boost = 1.0 + sh_excess * 0.5;
+
+        let gain_limit = if hl_excess > 0.02 {
+            (self.hist_constrained_gain * hl_gain_reduction).clamp(0.3, 1.5)
+        } else if sh_excess > 0.0 {
+            (self.hist_constrained_gain * sh_gain_boost).clamp(0.5, 4.0)
         } else {
-            self.hist_constrained_gain = 1.5;
-        }
+            self.hist_constrained_gain
+        };
+        self.hist_constrained_gain += (gain_limit - self.hist_constrained_gain) * 0.2;
     }
 
     // ── Getters ──
@@ -397,25 +470,45 @@ impl IspController {
         self.exposure_gain = gain.clamp(0.5, 8.0);
     }
 
+    /// Goalkeeper: validate & clamp all tone / AWB parameters.
+    /// Ported from ToneEngine.sanitizeTone().
+    pub fn sanitize_tone(&mut self, tag: &str) {
+        let clamped = false;
+
+        // AWB gains
+        self.awb_gains[0] = self.awb_gains[0].clamp(0.5, 3.0);
+        self.awb_gains[1] = 1.0;
+        self.awb_gains[2] = self.awb_gains[2].clamp(0.5, 3.0);
+
+        // Tone params
+        self.tone_gamma = self.tone_gamma.clamp(0.5, 4.0);
+        self.tone_contrast = self.tone_contrast.clamp(0.5, 2.0);
+        self.tone_brightness = self.tone_brightness.clamp(-0.3, 0.3);
+        self.tone_shadow_lift = self.tone_shadow_lift.clamp(0.0, 0.25);
+        self.tone_highlight_roll = self.tone_highlight_roll.clamp(0.0, 0.30);
+        self.exposure_gain = self.exposure_gain.clamp(0.5, 8.0);
+        self.tone_saturation = self.tone_saturation.clamp(0.7, 1.6);
+        self.lsc_strength = self.lsc_strength.clamp(0.0, 1.0);
+
+        if clamped {
+            log::warn!(
+                "ToneGuard {}: γ={:.2} c={:.2} b={:.3} sl={:.3} hr={:.3} exp={:.2} sat={:.2} lsc={:.2} awb=[{:.2},{:.2}]",
+                tag,
+                self.tone_gamma, self.tone_contrast, self.tone_brightness,
+                self.tone_shadow_lift, self.tone_highlight_roll,
+                self.exposure_gain, self.tone_saturation, self.lsc_strength,
+                self.awb_gains[0], self.awb_gains[2],
+            );
+        }
+    }
+
     /// Reset all state to defaults.
     pub fn reset(&mut self) {
         *self = Self::new();
     }
 }
 
-/// Identity 3×3 CCM matrix.
-const IDENTITY_CCM: [f32; 9] = [
-    1.0, 0.0, 0.0,
-    0.0, 1.0, 0.0,
-    0.0, 0.0, 1.0,
-];
 
-/// Default sensor CCM (placeholder — should be calibrated per sensor).
-const DEFAULT_SENSOR_CCM: [f32; 9] = [
-    1.6, -0.4, -0.2,
-    -0.3, 1.8, -0.5,
-    0.0, -0.5, 1.5,
-];
 
 #[cfg(test)]
 mod tests {
