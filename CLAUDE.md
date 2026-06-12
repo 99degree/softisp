@@ -1,9 +1,9 @@
 # CLAUDE.md — Rust Camera ISP Pipeline
 
-## Status: ✅ COMPLETE (95%)
+## Status: ✅ COMPLETE (97%)
 
 The Java/Kotlin codebase has been fully ported to Rust with significant enhancements.
-The workspace compiles with **0 warnings** and **40 tests pass** (34 unit + 6 integration).
+The workspace compiles with **0 warnings** and **52 tests pass** (46 unit + 6 integration).
 
 ## Pipeline (11 processing stages in CpuEngine)
 
@@ -71,8 +71,10 @@ cam-rust/
 | GraphComposer | ✅ | — | GraphComposer.kt |
 | 9 ISP Blocks | ✅ | — | IspBlock.kt + 9 block files |
 | CpuEngine (software ISP) | ✅ | 1 | (new — pure Rust fallback) |
-| IspController (AWB/AE/CCM/Tone) | ✅ | 6 | IspController.kt |
+| IspController (AWB/AE/CCM/Tone/Zone) | ✅ | 9 | IspController.kt |
 | AutoExposureEngine (exp+ISO) | ✅ | 6 | AutoExposureEngine.kt |
+| CcmEngine (quadratic CCT CCM) | ✅ | 8 | CcmEngine.kt |
+| Zone stats (6×8 multi-illuminant AWB) | ✅ | 3 | ToneEngine.updateZoneStats |
 | BrightnessEngine | ✅ | — | BrightnessEngine.kt |
 | PipelineProfile (4 presets) | ✅ | 4 | PipelineProfile.kt |
 | PipelineConfig (editable) | ✅ | 5 | PipelineConfig.kt |
@@ -117,7 +119,7 @@ cam-rust/
 
 ```bash
 cd cam-rust
-cargo test --all                          # 40 tests, 0 warnings
+cargo test --all                          # 52 tests, 0 warnings
 cargo run --example pipeline -p cam-isp   # Single frame PNG
 cargo run --example pipeline -p cam-isp -- --frames 30 --verbose  # Convergence
 RUST_LOG=info cargo run -p cam-app -- --width 1280  # ONNX model
