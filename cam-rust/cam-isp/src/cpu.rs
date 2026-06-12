@@ -125,6 +125,9 @@ impl IspEngine for CpuEngine {
             ctrl.update_channel_stats(&channel_means);
             ctrl.update_tone_stats(&tone_stats);
             ctrl.update_histogram(&histogram);
+            // Compute exposure time + ISO from scene stats
+            let bias = ctrl.brightness_bias;
+            let (_exp_ns, _iso) = ctrl.compute_exposure(bias);
             info!("Ctrl AWB gains: {:.3} {:.3} {:.3}, CCT: {:?}, AE gain: {:.3}",
                 ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2],
                 ctrl.estimated_cct, ctrl.get_effective_exposure_gain());
