@@ -10,13 +10,11 @@
 //! elimination for matrix inversion.
 //!
 //! ## Usage
+//! ```ignore
+//! let mut model = cam_isp::regression::RegressionModel::new();
+//! // model.fit_all(&observations);
+//! let pred = model.predict_rgb(0.3, 0.5, 0.2, 5500);
 //! ```
-//! let mut model = RegressionModel::new();
-//! model.fit_all(&observations);
-//! let pred = model.predict_rgb(0.3, 0.5, 0.2, 5500.0);
-//! ```
-
-use std::f64::consts::LN_10;
 
 /// Number of features: [log_lum, rg_ratio, bg_ratio, cct_norm]
 const N_FEATURES: usize = 4;

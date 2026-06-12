@@ -7,8 +7,19 @@
 //! These replace Android SQLite (LearnerDb) for pure-Rust operation.
 //! The learner can collect observations in memory, fit regression models,
 //! and optionally export/import for persistence across sessions.
+//!
+//! ## Disk persistence
+//! LearnerStore supports file-based persistence (CSV format):
+//! - `save(path)` writes current observations, trimming oldest if >1 MB
+//! - `load(path)` reads observations from a previously saved CSV
+//! - `set_persistence_path()` enables auto-save/auto-trim on add()
 
 use std::collections::HashMap;
+
+/// Maximum file size for learner persistence (1 MB).
+/// When saving, observations are trimmed oldest-first until the
+/// serialized CSV fits under this limit.
+pub const MAX_PERSISTENCE_FILE_BYTES: u64 = 1024 * 1024;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CameraCharacteristicsStore
@@ -227,6 +238,8 @@ pub struct LearnerStore {
     next_frame_idx: u64,
     /// Camera identifier associated with this store.
     camera_id: String,
+    /// Optional file path for disk persistence.
+    persistence_path: Option<String>,
 }
 
 impl LearnerStore {
@@ -238,6 +251,7 @@ impl LearnerStore {
             cct_bins: HashMap::new(),
             next_frame_idx: 0,
             camera_id: camera_id.to_string(),
+            persistence_path: None,
         }
     }
 
@@ -273,23 +287,7 @@ impl LearnerStore {
         self.next_frame_idx += 1;
 
         // Evict oldest if at capacity
-        if self.observations.len() >= self.max_observations {
-            // Remove from CCT-bin index first
-            if let Some(oldest) = self.observations.first() {
-                let bin = Self::cct_bin_key(oldest.cct);
-                if let Some(indices) = self.cct_bins.get_mut(&bin) {
-                    indices.retain(|&i| i != 0);
-                }
-            }
-            self.observations.remove(0);
-
-            // Shift all indices in cct_bins
-            for indices in self.cct_bins.values_mut() {
-                for i in indices.iter_mut() {
-                    *i = i.saturating_sub(1);
-                }
-            }
-        }
+        self.evict_if_full();
 
         // Index by CCT bin
         let bin = Self::cct_bin_key(obs.cct);
@@ -297,6 +295,11 @@ impl LearnerStore {
         self.cct_bins.entry(bin).or_default().push(idx);
 
         self.observations.push(obs);
+
+        // Auto-save to disk if persistence is enabled
+        if self.persistence_path.is_some() {
+            let _ = self.save();
+        }
     }
 
     /// Get all observations for a given CCT bin.
@@ -340,6 +343,103 @@ impl LearnerStore {
     /// Number of distinct CCT bins populated.
     pub fn populated_bin_count(&self) -> usize {
         self.cct_bins.len()
+    }
+
+    // ── Persistence (disk) ──
+
+    /// Enable disk persistence to the given file path.
+    /// Observations are auto-saved to this path after every `add()`.
+    /// If the file exists, observations are loaded from it.
+    /// Returns the number of observations loaded, or 0 if file didn't exist.
+    pub fn set_persistence_path(&mut self, path: &str) -> std::io::Result<usize> {
+        let loaded = if std::path::Path::new(path).exists() {
+            self.load(path)?
+        } else {
+            0
+        };
+        self.persistence_path = Some(path.to_string());
+        Ok(loaded)
+    }
+
+    /// Save observations to the configured persistence path.
+    /// Trims oldest observations if the CSV exceeds `MAX_PERSISTENCE_FILE_BYTES`.
+    pub fn save(&self) -> std::io::Result<()> {
+        let path = match &self.persistence_path {
+            Some(p) => p.clone(),
+            None => return Ok(()),
+        };
+        self.save_to(&path)
+    }
+
+    /// Save observations to a specific file path.
+    /// Trims oldest observations if the CSV would exceed `MAX_PERSISTENCE_FILE_BYTES`.
+    pub fn save_to(&self, path: &str) -> std::io::Result<()> {
+        let csv = self.to_csv();
+        let bytes = csv.as_bytes();
+
+        if bytes.len() as u64 > MAX_PERSISTENCE_FILE_BYTES {
+            // Need to trim — create a trimmed copy and save that
+            let mut trimmed = self.clone();
+            while trimmed.estimate_csv_size() > MAX_PERSISTENCE_FILE_BYTES as usize
+                && trimmed.len() > 1
+            {
+                trimmed.remove_oldest();
+            }
+            let trimmed_csv = trimmed.to_csv();
+            std::fs::write(path, trimmed_csv.as_bytes())?;
+        } else {
+            std::fs::write(path, bytes)?;
+        }
+        Ok(())
+    }
+
+    /// Load observations from a CSV file.
+    /// Returns the number of observations loaded.
+    pub fn load(&mut self, path: &str) -> std::io::Result<usize> {
+        let content = std::fs::read_to_string(path)?;
+        if content.trim().is_empty() {
+            return Ok(0);
+        }
+        let count = self.from_csv(&content);
+        Ok(count)
+    }
+
+    /// Estimate the byte size of the CSV output without allocating the full string.
+    /// Used for pre-trimming before save.
+    fn estimate_csv_size(&self) -> usize {
+        // Each observation line is roughly 120 bytes + 20 for the header
+        if self.observations.is_empty() {
+            return 80; // header only
+        }
+        100 + self.observations.len() * 120
+    }
+
+    /// Remove the oldest observation.
+    fn remove_oldest(&mut self) {
+        if self.observations.is_empty() {
+            return;
+        }
+        // Remove from CCT-bin index
+        if let Some(oldest) = self.observations.first() {
+            let bin = Self::cct_bin_key(oldest.cct);
+            if let Some(indices) = self.cct_bins.get_mut(&bin) {
+                indices.retain(|&i| i != 0);
+            }
+        }
+        self.observations.remove(0);
+        // Shift all indices in cct_bins
+        for indices in self.cct_bins.values_mut() {
+            for i in indices.iter_mut() {
+                *i = i.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Evict oldest observations if at capacity.
+    fn evict_if_full(&mut self) {
+        while self.observations.len() >= self.max_observations {
+            self.remove_oldest();
+        }
     }
 
     /// Clear all observations.
@@ -632,5 +732,93 @@ mod tests {
         store.set_black_level("cam", [128.0; 4]);
         let chars = store.get("cam").unwrap();
         assert!((chars.black_level[0] - 128.0).abs() < 0.01);
+    }
+
+    // ── Persistence tests ──
+
+    #[test]
+    fn test_persistence_roundtrip() {
+        let mut store = LearnerStore::new("persist_cam", 100);
+        store.add(make_obs(5500, 0.5));
+        store.add(make_obs(3000, 0.2));
+        store.add(make_obs(6500, 0.8));
+        assert_eq!(store.len(), 3);
+
+        let tmp = std::env::temp_dir().join("learner_test.csv");
+        let path = tmp.to_str().unwrap().to_string();
+        store.save_to(&path).expect("Save should succeed");
+
+        let mut loaded = LearnerStore::new("persist_cam", 100);
+        let count = loaded.load(&path).expect("Load should succeed");
+        assert_eq!(count, 3);
+        assert_eq!(loaded.len(), 3);
+
+        // Clean up
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_persistence_empty_store() {
+        let store = LearnerStore::new("empty", 100);
+        let tmp = std::env::temp_dir().join("learner_empty.csv");
+        let path = tmp.to_str().unwrap().to_string();
+        store.save_to(&path).expect("Save empty should succeed");
+
+        let mut loaded = LearnerStore::new("empty", 100);
+        let count = loaded.load(&path).expect("Load empty should succeed");
+        assert_eq!(count, 0);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_persistence_auto_trim() {
+        let max_obs = MAX_PERSISTENCE_FILE_BYTES as usize / 120 + 10; // enough to overflow 1MB
+        let mut store = LearnerStore::new("trim_test", max_obs);
+
+        // Fill with enough observations to exceed 1 MB
+        for i in 0..5000 {
+            let mut obs = make_obs(5500, 0.5);
+            obs.frame_idx = i;
+            store.add(obs);
+        }
+
+        // Save should trim to fit under 1 MB
+        let tmp = std::env::temp_dir().join("learner_trim.csv");
+        let path = tmp.to_str().unwrap().to_string();
+        store.save_to(&path).expect("Save trim should succeed");
+
+        let metadata = std::fs::metadata(&path).expect("File should exist");
+        assert!(
+            metadata.len() <= MAX_PERSISTENCE_FILE_BYTES + 512,
+            "File size {} exceeds limit {}",
+            metadata.len(), MAX_PERSISTENCE_FILE_BYTES
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_set_persistence_path_creates_file() {
+        let mut store = LearnerStore::new("auto_persist", 50);
+        let tmp = std::env::temp_dir().join("learner_auto.csv");
+        let path = tmp.to_str().unwrap().to_string();
+
+        // Set persistence path (file doesn't exist yet)
+        let loaded = store.set_persistence_path(&path).expect("set_persistence_path");
+        assert_eq!(loaded, 0); // nothing to load
+
+        // Add observations — auto-saves after each
+        store.add(make_obs(5500, 0.5));
+        store.add(make_obs(3000, 0.3));
+
+        // Verify file was created
+        assert!(tmp.exists(), "Persistence file should exist after add");
+        let content = std::fs::read_to_string(&path).expect("Read should work");
+        assert!(content.contains("5500"));
+        assert!(content.contains("3000"));
+
+        // Clean up
+        let _ = std::fs::remove_file(&path);
     }
 }

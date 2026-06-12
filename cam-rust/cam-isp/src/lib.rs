@@ -21,6 +21,7 @@ pub mod scene;
 pub mod predictor;
 pub mod regression;
 pub mod store;
+pub mod genetic;
 
 use std::sync::Once;
 
