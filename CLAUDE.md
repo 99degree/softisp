@@ -75,6 +75,8 @@ cam-rust/
 | AutoExposureEngine (exp+ISO) | ✅ | 6 | AutoExposureEngine.kt |
 | CcmEngine (quadratic CCT CCM) | ✅ | 8 | CcmEngine.kt |
 | Zone stats (6×8 multi-illuminant AWB) | ✅ | 3 | ToneEngine.updateZoneStats |
+| EisEngine (gyro stabilization) | ✅ | 7 | GyroEngine.kt |
+| CCM composition (scale+offset+EMA) | ✅ | 2 | CcmComposer.kt |
 | BrightnessEngine | ✅ | — | BrightnessEngine.kt |
 | PipelineProfile (4 presets) | ✅ | 4 | PipelineProfile.kt |
 | PipelineConfig (editable) | ✅ | 5 | PipelineConfig.kt |
@@ -119,7 +121,7 @@ cam-rust/
 
 ```bash
 cd cam-rust
-cargo test --all                          # 52 tests, 0 warnings
+cargo test --all                          # 62 tests, 0 warnings
 cargo run --example pipeline -p cam-isp   # Single frame PNG
 cargo run --example pipeline -p cam-isp -- --frames 30 --verbose  # Convergence
 RUST_LOG=info cargo run -p cam-app -- --width 1280  # ONNX model
