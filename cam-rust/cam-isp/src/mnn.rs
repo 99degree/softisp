@@ -234,6 +234,7 @@ impl IspEngine for MnnEngine {
                 focus_metric: None,
                 cct: None,
                 ae_gain: None,
+                calibration_stats: None,
             });
             return Ok(frame);
         }
@@ -256,6 +257,7 @@ impl IspEngine for MnnEngine {
             focus_metric: None,
             cct: None,
             ae_gain: None,
+            calibration_stats: None,
         });
         Ok(frame)
     }
