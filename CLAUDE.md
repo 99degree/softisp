@@ -73,7 +73,8 @@ cam-rust/
 | CpuEngine (software ISP) | ✅ | 1 | (new — pure Rust fallback) |
 | IspController (AWB/AE/CCM/Tone/Zone) | ✅ | 9 | IspController.kt |
 | AutoExposureEngine (exp+ISO) | ✅ | 6 | AutoExposureEngine.kt |
-| LearnerStore + CameraCharacteristicsStore | ✅ | 11 | LearnerDb.kt (ported) |
+| GeneticOptimizer (GA for ISP params) | ✅ | 8 | GeneticOptimizer.kt |
+| LearnerStore + CameraCharacteristicsStore | ✅ | 15 | LearnerDb.kt (ported) |
 | RegressionModel (OLS regression) | ✅ | 7 | RegressionModel.kt |
 | FastPredictor (per-CCT-bin averaging) | ✅ | 9 | FastPredictor.kt |
 | SceneClassifier (luminance+CCT scene classification) | ✅ | 8 | StatsLearner.kt |
@@ -127,7 +128,7 @@ cam-rust/
 
 ```bash
 cd cam-rust
-cargo test --all                          # 114 tests, 0 warnings
+cargo test --all                          # 126 tests, 0 warnings
 cargo run --example pipeline -p cam-isp   # Single frame PNG
 cargo run --example pipeline -p cam-isp -- --frames 30 --verbose  # Convergence
 RUST_LOG=info cargo run -p cam-app -- --width 1280  # ONNX model
