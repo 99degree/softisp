@@ -15,6 +15,7 @@ pub mod onnx;
 pub mod mnn;
 pub mod ccm_engine;
 pub mod eis;
+pub mod af;
 
 use std::sync::Once;
 
