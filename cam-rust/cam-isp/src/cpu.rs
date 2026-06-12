@@ -92,6 +92,18 @@ impl IspEngine for CpuEngine {
         // ── 2c. Gaussian denoise (optional, light blend) ──
         let denoised = apply_gaussian_denoise(&dpc_data, width as usize, height as usize, 0.3);
 
+        // ── 2d. Calibration stats: quad-level sensor metadata from raw Bayer ──
+        let calibration_stats = {
+            let quads = bayer_to_quads(&denoised, width as usize, height as usize);
+            let cfa_batch = &quads;
+            crate::calibration::compute_calibration_stats(
+                cfa_batch, 4,
+                (height as usize + 1) / 2,
+                (width as usize + 1) / 2,
+                cam_types::BayerPattern::Rggb,
+            )
+        };
+
         // ── 3. Auto white balance (use controller if no external gains) ──
         let awb_gains = if let Some(g) = awb_gains { *g } else {
             let ctrl = self.controller.lock().unwrap();
@@ -170,7 +182,17 @@ impl IspEngine for CpuEngine {
             format: cam_types::FrameFormat::Rgba8888,
             data: out_bytes,
             float_data: None,
-            aux: None,
+            aux: Some(crate::pipeline::IspAuxOutput {
+                channel_means: Some(channel_means),
+                tone_stats: Some(tone_stats),
+                wb_gains: Some(awb_gains),
+                histogram: Some(histogram.to_vec()),
+                zone_stats: Some(zone_stats),
+                focus_metric: None,
+                cct: None,
+                ae_gain: Some(ae_gain),
+                calibration_stats: Some(calibration_stats.0),
+            }),
         })
     }
 }
@@ -781,6 +803,34 @@ pub fn register_cpu_engine() {
         create_fn: || Box::new(CpuEngine::new()) as Box<dyn IspEngine>,
     };
     register_engine(factory);
+}
+
+/// Split flat raw Bayer data into 4-channel quad format for calibration stats.
+///
+/// Takes a flat `[H*W]` float array of raw Bayer pixels (RGGB pattern: R at even/even, etc.)
+/// and produces a flat `[4 * ((H+1)/2) * ((W+1)/2)]` array where each of the 4 channels
+/// represents one Bayer quadrant (TL=R, TR=Gr, BL=Gb, BR=B).
+///
+/// The output format matches CalibrationBlock's input: [1, 4, H/2, W/2] in flat layout.
+fn bayer_to_quads(bayer: &[f32], w: usize, h: usize) -> Vec<f32> {
+    let qh = (h + 1) / 2;
+    let qw = (w + 1) / 2;
+    let mut quads = vec![0.0f32; 4 * qh * qw];
+
+    for y in 0..h {
+        let qy = y / 2;
+        for x in 0..w {
+            let qx = x / 2;
+            let chan = ((y & 1) << 1) | (x & 1); // 0=TL=R, 1=TR=Gr, 2=BL=Gb, 3=BR=B
+            let src = y * w + x;
+            let dst = chan * (qh * qw) + qy * qw + qx;
+            if src < bayer.len() && dst < quads.len() {
+                quads[dst] = bayer[src];
+            }
+        }
+    }
+
+    quads
 }
 
 #[cfg(test)]

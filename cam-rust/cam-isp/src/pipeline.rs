@@ -18,6 +18,8 @@ pub struct IspAuxOutput {
     pub focus_metric: Option<f32>,
     pub cct: Option<f32>,
     pub ae_gain: Option<f32>,
+    /// Calibration statistics [24] from quad-level Bayer analysis.
+    pub calibration_stats: Option<[f32; 24]>,
 }
 
 /// ISP frame carrying pixel data.
