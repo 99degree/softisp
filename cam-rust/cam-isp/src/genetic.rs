@@ -7,7 +7,6 @@
 //! bounded mutation, and elitism.
 
 use rand::Rng;
-use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use crate::store::LearnerObservation;
@@ -128,7 +127,7 @@ impl GeneticOptimizer {
         let mut best_ever = population[0];
         let mut best_fitness = f32::MAX;
 
-        for gen in 0..self.generations {
+        for _gen in 0..self.generations {
             let fitnesses: Vec<f32> = population.iter()
                 .map(|c| fitness(c, observations))
                 .collect();

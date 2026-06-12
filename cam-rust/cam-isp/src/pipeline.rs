@@ -22,6 +22,10 @@ pub struct IspAuxOutput {
     pub calibration_stats: Option<[f32; 24]>,
     /// Scene classification for adaptive ISP.
     pub scene_category: Option<String>,
+    /// AF phase display string.
+    pub af_phase: Option<String>,
+    /// Current VCM lens position.
+    pub vcm_position: Option<i32>,
 }
 
 /// ISP frame carrying pixel data.
