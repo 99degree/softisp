@@ -86,6 +86,9 @@ impl IspEngine for CpuEngine {
         let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
         let float: Vec<f32> = raw.iter().map(|&v| v as f32 / max_val).collect();
 
+        // ── 2b. Defective pixel correction (hot pixel removal) ──
+        let dpc_data = apply_dpc(&float, width as usize, height as usize, _lsc_gains.map(|g| g[0]).unwrap_or(0.15));
+
         // ── 3. Auto white balance (use controller if no external gains) ──
         let awb_gains = if let Some(g) = awb_gains { *g } else {
             let ctrl = self.controller.lock().unwrap();
@@ -101,7 +104,11 @@ impl IspEngine for CpuEngine {
 
         // ── 4. Apply BLC + WB per-pixel on raw CFA ──
         let blc = *blc_values.unwrap_or(&[0.0, 0.0, 0.0, 0.0]);
-        let corrected = apply_blc_wb_raw(&float, width as usize, height as usize, &blc, wb_gains);
+        let blc_wb = apply_blc_wb_raw(&dpc_data, width as usize, height as usize, &blc, wb_gains);
+
+        // ── 4b. Lens shading correction (vignetting removal) ──
+        let lsc_k = _lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15);
+        let corrected = apply_lsc(&blc_wb, width as usize, height as usize, lsc_k);
 
         // ── 5. Malvar demosaic: raw CFA → RGB ──
         let rgb = demosaic_malvar(&corrected, width as usize, height as usize, Some(&awb_gains));
@@ -278,6 +285,67 @@ fn apply_blc_wb_raw(float: &[f32], width: usize, height: usize, blc: &[f32; 4], 
             };
             let corrected = (raw_val - bias).max(0.0) * gain;
             out.push(corrected.max(0.0).min(1.0));
+        }
+    }
+    out
+}
+
+/// Defective pixel correction — detect hot pixels by 3×3 median deviation.
+/// Any pixel deviating more than `threshold` from the median of its neighborhood
+/// is replaced with that median. Operates on raw CFA data.
+fn apply_dpc(cfa: &[f32], w: usize, h: usize, threshold: f32) -> Vec<f32> {
+    if w < 3 || h < 3 {
+        return cfa.to_vec();
+    }
+    let mut out = cfa.to_vec();
+    for y in 1..h-1 {
+        for x in 1..w-1 {
+            let idx = y * w + x;
+            let center = cfa[idx];
+
+            // Collect 3×3 neighborhood
+            let mut neighbors: [f32; 8] = [0.0; 8];
+            let mut ni = 0;
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    if dy == 1 && dx == 1 { continue; }
+                    let ny = y + dy - 1;
+                    let nx = x + dx - 1;
+                    neighbors[ni] = cfa[ny * w + nx];
+                    ni += 1;
+                }
+            }
+            // Median of 8 neighbors (average of 4th and 5th in sorted order)
+            neighbors.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let median = (neighbors[3] + neighbors[4]) * 0.5;
+
+            // If center deviates too much, replace
+            let diff = (center - median).abs();
+            if diff > threshold {
+                out[idx] = median;
+            }
+        }
+    }
+    out
+}
+
+/// Lens shading correction (vignetting removal).
+/// Applies radial gain: center pixels unchanged, corners boosted.
+/// `k` controls strength (0 = off, 0.3 = moderate, 0.6 = strong).
+/// Gain = 1 + k * r^2 where r is normalized [0,1] from image center.
+fn apply_lsc(raw: &[f32], w: usize, h: usize, k: f32) -> Vec<f32> {
+    if k <= 0.0 { return raw.to_vec(); }
+    let cx = w as f32 / 2.0;
+    let cy = h as f32 / 2.0;
+    let max_r2 = (cx * cx + cy * cy) as f32;
+    let mut out = Vec::with_capacity(raw.len());
+    for y in 0..h {
+        for x in 0..w {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let r2 = (dx * dx + dy * dy) / max_r2;
+            let gain = 1.0 + k * r2;
+            out.push((raw[y * w + x] * gain).min(1.0));
         }
     }
     out
