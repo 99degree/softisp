@@ -18,6 +18,7 @@ pub mod eis;
 pub mod af;
 pub mod calibration;
 pub mod scene;
+pub mod predictor;
 
 use std::sync::Once;
 
