@@ -170,18 +170,23 @@ fn main() {
 
         match result {
             Ok(frame) => {
-                last_frame = Some(frame);
-
                 if args.verbose {
+                    let cal = frame.aux.as_ref().and_then(|a| a.calibration_stats);
                     let ctrl = engine.controller.lock().unwrap();
+                    let scene = cam_isp::scene::SceneCategory::classify(ctrl.avg_lum_mean, ctrl.estimated_cct.unwrap_or(5500) as u32);
                     print!("Frame {:3}: {:6.1?} | AWB [{:.3} {:.3} {:.3}] | CCT {:>4?} | AE {:.3}",
                         frame_idx, elapsed,
                         ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2],
                         ctrl.estimated_cct.unwrap_or(0),
                         ctrl.get_effective_exposure_gain());
+                    if let Some(cs) = cal {
+                        print!(" | Cal: qm=[{:.4},{:.4},{:.4},{:.4}] noise={:.5} lum={:.4}",
+                            cs[0], cs[1], cs[2], cs[3], cs[21], cs[20]);
+                    }
                     let avg_lum = (ctrl.avg_r + ctrl.avg_g + ctrl.avg_b) / 3.0;
-                    println!(" | Luma: {:.4}", avg_lum);
+                    println!(" | {} | Luma: {:.4}", scene.name(), avg_lum);
                 }
+                last_frame = Some(frame);
             }
             Err(e) => eprintln!("Frame {} failed: {}", frame_idx, e),
         }
@@ -195,9 +200,11 @@ fn main() {
 
     {
         let ctrl = engine.controller.lock().unwrap();
-        println!("Final | AWB: [{:.3} {:.3} {:.3}]  CCT: {:?}  AE: {:.3}",
+        let scene = cam_isp::scene::SceneCategory::classify(ctrl.avg_lum_mean, ctrl.estimated_cct.unwrap_or(5500) as u32);
+        println!("Final | AWB: [{:.3} {:.3} {:.3}]  CCT: {:?}  AE: {:.3}  Scene: {}",
             ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2],
-            ctrl.estimated_cct, ctrl.get_effective_exposure_gain());
+            ctrl.estimated_cct, ctrl.get_effective_exposure_gain(),
+            scene.name());
         println!("      | Means: R={:.4} G={:.4} B={:.4} (target R={:.1} G={:.1} B={:.1})",
             ctrl.avg_r, ctrl.avg_g, ctrl.avg_b,
             ctrl.target_r, ctrl.target_g, ctrl.target_b);
