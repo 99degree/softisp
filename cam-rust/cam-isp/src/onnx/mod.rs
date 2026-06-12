@@ -5,6 +5,8 @@ pub mod proto;
 
 
 use log::info;
+#[cfg(feature = "ort")]
+use log::warn;
 use cam_types::{FrameFormat, ToneParams};
 
 use crate::engine::IspEngine;

@@ -14,3 +14,6 @@ cam-rust/target/
 .DS_Store
 Thumbs.db
 frames/
+*.o
+*.obj
+mnn_wrapper.o

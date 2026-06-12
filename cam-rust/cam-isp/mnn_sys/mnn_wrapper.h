@@ -109,12 +109,22 @@ MnnTensor mnn_session_get_input(MnnSession session, const char* name);
 MnnTensor mnn_session_get_output(MnnSession session, const char* name);
 
 /**
+ * Get an input tensor by name.
+ * @param interpreter Interpreter handle.
+ * @param session  Session handle.
+ * @param name     Tensor name (can be NULL for first input).
+ * @return Opaque tensor handle, or NULL.
+ */
+MnnTensor mnn_session_get_input_v2(MnnInterpreter interpreter, MnnSession session, const char* name);
+
+/**
  * Get an output tensor by name.
+ * @param interpreter Interpreter handle.
  * @param session  Session handle.
  * @param name     Tensor name (can be NULL for first output).
  * @return Opaque tensor handle, or NULL.
  */
-MnnTensor mnn_session_get_output(MnnSession session, const char* name);
+MnnTensor mnn_session_get_output_v2(MnnInterpreter interpreter, MnnSession session, const char* name);
 
 /**
  * Get the shape of a tensor.
@@ -138,13 +148,16 @@ int mnn_tensor_get_type(MnnTensor tensor);
 float* mnn_tensor_get_host_data(MnnTensor tensor);
 
 /**
- * Set the shape of a host tensor (for creating input tensors with specific dims).
- * @param tensor Tensor handle.
- * @param dims   Dimensions array.
- * @param ndim   Number of dimensions.
+ * Set the shape of a tensor (requires interpreter for resizeTensor).
+ * After setting shape, call mnn_session_resize to apply.
+ * @param interpreter Interpreter handle.
+ * @param session Session handle.
+ * @param tensor  Tensor handle.
+ * @param dims    Dimensions array.
+ * @param ndim    Number of dimensions.
  * @return 0 on success.
  */
-int mnn_tensor_set_shape(MnnTensor tensor, const int* dims, int ndim);
+int mnn_tensor_set_shape(MnnInterpreter interpreter, MnnSession session, MnnTensor tensor, const int* dims, int ndim);
 
 /**
  * Get raw host data pointer (void*) for any tensor element type.

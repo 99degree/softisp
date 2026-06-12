@@ -145,11 +145,12 @@ float* mnn_tensor_get_host_data(MnnTensor tensor) {
     return t->host<float>();
 }
 
-int mnn_tensor_set_shape(MnnTensor tensor, const int* dims, int ndim) {
+int mnn_tensor_set_shape(MnnInterpreter interpreter, MnnSession session, MnnTensor tensor, const int* dims, int ndim) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
-    if (!t || !dims) return -1;
+    if (!net || !t || !dims) return -1;
     std::vector<int> shape(dims, dims + ndim);
-    t->resize(shape);
+    net->resizeTensor(t, shape);
     return 0;
 }
 
@@ -165,7 +166,7 @@ void* mnn_tensor_get_host_data_raw(MnnTensor tensor) {
     // The MNN Tensor stores data in a Buffer. We can access via t->host<void>()
     // However, MNN doesn't have host<void>(). We'll use the float pointer and cast.
     // This is safe because the buffer is contiguous.
-    return const_cast<void*>(t->host<float>());
+    return static_cast<void*>(t->host<float>());
 }
 
 size_t mnn_tensor_get_data_size(MnnTensor tensor) {
