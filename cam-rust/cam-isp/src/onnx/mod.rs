@@ -60,9 +60,9 @@ pub struct OnnxEngine {
     initialized: bool,
     /// Composed ONNX model bytes (built by `build`).
     model_bytes: Option<Vec<u8>>,
-    /// ORT session (feature-gated).
+    /// ORT session (feature-gated), wrapped in Mutex for interior mutability.
     #[cfg(feature = "ort")]
-    session: Option<::ort::Session>,
+    session: std::sync::Mutex<Option<::ort::session::Session>>,
 }
 
 impl OnnxEngine {
@@ -72,7 +72,7 @@ impl OnnxEngine {
             initialized: false,
             model_bytes: None,
             #[cfg(feature = "ort")]
-            session: None,
+            session: std::sync::Mutex::new(None),
         }
     }
 }
@@ -109,33 +109,21 @@ impl IspEngine for OnnxEngine {
         
         #[cfg(feature = "ort")]
         {
-            // Load the model into an ORT session
-            let env = ::ort::EnvironmentBuilder::new()
-                .with_name("cam_isp_onnx")
-                .build()
-                .map_err(|e| format!("Failed to create ORT environment: {}", e))?;
-            
-            let mut options = ::ort::SessionOptionsBuilder::new()
-                .with_intra_op_num_threads(4)
-                .map_err(|e| format!("Failed to create session options: {}", e))?;
-            
-            // Enable NNAPI if available
-            if matches!(self.backend, OrtBackend::Nnapi) {
-                let _ = options.with_nnapi(false, None);
-            }
-            
-            let options = options
-                .build()
-                .map_err(|e| format!("Failed to build session options: {}", e))?;
-            
-            match ::ort::Session::from_buffer(&model, env, options) {
+            // Initialize ORT environment (auto-created if not already done)
+            // ort::init() already called by cam_isp::init()
+
+            // Build session from model
+            match ::ort::session::Session::builder()
+                .and_then(|mut b| b.commit_from_memory(&model))
+            {
                 Ok(session) => {
                     info!("OnnxEngine({}) loaded ORT session", self.backend.id());
-                    self.session = Some(session);
+                    let mut guard = self.session.lock().unwrap();
+                    *guard = Some(session);
                 }
                 Err(e) => {
                     warn!("OnnxEngine({}) failed to load ORT session: {}", self.backend.id(), e);
-                    // Continue without session (will use CPU fallback)
+                    // Continue without session (will use fallback)
                 }
             }
         }
@@ -173,11 +161,56 @@ impl IspEngine for OnnxEngine {
         
         #[cfg(feature = "ort")]
         {
-            if let Some(ref session) = self.session {
-                // Run inference using the ORT session
-                // TODO: Create input tensor, run session, extract output tensor
-                // This requires mapping pipeline inputs to ORT tensor names
-                info!("OnnxEngine: running ORT inference");
+            let buf = _buf;
+            let mut guard = self.session.lock().unwrap();
+            if let Some(ref mut session) = *guard {
+                // Build input tensor: INT16 [1, 1, height, width]
+                // Reinterpret raw u8 bytes as i16
+                let input_i16: Vec<i16> = unsafe {
+                    std::slice::from_raw_parts(
+                        buf.as_ptr() as *const i16,
+                        buf.len() / 2,
+                    )
+                }.to_vec();
+
+                let tensor = match ::ort::value::Tensor::from_array(
+                    (vec![1i64, 1, height as i64, width as i64], input_i16.into_boxed_slice())
+                ) {
+                    Ok(t) => t.upcast(),
+                    Err(e) => {
+                        warn!("OnnxEngine: failed to create input tensor: {}", e);
+                        return Err(format!("Failed to create input tensor: {}", e));
+                    }
+                };
+
+                // Run inference
+                let input_name = "RawInputBlock/frame";
+                let output_name = "DisplayBlock/frame";
+                let outputs = match session.run(ort::inputs![input_name => tensor]) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        warn!("OnnxEngine: inference failed: {}", e);
+                        return Err(format!("ORT inference failed: {}", e));
+                    }
+                };
+
+                // Extract output tensor (UINT8 BGRA)
+                if let Some(output_val) = outputs.get(output_name) {
+                    match output_val.try_extract_tensor::<u8>() {
+                        Ok((_, data)) => {
+                            let output_data = data.to_vec();
+                            info!("OnnxEngine: inference done, {} bytes", output_data.len());
+                            let mut frame = IspFrame::new(target_width, height, FrameFormat::Rgba8888);
+                            frame.data = output_data;
+                            return Ok(frame);
+                        }
+                        Err(e) => {
+                            warn!("OnnxEngine: failed to extract output: {}", e);
+                        }
+                    }
+                } else {
+                    warn!("OnnxEngine: output '{}' not found", output_name);
+                }
             }
         }
         
