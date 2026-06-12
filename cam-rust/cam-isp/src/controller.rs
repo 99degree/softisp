@@ -658,7 +658,6 @@ impl IspController {
         let mut mid_c = 0;
         let mut cool_c = 0;
         let mut valid_z = 0;
-        let mut t_lum = 0.0f64;
         let mut t_r = 0.0f64;
         let mut t_g = 0.0f64;
         let mut t_b = 0.0f64;
@@ -685,7 +684,6 @@ impl IspController {
 
                 let w_idx = r * self.zone_cols + c;
                 let w = self.zone_weight.get(w_idx).copied().unwrap_or(1.0) as f64;
-                t_lum += y as f64 * w;
                 t_r += rz as f64 * w;
                 t_g += gz as f64 * w;
                 t_b += bz as f64 * w;
