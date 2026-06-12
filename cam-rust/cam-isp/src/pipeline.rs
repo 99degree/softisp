@@ -26,6 +26,8 @@ pub struct IspAuxOutput {
     pub af_phase: Option<String>,
     /// Current VCM lens position.
     pub vcm_position: Option<i32>,
+    /// EIS compensation [dx_px, dy_px, roll_deg].
+    pub eis_compensation: Option<[f32; 3]>,
 }
 
 /// ISP frame carrying pixel data.

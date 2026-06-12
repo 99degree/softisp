@@ -16,6 +16,7 @@ use crate::engine::{IspEngine, EngineFactory, register_engine};
 use crate::pipeline::{IspBlock, IspFrame};
 use crate::controller::IspController;
 use crate::af::AfState;
+use crate::eis::EisEngine;
 
 // ── Engine registration ──
 
@@ -26,11 +27,13 @@ pub struct CpuEngine {
     pub controller: Mutex<IspController>,
     /// AF engine for autofocus state machine.
     pub af_engine: Mutex<AfState>,
+    /// EIS engine for gyro stabilization.
+    pub eis_engine: Mutex<EisEngine>,
 }
 
 impl CpuEngine {
     pub fn new() -> Self {
-        Self { loaded: false, _target_width: 0, controller: Mutex::new(IspController::new()), af_engine: Mutex::new(AfState::default()) }
+        Self { loaded: false, _target_width: 0, controller: Mutex::new(IspController::new()), af_engine: Mutex::new(AfState::default()), eis_engine: Mutex::new(EisEngine::new()) }
     }
 }
 
@@ -125,6 +128,39 @@ impl IspEngine for CpuEngine {
             af.advance_scan();
         }
         info!("Focus metric: {:.6}", focus_metric);
+
+        // ── 2f. EIS: feed synthetic gyro data and compute stabilization ──
+        let eis_frame_count = self.controller.lock().unwrap().frame_count;
+        let eis_compensation = {
+            let mut eis = self.eis_engine.lock().unwrap();
+            if !eis.enabled {
+                eis.enabled = true; // Enable on first use
+            }
+
+            // Push a synthetic gyro sample (simulating slight handheld jitter)
+            use crate::eis::GyroSample;
+            let t_ns = eis_frame_count as i64 * 33_333_333; // ~30 fps
+            let jitter = (eis_frame_count as f32 * 0.1).sin() * 0.02; // small oscillation
+            eis.push_sample(GyroSample {
+                timestamp_ns: t_ns,
+                x: 0.01 + jitter,
+                y: 0.02 + jitter * 0.5,
+                z: 0.005 + jitter * 0.3,
+            });
+
+            // If external warp grid provided, use it instead
+            let compensation = if _warp_grid.is_some() {
+                None
+            } else {
+                let fl = width as f32 * 1.2; // estimated focal length in pixels
+                eis.update(t_ns + 33_333_333, fl, width, height)
+            };
+
+            compensation
+        };
+        if let Some(comp) = eis_compensation {
+            info!("EIS: dx={:.2} dy={:.2} roll={:.2}°", comp[0], comp[1], comp[2]);
+        }
 
         // ── 3. Auto white balance (use controller if no external gains) ──
         let awb_gains = if let Some(g) = awb_gains { *g } else {
@@ -225,7 +261,8 @@ impl IspEngine for CpuEngine {
                 scene_category: Some(self.controller.lock().unwrap().scene_category.name().to_string()),
                 af_phase: Some(self.af_engine.lock().unwrap().display_string()),
                 vcm_position: Some(self.af_engine.lock().unwrap().vcm_pos),
-            }),
+                eis_compensation: eis_compensation,
+            })
         })
     }
 }

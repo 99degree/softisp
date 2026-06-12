@@ -238,6 +238,7 @@ impl IspEngine for MnnEngine {
                 scene_category: None,
                 af_phase: None,
                 vcm_position: None,
+                eis_compensation: None,
             });
             return Ok(frame);
         }
@@ -264,6 +265,7 @@ impl IspEngine for MnnEngine {
             scene_category: None,
             af_phase: None,
             vcm_position: None,
+            eis_compensation: None,
         });
         Ok(frame)
     }
