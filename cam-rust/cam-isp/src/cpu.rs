@@ -192,6 +192,7 @@ impl IspEngine for CpuEngine {
                 cct: None,
                 ae_gain: Some(ae_gain),
                 calibration_stats: Some(calibration_stats.0),
+                scene_category: Some(self.controller.lock().unwrap().scene_category.name().to_string()),
             }),
         })
     }

@@ -235,6 +235,7 @@ impl IspEngine for MnnEngine {
                 cct: None,
                 ae_gain: None,
                 calibration_stats: None,
+                scene_category: None,
             });
             return Ok(frame);
         }
@@ -258,6 +259,7 @@ impl IspEngine for MnnEngine {
             cct: None,
             ae_gain: None,
             calibration_stats: None,
+            scene_category: None,
         });
         Ok(frame)
     }

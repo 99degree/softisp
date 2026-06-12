@@ -20,6 +20,8 @@ pub struct IspAuxOutput {
     pub ae_gain: Option<f32>,
     /// Calibration statistics [24] from quad-level Bayer analysis.
     pub calibration_stats: Option<[f32; 24]>,
+    /// Scene classification for adaptive ISP.
+    pub scene_category: Option<String>,
 }
 
 /// ISP frame carrying pixel data.
