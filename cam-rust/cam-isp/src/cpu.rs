@@ -7,22 +7,27 @@
 //!   RawInput(INT16) → Normalize(FLOAT) → CFA(4ch) → BLC → WB
 //!   → Demosaic(RGB) → CCM → Tone → Display(UINT8 BGRA)
 
+use std::sync::Mutex;
+
 use log::info;
 use cam_types::ToneParams;
 
 use crate::engine::{IspEngine, EngineFactory, register_engine};
 use crate::pipeline::{IspBlock, IspFrame};
+use crate::controller::IspController;
 
 // ── Engine registration ──
 
 pub struct CpuEngine {
     loaded: bool,
     _target_width: u32,
+    /// ISP controller for AWB/AE/CCM/tone parameter estimation.
+    pub controller: Mutex<IspController>,
 }
 
 impl CpuEngine {
     pub fn new() -> Self {
-        Self { loaded: false, _target_width: 0 }
+        Self { loaded: false, _target_width: 0, controller: Mutex::new(IspController::new()) }
     }
 }
 
@@ -81,16 +86,38 @@ impl IspEngine for CpuEngine {
         let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
         let float: Vec<f32> = raw.iter().map(|&v| v as f32 / max_val).collect();
 
-        // ── 3. Auto white balance (if no gains provided) ──
-        let default_gains = calculate_awb_gains(&float, width as usize, height as usize);
-        let wb_gains: &[f32; 4] = bayer_gains.unwrap_or(&default_gains);
+        // ── 3. Auto white balance (use controller if no external gains) ──
+        let awb_gains = if let Some(g) = awb_gains { *g } else {
+            let ctrl = self.controller.lock().unwrap();
+            ctrl.get_awb_gains()
+        };
+
+        let default_bayer_gains = if bayer_gains.is_some() {
+            *bayer_gains.unwrap()
+        } else {
+            [awb_gains[0], awb_gains[1], awb_gains[1], awb_gains[2]]
+        };
+        let wb_gains: &[f32; 4] = bayer_gains.unwrap_or(&default_bayer_gains);
 
         // ── 4. Apply BLC + WB per-pixel on raw CFA ──
         let blc = *blc_values.unwrap_or(&[0.0, 0.0, 0.0, 0.0]);
         let corrected = apply_blc_wb_raw(&float, width as usize, height as usize, &blc, wb_gains);
 
         // ── 5. Malvar demosaic: raw CFA → RGB ──
-        let rgb = demosaic_malvar(&corrected, width as usize, height as usize, awb_gains);
+        let rgb = demosaic_malvar(&corrected, width as usize, height as usize, Some(&awb_gains));
+
+        // ── 5b. Compute stats from RGB and update controller ──
+        let channel_means = compute_channel_means(&rgb);
+        let tone_stats = compute_tone_stats(&rgb);
+        {
+            let mut ctrl = self.controller.lock().unwrap();
+            ctrl.update_channel_stats(&channel_means);
+            ctrl.update_tone_stats(&tone_stats);
+            // Update tone params from controller for the *next* frame
+            info!("Ctrl AWB gains: {:.3} {:.3} {:.3}, CCT: {:?}, AE gain: {:.3}",
+                ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2],
+                ctrl.estimated_cct, ctrl.get_effective_exposure_gain());
+        }
 
         // ── 6. Auto exposure (compute target brightness) ──
         let ae_gain = calculate_ae_gain(&rgb);
@@ -153,6 +180,7 @@ fn generate_simulated_raw(width: u32, height: u32, rgba: &[u8]) -> Vec<u16> {
 /// Calculate auto white balance gains using gray world assumption on raw CFA.
 /// Works on the normalized float CFA (BGGR pattern).
 /// Returns [R_gain, Gr_gain, Gb_gain, B_gain].
+#[allow(dead_code)]
 fn calculate_awb_gains(cfa: &[f32], width: usize, height: usize) -> [f32; 4] {
     let mut sum_r = 0.0f32;
     let mut sum_gr = 0.0f32;
@@ -513,6 +541,40 @@ fn apply_unsharp_mask(rgb: &mut [f32], w: usize, h: usize, strength: f32) {
             }
         }
     }
+}
+
+/// Compute channel means (R, G, B average) from an RGB float buffer.
+fn compute_channel_means(rgb: &[f32]) -> [f32; 3] {
+    let n = rgb.len() / 3;
+    if n == 0 { return [0.0; 3]; }
+    let mut sum = [0.0; 3];
+    for ch in 0..3 {
+        for i in 0..n {
+            sum[ch] += rgb[i * 3 + ch];
+        }
+        sum[ch] /= n as f32;
+    }
+    sum
+}
+
+/// Compute tone statistics (mean/min/max luminance) from an RGB float buffer.
+fn compute_tone_stats(rgb: &[f32]) -> [f32; 3] {
+    let n = rgb.len() / 3;
+    if n == 0 { return [0.0, 0.0, 1.0]; }
+    let mut mean_lum = 0.0f32;
+    let mut min_lum = f32::MAX;
+    let mut max_lum = f32::MIN;
+    for i in 0..n {
+        let r = rgb[i * 3];
+        let g = rgb[i * 3 + 1];
+        let b = rgb[i * 3 + 2];
+        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        mean_lum += lum;
+        if lum < min_lum { min_lum = lum; }
+        if lum > max_lum { max_lum = lum; }
+    }
+    mean_lum /= n as f32;
+    [mean_lum, min_lum, max_lum]
 }
 
 /// Display output: resize to target width and convert to UINT8 BGRA.
