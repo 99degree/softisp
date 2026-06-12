@@ -6,6 +6,7 @@
 //! and produces smoothed ISP parameters (AWB gains, CCM matrix, tone curve, exposure).
 
 use cam_types::ToneParams;
+use crate::ae::AutoExposureState;
 
 /// Smoothing mode for temporal filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +86,10 @@ pub struct IspController {
     pub shadow_ratio: f32,
     pub hist_constrained_gain: f32,
 
+    // ── Auto exposure engine ──
+    /// Auto-exposure state for computing exposure time + ISO.
+    pub ae_state: AutoExposureState,
+
     // ── Scene luminance ──
     pub scene_luminance: f32,
 }
@@ -128,6 +133,7 @@ impl IspController {
             highlight_ratio: 0.0,
             shadow_ratio: 0.0,
             hist_constrained_gain: 1.5,
+            ae_state: AutoExposureState::default(),
             scene_luminance: 0.0,
         }
     }
@@ -313,6 +319,13 @@ impl IspController {
     /// Get LSC (lens shading correction) strength.
     pub fn get_lsc_strength(&self) -> f32 {
         self.lsc_strength
+    }
+
+    /// Compute exposure time + ISO from current scene stats.
+    /// Delegates to AutoExposureState using internally-tracked luminance, histogram, and brightness bias.
+    pub fn compute_exposure(&mut self, brightness_bias: f32) -> (i64, i32) {
+        let lum = if self.avg_lum_mean > 0.001 { self.avg_lum_mean } else { self.scene_luminance };
+        self.ae_state.compute(lum, self.highlight_ratio, self.shadow_ratio, brightness_bias)
     }
 
     // ── Manual overrides ──

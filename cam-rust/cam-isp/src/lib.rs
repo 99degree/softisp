@@ -6,6 +6,7 @@ pub mod pipeline;
 pub mod blocks;
 pub mod cpu;
 pub mod controller;
+pub mod ae;
 pub mod profile;
 pub mod config;
 pub mod fused;
