@@ -52,7 +52,7 @@ pub trait IspEngine: Send + Sync {
         sensor_max: f32,
         target_width: u32,
         ccm_matrix: Option<&[f32; 9]>,
-        tone_params: &ToneParams,
+        _tone_params: &ToneParams,
         bayer_gains: Option<&[f32; 4]>,
         awb_gains: Option<&[f32; 3]>,
         analog_gain: f32,
