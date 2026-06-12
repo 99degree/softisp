@@ -7,6 +7,7 @@ pub mod blocks;
 pub mod cpu;
 pub mod controller;
 pub mod profile;
+pub mod config;
 pub mod manager;
 pub mod onnx;
 pub mod mnn;
