@@ -54,7 +54,7 @@ impl IspEngine for CpuEngine {
         ccm_matrix: Option<&[f32; 9]>,
         tone_params: &ToneParams,
         bayer_gains: Option<&[f32; 4]>,
-        _awb_gains: Option<&[f32; 3]>,
+        awb_gains: Option<&[f32; 3]>,
         _analog_gain: f32,
         _scene_change: f32,
         _lsc_gains: Option<&[f32]>,
@@ -81,23 +81,13 @@ impl IspEngine for CpuEngine {
         let max_val = 65535.0f32;
         let float: Vec<f32> = raw.iter().map(|&v| v as f32 / max_val).collect();
 
-        // ── 3. CFA: extract 4 Bayer planes ──
-        // Assume BGGR pattern
-        let bayer = extract_bayer(&float, width as usize, height as usize);
+        // ── 3. Apply BLC + WB per-pixel on raw CFA ──
+        let blc = *blc_values.unwrap_or(&[0.0, 0.0, 0.0, 0.0]);
+        let wb_gains = *bayer_gains.unwrap_or(&[1.0, 1.0, 1.0, 1.0]);
+        let corrected = apply_blc_wb_raw(&float, width as usize, height as usize, &blc, &wb_gains);
 
-        // ── 4. BLC: subtract black level ──
-        let blc = if let Some(blc_vals) = blc_values {
-            apply_blc(&bayer, blc_vals)
-        } else {
-            bayer.clone()
-        };
-
-        // ── 5. WB: apply white balance gains ──
-        let wb_gains = bayer_gains.unwrap_or(&[1.0, 1.0, 1.0, 1.0]);
-        let wb = apply_wb(&blc, wb_gains);
-
-        // ── 6. Demosaic: bilinear → RGB ──
-        let rgb = demosaic_bilinear(&wb, width as usize, height as usize);
+        // ── 4. Malvar demosaic: raw CFA → RGB ──
+        let rgb = demosaic_malvar(&corrected, width as usize, height as usize, awb_gains);
 
         // ── 7. CCM: 3×3 color matrix ──
         let ccm = ccm_matrix.unwrap_or(&[
@@ -153,126 +143,189 @@ fn generate_simulated_raw(width: u32, height: u32, rgba: &[u8]) -> Vec<u16> {
     raw
 }
 
-/// Extract 4 Bayer channels: [R, Gr, Gb, B] as separate planes.
-fn extract_bayer(float: &[f32], width: usize, height: usize) -> [Vec<f32>; 4] {
-    let mut r_plane = Vec::with_capacity((width * height) / 4);
-    let mut gr_plane = Vec::with_capacity((width * height) / 4);
-    let mut gb_plane = Vec::with_capacity((width * height) / 4);
-    let mut b_plane = Vec::with_capacity((width * height) / 4);
-
+/// Apply black level correction and white balance on raw CFA data.
+/// `blc` = [R_bias, Gr_bias, Gb_bias, B_bias]  (subtract this)
+/// `gains` = [R_gain, Gr_gain, Gb_gain, B_gain]  (multiply by this)
+/// BGGR pattern:
+///   even row:    B Gb B Gb ...
+///   odd row:     Gr R Gr R ...
+fn apply_blc_wb_raw(float: &[f32], width: usize, height: usize, blc: &[f32; 4], gains: &[f32; 4]) -> Vec<f32> {
+    let mut out = Vec::with_capacity(float.len());
     for y in 0..height {
         for x in 0..width {
             let idx = y * width + x;
-            let v = float[idx];
-            // BGGR pattern
-            if y % 2 == 0 {
-                if x % 2 == 0 { b_plane.push(v); } else { gb_plane.push(v); }
+            let raw_val = float[idx];
+            let (bias, gain) = if y % 2 == 0 {
+                if x % 2 == 0 { (blc[3], gains[3]) }   // B pixel
+                else { (blc[2], gains[2]) }              // Gb pixel
             } else {
-                if x % 2 == 0 { gr_plane.push(v); } else { r_plane.push(v); }
-            }
-        }
-    }
-    [r_plane, gr_plane, gb_plane, b_plane]
-}
-
-/// Apply black level correction: subtract blc values from each channel.
-fn apply_blc(planes: &[Vec<f32>; 4], blc: &[f32; 4]) -> [Vec<f32>; 4] {
-    let mut out: [Vec<f32>; 4] = [
-        Vec::with_capacity(planes[0].len()),
-        Vec::with_capacity(planes[1].len()),
-        Vec::with_capacity(planes[2].len()),
-        Vec::with_capacity(planes[3].len()),
-    ];
-    for (i, plane) in planes.iter().enumerate() {
-        for &v in plane.iter() {
-            out[i].push((v - blc[i]).max(0.0));
+                if x % 2 == 0 { (blc[1], gains[1]) }    // Gr pixel
+                else { (blc[0], gains[0]) }               // R pixel
+            };
+            let corrected = (raw_val - bias).max(0.0) * gain;
+            out.push(corrected.max(0.0).min(1.0));
         }
     }
     out
 }
 
-/// Apply white balance gains.
-fn apply_wb(planes: &[Vec<f32>; 4], gains: &[f32; 4]) -> [Vec<f32>; 4] {
-    let mut out: [Vec<f32>; 4] = [
-        Vec::with_capacity(planes[0].len()),
-        Vec::with_capacity(planes[1].len()),
-        Vec::with_capacity(planes[2].len()),
-        Vec::with_capacity(planes[3].len()),
-    ];
-    for (i, plane) in planes.iter().enumerate() {
-        let g = gains[i];
-        for &v in plane.iter() {
-            out[i].push((v * g).max(0.0).min(1.0));
-        }
-    }
-    out
-}
-
-/// Bilinear demosaic: reconstruct full RGB from 4 Bayer planes.
-fn demosaic_bilinear(planes: &[Vec<f32>; 4], width: usize, height: usize) -> Vec<f32> {
-    let grid_w = width / 2;
-    let grid_h = height / 2;
-
-    // Convert planes back to grid for interpolation
-    let r_grid = mat_from_plane(&planes[0], grid_w, grid_h);
-    let gr_grid = mat_from_plane(&planes[1], grid_w, grid_h);
-    let gb_grid = mat_from_plane(&planes[2], grid_w, grid_h);
-    let b_grid = mat_from_plane(&planes[3], grid_w, grid_h);
-
-    // G grid: average of Gr and Gb
-    let g_grid: Vec<Vec<f32>> = (0..grid_h).map(|y| {
-        (0..grid_w).map(|x| {
-            let gr = gr_grid[y][x];
-            let gb = gb_grid[y][x];
-            (gr + gb) * 0.5
-        }).collect()
-    }).collect();
-
+/// Malvar (2004) demosaic — high-quality gradient-based interpolation.
+/// BGGR pattern expected.
+/// Reference: Malvar, He, Cutler "High-Quality Linear Interpolation for Demosaicing of Bayer-Patterned Color Images" ICASSP 2004.
+fn demosaic_malvar(cfa: &[f32], width: usize, height: usize, _awb: Option<&[f32; 3]>) -> Vec<f32> {
     let mut rgb = vec![0.0f32; width * height * 3];
 
     for y in 0..height {
         for x in 0..width {
-            let gx = x / 2;
-            let gy = y / 2;
-            let r = bilerp(&r_grid, gx as f32, gy as f32);
-            let g = bilerp(&g_grid, gx as f32, gy as f32);
-            let b = bilerp(&b_grid, gx as f32, gy as f32);
-            let idx = (y * width + x) * 3;
-            rgb[idx] = r;
-            rgb[idx + 1] = g;
-            rgb[idx + 2] = b;
+            let idx = y * width + x;
+            let is_even_row = y % 2 == 0;
+            let is_even_col = x % 2 == 0;
+
+            match (is_even_row, is_even_col) {
+                // ── Blue pixel at (even, even) and Red at (odd, odd) ──
+                (true, true) | (false, false) => {
+                    // B at (even, even); R at (odd, odd)
+                    // We'll compute green and red (or blue) for this location
+                    let is_blue = is_even_row; // true → B, false → R
+
+                    // Sample the CFA value at this location
+                    let cf = cfa[idx];
+
+                    // ── Green interpolation ──
+                    // Use 5x5 directional interpolation with gradient detection
+                    let g = interpolate_green_at_rb(cfa, width, height, x, y, is_blue);
+
+                    // ── Red (or Blue) interpolation ──
+                    // At B location: interpolate R using color difference across G
+                    let other = if is_blue {
+                        interpolate_red_at_blue(cfa, width, height, x, y, g)
+                    } else {
+                        interpolate_blue_at_red(cfa, width, height, x, y, g)
+                    };
+
+                    if is_blue {
+                        // B location: B is known, R and G are interpolated
+                        set_rgb(&mut rgb, x, y, width, other, g, cf);
+                    } else {
+                        // R location: R is known, G and B are interpolated
+                        set_rgb(&mut rgb, x, y, width, cf, g, other);
+                    }
+                }
+                // ── Green pixel at (even, odd) or (odd, even) ──
+                (true, false) | (false, true) => {
+                    // Gb or Gr
+                    let g_val = cfa[idx];
+                    // Interpolate R and B using color differences
+                    let r = interpolate_red_at_green(cfa, width, height, x, y);
+                    let b = interpolate_blue_at_green(cfa, width, height, x, y);
+                    set_rgb(&mut rgb, x, y, width, r, g_val, b);
+                }
+            }
         }
     }
     rgb
 }
 
-fn mat_from_plane(plane: &[f32], w: usize, h: usize) -> Vec<Vec<f32>> {
-    (0..h).map(|y| {
-        (0..w).map(|x| plane[y * w + x]).collect()
-    }).collect()
+/// Interpolate green at a red or blue location using gradient detection.
+fn interpolate_green_at_rb(cfa: &[f32], width: usize, height: usize, x: usize, y: usize, _is_blue: bool) -> f32 {
+    // Horizontal and vertical gradients
+    let hv_grad = |x: usize, y: usize| -> (f32, f32) {
+        let c = |dx: isize, dy: isize| -> f32 {
+            let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
+            let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
+            cfa[ny * width + nx]
+        };
+
+        // Horizontal gradient: |G(x-1,y) - G(x+1,y)| + |2*C(x,y) - C(x-2,y) - C(x+2,y)|
+        let gh = (c(-1, 0) - c(1, 0)).abs() + (2.0 * c(0, 0) - c(-2, 0) - c(2, 0)).abs();
+        // Vertical gradient: |G(x,y-1) - G(x,y+1)| + |2*C(x,y) - C(x,y-2) - C(x,y+2)|
+        let gv = (c(0, -1) - c(0, 1)).abs() + (2.0 * c(0, 0) - c(0, -2) - c(0, 2)).abs();
+        (gh, gv)
+    };
+
+    let (gh, gv) = hv_grad(x, y);
+
+    let c = |dx: isize, dy: isize| -> f32 {
+        let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
+        let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
+        cfa[ny * width + nx]
+    };
+
+    // Horizontal interpolation
+    let g_h = (c(-1, 0) + c(1, 0)) / 2.0 + (2.0 * c(0, 0) - c(-2, 0) - c(2, 0)) / 4.0;
+    // Vertical interpolation
+    let g_v = (c(0, -1) + c(0, 1)) / 2.0 + (2.0 * c(0, 0) - c(0, -2) - c(0, 2)) / 4.0;
+
+    // Weighted combination based on gradients
+    if gh + gv < 1e-6 { (g_h + g_v) / 2.0 } else { (g_v * gh + g_h * gv) / (gh + gv) }
 }
 
-/// Bilinear interpolation from a 2D grid at float coordinates.
-fn bilerp(grid: &[Vec<f32>], fx: f32, fy: f32) -> f32 {
-    let w = grid[0].len() as f32;
-    let h = grid.len() as f32;
-    let x = fx.clamp(0.0, w - 1.0);
-    let y = fy.clamp(0.0, h - 1.0);
-    let x0 = x as usize;
-    let y0 = y as usize;
-    let x1 = (x0 + 1).min(w as usize - 1);
-    let y1 = (y0 + 1).min(h as usize - 1);
-    let dx = x - x0 as f32;
-    let dy = y - y0 as f32;
+/// Interpolate R at a B location using color difference with G.
+fn interpolate_red_at_blue(cfa: &[f32], width: usize, height: usize, x: usize, y: usize, g: f32) -> f32 {
+    let c = |dx: isize, dy: isize| -> f32 {
+        let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
+        let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
+        cfa[ny * width + nx]
+    };
 
-    let v00 = grid[y0][x0];
-    let v10 = grid[y0][x1];
-    let v01 = grid[y1][x0];
-    let v11 = grid[y1][x1];
+    // R at B: average of (R - G) at 4 diagonal R positions, then add G
+    // G at those diagonal positions is the average of 4 G neighbors
+    let g_at_diag = |dx: isize, dy: isize| -> f32 {
+        let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
+        let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
+        let g_h = (cfa[ny * width + nx.saturating_sub(1)] + cfa[ny * width + (nx + 1).min(width - 1)]) * 0.5;
+        let g_v = (cfa[ny.saturating_sub(1) * width + nx] + cfa[(ny + 1).min(height - 1) * width + nx]) * 0.5;
+        (g_h + g_v) * 0.5
+    };
 
-    let v0 = v00 + (v10 - v00) * dx;
-    let v1 = v01 + (v11 - v01) * dx;
-    v0 + (v1 - v0) * dy
+    let diff1 = c(-1, -1) - g_at_diag(-1, -1);
+    let diff2 = c(1, -1) - g_at_diag(1, -1);
+    let diff3 = c(-1, 1) - g_at_diag(-1, 1);
+    let diff4 = c(1, 1) - g_at_diag(1, 1);
+
+    let avg_diff = (diff1 + diff2 + diff3 + diff4) / 4.0;
+    (g + avg_diff).max(0.0).min(1.0)
+}
+
+/// Interpolate B at an R location (same as above, swapping R/B).
+fn interpolate_blue_at_red(cfa: &[f32], width: usize, height: usize, x: usize, y: usize, g: f32) -> f32 {
+    interpolate_red_at_blue(cfa, width, height, x, y, g)
+}
+
+/// Interpolate R at a green location.
+fn interpolate_red_at_green(cfa: &[f32], width: usize, height: usize, x: usize, y: usize) -> f32 {
+    let c = |dx: isize, dy: isize| -> f32 {
+        let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
+        let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
+        cfa[ny * width + nx]
+    };
+    // At Gr (even row, odd col): R is at (odd, odd) = (y+1, x) and (y-1, x)
+    // At Gb (odd row, even col): R is at (odd, odd) = (y, x+1) and (y, x-1)
+    // Just use diagonal R-G differences
+    let r1 = c(-1, -1); let r2 = c(1, -1);
+    let r3 = c(-1, 1); let r4 = c(1, 1);
+    let g1 = c(-1, 0); let g2 = c(1, 0);
+    let g3 = c(0, -1); let g4 = c(0, 1);
+    // R - G from vertical/horizontal neighbors
+    let diff1 = r1 - (g3 + g1) / 2.0;
+    let diff2 = r2 - (g3 + g2) / 2.0;
+    let diff3 = r3 - (g4 + g1) / 2.0;
+    let diff4 = r4 - (g4 + g2) / 2.0;
+    let avg_diff = (diff1 + diff2 + diff3 + diff4) / 4.0;
+    cfa[y * width + x] + avg_diff
+}
+
+/// Interpolate B at a green location (same as red interpolation, swapping R/B pattern).
+fn interpolate_blue_at_green(cfa: &[f32], width: usize, height: usize, x: usize, y: usize) -> f32 {
+    interpolate_red_at_green(cfa, width, height, x, y)
+}
+
+/// Set a pixel's RGB values in the output buffer.
+fn set_rgb(rgb: &mut [f32], x: usize, y: usize, width: usize, r: f32, g: f32, b: f32) {
+    let idx = (y * width + x) * 3;
+    rgb[idx] = r.max(0.0).min(1.0);
+    rgb[idx + 1] = g.max(0.0).min(1.0);
+    rgb[idx + 2] = b.max(0.0).min(1.0);
 }
 
 /// Apply 3×3 color correction matrix to each pixel.
