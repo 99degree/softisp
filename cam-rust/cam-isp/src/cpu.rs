@@ -120,11 +120,18 @@ impl IspEngine for CpuEngine {
         let channel_means = compute_channel_means(&rgb);
         let tone_stats = compute_tone_stats(&rgb);
         let histogram = compute_histogram(&rgb);
+        let zone_stats = compute_zone_stats(&rgb, width as usize, height as usize, 6, 8);
         let ctrl_ccm = {
             let mut ctrl = self.controller.lock().unwrap();
+            // Initialize zone stats on first use
+            if !ctrl.zone_stats_enabled {
+                ctrl.init_zone_stats(6, 8);
+            }
             ctrl.update_channel_stats(&channel_means);
             ctrl.update_tone_stats(&tone_stats);
             ctrl.update_histogram(&histogram);
+            // Feed zone stats
+            ctrl.update_zone_stats(&zone_stats);
             // Compute exposure time + ISO from scene stats
             let bias = ctrl.brightness_bias;
             let (_exp_ns, _iso) = ctrl.compute_exposure(bias);
@@ -674,6 +681,46 @@ fn compute_histogram(rgb: &[f32]) -> [f32; 256] {
         for v in hist.iter_mut() { *v /= total; }
     }
     hist
+}
+
+/// Compute zone stats (per-zone RGB means) for multi-illuminant AWB.
+/// Divides the image into `rows × cols` zones and computes the average
+/// R, G, B for each zone.
+/// Returns flat array: [zone0_r, zone0_g, zone0_b, zone1_r, ...] (row-major).
+fn compute_zone_stats(rgb: &[f32], width: usize, height: usize, rows: usize, cols: usize) -> Vec<f32> {
+    let n = rgb.len() / 3;
+    if n == 0 || rows == 0 || cols == 0 {
+        return vec![];
+    }
+
+    let zone_w = (width / cols).max(1);
+    let zone_h = (height / rows).max(1);
+
+    let mut sums = vec![[0.0f64; 3]; rows * cols];
+    let mut counts = vec![0u64; rows * cols];
+
+    for y in 0..height {
+        for x in 0..width {
+            let zi = y / zone_h;
+            let zj = x / zone_w;
+            if zi >= rows || zj >= cols { continue; }
+            let idx = (y * width + x) * 3;
+            let zidx = zi * cols + zj;
+            sums[zidx][0] += rgb[idx] as f64;
+            sums[zidx][1] += rgb[idx + 1] as f64;
+            sums[zidx][2] += rgb[idx + 2] as f64;
+            counts[zidx] += 1;
+        }
+    }
+
+    let mut result = Vec::with_capacity(rows * cols * 3);
+    for zidx in 0..(rows * cols) {
+        let c = counts[zidx].max(1);
+        result.push((sums[zidx][0] / c as f64) as f32);
+        result.push((sums[zidx][1] / c as f64) as f32);
+        result.push((sums[zidx][2] / c as f64) as f32);
+    }
+    result
 }
 
 /// Apply 3×3 Gaussian blur for denoising (raw Bayer domain).
