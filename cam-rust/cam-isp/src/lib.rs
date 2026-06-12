@@ -20,6 +20,7 @@ pub mod calibration;
 pub mod scene;
 pub mod predictor;
 pub mod regression;
+pub mod store;
 
 use std::sync::Once;
 
