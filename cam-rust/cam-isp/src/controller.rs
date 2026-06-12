@@ -63,10 +63,18 @@ pub struct IspController {
     pub smoothed_ccm: [f32; 9],
     /// Base sensor CCM.
     pub ccm_matrix: [f32; 9],
+    /// CCM per-sensor scale (9-element, default all 1.0).
+    pub ccm_scale_a: [f32; 9],
+    /// CCM per-sensor offset (9-element, default all 0.0).
+    pub ccm_offset_c: [f32; 9],
     /// CCM clamp flags.
     pub clamp_flags: i32,
     /// CCT at which clamping last occurred.
     pub clamp_cct_ref: i32,
+    /// CCM output EMA smoothing factor (1.0 = no smoothing).
+    pub ccm_smoothing: f32,
+    /// Whether CCM has been initialized (for EMA start).
+    pub ccm_initialized: bool,
 
     // ── Tone state ──
     /// Smoothed tone parameters.
@@ -158,8 +166,12 @@ impl IspController {
             awb_prior_b: [3.8e-08, -3.1e-04, 1.50],
             smoothed_ccm: ccm_engine::identity_ccm(),
             ccm_matrix: ccm_engine::default_sensor_ccm(),
+            ccm_scale_a: [1.0f32; 9],
+            ccm_offset_c: [0.0f32; 9],
             clamp_flags: 0,
             clamp_cct_ref: 0,
+            ccm_smoothing: 0.85,
+            ccm_initialized: false,
             tone_contrast: 1.0,
             tone_brightness: 0.0,
             tone_gamma: 2.2,
@@ -309,15 +321,36 @@ impl IspController {
             }
         }
 
-        // Select CCM from estimated CCT
+        // Update CCM: y = scale · select_ccm(cct) + offset, with EMA smoothing
         if let Some(cct) = self.estimated_cct {
-            let mut ccm = select_ccm(cct);
+            let x = select_ccm(cct);
+            // Element-wise: raw[i] = scale[i] * x[i] + offset[i]
+            let raw: [f32; 9] = std::array::from_fn(|i| {
+                self.ccm_scale_a[i] * x[i] + self.ccm_offset_c[i]
+            });
+
+            // Output EMA smoothing
+            if self.ccm_initialized {
+                for i in 0..9 {
+                    self.smoothed_ccm[i] += (raw[i] - self.smoothed_ccm[i]) * self.ccm_smoothing;
+                }
+            } else {
+                self.smoothed_ccm = raw;
+                self.ccm_initialized = true;
+            }
+
+            // Copy smoothed → ccm_matrix for external access
+            self.ccm_matrix = self.smoothed_ccm;
+
+            // Sanitize
             ccm_engine::sanitize_ccm(
-                &mut ccm, cct, "awb",
+                &mut self.ccm_matrix, cct, "stats",
                 Some(&mut self.clamp_flags),
                 Some(&mut self.clamp_cct_ref),
             );
-            self.smoothed_ccm = ccm;
+
+            // Sync back smoothed_ccm from sanitized matrix
+            self.smoothed_ccm = self.ccm_matrix;
         }
     }
 
@@ -812,6 +845,58 @@ mod tests {
         // Daylight: R/G ≈ 0.5, B/G ≈ 0.5 → CCT ≈ 4400 - 650 + 1050 = 4800
         let cct = IspController::estimate_cct(0.5, 0.5);
         assert!(cct >= 2000 && cct <= 10000);
+    }
+
+    #[test]
+    fn test_ccm_composition() {
+        let mut ctrl = IspController::new();
+        // Simulate a scene to get CCT estimated
+        ctrl.frame_count = 5;
+        ctrl.estimated_cct = Some(5500);
+        ctrl.avg_r = 0.5;
+        ctrl.avg_g = 0.5;
+        ctrl.avg_b = 0.5;
+
+        // Update CCM
+        ctrl.update_channel_stats(&[0.5, 0.5, 0.5]);
+
+        // CCM should be initialized
+        assert!(ctrl.ccm_initialized);
+        // All rows should sum to ≈1.0
+        let ccm = ctrl.ccm_matrix;
+        for row in 0..3 {
+            let base = row * 3;
+            let sum: f32 = ccm[base..base + 3].iter().sum();
+            assert!((sum - 1.0).abs() < 0.01, "Row {} sum = {}", row, sum);
+        }
+        // R-B and B-R should be negative (anti-purple)
+        assert!(ccm[2] < 0.0, "R-B should be negative: {}", ccm[2]);
+        assert!(ccm[6] < 0.0, "B-R should be negative: {}", ccm[6]);
+    }
+
+    #[test]
+    fn test_ccm_scale_offset() {
+        let mut ctrl = IspController::new();
+        ctrl.estimated_cct = Some(5500);
+        ctrl.ccm_smoothing = 1.0; // no smoothing for test
+
+        // Set scale = 2x diagonal, offset = 0.1 on diagonal
+        ctrl.ccm_scale_a = [2.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 2.0];
+        ctrl.ccm_offset_c = [0.1, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.1];
+
+        ctrl.update_channel_stats(&[0.5, 0.5, 0.5]);
+
+        // After EMA init: ccm_matrix = scale * quad + offset
+        // The first update should give initialized values
+        assert!(ctrl.ccm_initialized);
+
+        // Get the CCM and check row sums are ≈1 (sanitization normalizes)
+        let ccm = ctrl.ccm_matrix;
+        for row in 0..3 {
+            let base = row * 3;
+            let sum: f32 = ccm[base..base + 3].iter().sum();
+            assert!((sum - 1.0).abs() < 0.01, "Row {} sum = {}", row, sum);
+        }
     }
 
     #[test]
