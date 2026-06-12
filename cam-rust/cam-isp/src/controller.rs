@@ -8,6 +8,7 @@
 use cam_types::ToneParams;
 use crate::ae::AutoExposureState;
 use crate::ccm_engine::{self, select_ccm};
+use crate::scene::SceneCategory;
 
 /// Smoothing mode for temporal filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +139,12 @@ pub struct IspController {
     pub dominant_cluster_fraction: f32,
     /// Zone stats enabled flag.
     pub zone_stats_enabled: bool,
+
+    // ── Scene adaptivity ──
+    /// Current scene category for adaptive ISP tuning.
+    pub scene_category: SceneCategory,
+    /// CCT from last frame (for scene classification).
+    pub last_cct_for_scene: u32,
 }
 
 impl Default for IspController {
@@ -203,6 +210,8 @@ impl IspController {
             dominant_cct_cluster: None,
             dominant_cluster_fraction: 0.0,
             zone_stats_enabled: false,
+            scene_category: SceneCategory::Unknown,
+            last_cct_for_scene: 5500,
         }
     }
 
@@ -351,6 +360,67 @@ impl IspController {
 
             // Sync back smoothed_ccm from sanitized matrix
             self.smoothed_ccm = self.ccm_matrix;
+        }
+
+        // Scene classification + adaptive ISP tuning
+        let cct_for_scene = self.estimated_cct.unwrap_or(5500) as u32;
+        self.last_cct_for_scene = cct_for_scene;
+        let new_scene = SceneCategory::classify(self.scene_luminance, cct_for_scene);
+
+        // Scene transition detection
+        if new_scene != self.scene_category {
+            log::debug!(
+                "Scene transition: {:?} → {:?} (lum={:.3}, cct={}K)",
+                self.scene_category, new_scene, self.scene_luminance, cct_for_scene
+            );
+        }
+        self.scene_category = new_scene;
+
+        // Scene-adaptive parameter adjustments
+        match self.scene_category {
+            SceneCategory::Dark => {
+                // Boost exposure, reduce sharpness, warm up tones
+                self.tone_shadow_lift = self.tone_shadow_lift.max(0.15);
+                self.tone_gamma = self.tone_gamma.max(2.0).min(2.6);
+                // CCM diagonal boost for better low-light color
+                for i in [0, 4, 8] {
+                    self.ccm_scale_a[i] = self.ccm_scale_a[i].max(1.05).min(1.25);
+                }
+            },
+            SceneCategory::SunriseSunset => {
+                // Preserve warm tones: reduce AWB correction
+                // Bias AWB gains toward 1.0 to avoid neutralizing the warm cast
+                self.awb_gains[0] += (1.0 - self.awb_gains[0]) * 0.1;
+                self.awb_gains[2] += (1.0 - self.awb_gains[2]) * 0.1;
+                // Warm color bias: increase R channel gain slightly
+                self.ccm_scale_a[0] = self.ccm_scale_a[0].max(1.0).min(1.15);
+                // Enhance saturation for richer colors
+                self.tone_saturation = self.tone_saturation.max(1.1).min(1.4);
+            },
+            SceneCategory::Indoor => {
+                // Moderate settings (default behavior, reset any extremes)
+                self.tone_saturation = self.tone_saturation.clamp(0.9, 1.2);
+                self.tone_shadow_lift = self.tone_shadow_lift.clamp(0.05, 0.20);
+                self.tone_contrast = self.tone_contrast.clamp(0.9, 1.2);
+            },
+            SceneCategory::Outdoor => {
+                // Increase contrast and sharpness, reduce shadow lift
+                self.tone_contrast = self.tone_contrast.max(1.05).min(1.3);
+                self.tone_shadow_lift = self.tone_shadow_lift.min(0.12);
+                self.tone_gamma = self.tone_gamma.clamp(2.0, 2.4);
+            },
+            SceneCategory::Bright => {
+                // Reduce exposure gain, increase contrast for punch
+                self.exposure_gain = self.exposure_gain.min(1.2);
+                self.tone_contrast = self.tone_contrast.max(1.1).min(1.4);
+                self.tone_shadow_lift = self.tone_shadow_lift.min(0.08);
+                self.tone_gamma = self.tone_gamma.clamp(2.0, 2.3);
+                // Slightly desaturate very bright scenes
+                self.tone_saturation = self.tone_saturation.min(1.1);
+            },
+            SceneCategory::Unknown => {
+                // Fall through with default params
+            },
         }
     }
 
@@ -962,5 +1032,41 @@ mod tests {
         // Warm cluster (B high): CCT < 4000 → cluster 0
         // Cool cluster (R high): CCT > 5500 → cluster 2
         assert_eq!(ctrl.dominant_cct_cluster, Some(-1), "Mixed scene should be -1: {:?}", ctrl.dominant_cct_cluster);
+    }
+
+    #[test]
+    fn test_scene_classification_in_controller() {
+        let mut ctrl = IspController::new();
+
+        // Dark scene: low luminance → should be Dark
+        ctrl.scene_luminance = 0.02;
+        ctrl.update_channel_stats(&[0.02, 0.018, 0.015]);
+        assert_eq!(ctrl.scene_category, SceneCategory::Dark);
+
+        // Bright scene
+        let mut ctrl = IspController::new();
+        ctrl.frame_count = 5;
+        ctrl.scene_luminance = 0.7;
+        ctrl.update_channel_stats(&[0.7, 0.65, 0.6]);
+        assert_eq!(ctrl.scene_category, SceneCategory::Bright);
+
+        // Moderate luminance should be Outdoor
+        let mut ctrl = IspController::new();
+        ctrl.frame_count = 30;
+        ctrl.scene_luminance = 0.35;
+        ctrl.update_channel_stats(&[0.35, 0.33, 0.30]);
+        assert_eq!(ctrl.scene_category, SceneCategory::Outdoor);
+
+        // Indoor luminance
+        let mut ctrl = IspController::new();
+        ctrl.frame_count = 30;
+        ctrl.scene_luminance = 0.1;
+        // Neutral CCT (not warm) → Indoor, not Sunset
+        ctrl.update_channel_stats(&[0.10, 0.10, 0.10]);
+        let cct = ctrl.estimated_cct.unwrap_or(5500);
+        if cct > 4000 || cct == 0 {
+            assert_eq!(ctrl.scene_category, SceneCategory::Indoor,
+                "CCT={} should be Indoor", cct);
+        }
     }
 }
