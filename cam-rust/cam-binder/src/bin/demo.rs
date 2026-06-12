@@ -1,18 +1,20 @@
 //! Camera2-style demo app using the Camera HAL binder service.
 //!
-//! This simulates an Android app using Camera2 API, but directly through
-//! the Rust Camera HAL service (no Android framework needed).
-//!
-//! Flow (matches Camera2 API pattern):
+//! Flow:
 //! 1. Enumerate cameras via ICameraProvider.getCameraIdList()
 //! 2. Open camera via ICameraDevice.open(callback)
-//! 3. Configure streams via ICameraDeviceSession.configureStreams()
-//! 4. Submit capture requests via ICameraDeviceSession.processCaptureRequest()
-//! 5. Receive frames via ICameraDeviceCallback.onCaptureResult()
-//! 6. Save frames as raw RGBA or convert to PNG
+//! 3. Optionally set V4L2 device for real frames
+//! 4. Configure streams via ICameraDeviceSession.configureStreams()
+//! 5. Submit capture requests via ICameraDeviceSession.processCaptureRequest()
+//! 6. Receive frames via ICameraDeviceCallback.onCaptureResult()
+//! 7. Save frames as PNG or raw RGBA
 //!
 //! Usage:
+//!   # Test pattern frames
 //!   cargo run --bin cam-demo -- --width 640 --height 480 --frames 5 --out ./frames
+//!
+//!   # Real V4L2 capture (Linux with camera)
+//!   cargo run --features v4l2 --bin cam-demo -- --v4l2 /dev/video0 --width 640 --height 480 --frames 3 --out ./frames --png
 
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
@@ -30,9 +32,13 @@ use cam_binder::{
 #[derive(Parser, Debug)]
 #[clap(about = "Camera2-style demo app")]
 struct Args {
-    /// Camera ID to use
+    /// Camera ID to use (for provider lookup)
     #[clap(long, default_value = "0")]
     camera: String,
+
+    /// V4L2 device path (e.g., /dev/video0) — enables real camera capture
+    #[clap(long)]
+    v4l2: Option<String>,
 
     /// Frame width
     #[clap(long, default_value_t = 640)]
@@ -46,43 +52,69 @@ struct Args {
     #[clap(long, default_value_t = 5)]
     frames: usize,
 
-    /// Output directory
+    /// Output directory or file prefix
     #[clap(long, default_value = "./frames")]
     out: String,
 
-    /// Save as raw RGBA (no PNG conversion)
+    /// Save as PNG (requires image crate)
+    #[clap(long)]
+    png: bool,
+
+    /// Save as raw RGBA (default if --png not set)
     #[clap(long)]
     raw: bool,
+
+    /// Verbose output
+    #[clap(long, short)]
+    verbose: bool,
 }
 
 /// Frame collector callback.
 struct FrameCollector {
     frames: Mutex<Vec<StreamBuffer>>,
     out_dir: PathBuf,
+    save_png: bool,
     save_raw: bool,
 }
 
 impl FrameCollector {
-    fn new(out_dir: PathBuf, save_raw: bool) -> Self {
+    fn new(out_dir: PathBuf, save_png: bool, save_raw: bool) -> Self {
         fs::create_dir_all(&out_dir).ok();
         Self {
             frames: Mutex::new(Vec::new()),
             out_dir,
+            save_png,
             save_raw,
         }
     }
 
     fn save_frame(&self, buffer: &StreamBuffer, index: usize) {
-        let filename = if self.save_raw {
-            format!("frame_{:04}.rgba", index)
-        } else {
-            format!("frame_{:04}.raw", index)
-        };
-        let path = self.out_dir.join(&filename);
+        let w = buffer.width as u32;
+        let h = buffer.height as u32;
+        let data = &buffer.data;
 
-        match fs::write(&path, &buffer.data) {
-            Ok(_) => info!("Saved frame {} → {} ({} bytes)", index, path.display(), buffer.data.len()),
-            Err(e) => error!("Failed to save frame {}: {}", index, e),
+        if self.save_png {
+            let filename = format!("frame_{:04}.png", index);
+            let path = self.out_dir.join(&filename);
+            match image::RgbaImage::from_raw(w, h, data.to_vec()) {
+                Some(img) => {
+                    if let Err(e) = img.save(&path) {
+                        error!("Failed to save PNG {}: {}", path.display(), e);
+                    } else {
+                        info!("Saved PNG {} ({}x{})", path.display(), w, h);
+                    }
+                }
+                None => error!("Failed to create PNG image from raw data"),
+            }
+        }
+
+        if self.save_raw || !self.save_png {
+            let filename = format!("frame_{:04}.raw", index);
+            let path = self.out_dir.join(&filename);
+            match fs::write(&path, &buffer.data) {
+                Ok(_) => info!("Saved raw {} ({} bytes)", path.display(), buffer.data.len()),
+                Err(e) => error!("Failed to save raw {}: {}", path.display(), e),
+            }
         }
     }
 }
@@ -124,10 +156,19 @@ fn main() {
     env_logger::init();
     let args = Args::parse();
 
+    let width = args.width;
+    let height = args.height;
+    let num_frames = args.frames;
+    let save_png = args.png || !args.raw;
+    let save_raw = args.raw || !args.png;
+
     info!("═══ Camera2-Style Demo App ═══");
-    info!("Camera: {}, Resolution: {}x{}, Frames: {}",
-        args.camera, args.width, args.height, args.frames);
+    info!("Camera: {}, Resolution: {}x{}, Frames: {}", args.camera, width, height, num_frames);
+    if let Some(ref dev) = args.v4l2 {
+        info!("V4L2 device: {}", dev);
+    }
     info!("Output: {}", args.out);
+    info!("Format: {}", if save_png { "PNG" } else { "raw RGBA" });
 
     // ── Step 1: Create Camera HAL Service ──
     let service = CameraHalService::new();
@@ -150,7 +191,8 @@ fn main() {
     // ── Step 4: Open camera ──
     let callback = Arc::new(FrameCollector::new(
         PathBuf::from(&args.out),
-        args.raw,
+        save_png,
+        save_raw,
     ));
 
     let session = match service.open_camera(&args.camera, callback.clone()) {
@@ -161,19 +203,25 @@ fn main() {
         }
     };
 
-    // ── Step 5: Configure streams ──
-    let stream_config = StreamConfig::new(0, args.width, args.height, 0x1);
+    // ── Step 5: Configure V4L2 (if requested) ──
+    if let Some(dev_path) = &args.v4l2 {
+        session.lock().unwrap().set_v4l2_device(dev_path);
+        info!("V4L2 device {} configured for real frame capture", dev_path);
+    }
+
+    // ── Step 6: Configure streams ──
+    let stream_config = StreamConfig::new(0, width, height, 0x1);
     let stream_ids = session.lock().unwrap().configure_streams(&[stream_config]);
     info!("Configured streams: {:?}", stream_ids);
 
-    // ── Step 6: Process capture requests ──
-    for i in 0..args.frames {
+    // ── Step 7: Process capture requests ──
+    for i in 0..num_frames {
         let request = CaptureRequest::preview(i as i64, 0);
         let buffers = session.lock().unwrap().process_capture_request(&request);
-        info!("Frame {}/{}: {} buffers", i + 1, args.frames, buffers.len());
+        info!("Frame {}/{}: {} buffers", i + 1, num_frames, buffers.len());
     }
 
-    // ── Step 7: Flush and close ──
+    // ── Step 8: Flush and close ──
     session.lock().unwrap().flush();
     session.lock().unwrap().close();
     service.close_camera(&args.camera);
@@ -182,7 +230,7 @@ fn main() {
     let collected = callback.frames.lock().unwrap();
     info!("═══ Capture complete: {} frames saved to {} ═══", collected.len(), args.out);
 
-    // Print a simple hex dump of first frame's first 32 bytes
+    // Print hex dump of first frame's first 32 bytes
     if let Some(first) = collected.first() {
         let hex: String = first.data.iter().take(32)
             .map(|b| format!("{:02x}", b))

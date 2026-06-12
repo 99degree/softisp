@@ -31,7 +31,7 @@ fn main() {
                 .cpp(true)
                 .std("c++17")
                 .file("mnn_sys/mnn_wrapper.cpp")
-                .include(&mnn_include)
+                .include(&_mnn_include)
                 .compile("mnn_wrapper");
 
             // Link MNN shared library
