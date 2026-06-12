@@ -2,7 +2,7 @@
 //! Ported from com.camcore.isp.mnn.MnnEngine
 
 use log::info;
-use cam_types::ToneParams;
+use cam_types::{FrameFormat, ToneParams};
 
 use crate::engine::IspEngine;
 use crate::pipeline::{IspBlock, IspFrame, IspAuxOutput};
@@ -121,8 +121,8 @@ impl IspEngine for MnnEngine {
     fn build(
         &mut self,
         pipeline_head: Box<dyn IspBlock>,
-        _aux_blocks: Vec<Box<dyn IspBlock>>,
-        _warp_block: Option<Box<dyn IspBlock>>,
+        #[allow(unused)] aux_blocks: Vec<Box<dyn IspBlock>>,
+        #[allow(unused)] _warp_block: Option<Box<dyn IspBlock>>,
         opset_version: i64,
     ) -> Result<(), String> {
         info!("Building MNN engine with backend={}", self.backend.id());

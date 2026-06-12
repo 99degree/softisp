@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn test_default_pipeline_composition() {
         // Build the standard 9-block pipeline
-        let mut raw = RawInputBlock::new();
+        let raw = RawInputBlock::new();
         let mut norm = NormalizeBlock::new();
         let mut cfa = CfaBlock::new();
         let mut blc = BlcBlock::new();
