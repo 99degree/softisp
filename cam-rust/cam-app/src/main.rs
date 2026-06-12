@@ -8,9 +8,12 @@ use clap::Parser;
 
 use cam_isp::mnn::MnnBackend;
 use cam_isp::onnx::OrtBackend;
-use cam_isp::pipeline::{GraphComposer, IspBlock};
+use cam_isp::pipeline::GraphComposer;
 use cam_isp::blocks::*;
+use cam_isp::pipeline::IspBlock;
 use cam_isp::{register_mnn_engine, register_onnx_engine};
+use cam_isp::engine::select_engine_by_name;
+use cam_isp::cpu::register_cpu_engine;
 
 /// Command-line arguments.
 #[derive(Parser, Debug)]
@@ -20,8 +23,8 @@ struct Args {
     #[arg(short, long, default_value_t = 1280)]
     width: u32,
 
-    /// Backend for registration (mnn, onnx, auto).
-    #[arg(short, long, default_value = "auto")]
+    /// Backend for pipeline (cpu, ort, mnn, auto).
+    #[arg(short, long, default_value = "auto", value_parser = ["cpu", "ort", "mnn", "auto"])]
     backend: String,
 }
 
@@ -55,6 +58,33 @@ fn build_pipeline(width: u32) -> Result<Vec<u8>, String> {
     GraphComposer::compose_from_vec(&pipeline, &[], 16)
 }
 
+/// Register engines based on backend selection.
+fn register_engines(backend: &str) {
+    match backend {
+        "cpu" => {
+            info!("Registering CPU engine only");
+            register_cpu_engine();
+        }
+        "ort" => {
+            info!("Registering ONNX Runtime engines");
+            register_onnx_engine!(OrtBackend::Nnapi);
+            register_onnx_engine!(OrtBackend::Cpu);
+        }
+        "mnn" => {
+            info!("Registering MNN engines");
+            register_mnn_engine!(MnnBackend::Vulkan);
+            register_mnn_engine!(MnnBackend::Cpu);
+        }
+        _ => {
+            info!("Registering all engines (auto mode)");
+            register_mnn_engine!(MnnBackend::Vulkan);
+            register_mnn_engine!(MnnBackend::Cpu);
+            register_onnx_engine!(OrtBackend::Nnapi);
+            register_onnx_engine!(OrtBackend::Cpu);
+        }
+    }
+}
+
 fn main() {
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
@@ -63,13 +93,23 @@ fn main() {
 
     let args = Args::parse();
     info!("=== Cam App v{} ===", env!("CARGO_PKG_VERSION"));
+    info!("Backend: {}", args.backend);
     info!("Building pipeline with width={}", args.width);
 
-    // Register engines
-    register_mnn_engine!(MnnBackend::Vulkan);
-    register_mnn_engine!(MnnBackend::Cpu);
-    register_onnx_engine!(OrtBackend::Nnapi);
-    register_onnx_engine!(OrtBackend::Cpu);
+    // Register engines based on backend selection
+    register_engines(&args.backend);
+
+    // Select and initialize the engine
+    match select_engine_by_name(&args.backend) {
+        Some(engine) => {
+            info!("Selected engine: {}", engine.backend_name());
+            info!("Engine priority: {}", engine.priority());
+        }
+        None => {
+            error!("No engine available for backend '{}'", args.backend);
+            std::process::exit(1);
+        }
+    }
 
     // Build pipeline and compose ONNX
     match build_pipeline(args.width) {
