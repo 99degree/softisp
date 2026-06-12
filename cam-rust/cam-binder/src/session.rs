@@ -14,6 +14,20 @@ use log::info;
 use crate::types::*;
 use crate::callback::ICameraDeviceCallback;
 
+/// Attempt to capture a single frame from V4L2 device.
+/// Returns raw RGBA pixel data.
+#[cfg(feature = "v4l2")]
+fn capture_v4l2_frame(device_path: &str, width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let (_w, _h, data) = cam_hal_linux::capture_single_v4l2_frame(device_path, width, height)?;
+    Ok(data)
+}
+
+/// Non-V4L2 stub.
+#[cfg(not(feature = "v4l2"))]
+fn capture_v4l2_frame(_device_path: &str, _width: u32, _height: u32) -> Result<Vec<u8>, String> {
+    Err("V4L2 feature not enabled".to_string())
+}
+
 /// Session state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionState {
@@ -42,6 +56,8 @@ pub struct CameraDeviceSession {
     frame_counter: Mutex<u64>,
     /// Buffer pool: stream_id -> list of pre-allocated buffers.
     _buffer_pool: Mutex<std::collections::HashMap<i32, Vec<Vec<u8>>>>,
+    /// Optional V4L2 device path for real frame capture.
+    v4l2_device: Mutex<Option<String>>,
 }
 
 impl CameraDeviceSession {
@@ -55,6 +71,7 @@ impl CameraDeviceSession {
             callback: Arc::new(Mutex::new(None)),
             frame_counter: Mutex::new(0),
             _buffer_pool: Mutex::new(std::collections::HashMap::new()),
+            v4l2_device: Mutex::new(None),
         }
     }
 
@@ -134,8 +151,8 @@ impl CameraDeviceSession {
 
     /// Capture a single frame for a stream.
     ///
-    /// For now, generates a test pattern (color bars).
-    /// When V4L2 is available, reads from the camera.
+    /// If a V4L2 device is configured, captures a real frame.
+    /// Otherwise generates a test pattern (color bars).
     fn capture_frame(&self, stream_id: i32, frame_number: u64) -> StreamBuffer {
         let streams = self.streams.lock().unwrap();
         let stream = match streams.iter().find(|s| s.config.stream_id == stream_id) {
@@ -146,10 +163,32 @@ impl CameraDeviceSession {
         let width = stream.config.width;
         let height = stream.config.height;
 
-        // Generate test pattern (SMPTE color bars)
-        let data = self.generate_test_pattern(width as u32, height as u32, frame_number);
+        // Try real V4L2 capture first
+        if let Some(dev_path) = self.v4l2_device.lock().unwrap().as_ref() {
+            match capture_v4l2_frame(dev_path, width as u32, height as u32) {
+                Ok(data) => {
+                    return StreamBuffer::ok(stream_id, width, height, data);
+                }
+                Err(e) => {
+                    info!("V4L2 capture failed ({}), falling back to test pattern", e);
+                }
+            }
+        }
 
+        // Fallback: generate test pattern
+        let data = self.generate_test_pattern(width as u32, height as u32, frame_number);
         StreamBuffer::ok(stream_id, width, height, data)
+    }
+
+    /// Set a V4L2 device path for real frame capture.
+    pub fn set_v4l2_device(&self, device_path: &str) {
+        *self.v4l2_device.lock().unwrap() = Some(device_path.to_string());
+        info!("CameraDeviceSession({}): V4L2 device set to {}", self.camera_id, device_path);
+    }
+
+    /// Clear the V4L2 device (use test patterns).
+    pub fn clear_v4l2_device(&self) {
+        *self.v4l2_device.lock().unwrap() = None;
     }
 
     /// Generate SMPTE color bar test pattern.

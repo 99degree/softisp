@@ -52,6 +52,7 @@ impl CameraProvider {
             let v4l2_devices = cam_hal_linux::list_v4l2_devices();
             for (i, path) in v4l2_devices.iter().enumerate() {
                 let id = i.to_string();
+                let dev_path = path.clone();
                 let info = CameraInfo {
                     camera_id: id.clone(),
                     facing: if i == 0 { 1 } else { 2 },
@@ -60,7 +61,7 @@ impl CameraProvider {
                     max_resolution: (1920, 1080),
                     hardware_level: 0,
                 };
-                let device = CameraDevice::new(id, path.clone(), info);
+                let device = CameraDevice::new(id.clone(), dev_path, info);
                 self.devices.push(Arc::new(Mutex::new(device)));
                 info!("CameraProvider: found camera {} at {}", id, path);
             }
