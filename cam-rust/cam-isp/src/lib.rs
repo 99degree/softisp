@@ -17,6 +17,7 @@ pub mod ccm_engine;
 pub mod eis;
 pub mod af;
 pub mod calibration;
+pub mod scene;
 
 use std::sync::Once;
 
