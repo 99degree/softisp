@@ -75,11 +75,9 @@ impl IspEngine for CpuEngine {
         let t0 = std::time::Instant::now();
 
         info!("CpuEngine::process {}x{} → target {}", width, height, target_width);
-        eprintln!("DEBUG: step0 {}", t0.elapsed().as_millis());
 
         // ── 1. RawInput: interpret as INT16 Bayer ──
         // Input is raw 16-bit sensor data (Bayer pattern)
-        eprintln!("DEBUG: start rawinput {}", t0.elapsed().as_millis());
         let raw: Vec<u16> = if buf.len() >= (width * height * 2) as usize {
             buf.chunks_exact(2)
                 .take((width * height) as usize)
@@ -90,20 +88,16 @@ impl IspEngine for CpuEngine {
             generate_simulated_raw(width, height, buf)
         };
 
-        eprintln!("DEBUG: start normalize {}", t0.elapsed().as_millis());
         // ── 2. Normalize: INT16 → FLOAT [0, 1] ──
         let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
         let float: Vec<f32> = raw.iter().map(|&v| v as f32 / max_val).collect();
 
-        eprintln!("DEBUG: start dpc {}", t0.elapsed().as_millis());
         // ── 2b. Defective pixel correction (hot pixel removal) ──
         let dpc_data = apply_dpc(&float, width as usize, height as usize, _lsc_gains.map(|g| g[0]).unwrap_or(0.15));
 
-        eprintln!("DEBUG: start denoise {}", t0.elapsed().as_millis());
         // ── 2c. Gaussian denoise (optional, light blend) ──
         let denoised = apply_gaussian_denoise(&dpc_data, width as usize, height as usize, 0.3);
 
-        eprintln!("DEBUG: start calibration {}", t0.elapsed().as_millis());
         // ── 2d. Calibration stats: quad-level sensor metadata from raw Bayer ──
         let calibration_stats = {
             let quads = bayer_to_quads(&denoised, width as usize, height as usize);
@@ -183,11 +177,9 @@ impl IspEngine for CpuEngine {
         let lsc_k = _lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15);
         let corrected = apply_lsc(&blc_wb, width as usize, height as usize, lsc_k);
 
-        eprintln!("DEBUG: start demosaic {}", t0.elapsed().as_millis());
         // ── 5. Malvar demosaic: raw CFA → RGB ──
         let rgb = demosaic_malvar(&corrected, width as usize, height as usize, Some(&awb_gains));
 
-        eprintln!("DEBUG: after demosaic, start stats {}", t0.elapsed().as_millis());
         // ── 5b. Compute stats from RGB and update controller ──
         let channel_means = compute_channel_means(&rgb);
         let tone_stats = compute_tone_stats(&rgb);
@@ -213,7 +205,6 @@ impl IspEngine for CpuEngine {
             ctrl.get_ccm()
         };
 
-        eprintln!("DEBUG: after ctrl, ae_gain {}", t0.elapsed().as_millis());
         // ── 6. Auto exposure (use controller or fallback simple AE) ──
         let ae_gain = if _analog_gain <= 0.0 {
             self.controller.lock().unwrap().get_effective_exposure_gain()
@@ -221,22 +212,33 @@ impl IspEngine for CpuEngine {
             calculate_ae_gain(&rgb)
         };
 
-        eprintln!("DEBUG: after ae_gain, ccm {}", t0.elapsed().as_millis());
         // ── 7. CCM: 3×3 color matrix (use controller if no external) ──
         let ccm: &[f32; 9] = ccm_matrix.unwrap_or(&ctrl_ccm);
         let ccm_applied = apply_ccm(&rgb, ccm);
 
-        eprintln!("DEBUG: after ccm, tone {}", t0.elapsed().as_millis());
         // ── 8. Tone: apply tone curve (with AE gain) ──
         let adjusted = apply_ae_gain(&ccm_applied, ae_gain);
         let toned = apply_tone(&adjusted, _tone_params, width as usize, height as usize);
 
-        eprintln!("DEBUG: after tone, display {}", t0.elapsed().as_millis());
+        // ── 8b. False Color Suppression (edge-aware chroma desaturation) ──
+        let fcs_strength = 0.4; // 0..1, moderate by default
+        let toned = apply_fcs(&toned, width as usize, height as usize, fcs_strength);
+
+        // ── 8c. Local Dynamic Contrast Improvement ──
+        let ldci_strength = 0.3; // 0..1, moderate by default
+        let toned = apply_ldci(&toned, width as usize, height as usize, ldci_strength);
+
+        // ── 8b. False Color Suppression (edge-aware chroma desaturation) ──
+        let fcs_strength = 0.4; // 0..1, moderate by default
+        let toned = apply_fcs(&toned, width as usize, height as usize, fcs_strength);
+
+        // ── 8c. Local Dynamic Contrast Improvement ──
+        let ldci_strength = 0.3; // 0..1, moderate by default
+        let toned = apply_ldci(&toned, width as usize, height as usize, ldci_strength);
+
         // ── 9. Display: resize + convert to UINT8 BGRA ──
         let out_width = if target_width > 0 { target_width } else { width };
-        eprintln!("DEBUG: before display_output call {}", t0.elapsed().as_millis());
         let out_bytes = display_output(&toned, width as usize, height as usize, out_width as usize);
-        eprintln!("DEBUG: after display_output call {}", t0.elapsed().as_millis());
 
         let elapsed = t0.elapsed();
         info!("CpuEngine: processed in {:?} → {}×{} output ({} bytes)",
@@ -462,11 +464,9 @@ fn apply_lsc(raw: &[f32], w: usize, h: usize, k: f32) -> Vec<f32> {
 /// BGGR pattern expected.
 /// Reference: Malvar, He, Cutler "High-Quality Linear Interpolation for Demosaicing of Bayer-Patterned Color Images" ICASSP 2004.
 fn demosaic_malvar(cfa: &[f32], width: usize, height: usize, _awb: Option<&[f32; 3]>) -> Vec<f32> {
-    eprintln!("DEBUG demosaic: {}x{} pixels", width, height);
     let mut rgb = vec![0.0f32; width * height * 3];
 
     for y in 0..height {
-        if y % 10 == 0 { eprintln!("DEBUG demosaic row {}/{}", y, height); }
         for x in 0..width {
             let idx = y * width + x;
             let is_even_row = y % 2 == 0;
@@ -903,6 +903,136 @@ fn bayer_to_quads(bayer: &[f32], w: usize, h: usize) -> Vec<f32> {
     }
 
     quads
+}
+
+/// False Color Suppression (FCS) — edge-aware chroma desaturation.
+///
+/// Detects edges using a 3×5 Laplacian-like kernel on the Y (luminance) channel,
+/// then suppresses saturation proportionally to edge strength.
+/// This reduces color fringing (green/magenta halos) at sharp edges.
+///
+/// Ported from `EeBlock.kt` / `FcsBlock.kt` edge detection kernel.
+fn apply_fcs(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<f32> {
+    if strength <= 0.0 || rgb.len() < 9 {
+        return rgb.to_vec();
+    }
+
+    let mut out = rgb.to_vec();
+
+    // 3×5 edge detection kernel (Laplacian-like, from openISP)
+    // Normalized sum close to 0; center = 1.0 (after /8)
+    let kernel: [f32; 15] = [
+        -0.125,  0.0, -0.125,  0.0, -0.125,
+        -0.125,  0.0,  1.0,   0.0, -0.125,
+        -0.125,  0.0, -0.125,  0.0, -0.125,
+    ];
+
+    let gain = strength * 0.125; // scale: 0..1 → 0..0.125
+
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            if idx + 2 >= rgb.len() { continue; }
+
+            // Compute Y (luma) edge response: convolve 3×5 kernel on Y
+            let mut edge_y = 0.0f32;
+            for ky in 0..3 {
+                for kx in 0..5 {
+                    let py = y as isize + ky as isize - 1;
+                    let px = x as isize + kx as isize - 2;
+                    if py < 0 || py >= h as isize || px < 0 || px >= w as isize {
+                        continue;
+                    }
+                    let p_idx = (py as usize * w + px as usize) * 3;
+                    if p_idx + 2 >= rgb.len() { continue; }
+                    // Luma at pixel
+                    let lum = 0.299 * rgb[p_idx] + 0.587 * rgb[p_idx + 1] + 0.114 * rgb[p_idx + 2];
+                    edge_y += lum * kernel[ky * 5 + kx];
+                }
+            }
+
+            // Edge strength: absolute value, clamped
+            let edge_strength = (edge_y.abs() * gain).clamp(0.0, 1.0);
+
+            // Attenuation: 1 - edge_strength (weaker chroma at edges)
+            let atten = 1.0 - edge_strength;
+
+            // Desaturate toward luma at edges
+            let r = out[idx];
+            let g = out[idx + 1];
+            let b = out[idx + 2];
+            let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            out[idx]     = luma + (r - luma) * atten;
+            out[idx + 1] = luma + (g - luma) * atten;
+            out[idx + 2] = luma + (b - luma) * atten;
+        }
+    }
+
+    out
+}
+
+/// Local Dynamic Contrast Improvement (LDCI) — tile-based contrast stretch on Y.
+///
+/// Similar to CLAHE: computes local mean via box blur, then boosts
+/// deviation from local mean (local contrast) scaled by strength.
+/// Y channel only; UV pass through unchanged.
+///
+/// Ported from `LdciBlock.kt`.
+fn apply_ldci(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<f32> {
+    if strength <= 0.0 || rgb.len() < 9 {
+        return rgb.to_vec();
+    }
+
+    let mut out = vec![0.0f32; rgb.len()];
+
+    // Compute local mean via box blur (kernel_size = 9, SAME padding)
+    let radius: usize = 4; // for 9×9
+
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            if idx + 2 >= rgb.len() { continue; }
+
+            let r = rgb[idx];
+            let g = rgb[idx + 1];
+            let b = rgb[idx + 2];
+            let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+
+            // Compute local mean luma (box filter 9×9)
+            let mut sum = 0.0f32;
+            let mut count_px = 0u32;
+            for dy in -(radius as isize)..=radius as isize {
+                for dx in -(radius as isize)..=radius as isize {
+                    let py = y as isize + dy;
+                    let px = x as isize + dx;
+                    if py < 0 || py >= h as isize || px < 0 || px >= w as isize {
+                        continue;
+                    }
+                    let p_idx = (py as usize * w + px as usize) * 3;
+                    if p_idx + 2 >= rgb.len() { continue; }
+                    let pl = 0.299 * rgb[p_idx] + 0.587 * rgb[p_idx + 1] + 0.114 * rgb[p_idx + 2];
+                    sum += pl;
+                    count_px += 1;
+                }
+            }
+            let local_mean = sum / count_px.max(1) as f32;
+
+            // Local contrast: deviation from local mean
+            let local_contrast = luma - local_mean;
+
+            // Boost Y by local contrast scaled by strength
+            let boost = local_contrast * strength.clamp(0.0, 1.0);
+            let enhanced_luma = (luma + boost).clamp(0.0, 1.0);
+
+            // Scale RGB proportionally (preserve hue)
+            let scale = if luma > 0.001 { enhanced_luma / luma } else { 1.0 };
+            out[idx]     = (r * scale).clamp(0.0, 1.0);
+            out[idx + 1] = (g * scale).clamp(0.0, 1.0);
+            out[idx + 2] = (b * scale).clamp(0.0, 1.0);
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
