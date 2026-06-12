@@ -57,7 +57,7 @@ impl IspEngine for CpuEngine {
         _sensor_max: f32,
         target_width: u32,
         ccm_matrix: Option<&[f32; 9]>,
-        tone_params: &ToneParams,
+        _tone_params: &ToneParams,
         bayer_gains: Option<&[f32; 4]>,
         awb_gains: Option<&[f32; 3]>,
         _analog_gain: f32,
@@ -116,30 +116,30 @@ impl IspEngine for CpuEngine {
         // ── 5b. Compute stats from RGB and update controller ──
         let channel_means = compute_channel_means(&rgb);
         let tone_stats = compute_tone_stats(&rgb);
-        {
+        let ctrl_ccm = {
             let mut ctrl = self.controller.lock().unwrap();
             ctrl.update_channel_stats(&channel_means);
             ctrl.update_tone_stats(&tone_stats);
-            // Update tone params from controller for the *next* frame
             info!("Ctrl AWB gains: {:.3} {:.3} {:.3}, CCT: {:?}, AE gain: {:.3}",
                 ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2],
                 ctrl.estimated_cct, ctrl.get_effective_exposure_gain());
-        }
+            ctrl.get_ccm()
+        };
 
-        // ── 6. Auto exposure (compute target brightness) ──
-        let ae_gain = calculate_ae_gain(&rgb);
+        // ── 6. Auto exposure (use controller or fallback simple AE) ──
+        let ae_gain = if _analog_gain <= 0.0 {
+            self.controller.lock().unwrap().get_effective_exposure_gain()
+        } else {
+            calculate_ae_gain(&rgb)
+        };
 
-        // ── 7. CCM: 3×3 color matrix ──
-        let ccm = ccm_matrix.unwrap_or(&[
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-        ]);
+        // ── 7. CCM: 3×3 color matrix (use controller if no external) ──
+        let ccm: &[f32; 9] = ccm_matrix.unwrap_or(&ctrl_ccm);
         let ccm_applied = apply_ccm(&rgb, ccm);
 
         // ── 8. Tone: apply tone curve (with AE gain) ──
         let adjusted = apply_ae_gain(&ccm_applied, ae_gain);
-        let toned = apply_tone(&adjusted, tone_params, width as usize, height as usize);
+        let toned = apply_tone(&adjusted, _tone_params, width as usize, height as usize);
 
         // ── 9. Display: resize + convert to UINT8 BGRA ──
         let out_width = if target_width > 0 { target_width } else { width };
