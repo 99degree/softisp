@@ -100,11 +100,12 @@ impl MnnEngine {
         use crate::engine::register_engine;
         use crate::engine::EngineFactory;
 
-        // Build ONE model at 320×240 — small enough to convert quickly,
-        // large enough for GPU kernel-launch overhead to not dominate.
-        let bench_w = 320u32;
-        let bench_h = 240u32;
-        let mnn_path = match Self::build_bench_model(bench_w) {
+        // Build ONE compute-heavy model (3× Conv3×3 + Relu).
+        // 160×120 is large enough for GPU compute to dominate over kernel-launch overhead,
+        // yet small enough for the ONNX→MNN conversion to finish in <1 s.
+        let bench_w = 160u32;
+        let bench_h = 120u32;
+        let mnn_path = match Self::build_bench_model(bench_w, bench_h) {
             Ok(p) => p,
             Err(e) => {
                 error!("Failed to build bench model: {}; using default priorities", e);
@@ -156,27 +157,111 @@ impl MnnEngine {
         info!("Registered {} MNN engine factories (default priorities)", backends.len());
     }
 
-    /// Build a LITE .mnn model for benchmarking (height derived 4:3 from w).
+    /// Build a compute-heavy .mnn model for benchmarking (3× Conv3×3 + Relu).
+    /// Designed to stress GPU compute units — far more FLOPs than the ISP pipeline.
+    /// Accepts [1,1,H,W] f32 input, outputs [1,3,H,W] f32.
     #[cfg(feature = "mnn")]
-    fn build_bench_model(w: u32) -> Result<String, String> {
-        use crate::profile::PipelineProfile;
-        use crate::pipeline::GraphComposer;
+    fn build_bench_model(bench_w: u32, bench_h: u32) -> Result<String, String> {
+        use crate::onnx::proto::Proto;
         use crate::mnn_converter::convert_onnx_to_mnn;
 
         let pid = std::process::id();
         let onnx_path = format!(".mnn_bench_{}.onnx", pid);
         let mnn_path = format!(".mnn_bench_{}.mnn", pid);
 
-        let blocks = PipelineProfile::LITE.build_blocks(w, 0);
-        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-        let model = GraphComposer::compose_from_vec(&refs, &[], 16)
-            .map_err(|e| format!("compose: {}", e))?;
-        std::fs::write(&onnx_path, &model).map_err(|e| format!("write: {}", e))?;
+        let dims_in = vec![
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(bench_h as i64),
+            Proto::tensor_dim_value(bench_w as i64),
+        ];
+        let dims_out = vec![
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(3),
+            Proto::tensor_dim_value(bench_h as i64),
+            Proto::tensor_dim_value(bench_w as i64),
+        ];
 
+        // Wider channels for meaningful GPU stress:
+        //   Conv1: 1→16  (144 params)
+        //   Conv2: 16→16 (2304 params)
+        //   Conv3: 16→3  (432 params)
+        // Total: 2880 weights → ~110M FLOPs at 160×120
+        let w1 = Self::rand_weight(16 * 1 * 3 * 3);  // [16, 1, 3, 3]
+        let w2 = Self::rand_weight(16 * 16 * 3 * 3); // [16, 16, 3, 3]
+        let w3 = Self::rand_weight(3 * 16 * 3 * 3);  // [3, 16, 3, 3]
+
+        let dims_16 = vec![
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(16),
+            Proto::tensor_dim_value(bench_h as i64),
+            Proto::tensor_dim_value(bench_w as i64),
+        ];
+
+        let nodes = vec![
+            Proto::node("Conv", &["input", "conv1_w", "conv1_b"], &["conv1_out"],
+                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
+                  Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                  Proto::attribute_ints("strides", &[1, 1]),
+                  Proto::attribute_int("group", 1)]),
+            Proto::node("Relu", &["conv1_out"], &["relu1_out"], &[]),
+            Proto::node("Conv", &["relu1_out", "conv2_w", "conv2_b"], &["conv2_out"],
+                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
+                  Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                  Proto::attribute_ints("strides", &[1, 1]),
+                  Proto::attribute_int("group", 1)]),
+            Proto::node("Relu", &["conv2_out"], &["relu2_out"], &[]),
+            Proto::node("Conv", &["relu2_out", "conv3_w", "conv3_b"], &["output"],
+                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
+                  Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                  Proto::attribute_ints("strides", &[1, 1]),
+                  Proto::attribute_int("group", 1)]),
+        ];
+
+        let inputs = vec![Proto::value_info("input", &dims_in, 1)];
+        let outputs = vec![Proto::value_info("output", &dims_out, 1)];
+        let vi = vec![
+            Proto::value_info("conv1_out", &dims_16, 1),
+            Proto::value_info("relu1_out", &dims_16, 1),
+            Proto::value_info("conv2_out", &dims_16, 1),
+            Proto::value_info("relu2_out", &dims_16, 1),
+        ];
+
+        let init = vec![
+            Proto::tensor_proto_float("conv1_w", &[16, 1, 3, 3], &w1),
+            Proto::tensor_proto_float("conv1_b", &[16], &[0.0f32; 16]),
+            Proto::tensor_proto_float("conv2_w", &[16, 16, 3, 3], &w2),
+            Proto::tensor_proto_float("conv2_b", &[16], &[0.0f32; 16]),
+            Proto::tensor_proto_float("conv3_w", &[3, 16, 3, 3], &w3),
+            Proto::tensor_proto_float("conv3_b", &[3], &[0.0f32; 3]),
+        ];
+
+        let opset = Proto::opset("", 21);
+        let graph = Proto::graph("bench", &nodes, &inputs, &outputs, &init, &vi);
+        let model = Proto::model(9, &opset, "cam_isp_bench", &graph);
+
+        std::fs::write(&onnx_path, &model).map_err(|e| format!("write: {}", e))?;
         convert_onnx_to_mnn(&onnx_path, &mnn_path, None)
             .map_err(|e| format!("convert: {}", e))?;
         let _ = std::fs::remove_file(&onnx_path);
         Ok(mnn_path)
+    }
+
+    /// Helper: fill a tensor with small random values (stddev ~0.01).
+    #[cfg(feature = "mnn")]
+    fn rand_weight(n: usize) -> Vec<f32> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        // Simple xorshift to avoid std::rand dependency
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64;
+        let mut state = seed ^ 123456789;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            out.push(((state >> 32) as f32 * 2.3283064e-10) * 0.02 - 0.01); // [-0.01, 0.01)
+        }
+        out
     }
 
     /// Benchmark one backend at 320×240 in a dedicated thread with 2 s timeout.
