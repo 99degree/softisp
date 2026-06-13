@@ -301,7 +301,7 @@ pub fn register_cpu_engine() {
     let factory = EngineFactory {
         name: "CPU",
         priority: 70,
-        create_fn: || Box::new(CpuEngine::new()) as Box<dyn IspEngine>,
+        create_fn: Box::new(|| Box::new(CpuEngine::new()) as Box<dyn IspEngine>),
     };
     register_engine(factory);
 }
