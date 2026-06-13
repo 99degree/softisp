@@ -8,6 +8,9 @@ pub struct RawInputBlock {
     pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String,
     pub input_source: String,
+    pub concrete_h: Option<i64>,
+    pub concrete_w: Option<i64>,
+    pub elem_type: i32,
 }
 
 impl RawInputBlock {
@@ -18,7 +21,23 @@ impl RawInputBlock {
             next: None,
             frame_tensor: "RawInputBlock/frame".to_string(),
             input_source: String::new(),
+            concrete_h: None,
+            concrete_w: None,
+            elem_type: 5, // INT16 default
         }
+    }
+    
+    /// Set concrete height/width for fixed-shape models (avoids MNN resize crash).
+    pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
+        self.concrete_h = Some(h);
+        self.concrete_w = Some(w);
+        self
+    }
+    
+    /// Set element type: 1=FLOAT, 4=UINT16, 5=INT16.
+    pub fn with_elem_type(mut self, t: i32) -> Self {
+        self.elem_type = t;
+        self
     }
 }
 
@@ -34,16 +53,24 @@ impl IspBlock for RawInputBlock {
     fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
 
     fn graph_input_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_elem_type(&self) -> i32 { 5 } // INT16
+    fn input_elem_type(&self) -> i32 { self.elem_type }
 
     fn input_tensors(&self) -> Vec<String> { vec![] }
     fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.frame_tensor, &[
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
-            Proto::tensor_dim_param("height"), Proto::tensor_dim_param("width"),
-        ], 5))
+        let dims: Vec<Vec<u8>> = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
+            vec![
+                Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
+            ]
+        } else {
+            vec![
+                Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
+                Proto::tensor_dim_param("height"), Proto::tensor_dim_param("width"),
+            ]
+        };
+        Some(Proto::value_info(&self.frame_tensor, &dims, self.elem_type))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> { self.input_value_info() }
 }

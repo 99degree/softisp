@@ -44,20 +44,33 @@ fn link_mnn() {
     if wrapper_src.exists() && wrapper_hdr.exists() {
         println!("cargo:rerun-if-changed=mnn_sys/mnn_wrapper.cpp");
         println!("cargo:rerun-if-changed=mnn_sys/mnn_wrapper.h");
-
-        let mut build = cc::Build::new();
-        build
+        
+        let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        
+        cc::Build::new()
             .cpp(true)
             .std("c++17")
             .file("mnn_sys/mnn_wrapper.cpp")
             .include(&mnn_include)
             .compile("mnn_wrapper");
+        
+        // Copy .a to lib/aarch64 so it's findable by ALL targets
+        let lib_dir = std::path::Path::new(&abi_dir);
+        std::fs::create_dir_all(lib_dir).ok();
+        let src = out_dir.join("libmnn_wrapper.a");
+        let dst = lib_dir.join("libmnn_wrapper.a");
+        if src.exists() {
+            std::fs::copy(&src, &dst).ok();
+            println!("cargo:rerun-if-changed={}", dst.display());
+        }
     }
 
-    println!("cargo:rerun-if-changed={}/libMNN.so", abi_dir);
-    let mnn_lib_dir = std::env::var("MNN_LIB_DIR").unwrap_or_else(|_| abi_dir);
-    println!("cargo:rustc-link-search=native={}", mnn_lib_dir);
+    // Always link from lib/ directory (works for all targets)
+    println!("cargo:rustc-link-search=native={}", abi_dir);
+    println!("cargo:rustc-link-lib=static=mnn_wrapper");
     println!("cargo:rustc-link-lib=MNN");
+    println!("cargo:rustc-link-lib=c++_shared");
+    println!("cargo:rustc-link-lib=MNN_Express");
 }
 
 /// Compute the ABI-specific library directory.

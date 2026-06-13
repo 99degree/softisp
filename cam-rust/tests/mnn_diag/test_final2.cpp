@@ -1,0 +1,62 @@
+#include <MNN/Interpreter.hpp>
+#include <MNN/Tensor.hpp>
+#include <iostream>
+using namespace MNN;
+int main() {
+    auto* interp = Interpreter::createFromFile("test_final2.mnn");
+    if (!interp) { std::cerr << "load failed\n"; return 1; }
+    ScheduleConfig cfg; cfg.type = MNN_FORWARD_CPU; cfg.numThread = 4;
+    auto* sess = interp->createSession(cfg);
+    if (!sess) { std::cerr << "session failed\n"; return 1; }
+    auto* in = interp->getSessionInput(sess, nullptr);
+    auto inType = in->getType();
+    auto inshape = in->shape();
+    std::cout << "Input: ["; for (auto d : inshape) std::cout << d << ","; std::cout << "] code=" << (int)inType.code << "\n";
+    
+    int H = 48, W = 64;
+    bool needsResize = (inshape.size() < 4 || inshape[2] < 0);
+    if (needsResize) {
+        interp->resizeTensor(in, {1, 1, H, W});
+        interp->resizeSession(sess);
+    }
+    
+    // Zero-copy: create tensor wrapping user data (no memory alloc)
+    auto* hostIn = Tensor::create({1, 1, H, W}, inType, nullptr, Tensor::CAFFE);
+    if (inType.code == 2) { // FLOAT on this platform
+        float* d = (float*)hostIn->host<void>();
+        for (int i = 0; i < H*W; i++) d[i] = (float)(i % 256);
+    } else { // INT32
+        int32_t* d = (int32_t*)hostIn->host<void>();
+        for (int i = 0; i < H*W; i++) d[i] = (int32_t)(i % 256);
+    }
+    std::cout << "Input first: " << *(float*)hostIn->host<void>() << "\n";
+    
+    in->copyFromHostTensor(hostIn);
+    interp->runSession(sess);
+    
+    auto* out = interp->getSessionOutput(sess, nullptr);
+    if (!out) { std::cerr << "no output\n"; return 1; }
+    auto* hostOut = new Tensor(out, Tensor::CAFFE);
+    out->copyToHostTensor(hostOut);
+    
+    auto s = hostOut->shape();
+    int n = 1; for (auto d : s) n *= d;
+    auto ty = hostOut->getType();
+    std::cout << "Output: ["; for (auto d : s) std::cout << d << ","; std::cout << "] n=" << n << " type code=" << (int)ty.code << "\n";
+    
+    if (n > 0) {
+        float* d = (float*)hostOut->host<void>();
+        std::cout << "First 8: ";
+        for (int i = 0; i < 8; i++) std::cout << d[i] << " ";
+        std::cout << "\nExpected: 0 255 510 765 1020 1275 1530 1785\n";
+        int nz = 0;
+        for (int i = 0; i < std::min(n, 100); i++) if (d[i] != 0.0f) nz++;
+        std::cout << "Non-zero in 100: " << nz << "\n";
+    }
+    
+    Tensor::destroy(hostIn);
+    delete hostOut;
+    interp->releaseSession(sess);
+    Interpreter::destroy(interp);
+    return 0;
+}

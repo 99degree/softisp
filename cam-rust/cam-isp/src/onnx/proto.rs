@@ -254,6 +254,9 @@ impl Proto {
     }
 
     /// `onnx.NodeProto`.
+    /// NOTE: MNN's ONNX parser reads op_type from field 4 (output) rather than field 2.
+    /// So we encode: op_type → field 4, inputs → field 1, outputs → field 2.
+    /// See docs/mnn-inference-guide.md for details.
     pub fn node(op_type: &str, inputs: &[&str], outputs: &[&str], attrs: &[Vec<u8>]) -> Vec<u8> {
         let mut buf = Self::string(4, op_type);
         for inp in inputs {
@@ -275,6 +278,7 @@ impl Proto {
         inputs: &[Vec<u8>],
         outputs: &[Vec<u8>],
         initializers: &[Vec<u8>],
+        value_info: &[Vec<u8>],
     ) -> Vec<u8> {
         let mut buf = Self::string(2, name);
         for n in nodes {
@@ -288,6 +292,9 @@ impl Proto {
         }
         for o in outputs {
             buf.extend_from_slice(&Self::raw_bytes(12, o));
+        }
+        for vi in value_info {
+            buf.extend_from_slice(&Self::raw_bytes(13, vi));
         }
         buf
     }
@@ -425,9 +432,9 @@ mod tests {
         let outputs = vec![
             Proto::value_info("output", &dims, 1),
         ];
-        let graph = Proto::graph("test_graph", &nodes, &inputs, &outputs, &[]);
+        let graph = Proto::graph("test_graph", &nodes, &inputs, &outputs, &[], &[]);
         let opset = Proto::opset("", 16);
-        let model = Proto::model(7, &opset, "cam_rust_proto", &graph);
+        let model = Proto::model(11, &opset, "cam_rust_proto", &graph);
         assert!(!model.is_empty());
         assert!(model.len() > 20);
     }
