@@ -30,10 +30,11 @@ pub fn init_logger_with_tag(verbose: bool, tag: &str) {
 
         #[cfg(feature = "android")]
         {
-            android_logger::Config::default()
-                .with_max_level(level)
-                .with_tag(tag)
-                .init();
+            android_logger::init_once(
+                android_logger::Config::default()
+                    .with_max_level(level)
+                    .with_tag(tag),
+            );
             info!("Android logger initialized (verbose={}, tag={})", verbose, tag);
         }
 
