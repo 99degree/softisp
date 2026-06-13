@@ -196,6 +196,48 @@ impl CameraBuffer for HeapCameraBuffer {
     fn frame_number(&self) -> u64 { 0 }
 }
 
+// ── GenericCameraBuffer ─────────────────────────────────────────────────────
+
+/// Wraps any `MappedBuffer` as a `CameraBuffer` with explicit metadata.
+/// Useful when the underlying buffer doesn't natively track frame metadata.
+#[derive(Debug)]
+pub struct GenericCameraBuffer {
+    width: u32,
+    height: u32,
+    stride: u32,
+    format: i32,
+    inner: Box<dyn MappedBuffer>,
+}
+
+impl GenericCameraBuffer {
+    pub fn new(
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: i32,
+        inner: Box<dyn MappedBuffer>,
+    ) -> Self {
+        Self { width, height, stride, format, inner }
+    }
+}
+
+impl MappedBuffer for GenericCameraBuffer {
+    fn map(&self) -> Result<(*mut u8, usize), String> { self.inner.map() }
+    fn unmap(&self) -> Result<(), String> { self.inner.unmap() }
+    fn is_mapped(&self) -> bool { self.inner.is_mapped() }
+    fn size(&self) -> usize { self.inner.size() }
+    fn fd(&self) -> Option<i32> { self.inner.fd() }
+}
+
+impl CameraBuffer for GenericCameraBuffer {
+    fn width(&self) -> u32 { self.width }
+    fn height(&self) -> u32 { self.height }
+    fn stride(&self) -> u32 { self.stride }
+    fn format(&self) -> i32 { self.format }
+    fn timestamp(&self) -> u64 { 0 }
+    fn frame_number(&self) -> u64 { 0 }
+}
+
 // ── Allocator registry ─────────────────────────────────────────────────────
 
 /// Global allocator that delegates to a registered backend.
