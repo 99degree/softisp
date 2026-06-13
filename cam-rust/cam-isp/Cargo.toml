@@ -28,6 +28,7 @@ required-features = ["mnn"]
 
 [features]
 default = []
+mnn_buffer = []
 ort = ["dep:ort"]
 mnn = []
 
