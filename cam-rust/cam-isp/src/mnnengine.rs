@@ -317,6 +317,9 @@ impl MnnEngine {
         let model = Proto::model(9, &opset, "cam_isp_bench", &graph);
 
         std::fs::write(&onnx_path, &model).map_err(|e| format!("write: {}", e))?;
+        // Note: Graph optimization (optimizeLevel=2) and INT8 quantization (weightQuantBits=8)
+        // were tested but hurt performance on this synthetic benchmark (3.5 fps → 2.0 fps).
+        // For production ISP pipelines, retest with optimization enabled.
         convert_onnx_to_mnn(&onnx_path, &mnn_path, None)
             .map_err(|e| format!("convert: {}", e))?;
         let _ = std::fs::remove_file(&onnx_path);
