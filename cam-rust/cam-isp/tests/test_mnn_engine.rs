@@ -385,6 +385,89 @@ fn test_mnn_resolution_bench() {
     }
 }
 
+/// Stream at target resolution through MNN with a specific backend.
+#[cfg(feature = "mnn")]
+fn stream_mnn_backend(w: u32, h: u32, n_frames: u32, backend: &str) -> Result<f64, String> {
+    use cam_isp::engine::IspEngine;
+    use cam_isp::mnnengine::{MnnEngine, MnnBackend};
+    use std::time::Instant;
+
+    let be = match backend {
+        "vulkan" => MnnBackend::Vulkan,
+        "opencl" => MnnBackend::Opencl,
+        "opengl" => MnnBackend::OpenGl,
+        "cpu" => MnnBackend::Cpu,
+        _ => return Err(format!("unknown backend: {}", backend)),
+    };
+
+    // Clean up any stale model files
+    let onnx = format!(".mnn_be_{}.onnx", backend);
+    let mnn_p = format!(".mnn_be_{}.mnn", backend);
+    let _ = std::fs::remove_file(&onnx);
+    let _ = std::fs::remove_file(&mnn_p);
+
+    let mnn = build_profile_mnn(&cam_isp::profile::PipelineProfile::LITE, &format!("be_{}", backend), w, h)?;
+
+    let mut engine = MnnEngine::new(be);
+    engine.set_model_path(&mnn);
+    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    engine.build(head, vec![], None, 16).map_err(|e| format!("build: {}", e))?;
+
+    let params = cam_isp::engine::default_tone_params();
+    let frame_size = (w * h * 2) as usize;
+    let mut total_duration = std::time::Duration::ZERO;
+
+    for frame_idx in 0..n_frames {
+        let mut buf = vec![0u8; frame_size];
+        let base = (frame_idx * 7) as u8;
+        for chunk in buf.chunks_exact_mut(2) {
+            let v = base.wrapping_mul(13).wrapping_add(chunk.len() as u8);
+            chunk[0] = v;
+            chunk[1] = v.wrapping_mul(3);
+        }
+
+        let t_start = Instant::now();
+        let result = engine.process(
+            w, h, w, &buf, 1024.0, w,
+            None, &params, None, None, 1.0, 0.0, None, None, None,
+        );
+        let elapsed = t_start.elapsed();
+        total_duration += elapsed;
+
+        match &result {
+            Ok(frame) => {
+                let expected = (w * h * 4) as usize;
+                if frame.data.len() != expected {
+                    let _ = std::fs::remove_file(&mnn);
+                    return Err(format!("frame {} size: {} vs expected {}", frame_idx, frame.data.len(), expected));
+                }
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&mnn);
+                return Err(format!("frame {} failed: {}", frame_idx, e));
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(&mnn);
+    let fps = n_frames as f64 / total_duration.as_secs_f64();
+    eprintln!("  {}: {:4}x{:4} -> {:.1} fps (backend={})", backend, w, h, fps, backend);
+    Ok(fps)
+}
+
+/// Compare CPU vs Vulkan vs OpenCL at 720p.
+#[cfg(feature = "mnn")]
+#[test]
+#[ignore]
+fn test_mnn_backend_compare() {
+    for backend in &["vulkan", "opencl", "opengl", "cpu"] {
+        match stream_mnn_backend(640, 360, 5, backend) {
+            Ok(fps) => eprintln!("  {} OK: {:.1} fps", backend, fps),
+            Err(e) => eprintln!("  {} FAILED: {}", backend, e),
+        }
+    }
+}
+
 /// Uninitialized engine should return error.
 #[test]
 fn test_mnn_engine_uninitialized() {

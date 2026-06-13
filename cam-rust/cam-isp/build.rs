@@ -72,6 +72,7 @@ fn link_mnn() {
     println!("cargo:rustc-link-lib=MNN_Express");
     println!("cargo:rustc-link-lib=MNN_Vulkan");
     println!("cargo:rustc-link-lib=MNN_CL");
+    println!("cargo:rustc-link-lib=MNN_GL");
 }
 
 /// Compute the ABI-specific library directory.
