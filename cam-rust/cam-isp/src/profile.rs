@@ -42,6 +42,8 @@ pub struct PipelineProfile {
     pub level: PipelineLevel,
     /// Enable defective pixel correction (hot pixel removal).
     pub use_bad_pixel: bool,
+    /// ONNX element type for raw input: 1=FLOAT, 4=UINT16, 5=INT16.
+    pub input_elem_type: i32,
     /// Demosaic quality.
     pub demosaic_quality: DemosaicQuality,
     /// Enable local contrast enhancement.
@@ -62,6 +64,7 @@ impl PipelineProfile {
         label: "LITE",
         level: PipelineLevel::Lite,
         use_bad_pixel: false,
+        input_elem_type: 5, // INT16
         demosaic_quality: DemosaicQuality::HqLinear,
         use_local_contrast: false,
         use_unsharp: false,
@@ -75,6 +78,7 @@ impl PipelineProfile {
         label: "MED",
         level: PipelineLevel::Medium,
         use_bad_pixel: true,
+        input_elem_type: 5, // INT16
         demosaic_quality: DemosaicQuality::Standard,
         use_local_contrast: false,
         use_unsharp: true,
@@ -88,6 +92,7 @@ impl PipelineProfile {
         label: "HEAVY",
         level: PipelineLevel::Heavy,
         use_bad_pixel: true,
+        input_elem_type: 5, // INT16
         demosaic_quality: DemosaicQuality::Edge,
         use_local_contrast: true,
         use_unsharp: true,
@@ -101,6 +106,7 @@ impl PipelineProfile {
         label: "PRO",
         level: PipelineLevel::Pro,
         use_bad_pixel: true,
+        input_elem_type: 5, // INT16
         demosaic_quality: DemosaicQuality::Edge,
         use_local_contrast: true,
         use_unsharp: true,
@@ -114,6 +120,7 @@ impl PipelineProfile {
         label: "TEST",
         level: PipelineLevel::Lite,
         use_bad_pixel: false,
+        input_elem_type: 1, // FLOAT (MNN-compatible)
         demosaic_quality: DemosaicQuality::Standard,
         use_local_contrast: false,
         use_unsharp: false,
@@ -136,6 +143,7 @@ impl PipelineProfile {
         use_lsc: bool,
         use_warp: bool,
         use_hdr: bool,
+        input_elem_type: i32,
     ) -> Self {
         Self {
             label,
@@ -147,6 +155,7 @@ impl PipelineProfile {
             use_lsc,
             use_warp,
             use_hdr,
+            input_elem_type,
         }
     }
 
@@ -163,7 +172,11 @@ impl PipelineProfile {
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
 
         // ── Raw input ──
-        blocks.push(Box::new(RawInputBlock::new()));
+        // Use concrete dims for all profiles (avoids MNN symbolic dim issues).
+        // These are the model's declared input dimensions — MNN can resize at runtime.
+        blocks.push(Box::new(RawInputBlock::new()
+            .with_elem_type(self.input_elem_type)
+            .with_concrete_dims(48, 64)));
 
         // ── Normalize ──
         blocks.push(Box::new(NormalizeBlock::new()));
@@ -174,7 +187,7 @@ impl PipelineProfile {
         }
 
         // ── CFA unpack ──
-        blocks.push(Box::new(CfaBlock::new()));
+        blocks.push(Box::new(CfaBlock::new().with_concrete_dims(48, 64)));
 
         // ── Black level correction ──
         blocks.push(Box::new(BlcBlock::new()));
@@ -188,7 +201,7 @@ impl PipelineProfile {
         blocks.push(Box::new(BayerWbBlock::new()));
 
         // ── Demosaic ──
-        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
+        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern).with_concrete_dims(24, 32)));
 
         // ── Warp (optional, EIS/deshake) ──
         if self.use_warp {
@@ -217,23 +230,15 @@ impl PipelineProfile {
         blocks
     }
 
-    /// Build minimal identity blocks for TEST profile — fast ONNX path verification.
-    /// Pipeline: RawInput → Identity(normalize) → Identity(cfa) → Identity(blc) → 
-    /// Identity(wb) → FastDemosaic → Identity(ccm) → Identity(tone) → Display
-    fn build_test_blocks(&self, target_width: u32, bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
-        let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
-
-        blocks.push(Box::new(RawInputBlock::new()));
-        blocks.push(Box::new(IdentityBlock::new("normalize")));
-        blocks.push(Box::new(IdentityBlock::new("cfa")));
-        blocks.push(Box::new(IdentityBlock::new("blc")));
-        blocks.push(Box::new(IdentityBlock::new("wb")));
-        blocks.push(Box::new(FastDemosaicBlock::new("demosaic").with_pattern(bayer_pattern)));
-        blocks.push(Box::new(IdentityBlock::new("ccm")));
-        blocks.push(Box::new(IdentityBlock::new("tone")));
-        blocks.push(Box::new(DisplayBlock::new(target_width)));
-
-        blocks
+    /// Build minimal blocks for TEST profile — fast ONNX/MNN path verification.
+    /// Uses FLOAT input with concrete dims for MNN compatibility.
+    fn build_test_blocks(&self, target_width: u32, _bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
+        vec![
+            Box::new(RawInputBlock::new()
+                .with_elem_type(self.input_elem_type)
+                .with_concrete_dims(48, 64)),
+            Box::new(DisplayBlock::new(target_width)),
+        ]
     }
 
     /// Number of blocks in this profile's chain.
@@ -299,6 +304,7 @@ mod tests {
         let p = PipelineProfile::custom(
             "CUSTOM", PipelineLevel::Pro, true,
             DemosaicQuality::Edge, true, true, true, true, false,
+            5, // INT16
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
