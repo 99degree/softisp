@@ -20,6 +20,8 @@ pub enum CameraSourceType {
     Virtual,
     RawCamera2,
     RawStub,
+    /// Android Camera HAL v3 device.
+    AndroidHal,
 }
 
 /// Frame type for HDR and normal captures.
