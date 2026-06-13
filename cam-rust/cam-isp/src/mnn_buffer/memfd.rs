@@ -1,34 +1,34 @@
-//! memfd-based Buffer Management for MNN Inference
-//!
-//! Provides a clean, focused implementation using Linux memfd for:
-//! - Zero-copy buffer sharing between client and MNN
-//! - Hardware-aligned memory allocation
-//! - Proper lifetime management (client allocates, MNN uses, client frees)
-//!
-//! # Why memfd?
-//!
-//! 1. **Zero-copy**: Memory is mapped directly, no copying needed
-//! 2. **File descriptor**: Can be shared across processes (e.g., camera → MNN)
-//! 3. **Hardware alignment**: memfd + mmap provides page-aligned memory
-//! 4. **MIPI/ISP compatible**: Works with V4L2, Camera HAL, ISP hardware
-//! 5. **DMA-capable**: Can be used with dma-buf for GPU/ISP access
-//!
-//! # Usage Pattern
-//!
-//! ```text
-//! 1. Client: Create memfd buffer with required size
-//! 2. Client: Map buffer into memory (mmap)
-//! 3. Client: Fill buffer with camera/ISP data
-//! 4. Client: Set tensor->buffer().host = mmap_ptr
-//! 5. MNN:    Read from tensor (no copy)
-//! 6. Client: Free buffer when done (munmap + close)
-//! ```
+// memfd-based Buffer Management for MNN Inference
+//
+// Provides a clean, focused implementation using Linux memfd for:
+// - Zero-copy buffer sharing between client and MNN
+// - Hardware-aligned memory allocation
+// - Proper lifetime management (client allocates, MNN uses, client frees)
+//
+// # Why memfd?
+//
+// 1. **Zero-copy**: Memory is mapped directly, no copying needed
+// 2. **File descriptor**: Can be shared across processes (e.g., camera → MNN)
+// 3. **Hardware alignment**: memfd + mmap provides page-aligned memory
+// 4. **MIPI/ISP compatible**: Works with V4L2, Camera HAL, ISP hardware
+// 5. **DMA-capable**: Can be used with dma-buf for GPU/ISP access
+//
+// # Usage Pattern
+//
+// ```text
+// 1. Client: Create memfd buffer with required size
+// 2. Client: Map buffer into memory (mmap)
+// 3. Client: Fill buffer with camera/ISP data
+// 4. Client: Set tensor->buffer().host = mmap_ptr
+// 5. MNN:    Read from tensor (no copy)
+// 6. Client: Free buffer when done (munmap + close)
+// ```
 
 use std::fs::File;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::sync::Arc;
 
-/// Alignment for hardware access
+// Alignment for hardware access
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alignment {
     /// 4KB - Page size, minimum for mmap
@@ -45,13 +45,13 @@ impl Default for Alignment {
     }
 }
 
-/// memfd buffer for zero-copy MNN inference
-///
-/// This buffer uses Linux memfd_create + mmap to provide:
-/// - Zero-copy memory sharing
-/// - Hardware-aligned allocation
-/// - File descriptor for cross-process sharing
-/// - Proper cleanup (munmap + close)
+// memfd buffer for zero-copy MNN inference
+//
+// This buffer uses Linux memfd_create + mmap to provide:
+// - Zero-copy memory sharing
+// - Hardware-aligned allocation
+// - File descriptor for cross-process sharing
+// - Proper cleanup (munmap + close)
 pub struct MemfdBuffer {
     /// The memfd file descriptor
     fd: File,
@@ -380,9 +380,9 @@ impl Clone for MemfdBuffer {
     }
 }
 
-/// Buffer manager for MNN inference
-///
-/// Manages memfd buffers for multiple tensors
+// Buffer manager for MNN inference
+//
+// Manages memfd buffers for multiple tensors
 pub struct MemfdBufferManager {
     /// Map of tensor name to buffer
     buffers: std::collections::HashMap<String, Arc<MemfdBuffer>>,
@@ -512,10 +512,10 @@ impl Default for MemfdBufferManager {
 // C API for C++ Interop
 // ============================================================================
 
-/// Opaque pointer to MemfdBuffer for C API
+// Opaque pointer to MemfdBuffer for C API
 pub type CMemfdBuffer = MemfdBuffer;
 
-/// Opaque pointer to MemfdBufferManager for C API
+// Opaque pointer to MemfdBufferManager for C API
 pub type CMemfdBufferManager = MemfdBufferManager;
 
 #[no_mangle]
@@ -665,174 +665,174 @@ pub extern "C" fn memfd_buffer_manager_setup_mnn(
 // C++ Usage Example
 // ============================================================================
 
-/// ```cpp
-/// #include <MNN/Interpreter.hpp>
-/// #include <vector>
-/// 
-/// // Forward declarations from Rust
-/// extern "C" {
-///     // Buffer functions
-///     void* memfd_buffer_create(size_t size, uint32_t alignment, const char* name);
-///     void memfd_buffer_free(void* buffer);
-///     uint8_t* memfd_buffer_ptr(void* buffer);
-///     size_t memfd_buffer_size(void* buffer);
-///     int memfd_buffer_fd(void* buffer);
-///     bool memfd_buffer_fill(void* buffer, const uint8_t* data, size_t len);
-///     bool memfd_buffer_sync_for_device(void* buffer);
-///     bool memfd_buffer_sync_for_cpu(void* buffer);
-///     
-///     // Manager functions
-///     void* memfd_buffer_manager_new();
-///     void memfd_buffer_manager_free(void* manager);
-///     void* memfd_buffer_manager_get(void* manager, const char* name, size_t size);
-///     void* memfd_buffer_manager_setup_mnn(void* manager, void* tensor, const char* name, 
-///                                          uint8_t elem_bits, int ndims, const int* dims);
-/// }
-/// 
-/// // Example 1: Simple buffer usage
-/// void example_simple() {
-///     // Create buffer
-///     size_t size = 48 * 64 * sizeof(int32_t);
-///     void* buffer = memfd_buffer_create(size, 4096, "input_buffer");
-///     uint8_t* ptr = memfd_buffer_ptr(buffer);
-///     
-///     // Fill with data
-///     std::vector<int32_t> data(48*64);
-///     for (int i = 0; i < 48*64; i++) data[i] = i % 256;
-///     memfd_buffer_fill(buffer, data.data(), size);
-///     
-///     // Set as MNN input
-///     auto net = MNN::Interpreter::createFromFile("model.mnn");
-///     auto sess = net->createSession(cfg);
-///     auto* in = net->getSessionInput(sess, nullptr);
-///     in->buffer().host = ptr;
-///     
-///     // Sync and run
-///     memfd_buffer_sync_for_device(buffer);
-///     net->runSession(sess);
-///     
-///     // Clean up
-///     memfd_buffer_free(buffer);
-/// }
-/// 
-/// // Example 2: Using buffer manager
-/// void example_with_manager() {
-///     // Create manager
-///     void* manager = memfd_buffer_manager_new();
-///     
-///     // Setup MNN
-///     auto net = MNN::Interpreter::createFromFile("model.mnn");
-///     auto sess = net->createSession(cfg);
-///     auto* in = net->getSessionInput(sess, nullptr);
-///     
-///     // Get or create buffer for this tensor
-///     int dims[] = {1, 1, 48, 64};
-///     void* buffer = memfd_buffer_manager_setup_mnn(
-///         manager, in, "input", 32, 4, dims);
-///     
-///     if (!buffer) {
-///         std::cerr << "Failed to setup buffer" << std::endl;
-///         return;
-///     }
-///     
-///     // Fill buffer
-///     uint8_t* ptr = memfd_buffer_ptr(buffer);
-///     std::vector<int32_t> data(48*64);
-///     for (int i = 0; i < 48*64; i++) data[i] = i % 256;
-///     memcpy(ptr, data.data(), 48*64*4);
-///     
-///     // Sync and run
-///     memfd_buffer_sync_for_device(buffer);
-///     net->runSession(sess);
-///     
-///     // Clean up
-///     memfd_buffer_manager_free(manager);
-/// }
-/// 
-/// // Example 3: With MIPI/ISP Hardware
-/// void example_with_mipi() {
-///     // Assume we have a MIPI camera that outputs to a memfd
-///     int camera_fd = open_mipi_camera("/dev/video0");
-///     
-///     // Create buffer manager
-///     void* manager = memfd_buffer_manager_new();
-///     
-///     // Create buffer for camera output
-///     size_t size = 1920 * 1080 * 2; // RG10 format
-///     void* buffer = memfd_buffer_manager_get(manager, "camera_buffer", size);
-///     int buffer_fd = memfd_buffer_fd(buffer);
-///     
-///     // Tell camera to use this buffer
-///     configure_camera_output(camera_fd, buffer_fd);
-///     
-///     // Start camera
-///     start_camera(camera_fd);
-///     
-///     // Setup MNN
-///     auto net = MNN::Interpreter::createFromFile("model.mnn");
-///     auto sess = net->createSession(cfg);
-///     auto* in = net->getSessionInput(sess, nullptr);
-///     
-///     // Get buffer and set as MNN input
-///     uint8_t* ptr = memfd_buffer_ptr(buffer);
-///     in->buffer().host = ptr;
-///     
-///     // In frame processing loop:
-///     while (true) {
-///         // Wait for frame
-///         wait_for_frame(camera_fd);
-///         
-///         // Sync buffer for device (camera already wrote)
-///         memfd_buffer_sync_for_device(buffer);
-///         
-///         // Run MNN inference
-///         net->runSession(sess);
-///         
-///         // Process output...
-///     }
-///     
-///     // Clean up
-///     stop_camera(camera_fd);
-///     memfd_buffer_manager_free(manager);
-/// }
-/// ```
-//!
-//! # Integration with Existing Rust Code
-//!
-//! ```rust,ignore
-//! use cam_isp::mnn::memfd::{MemfdBuffer, MemfdBufferManager, Alignment};
-//!
-//! fn run_inference() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create buffer manager
-//!     let mut manager = MemfdBufferManager::with_alignment(Alignment::Page64K);
-//!
-//!     // Load MNN model
-//!     let net = unsafe { MNN::Interpreter::createFromFile("model.mnn") };
-//!     let sess = net.createSession(cfg);
-//!     let in = net.getSessionInput(sess, None);
-//!
-//!     // Setup buffer for input tensor
-//!     let dims = vec![1, 1, 48, 64];
-//!     let buffer = manager.create_for_mnn(in, "input", 0, 32, &dims)?;
-//!
-//!     // Fill buffer with data
-//!     let mut data = vec![0u32; 48*64];
-//!     for i in 0..48*64 {
-//!         data[i] = (i % 256) as u32;
-//!     }
-//!     buffer.fill_from_slice(&unsafe { 
-//!         std::slice::from_raw_parts(
-//!             data.as_ptr() as *const u8,
-//!             data.len() * 4
-//!         )
-//!     })?;
-//!
-//!     // Sync for device
-//!     buffer.sync_for_device()?;
-//!
-//!     // Run inference
-//!     net.runSession(sess);
-//!
-//!     Ok(())
-//! }
-//! ```
+// ```cpp
+// #include <MNN/Interpreter.hpp>
+// #include <vector>
+// 
+// // Forward declarations from Rust
+// extern "C" {
+//     // Buffer functions
+//     void* memfd_buffer_create(size_t size, uint32_t alignment, const char* name);
+//     void memfd_buffer_free(void* buffer);
+//     uint8_t* memfd_buffer_ptr(void* buffer);
+//     size_t memfd_buffer_size(void* buffer);
+//     int memfd_buffer_fd(void* buffer);
+//     bool memfd_buffer_fill(void* buffer, const uint8_t* data, size_t len);
+//     bool memfd_buffer_sync_for_device(void* buffer);
+//     bool memfd_buffer_sync_for_cpu(void* buffer);
+//     
+//     // Manager functions
+//     void* memfd_buffer_manager_new();
+//     void memfd_buffer_manager_free(void* manager);
+//     void* memfd_buffer_manager_get(void* manager, const char* name, size_t size);
+//     void* memfd_buffer_manager_setup_mnn(void* manager, void* tensor, const char* name, 
+//                                          uint8_t elem_bits, int ndims, const int* dims);
+// }
+// 
+// // Example 1: Simple buffer usage
+// void example_simple() {
+//     // Create buffer
+//     size_t size = 48 * 64 * sizeof(int32_t);
+//     void* buffer = memfd_buffer_create(size, 4096, "input_buffer");
+//     uint8_t* ptr = memfd_buffer_ptr(buffer);
+//     
+//     // Fill with data
+//     std::vector<int32_t> data(48*64);
+//     for (int i = 0; i < 48*64; i++) data[i] = i % 256;
+//     memfd_buffer_fill(buffer, data.data(), size);
+//     
+//     // Set as MNN input
+//     auto net = MNN::Interpreter::createFromFile("model.mnn");
+//     auto sess = net->createSession(cfg);
+//     auto* in = net->getSessionInput(sess, nullptr);
+//     in->buffer().host = ptr;
+//     
+//     // Sync and run
+//     memfd_buffer_sync_for_device(buffer);
+//     net->runSession(sess);
+//     
+//     // Clean up
+//     memfd_buffer_free(buffer);
+// }
+// 
+// // Example 2: Using buffer manager
+// void example_with_manager() {
+//     // Create manager
+//     void* manager = memfd_buffer_manager_new();
+//     
+//     // Setup MNN
+//     auto net = MNN::Interpreter::createFromFile("model.mnn");
+//     auto sess = net->createSession(cfg);
+//     auto* in = net->getSessionInput(sess, nullptr);
+//     
+//     // Get or create buffer for this tensor
+//     int dims[] = {1, 1, 48, 64};
+//     void* buffer = memfd_buffer_manager_setup_mnn(
+//         manager, in, "input", 32, 4, dims);
+//     
+//     if (!buffer) {
+//         std::cerr << "Failed to setup buffer" << std::endl;
+//         return;
+//     }
+//     
+//     // Fill buffer
+//     uint8_t* ptr = memfd_buffer_ptr(buffer);
+//     std::vector<int32_t> data(48*64);
+//     for (int i = 0; i < 48*64; i++) data[i] = i % 256;
+//     memcpy(ptr, data.data(), 48*64*4);
+//     
+//     // Sync and run
+//     memfd_buffer_sync_for_device(buffer);
+//     net->runSession(sess);
+//     
+//     // Clean up
+//     memfd_buffer_manager_free(manager);
+// }
+// 
+// // Example 3: With MIPI/ISP Hardware
+// void example_with_mipi() {
+//     // Assume we have a MIPI camera that outputs to a memfd
+//     int camera_fd = open_mipi_camera("/dev/video0");
+//     
+//     // Create buffer manager
+//     void* manager = memfd_buffer_manager_new();
+//     
+//     // Create buffer for camera output
+//     size_t size = 1920 * 1080 * 2; // RG10 format
+//     void* buffer = memfd_buffer_manager_get(manager, "camera_buffer", size);
+//     int buffer_fd = memfd_buffer_fd(buffer);
+//     
+//     // Tell camera to use this buffer
+//     configure_camera_output(camera_fd, buffer_fd);
+//     
+//     // Start camera
+//     start_camera(camera_fd);
+//     
+//     // Setup MNN
+//     auto net = MNN::Interpreter::createFromFile("model.mnn");
+//     auto sess = net->createSession(cfg);
+//     auto* in = net->getSessionInput(sess, nullptr);
+//     
+//     // Get buffer and set as MNN input
+//     uint8_t* ptr = memfd_buffer_ptr(buffer);
+//     in->buffer().host = ptr;
+//     
+//     // In frame processing loop:
+//     while (true) {
+//         // Wait for frame
+//         wait_for_frame(camera_fd);
+//         
+//         // Sync buffer for device (camera already wrote)
+//         memfd_buffer_sync_for_device(buffer);
+//         
+//         // Run MNN inference
+//         net->runSession(sess);
+//         
+//         // Process output...
+//     }
+//     
+//     // Clean up
+//     stop_camera(camera_fd);
+//     memfd_buffer_manager_free(manager);
+// }
+// ```
+//
+// # Integration with Existing Rust Code
+//
+// ```rust,ignore
+// use cam_isp::mnn::memfd::{MemfdBuffer, MemfdBufferManager, Alignment};
+//
+// fn run_inference() -> Result<(), Box<dyn std::error::Error>> {
+//     // Create buffer manager
+//     let mut manager = MemfdBufferManager::with_alignment(Alignment::Page64K);
+//
+//     // Load MNN model
+//     let net = unsafe { MNN::Interpreter::createFromFile("model.mnn") };
+//     let sess = net.createSession(cfg);
+//     let in = net.getSessionInput(sess, None);
+//
+//     // Setup buffer for input tensor
+//     let dims = vec![1, 1, 48, 64];
+//     let buffer = manager.create_for_mnn(in, "input", 0, 32, &dims)?;
+//
+//     // Fill buffer with data
+//     let mut data = vec![0u32; 48*64];
+//     for i in 0..48*64 {
+//         data[i] = (i % 256) as u32;
+//     }
+//     buffer.fill_from_slice(&unsafe { 
+//         std::slice::from_raw_parts(
+//             data.as_ptr() as *const u8,
+//             data.len() * 4
+//         )
+//     })?;
+//
+//     // Sync for device
+//     buffer.sync_for_device()?;
+//
+//     // Run inference
+//     net.runSession(sess);
+//
+//     Ok(())
+// }
+// ```

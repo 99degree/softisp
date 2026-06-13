@@ -75,7 +75,7 @@ extern "C" {
     fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
     fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
     fn mnn_tensor_set_shape(interpreter: *mut c_void, session: *mut c_void, tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
-    fn mnn_run_host_tensors(
+    pub fn mnn_run_host_tensors(
         interpreter: *mut c_void,
         session: *mut c_void,
         in_data: *const c_float,
