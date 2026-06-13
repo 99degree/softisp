@@ -15,10 +15,8 @@ pub enum FrameFormat {
 pub enum CameraSourceType {
     /// No camera source.
     None,
-    /// Test stub.
+    /// Test stub that can emit RGB / YUV / RAW / RAW10 / RAW12.
     Stub,
-    /// Raw frame stub.
-    RawStub,
     /// Android Camera HAL v3.
     AndroidHal,
     /// Linux V4L2 camera.
