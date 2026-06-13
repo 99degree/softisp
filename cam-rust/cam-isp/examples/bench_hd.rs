@@ -44,20 +44,23 @@ fn main() {
                 _ => unreachable!(),
             };
 
-            // 2s budget
             let budget = std::time::Duration::from_millis(2000);
             let deadline = Instant::now() + budget;
-            let mut count = 0u32;
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mnn_owned = mnn.clone();
 
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            std::thread::spawn(move || {
                 let mut engine = cam_isp::mnnengine::MnnEngine::new(be);
-                engine.set_model_path(&mnn);
+                engine.set_model_path(&mnn_owned);
                 let head: Box<dyn cam_isp::pipeline::IspBlock> =
                     Box::new(cam_isp::blocks::RawInputBlock::new());
-                engine.build(head, vec![], None, 16).ok()?;
+                if engine.build(head, vec![], None, 16).is_err() {
+                    let _ = tx.send(None);
+                    return;
+                }
 
                 let params = cam_isp::engine::default_tone_params();
-                let frame_size = (w as usize * h as usize * 2);
+                let frame_size = w as usize * h as usize * 2;
                 let mut buf = vec![0u8; frame_size];
                 for y in 0..h {
                     for x in 0..w {
@@ -70,18 +73,20 @@ fn main() {
 
                 let mut count = 0u32;
                 while Instant::now() < deadline {
-                    if let Ok(_) = engine.process(w, h, w, &buf, 1024.0, w, None, &params,
-                        None, None, 1.0, 0.0, None, None, None) {
+                    if engine.process(w, h, w, &buf, 1024.0, w, None, &params,
+                        None, None, 1.0, 0.0, None, None, None).is_ok() {
                         count += 1;
                     } else {
                         break;
                     }
                 }
-                Some(count)
-            })) {
-                Ok(Some(c)) => count = c,
-                _ => { eprintln!("  {:4}x{:4} {:>8}: CRASHED", w, h, be_name); continue; }
-            }
+                let _ = tx.send(Some(count));
+            });
+
+            let count = match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+                Ok(Some(c)) => c,
+                _ => { eprintln!("  {:4}x{:4} {:>8}: CRASHED/TIMEOUT", w, h, be_name); continue; }
+            };
 
             let elapsed = budget.saturating_sub(deadline.saturating_duration_since(Instant::now()));
             let secs = elapsed.as_secs_f64().max(0.001);
