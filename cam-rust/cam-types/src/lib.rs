@@ -21,10 +21,13 @@ pub enum CameraSourceType {
     None,
     /// Test stub that can emit RGB / YUV / RAW / RAW10 / RAW12.
     Stub,
-    /// Android Camera HAL v3.
+    Camerax,
+    Camera2,
+    Virtual,
+    RawCamera2,
+    RawStub,
+    /// Android Camera HAL v3 device.
     AndroidHal,
-    /// Linux V4L2 camera.
-    V4l2,
 }
 
 /// Frame type for HDR and normal captures.

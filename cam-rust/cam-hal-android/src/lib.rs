@@ -8,9 +8,12 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
+pub mod adapter;
+
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
-use std::sync::OnceLock;
+
+use cam_hal::ICameraAdapter;
 
 // ============================================================================
 // Type definitions from AOSP hardware.h and camera3.h (exact ABI matches)
@@ -292,8 +295,11 @@ unsafe extern "C" fn module_open(
     device: *mut *mut hw_device_t,
 ) -> i32 {
     let id_str = CStr::from_ptr(name).to_str().unwrap_or("0");
-    let id: i32 = id_str.parse().unwrap_or(0);
-    log::info!("module_open: camera id={}", id);
+    log::info!("module_open: camera id={}", id_str);
+
+    // Create the AndroidCameraAdapter for this device
+    let adapter = adapter::AndroidCameraAdapter::new(id_str);
+    let adapter_ptr = Box::into_raw(Box::new(adapter)) as *mut c_void;
 
     // Build the camera3 device
     let dev = Box::new(camera3_device_t {
@@ -305,7 +311,7 @@ unsafe extern "C" fn module_open(
             close: device_close,
         },
         ops: &DEVICE_OPS,
-        priv_: std::ptr::null_mut(),
+        priv_: adapter_ptr,
     });
 
     *device = &*dev as *const _ as *mut hw_device_t;
@@ -341,15 +347,23 @@ unsafe extern "C" fn device_initialize(
 }
 
 unsafe extern "C" fn device_configure_streams(
-    _device: *const camera3_device_t,
+    device: *const camera3_device_t,
     config: *mut camera3_stream_configuration_t,
 ) -> i32 {
+    let dev = &*device;
     let cfg = &*config;
     log::info!(
         "configure_streams: op_mode={}, num_streams={}",
         cfg.operation_mode,
         cfg.num_streams
     );
+
+    // Retrieve adapter from priv_
+    let adapter_ptr = dev.priv_ as *mut adapter::AndroidCameraAdapter;
+    if adapter_ptr.is_null() {
+        return -1;
+    }
+    let adapter = &mut *adapter_ptr;
 
     for i in 0..cfg.num_streams as isize {
         let stream = *cfg.streams.offset(i as isize);
@@ -361,8 +375,20 @@ unsafe extern "C" fn device_configure_streams(
             s.height,
             s.format,
         );
-        // For now, accept whatever the framework asks
+
+        // Accept up to 4 buffers per stream
         s.max_buffers = 4;
+
+        // Configure the adapter with first stream's parameters
+        if i == 0 {
+            let stream_cfg = cam_hal::camera::StreamConfig {
+                width: s.width,
+                height: s.height,
+                format: cam_types::FrameFormat::RawSensor,
+                fps: 30,
+            };
+            let _ = adapter.open(&stream_cfg);
+        }
     }
 
     0
@@ -372,8 +398,18 @@ unsafe extern "C" fn device_process_capture_request(
     device: *const camera3_device_t,
     request: *const camera3_capture_request_t,
 ) -> i32 {
+    let dev = &*device;
     let req = &*request;
     log::debug!("process_capture_request: frame {}", req.frame_number);
+
+    // Retrieve the adapter from priv_
+    let adapter_ptr = dev.priv_ as *mut adapter::AndroidCameraAdapter;
+    let adapter = if adapter_ptr.is_null() {
+        log::warn!("No adapter in device priv_");
+        return -1;
+    } else {
+        &*adapter_ptr
+    };
 
     // ── Notify shutter ─────────────────────────────────────────────────
     if let Some(cbp) = GLOBAL_CALLBACK_PTR {
@@ -398,6 +434,24 @@ unsafe extern "C" fn device_process_capture_request(
                 (*buf.stream).format,
                 buf.acquire_fence,
             );
+
+            // Lock the AHardwareBuffer and process it through the adapter
+            if !buf.buffer.is_null() {
+                match adapter.lock_and_process(
+                    buf.buffer as *mut adapter::AHardwareBuffer,
+                    (*buf.stream).format,
+                    (*buf.stream).width,
+                    (*buf.stream).height,
+                ) {
+                    Ok(_frame) => {
+                        // TODO: The processed frame should be written back to buffer
+                        // or sent via callback. For now, we just unlock and return.
+                    },
+                    Err(e) => {
+                        log::error!("Buffer processing failed: {}", e);
+                    }
+                }
+            }
 
             // Mark buffer as filled
             let mut filled = camera3_stream_buffer_t {
@@ -435,7 +489,14 @@ unsafe extern "C" fn device_flush(_device: *const camera3_device_t) -> i32 {
 unsafe extern "C" fn device_close(device: *mut hw_device_t) -> i32 {
     let dev = device as *mut camera3_device_t;
     if !dev.is_null() {
-        let _ = Box::from_raw(dev);
+        let dev = &mut *dev;
+        // Free the adapter stored in priv_
+        if !dev.priv_.is_null() {
+            let _ = Box::from_raw(dev.priv_ as *mut adapter::AndroidCameraAdapter);
+            dev.priv_ = std::ptr::null_mut();
+        }
+        // Free the device struct itself
+        let _ = Box::from_raw(dev as *mut camera3_device_t);
     }
     log::info!("camera3_device_close");
     0
