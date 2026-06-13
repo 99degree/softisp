@@ -22,27 +22,24 @@ impl IspBlock for DisplayBlock {
     fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
     fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
     fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
-    fn input_value_info(&self) -> Option<Vec<u8>> { Some(Proto::value_info(&self.input_source, &[Proto::tensor_dim_value(1),Proto::tensor_dim_value(3),Proto::tensor_dim_param("H"),Proto::tensor_dim_param("W")], 1)) }
-    fn output_value_info(&self) -> Option<Vec<u8>> { Some(Proto::value_info(&self.frame_tensor, &[Proto::tensor_dim_value(1),Proto::tensor_dim_value(4),Proto::tensor_dim_param("H"),Proto::tensor_dim_param("W")], 2)) }
+    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone(), format!("{}/cast", self.tensor_ns())] }
+    fn input_value_info(&self) -> Option<Vec<u8>> { Some(Proto::value_info(&self.input_source, &[Proto::tensor_dim_value(1),Proto::tensor_dim_param("C"),Proto::tensor_dim_param("H"),Proto::tensor_dim_param("W")], 1)) }
+    fn output_value_info(&self) -> Option<Vec<u8>> { Some(Proto::value_info(&self.frame_tensor, &[Proto::tensor_dim_value(1),Proto::tensor_dim_param("C"),Proto::tensor_dim_param("H"),Proto::tensor_dim_param("W")], 1)) }
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        let sizes = format!("{}/sizes", ns);
         let scale = format!("{}/scale", ns);
-        let mul_out = format!("{}/mul", ns);
+        let cast_tensor = format!("{}/cast", ns);
+        // Cast input to FLOAT, then multiply by 255.0.
+        // For FLOAT inputs this is a no-op cast, but ensures type correctness.
         vec![
-            Proto::node("Resize", &[&self.input_source, "", "", &sizes], &[&format!("{}/resized", ns)],
-                &[Proto::attribute_string("mode", "linear"),
-                  Proto::attribute_string("coordinate_transformation_mode", "asymmetric")]),
-            Proto::node("Mul", &[&format!("{}/resized", ns), &scale], &[&mul_out], &[]),
-            Proto::node("Cast", &[&mul_out], &[&self.frame_tensor], &[Proto::attribute_int("to", 2)]),
+            Proto::node("Cast", &[&self.input_source], &[&cast_tensor], &[Proto::attribute_int("to", 1)]),
+            Proto::node("Mul", &[&cast_tensor, &scale], &[&self.frame_tensor], &[]),
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
             Proto::tensor_proto_float_scalar(&format!("{}/scale", ns), 255.0),
-            Proto::tensor_proto_int64(&format!("{}/sizes", ns), &[1, 3, self.target_width as i64, -1]),
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }

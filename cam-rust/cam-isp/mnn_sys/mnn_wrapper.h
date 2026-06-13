@@ -53,8 +53,15 @@ typedef void* MnnSession;
 typedef void* MnnTensor;
 
 /**
+ * Create an Interpreter from a model file (.mnn format).
+ * @param path    Path to the .mnn model file.
+ * @return Opaque handle, or NULL on failure.
+ */
+MnnInterpreter mnn_interpreter_create_from_file(const char* path);
+
+/**
  * Create an Interpreter from a model buffer.
- * @param buffer  Pointer to the serialized MNN model (or ONNX model) data.
+ * @param buffer  Pointer to the serialized MNN model data.
  * @param size    Size of the buffer in bytes.
  * @return Opaque handle, or NULL on failure.
  */
@@ -195,8 +202,83 @@ const void* mnn_interpreter_get_model_buffer(MnnInterpreter interpreter, size_t*
  */
 int mnn_interpreter_save_model(MnnInterpreter interpreter, const char* path);
 
+/**
+ * Run inference with proper host-tensor management.
+ * Creates host tensors with copyFromHostTensor / copyToHostTensor.
+ * @param interpreter Interpreter handle.
+ * @param session Session handle.
+ * @param in_data Float32 input data.
+ * @param in_shape Input shape array.
+ * @param in_ndim Number of dimensions.
+ * @param out_data Output buffer (float32).
+ * @param max_out Max number of output elements.
+ * @return Number of output elements written, or -1 on error.
+ */
+int mnn_run_host_tensors(MnnInterpreter interpreter, MnnSession session,
+                          const float* in_data, const int* in_shape, int in_ndim,
+                          float* out_data, int max_out);
+
+/**
+ * Zero-copy inference: wrap existing buffer directly as host tensor.
+ * If buffer type matches model input type, no alloc/copy for input.
+ * @param interpreter Interpreter handle.
+ * @param session Session handle.
+ * @param buffer      Pointer to existing frame buffer.
+ * @param buffer_type_code Halide type code: 0=INT, 1=UINT, 2=FLOAT.
+ * @param buffer_type_bits Bit width: 8, 16, 32.
+ * @param in_shape    Input shape array.
+ * @param in_ndim     Number of dimensions.
+ * @param out_data    Output buffer (float32).
+ * @param max_out     Max number of output elements.
+ * @return Number of output elements written, or -1 on error.
+ */
+int mnn_run_with_buffer(MnnInterpreter interpreter, MnnSession session,
+                          const void* buffer, int buffer_type_code, int buffer_type_bits,
+                          const int* in_shape, int in_ndim,
+                          float* out_data, int max_out);
+
+// ── Express Module API ──────────────────────────────────────────────────
+
+typedef void* MnnExpressModule;
+typedef void* MnnVARP;
+
+MnnVARP* mnn_express_load_vars(const char* path, int* out_count);
+MnnExpressModule mnn_express_extract(MnnVARP* inputs, int n_inputs, MnnVARP* outputs, int n_outputs);
+void mnn_express_destroy_module(MnnExpressModule module);
+MnnVARP mnn_express_create_input(const int* dims, int ndim, int format, int dtype);
+void* mnn_express_write_map(MnnVARP varp);
+const void* mnn_express_read_map(MnnVARP varp);
+int mnn_express_var_info(MnnVARP varp, int* dims_out, int max_dims, int* out_format);
+int mnn_express_var_resize(MnnVARP varp, const int* dims, int ndim);
+MnnVARP* mnn_express_forward(MnnExpressModule module, MnnVARP* inputs, int n_inputs, int* out_count);
+void mnn_varps_destroy(MnnVARP* varps, int count);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* MNN_WRAPPER_H */
+
+/**
+ * Zero-copy inference with direct host pointer assignment.
+ * Bypasses copyFromHostTensor for tensors with null backend.
+ * 
+ * @param interpreter Interpreter handle.
+ * @param session Session handle.
+ * @param buffer Pointer to existing buffer with input data.
+ * @param in_shape Input shape array.
+ * @param in_ndim Number of dimensions.
+ * @param out_data Output buffer (float32).
+ * @param max_out Max number of output elements.
+ * @return Number of output elements written, or negative on error.
+ */
+int mnn_run_zero_copy(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const void* buffer,
+    const int* in_shape,
+    int in_ndim,
+    float* out_data,
+    int max_out
+);
+
