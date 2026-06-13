@@ -78,6 +78,9 @@ pub trait ICameraAdapter: Send + Sync {
 
     /// Get the device path/name.
     fn device_name(&self) -> &str;
+
+    /// Send a frame to the adapter for processing.
+    fn send_frame(&self, frame: ByteFrame) -> Result<(), String>;
 }
 
 /// Base camera adapter providing shared state.
