@@ -119,3 +119,54 @@ fn test_test_model_ort_validation() {
     eprintln!("TEST: {}", result.as_ref().unwrap_or(&"FAILED".to_string()));
     assert!(result.is_ok(), "TEST model should be valid ORT model: {:?}", result.err());
 }
+
+/// End-to-end inference test: create a LITE model, feed a dummy INT16 input,
+/// run inference, and verify the output has the expected shape.
+#[test]
+fn test_lite_ort_inference() {
+    use ort::value::Tensor;
+
+    let blocks = wired_blocks(PipelineProfile::LITE);
+    let model = compose_wired(&blocks);
+
+    let mut session = Session::builder()
+        .and_then(|mut b| b.commit_from_memory(&model))
+        .expect("LITE model should create a valid ORT session");
+
+    let w: u32 = 8;
+    let h: u32 = 8;
+
+    // LITE profile has exactly one input (RawInputBlock/frame) and one output (DisplayBlock/frame)
+    let input_name = "RawInputBlock/frame";
+    let output_name = "DisplayBlock/frame";
+
+    eprintln!("ORT inference: input='{}' output='{}'", input_name, output_name);
+
+    // Build input tensor: INT16 [1, 1, h, w]
+    let input_data: Vec<i16> = vec![2000i16; (w * h) as usize];
+    let tensor = Tensor::from_array(
+        (vec![1i64, 1, h as i64, w as i64], input_data.into_boxed_slice())
+    ).unwrap();
+
+    // Run inference
+    let result = session.run(ort::inputs![input_name => tensor]);
+    assert!(result.is_ok(), "ORT inference should succeed: {:?}", result.err());
+    let outputs_map = result.unwrap();
+
+    let output_val = outputs_map.get(output_name)
+        .expect("output should be in results");
+
+    let (shape, data) = output_val.try_extract_tensor::<u8>()
+        .expect("output should be UINT8 tensor");
+
+    let out_vec: Vec<u8> = data.iter().copied().collect();
+    eprintln!("ORT inference OK: {}x{} raw -> shape {:?} ({} bytes, first 4: {:?})",
+        w, h, shape, out_vec.len(), &out_vec[..4.min(out_vec.len())]);
+
+    assert_eq!(out_vec.len() as u64,
+        shape.iter().map(|d| *d as u64).product::<u64>(),
+        "output element count matches shape");
+    assert!(!out_vec.is_empty(), "output should not be empty");
+    assert!(out_vec.len() >= (w * h * 4) as usize,
+        "output should be at least {} bytes for BGRA output", w * h * 4);
+}
