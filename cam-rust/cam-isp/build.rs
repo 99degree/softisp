@@ -34,8 +34,7 @@ fn link_onnxruntime() {
 fn link_mnn() {
     let abi_dir = compute_abi_dir();
     let mnn_include = std::env::var("MNN_INCLUDE_DIR").unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/data/data/com.termux/files/home".to_string());
-        format!("{}/MNN/include", home)
+        "vendor/mnn/include".to_string()
     });
 
     let wrapper_src = std::path::Path::new("mnn_sys/mnn_wrapper.cpp");
