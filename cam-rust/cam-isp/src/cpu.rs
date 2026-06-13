@@ -9,8 +9,9 @@
 //!   → Warp → Display(UINT8 BGRA)
 
 use std::sync::Mutex;
+use std::time::Instant;
 
-use log::info;
+use log::{info, debug};
 use cam_types::ToneParams;
 
 use crate::engine::{IspEngine, EngineFactory, register_engine};
@@ -88,9 +89,9 @@ impl IspEngine for CpuEngine {
         blc_values: Option<&[f32; 4]>,
         _warp_grid: Option<&[f32]>,
     ) -> Result<IspFrame, String> {
-        let t0 = std::time::Instant::now();
+        let t0 = Instant::now();
 
-        info!("CpuEngine::process {}x{} → target {}", width, height, target_width);
+        debug!("CpuEngine::process start {}x{} → target {}", width, height, target_width);
 
         // ── 1. RawInput: interpret as INT16 Bayer ──
         let raw: Vec<u16> = if buf.len() >= (width * height * 2) as usize {
@@ -101,6 +102,7 @@ impl IspEngine for CpuEngine {
         } else {
             generate_simulated_raw(width, height, buf)
         };
+        let t_input = t0.elapsed();
 
         // ── 2. Normalize: INT16 → FLOAT [0, 1] ──
         let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
@@ -151,6 +153,7 @@ impl IspEngine for CpuEngine {
                 eis.update(t_ns + 33_333_333, fl, width, height)
             }
         };
+        let t_pre = t0.elapsed();
 
         // ── 3. AWB ──
         let awb_gains = if let Some(g) = awb_gains { *g } else {
@@ -231,13 +234,18 @@ impl IspEngine for CpuEngine {
                 toned
             }
         };
+        let t_process = t0.elapsed();
 
         // ── 9. Display ──
         let out_width = if target_width > 0 { target_width } else { width };
         let out_bytes = display_output(&toned, width as usize, height as usize, out_width as usize);
+        let t_total = t0.elapsed();
 
-        info!("CpuEngine: processed in {:?} → {}×{} output ({} bytes)",
-            t0.elapsed(), out_width, height, out_bytes.len());
+        debug!("CpuEngine: {}x{} -> {}x{} (input={:?} pre={:?} process={:?} total={:?})",
+            width, height, out_width, height,
+            t_input, t_pre - t_input, t_process - t_pre, t_total);
+            
+        info!("CpuEngine: frame processed ({} bytes)", out_bytes.len());
 
         Ok(IspFrame {
             width: out_width,

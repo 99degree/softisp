@@ -3,6 +3,8 @@
 //! No separate C++ compilation needed — lives in mnn_wrapper.cpp.
 
 use std::ffi::CString;
+use std::time::Instant;
+use log::{info, debug, error};
 
 extern "C" {
     fn mnn_interpreter_create_from_file(path: *const std::ffi::c_char) -> *mut std::ffi::c_void;
@@ -36,6 +38,7 @@ impl MnnHostModel {
     }
 
     pub fn run(&self, input: &[f32], shape: &[i32]) -> Option<Vec<f32>> {
+        let t0 = Instant::now();
         let mut output = vec![0.0f32; 4096];
         let n = unsafe {
             mnn_run_host_tensors(
@@ -44,8 +47,12 @@ impl MnnHostModel {
                 output.as_mut_ptr(), output.len() as i32,
             )
         };
-        if n <= 0 { return None; }
+        if n <= 0 {
+            error!("MnnHostModel::run failed: {} (input shape {:?})", n, shape);
+            return None;
+        }
         output.truncate(n as usize);
+        debug!("MnnHostModel::run {:?} {} outputs (shape {:?})", t0.elapsed(), n, shape);
         Some(output)
     }
 }
@@ -71,6 +78,6 @@ mod tests {
         let input = vec![0.0f32; 3 * 224 * 224];
         let out = m.run(&input, &[1, 3, 224, 224]).expect("run failed");
         assert_eq!(out.len(), 1001, "MobileNetV2 should output 1001 classes");
-        eprintln!("MNN host-tensor inference OK: {} outputs", out.len());
+        info!("MNN host-tensor inference OK: {} outputs", out.len());
     }
 }

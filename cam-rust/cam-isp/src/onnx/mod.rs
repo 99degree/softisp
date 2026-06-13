@@ -3,9 +3,8 @@
 
 pub mod proto;
 
-use log::info;
-#[cfg(feature = "ort")]
-use log::warn;
+use std::time::Instant;
+use log::{info, debug, warn, error};
 use cam_types::{FrameFormat, ToneParams};
 
 use crate::engine::IspEngine;
@@ -151,11 +150,14 @@ impl IspEngine for OnnxEngine {
         _blc_values: Option<&[f32; 4]>,
         _warp_grid: Option<&[f32]>,
     ) -> Result<IspFrame, String> {
+        let t0 = Instant::now();
+        
         if !self.initialized {
+            error!("OnnxEngine({}) process called before build()", self.backend.id());
             return Err("Engine not initialized".to_string());
         }
         
-        info!("OnnxEngine({}) processing frame {}x{} -> {}x{}",
+        debug!("OnnxEngine({}) processing frame {}x{} -> {}x{}",
             self.backend.id(), width, height, target_width, height);
         
         #[cfg(feature = "ort")]
@@ -164,7 +166,7 @@ impl IspEngine for OnnxEngine {
             let mut guard = self.session.lock().unwrap();
             if let Some(ref mut session) = *guard {
                 // Build input tensor: INT16 [1, 1, height, width]
-                // Reinterpret raw u8 bytes as i16
+                let t_prep = Instant::now();
                 let input_i16: Vec<i16> = unsafe {
                     std::slice::from_raw_parts(
                         buf.as_ptr() as *const i16,
@@ -185,6 +187,7 @@ impl IspEngine for OnnxEngine {
                 // Run inference
                 let input_name = "RawInputBlock/frame";
                 let output_name = "DisplayBlock/frame";
+                let t_run = Instant::now();
                 let outputs = match session.run(ort::inputs![input_name => tensor]) {
                     Ok(o) => o,
                     Err(e) => {
@@ -192,13 +195,19 @@ impl IspEngine for OnnxEngine {
                         return Err(format!("ORT inference failed: {}", e));
                     }
                 };
+                let t_infer = t_run.elapsed();
 
                 // Extract output tensor (UINT8 BGRA)
                 if let Some(output_val) = outputs.get(output_name) {
                     match output_val.try_extract_tensor::<u8>() {
                         Ok((_, data)) => {
                             let output_data = data.to_vec();
-                            info!("OnnxEngine: inference done, {} bytes", output_data.len());
+                            let t_total = t0.elapsed();
+                            debug!("OnnxEngine: prepare={:?} infer={:?} total={:?} ({} -> {} bytes)",
+                                t_prep.elapsed(), t_infer, t_total,
+                                buf.len(), output_data.len());
+                            info!("OnnxEngine({}) frame done: {}x{} ({} bytes)",
+                                self.backend.id(), target_width, height, output_data.len());
                             let mut frame = IspFrame::new(target_width, height, FrameFormat::Rgba8888);
                             frame.data = output_data;
                             return Ok(frame);
@@ -215,9 +224,11 @@ impl IspEngine for OnnxEngine {
         
         #[cfg(not(feature = "ort"))]
         {
-            info!("OnnxEngine: ort feature not enabled, returning dummy frame");
+            debug!("OnnxEngine: ort feature not enabled, returning dummy frame");
         }
         
+        let t_total = t0.elapsed();
+        warn!("OnnxEngine({}) returning dummy frame (total={:?})", self.backend.id(), t_total);
         let frame = IspFrame::new(target_width, height, FrameFormat::Rgba8888);
         Ok(frame)
     }

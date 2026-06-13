@@ -12,7 +12,8 @@
 //!   4. Read output float32 → BGRA U8
 
 use std::sync::Mutex;
-use log::info;
+use std::time::Instant;
+use log::{info, debug, warn, error};
 
 use cam_types::{FrameFormat, ToneParams};
 use crate::engine::IspEngine;
@@ -130,7 +131,7 @@ impl IspEngine for MnnEngine {
                     all.extend(aux);
                     let refs: Vec<&dyn IspBlock> = all.iter().map(|b| b.as_ref()).collect();
                     let onnx = crate::pipeline::GraphComposer::compose_from_vec(&refs, &[], opset)?;
-                    info!("ONNX: {} bytes", onnx.len());
+                    debug!("ONNX: {} bytes for MNN conversion", onnx.len());
 
                     let on = format!(".mnn_temp_{}.onnx", std::process::id());
                     let mn = on.replace(".onnx", ".mnn");
@@ -141,13 +142,19 @@ impl IspEngine for MnnEngine {
                 }
             };
 
-            if !Path::new(&mnn).exists() { return Err(format!("missing .mnn: {}", mnn)); }
-            let interp = MnnInterpreterSafe::from_file(&mnn).ok_or_else(|| format!("load fail: {}", mnn))?;
+            if !Path::new(&mnn).exists() {
+                error!("MNN model not found: {}", mnn);
+                return Err(format!("missing .mnn: {}", mnn));
+            }
+            let interp = MnnInterpreterSafe::from_file(&mnn).ok_or_else(|| {
+                error!("Failed to load MNN model: {}", mnn);
+                format!("load fail: {}", mnn)
+            })?;
             let sess = interp.create_session(self.backend.to_sys(), 4)
                 .ok_or("session create fail")?;
             self.interp = Some(interp);
             self.sess = Some(Mutex::new(sess));
-            info!("MNN engine loaded from {}", mnn);
+            info!("MNN engine loaded from {} (backend={:?})", mnn, self.backend);
         }
 
         #[cfg(not(feature = "mnn"))] { let _ = (head, aux, opset); }
@@ -167,8 +174,12 @@ impl IspEngine for MnnEngine {
             let sess = sess_lock.lock().map_err(|_| "lock")?;
             let interp = self.interp.as_ref().unwrap();
 
+            let t_start = Instant::now();
+
             // Normalize INT16/UINT16 sensor data to float32
             let f32d = Self::norm(buf, smax);
+            let t_norm = t_start.elapsed();
+
             let shape = [1, 1, h as i32, w as i32];
 
             // Allocate output buffer (enough for 4K HD RGBA floats)
@@ -196,11 +207,15 @@ impl IspEngine for MnnEngine {
                 )
             };
 
+            let t_infer = t_start.elapsed();
+
             if n <= 0 {
+                error!("mnn_run_host_tensors failed: {} (input={}x{})", n, w, h);
                 return Err(format!("mnn_run_host_tensors failed: {}", n));
             }
 
-            info!("MNN inference OK: {} float outputs (requested max {})", n, max_out);
+            debug!("MNN inference: norm={:?} infer={:?} total={:?} ({}x{} -> {} flt)",
+                t_norm, t_infer - t_norm, t_infer, w, h, n);
 
             let nf = n as usize;
             let oh = h as usize;
