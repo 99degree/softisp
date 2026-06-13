@@ -70,6 +70,91 @@ pub use ahardware_buffer::*;
 
 // ── CameraBuffer implementation for AHardwareBuffer ─────────────────────────
 
+/// Wraps a raw `mmap`-ed dma-buf fd as a `CameraBuffer`.
+/// This is the same approach libcamera uses (no NDK dependency).
+#[derive(Debug)]
+pub struct MmapFdCameraBuffer {
+    fd: std::os::unix::io::RawFd,
+    ptr: *mut u8,
+    size: usize,
+    width: u32,
+    height: u32,
+    format: i32,
+    frame_number: u64,
+}
+
+// SAFETY: Only accessed from camera HAL callbacks (serialized).
+unsafe impl Send for MmapFdCameraBuffer {}
+unsafe impl Sync for MmapFdCameraBuffer {}
+
+impl MmapFdCameraBuffer {
+    /// Open a dma-buf fd, determine its size, and mmap it.
+    pub unsafe fn new(
+        fd: std::os::unix::io::RawFd,
+        format: i32,
+        width: u32,
+        height: u32,
+        frame_number: u64,
+    ) -> Result<Self, String> {
+        // Determine buffer size via lseek
+        let size = libc::lseek(fd, 0, libc::SEEK_END);
+        if size < 0 {
+            return Err("lseek failed on dma-buf fd".to_string());
+        }
+        let size = size as usize;
+
+        let ptr = libc::mmap(
+            std::ptr::null_mut(),
+            size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd,
+            0,
+        );
+        if ptr == libc::MAP_FAILED {
+            return Err("mmap failed on dma-buf fd".to_string());
+        }
+
+        Ok(Self {
+            fd,
+            ptr: ptr as *mut u8,
+            size,
+            width,
+            height,
+            format,
+            frame_number,
+        })
+    }
+}
+
+impl Drop for MmapFdCameraBuffer {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.size) };
+        }
+        // Don't close the fd — framework owns it
+    }
+}
+
+impl cam_hal::buffer::MappedBuffer for MmapFdCameraBuffer {
+    fn map(&self) -> Result<(*mut u8, usize), String> {
+        Ok((self.ptr, self.size))
+    }
+    fn unmap(&self) -> Result<(), String> { Ok(()) }
+    fn is_mapped(&self) -> bool { !self.ptr.is_null() }
+    fn size(&self) -> usize { self.size }
+    fn fd(&self) -> Option<i32> { Some(self.fd) }
+}
+
+impl cam_hal::buffer::CameraBuffer for MmapFdCameraBuffer {
+    fn width(&self) -> u32 { self.width }
+    fn height(&self) -> u32 { self.height }
+    fn stride(&self) -> u32 { self.width } // stride = width for simple case
+    fn format(&self) -> i32 { self.format }
+    fn timestamp(&self) -> u64 { 0 }
+    fn frame_number(&self) -> u64 { self.frame_number }
+}
+
 /// Wraps an `AHardwareBuffer` pointer as a `cam_hal::buffer::CameraBuffer`.
 #[derive(Debug)]
 pub struct AHardwareBufferBacked {
