@@ -41,3 +41,4 @@ frames/
 *.o
 *.obj
 mnn_wrapper.o
+*.mnn
