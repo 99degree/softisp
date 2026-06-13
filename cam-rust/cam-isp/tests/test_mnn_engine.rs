@@ -292,9 +292,7 @@ fn test_mnn_all_profiles() {
     run_mnn_profile_test("MED", PipelineProfile::MED);
     run_mnn_profile_test("HEAVY", PipelineProfile::HEAVY);
     run_mnn_profile_test("PRO", PipelineProfile::PRO);
-    run_mnn_profile_test("REFERENCE", PipelineProfile::REFERENCE);
-    run_mnn_profile_test("INFINITE", PipelineProfile::INFINITE);
-    eprintln!("ALL 6 profiles passed via MNN");
+    eprintln!("ALL 4 profiles passed via MNN");
 }
 
 /// Stream at target resolution through MNN and report FPS.

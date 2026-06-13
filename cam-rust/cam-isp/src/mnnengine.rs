@@ -158,19 +158,23 @@ impl MnnEngine {
     }
 
     /// Build a comprehensive benchmark .mnn model exercising all pipeline ops:
-    ///   Conv3×3, Relu, AveragePool, MatMul, Reshape, Resize, GridSampler
-    /// Accepts [1,1,H,W] f32 input, outputs [1,3,H,W] f32.
+    ///   Conv3×3, Relu, GlobalAveragePool, MatMul, Reshape, Resize, GridSampler
     ///
-    /// Architecture (at 64×48 input):
-    ///   Input [1,1,48,64] → Conv1(1→8,3×3) → Relu → Conv2(8→8,3×3) → Relu
-    ///   → AvgPool(2×2) [1,8,24,32] → Flatten [1,6144]
-    ///   → MatMul[6144,128] → Relu → MatMul[128,6144] → Reshape [1,8,24,32]
-    ///   → Resize (×2 bilinear) [1,8,48,64] → Conv3(8→3,3×3)
-    ///   → GridSampler(bilinear) → Output [1,3,48,64]
+    /// **Resolution-independent**: weights are constant (~2K) regardless of
+    /// input resolution because GlobalAveragePool reduces spatial to 1×1 before
+    /// the MatMul bottleneck. Compute scales with H×W (Conv layers) but weight
+    /// size is fixed, making this suitable for benchmarking any resolution.
     ///
-    /// ~1.6M weights (mostly MatMul), ~8M FLOPs — heavy enough for GPU differentiation.
+    /// Architecture:
+    ///   Input [1,1,H,W] → Conv1(1→8,3×3) → Relu → Conv2(8→8,3×3) → Relu
+    ///   → GlobalAveragePool [1,8,1,1] → Reshape [1,8]
+    ///   → MatMul[8,64] → Relu → MatMul[64,8] → Reshape [1,8,1,1]
+    ///   → Resize (nearest, ×H×W) [1,8,H,W] → Conv3(8→3,3×3)
+    ///   → GridSampler(bilinear) → Output [1,3,H,W]
+    ///
+    /// ~2K weights (all Conv), compute scales with H×W.
     #[cfg(feature = "mnn")]
-    fn build_bench_model(bench_w: u32, bench_h: u32) -> Result<String, String> {
+    pub fn build_bench_model(bench_w: u32, bench_h: u32) -> Result<String, String> {
         use crate::onnx::proto::Proto;
         use crate::mnn_converter::convert_onnx_to_mnn;
 
@@ -180,8 +184,6 @@ impl MnnEngine {
 
         let h = bench_h as i64;
         let w = bench_w as i64;
-        let h2 = h / 2;
-        let w2 = w / 2;
 
         // ── Dimension helpers ──
         let dim_1hw = || vec![
@@ -196,74 +198,73 @@ impl MnnEngine {
             Proto::tensor_dim_value(1), Proto::tensor_dim_value(8),
             Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
         ];
-        let dim_8h2w2 = || vec![
+        let dim_8111 = || vec![
             Proto::tensor_dim_value(1), Proto::tensor_dim_value(8),
-            Proto::tensor_dim_value(h2), Proto::tensor_dim_value(w2),
+            Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
         ];
-        let flat_size = (8 * h2 * w2) as usize;
-        let dim_flat = || vec![
+        let dim_8 = || vec![
             Proto::tensor_dim_value(1),
-            Proto::tensor_dim_value(flat_size as i64),
+            Proto::tensor_dim_value(8),
         ];
-        let dim_128 = || vec![
+        let dim_64 = || vec![
             Proto::tensor_dim_value(1),
-            Proto::tensor_dim_value(128),
+            Proto::tensor_dim_value(64),
         ];
 
-        // ── Weights ──
-        let conv1_w = Self::rand_weight(8 * 1 * 3 * 3);   // [8,1,3,3]
-        let conv2_w = Self::rand_weight(8 * 8 * 3 * 3);   // [8,8,3,3]
-        let conv3_w = Self::rand_weight(3 * 8 * 3 * 3);   // [3,8,3,3]
-        let mm1_w = Self::rand_weight(flat_size * 128);   // [flat, 128]
-        let mm2_w = Self::rand_weight(128 * flat_size);   // [128, flat]
+        // ── Weights (all resolution-independent, ~2K params total) ──
+        let conv1_w = Self::rand_weight(8 * 1 * 3 * 3);   // [8,1,3,3]  = 72
+        let conv2_w = Self::rand_weight(8 * 8 * 3 * 3);   // [8,8,3,3]  = 576
+        let conv3_w = Self::rand_weight(3 * 8 * 3 * 3);   // [3,8,3,3]  = 216
+        let mm1_w = Self::rand_weight(8 * 64);             // [8,64]     = 512
+        let mm2_w = Self::rand_weight(64 * 8);             // [64,8]     = 512
+        // total: 72+576+216+512+512 = 1,888 (constant at any resolution!)
 
         // Identity grid for GridSampler: [1, H, W, 2] in [-1, 1]
-        let mut grid = Vec::with_capacity((h * w * 2) as usize);
-        for y in 0..h {
-            for x in 0..w {
-                grid.push((2.0 * x as f64 / (w - 1) as f64 - 1.0) as f32);  // x
-                grid.push((2.0 * y as f64 / (h - 1) as f64 - 1.0) as f32);  // y
+        let mut grid = Vec::with_capacity((h as usize * w as usize * 2) as usize);
+        if h > 0 && w > 0 {
+            for y in 0..h {
+                for x in 0..w {
+                    grid.push((2.0 * x as f64 / (w - 1).max(1) as f64 - 1.0) as f32);
+                    grid.push((2.0 * y as f64 / (h - 1).max(1) as f64 - 1.0) as f32);
+                }
             }
         }
 
-        // Resize sizes tensor [1, 8, H, W] — upscale by 2
-        let resize_sizes = vec![1.0f32, 8.0, h as f32, w as f32];
+        // Resize scales: [1, 1, H, W] — expand 1×1 → H×W
+        let resize_scales = vec![1.0f32, 1.0, h as f32, w as f32];
 
         // ── Nodes ──
         let nodes = vec![
-            // Conv1 1→8
+            // Conv1 1→8, 3×3
             Proto::node("Conv", &["input", "conv1_w", "conv1_b"], &["conv1_out"],
                 &[Proto::attribute_ints("kernel_shape", &[3, 3]),
                   Proto::attribute_ints("pads", &[1, 1, 1, 1]),
                   Proto::attribute_ints("strides", &[1, 1]),
                   Proto::attribute_int("group", 1)]),
             Proto::node("Relu", &["conv1_out"], &["relu1_out"], &[]),
-            // Conv2 8→8
+            // Conv2 8→8, 3×3
             Proto::node("Conv", &["relu1_out", "conv2_w", "conv2_b"], &["conv2_out"],
                 &[Proto::attribute_ints("kernel_shape", &[3, 3]),
                   Proto::attribute_ints("pads", &[1, 1, 1, 1]),
                   Proto::attribute_ints("strides", &[1, 1]),
                   Proto::attribute_int("group", 1)]),
             Proto::node("Relu", &["conv2_out"], &["relu2_out"], &[]),
-            // AveragePool 2×2
-            Proto::node("AveragePool", &["relu2_out"], &["pool_out"],
-                &[Proto::attribute_ints("kernel_shape", &[2, 2]),
-                  Proto::attribute_ints("strides", &[2, 2]),
-                  Proto::attribute_ints("pads", &[0, 0, 0, 0])]),
-            // Flatten via Reshape
-            Proto::node("Reshape", &["pool_out", "flat_shape"], &["flat_out"], &[]),
-            // MatMul 1
-            Proto::node("MatMul", &["flat_out", "mm1_w"], &["mm1_out"], &[]),
+            // GlobalAveragePool — reduces ANY spatial size to 1×1
+            Proto::node("GlobalAveragePool", &["relu2_out"], &["gap_out"], &[]),
+            // Flatten [1,8,1,1] → [1,8]
+            Proto::node("Reshape", &["gap_out", "flat8_shape"], &["flat8_out"], &[]),
+            // MatMul bottleneck: [1,8] × [8,64] → [1,64]
+            Proto::node("MatMul", &["flat8_out", "mm1_w"], &["mm1_out"], &[]),
             Proto::node("Relu", &["mm1_out"], &["mm1_relu"], &[]),
-            // MatMul 2 (project back)
+            // MatMul: [1,64] × [64,8] → [1,8]
             Proto::node("MatMul", &["mm1_relu", "mm2_w"], &["mm2_out"], &[]),
             Proto::node("Relu", &["mm2_out"], &["mm2_relu"], &[]),
-            // Reshape back to [1, 8, H/2, W/2]
-            Proto::node("Reshape", &["mm2_relu", "pool_shape"], &["reshape_out"], &[]),
-            // Resize scale=2 (bilinear)
-            Proto::node("Resize", &["reshape_out", "", "resize_scales", ""], &["resize_out"],
-                &[Proto::attribute_string("mode", "linear")]),
-            // Conv3 8→3
+            // Reshape back to [1,8,1,1]
+            Proto::node("Reshape", &["mm2_relu", "shape_8111"], &["reshape8_out"], &[]),
+            // Resize from 1×1 → H×W (nearest, fast)
+            Proto::node("Resize", &["reshape8_out", "", "resize_scales", ""], &["resize_out"],
+                &[Proto::attribute_string("mode", "nearest")]),
+            // Conv3 8→3, 3×3
             Proto::node("Conv", &["resize_out", "conv3_w", "conv3_b"], &["conv3_out"],
                 &[Proto::attribute_ints("kernel_shape", &[3, 3]),
                   Proto::attribute_ints("pads", &[1, 1, 1, 1]),
@@ -284,20 +285,18 @@ impl MnnEngine {
             Proto::value_info("relu1_out", &dim_8hw(), 1),
             Proto::value_info("conv2_out", &dim_8hw(), 1),
             Proto::value_info("relu2_out", &dim_8hw(), 1),
-            Proto::value_info("pool_out", &dim_8h2w2(), 1),
-            Proto::value_info("flat_out", &dim_flat(), 1),
-            Proto::value_info("mm1_out", &dim_128(), 1),
-            Proto::value_info("mm1_relu", &dim_128(), 1),
-            Proto::value_info("mm2_out", &dim_flat(), 1),
-            Proto::value_info("mm2_relu", &dim_flat(), 1),
-            Proto::value_info("reshape_out", &dim_8h2w2(), 1),
+            Proto::value_info("gap_out", &dim_8111(), 1),
+            Proto::value_info("flat8_out", &dim_8(), 1),
+            Proto::value_info("mm1_out", &dim_64(), 1),
+            Proto::value_info("mm1_relu", &dim_64(), 1),
+            Proto::value_info("mm2_out", &dim_8(), 1),
+            Proto::value_info("mm2_relu", &dim_8(), 1),
+            Proto::value_info("reshape8_out", &dim_8111(), 1),
             Proto::value_info("resize_out", &dim_8hw(), 1),
             Proto::value_info("conv3_out", &dim_3hw(), 1),
         ];
 
         // ── Initializers ──
-        let flat_shape = vec![1i64, flat_size as i64];
-        let pool_shape = vec![1i64, 8, h2, w2];
         let init = vec![
             Proto::tensor_proto_float("conv1_w", &[8, 1, 3, 3], &conv1_w),
             Proto::tensor_proto_float("conv1_b", &[8], &[0.0f32; 8]),
@@ -305,11 +304,11 @@ impl MnnEngine {
             Proto::tensor_proto_float("conv2_b", &[8], &[0.0f32; 8]),
             Proto::tensor_proto_float("conv3_w", &[3, 8, 3, 3], &conv3_w),
             Proto::tensor_proto_float("conv3_b", &[3], &[0.0f32; 3]),
-            Proto::tensor_proto_float("mm1_w", &[flat_size as i64, 128], &mm1_w),
-            Proto::tensor_proto_float("mm2_w", &[128, flat_size as i64], &mm2_w),
-            Proto::tensor_proto_int64("flat_shape", &flat_shape),
-            Proto::tensor_proto_int64("pool_shape", &pool_shape),
-            Proto::tensor_proto_float("resize_scales", &[4], &[1.0, 1.0, 2.0, 2.0]),
+            Proto::tensor_proto_float("mm1_w", &[8, 64], &mm1_w),
+            Proto::tensor_proto_float("mm2_w", &[64, 8], &mm2_w),
+            Proto::tensor_proto_int64("flat8_shape", &[1, 8]),
+            Proto::tensor_proto_int64("shape_8111", &[1, 8, 1, 1]),
+            Proto::tensor_proto_float("resize_scales", &[4], &resize_scales),
             Proto::tensor_proto_float("identity_grid", &[1, h, w, 2], &grid),
         ];
 
