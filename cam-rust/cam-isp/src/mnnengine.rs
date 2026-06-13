@@ -61,13 +61,13 @@ pub struct MnnEngine {
 #[cfg(feature = "mnn")]
 impl Drop for MnnEngine {
     fn drop(&mut self) {
-        // Leak to avoid MNN internal drop-order crashes for now
-        // TODO: fix proper release order
-        if let Some(interp) = self.interp.take() {
-            let _ = std::mem::ManuallyDrop::new(interp);
-        }
+        // Drop session before interpreter to avoid dangling pointer.
+        // Session holds a raw interpreter pointer used in releaseSession().
         if let Some(sess) = self.sess.take() {
-            let _ = std::mem::ManuallyDrop::new(sess);
+            drop(sess);
+        }
+        if let Some(interp) = self.interp.take() {
+            drop(interp);
         }
     }
 }
@@ -167,59 +167,67 @@ impl IspEngine for MnnEngine {
             let sess = sess_lock.lock().map_err(|_| "lock")?;
             let interp = self.interp.as_ref().unwrap();
 
-            eprintln!("DBG: get input tensor (data)");
-            let input = interp.get_input(&sess, "data")
-                .or_else(|| interp.get_input(&sess, "RawInputBlock/frame"))
-                .or_else(|| interp.get_input(&sess, "input"))
-                .ok_or("no input tensor")?;
-
-            eprintln!("DBG: set_shape & resize");
-            input.set_shape(interp.as_ptr(), sess.as_ptr(), &[1, 1, h as i32, w as i32])?;
-            sess.resize()?;
-
-            // Copy normalized float32 input
-            eprintln!("DBG: copy input");
+            // Normalize INT16/UINT16 sensor data to float32
             let f32d = Self::norm(buf, smax);
-            let f32bytes: Vec<u8> = f32d.iter().flat_map(|f| f.to_ne_bytes()).collect();
-            let host = input.as_mut_ptr();
-            eprintln!("DBG: host ptr={:p}", host);
-            if !host.is_null() {
-                let dst = unsafe { std::slice::from_raw_parts_mut(host, f32bytes.len()) };
-                dst.copy_from_slice(&f32bytes);
-            } else {
-                return Err("input host data not available".into());
+            let shape = [1, 1, h as i32, w as i32];
+
+            // Allocate output buffer (enough for 4K HD RGBA floats)
+            let max_out = (tw * h * 4) as i32;
+            let mut out_data = vec![0.0f32; max_out as usize];
+
+            // Use mnn_run_host_tensors which handles:
+            // 1. Creating proper host tensors (with backend, not portal tensors)
+            // 2. Converting float32 input to model's native type (INT16/UINT16/F32)
+            // 3. resizeSession + copyFromHostTensor
+            // 4. runSession
+            // 5. copyToHostTensor output back to float32
+            //
+            // This bypasses the portal tensor issue where copyFromHostTensor
+            // fails because the portal tensor has backend=NULL.
+            let n = unsafe {
+                crate::mnn_sys::mnn_run_host_tensors(
+                    interp.as_ptr(),
+                    sess.as_ptr(),
+                    f32d.as_ptr(),
+                    shape.as_ptr(),
+                    shape.len() as i32,
+                    out_data.as_mut_ptr(),
+                    max_out,
+                )
+            };
+
+            if n <= 0 {
+                return Err(format!("mnn_run_host_tensors failed: {}", n));
             }
 
-            // Run inference
-            eprintln!("DBG: run");
-            sess.run()?;
-            eprintln!("DBG: run done");
+            info!("MNN inference OK: {} float outputs (requested max {})", n, max_out);
 
-            eprintln!("DBG: get output");
-            let output = interp.get_first_output(&sess)
-                .or_else(|| interp.get_output(&sess, "DisplayBlock/frame"))
-                .ok_or("no output tensor")?;
-            eprintln!("DBG: read output");
-            let out_data = output.as_bytes().ok_or("output not readable")?.to_vec();
-            eprintln!("DBG: output bytes={}", out_data.len());
-
-            let nf = out_data.len() / 4;
+            let nf = n as usize;
             let oh = h as usize;
             let ow = tw as usize;
-            let ch = if nf >= oh * ow * 4 { 4 } else if nf >= oh * ow * 3 { 3 } else { 1 };
+            let ch = nf / (oh * ow);
 
-            let floats: Vec<f32> = out_data.chunks_exact(4).map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]])).collect();
-            let bgra = Self::to_bgra(&floats, ch, oh, ow);
+            let bgra = Self::to_bgra(&out_data[..nf], ch, oh, ow);
 
             let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
             frame.data = bgra;
-            frame.aux = Some(IspAuxOutput { channel_means: Some([0.5, 0.5, 0.5]), tone_stats: None, wb_gains: None, histogram: None, zone_stats: None, focus_metric: None, cct: None, ae_gain: None, calibration_stats: None, scene_category: None, af_phase: None, vcm_position: None, eis_compensation: None });
+            frame.aux = Some(IspAuxOutput {
+                channel_means: Some([0.5, 0.5, 0.5]),
+                tone_stats: None, wb_gains: None, histogram: None,
+                zone_stats: None, focus_metric: None, cct: None,
+                ae_gain: None, calibration_stats: None,
+                scene_category: None, af_phase: None,
+                vcm_position: None, eis_compensation: None,
+            });
             return Ok(frame);
         }
 
-        let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
-        frame.data.fill(128);
-        Ok(frame)
+        #[cfg(not(feature = "mnn"))]
+        {
+            let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
+            frame.data.fill(128);
+            Ok(frame)
+        }
     }
 }
 
