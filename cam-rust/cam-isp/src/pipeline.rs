@@ -313,7 +313,9 @@ impl GraphComposer {
                 let shape_dims: Vec<Vec<u8>> = dims.iter()
                     .map(|d| Proto::tensor_dim_value(*d))
                     .collect();
-                value_infos.push(Proto::value_info(&name, &shape_dims, elem_type as i32));
+                let vi = Proto::value_info(&name, &shape_dims, elem_type as i32);
+                value_infos.push(vi.clone());
+                graph_inputs.push(vi);
                 info!("{}: extra input: {} (elem_type={})", Self::TAG, name, elem_type);
             }
         }
