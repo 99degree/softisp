@@ -81,3 +81,7 @@ pub trait ICameraAdapter: Send + Sync {
     /// Send a frame to the adapter for processing.
     fn send_frame(&self, frame: ByteFrame) -> Result<(), String>;
 }
+
+    /// Send a frame to the adapter for processing.
+    fn send_frame(&self, frame: ByteFrame) -> Result<(), String>;
+}
