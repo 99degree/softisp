@@ -60,7 +60,6 @@ pub fn create_isp_processor(
     #[allow(unused_imports)]
     use cam_isp::engine::IspEngine;
     let processor: FrameProcessor = Arc::new(move |data: &[u8], w: u32, h: u32, _fmt: i32| {
-        let proc_start = std::time::Instant::now();
         let mut guard = engine.lock().map_err(|e| format!("Lock failed: {}", e))?;
         let eng = guard.as_mut().ok_or("Engine taken")?;
         let tone = ToneParams::default();
@@ -79,9 +78,6 @@ pub fn create_isp_processor(
             None,                  // blc_values
             None,                  // warp_grid
         )?;
-        let proc_elapsed = proc_start.elapsed();
-        log::trace!("ISP process: {}x{} -> {} bytes in {:.2}ms",
-            w, h, result.data.len(), proc_elapsed.as_secs_f64() * 1000.0);
         Ok(result.data)
     });
 
