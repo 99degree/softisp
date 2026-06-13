@@ -1,6 +1,30 @@
 # Rust build artifacts
 cam-rust/target/
 
+# Temp build/test scripts
+cam-rust/build_incremental_lite.rs
+cam-rust/build_lite_onnx.rs
+cam-rust/build_simple_lite.rs
+cam-rust/test_*.cpp
+cam-rust/test_*.c
+cam-rust/mnn_test_*.cpp
+
+# MNN model files
+cam-rust/*.mnn
+cam-rust/*.onnx
+
+# C++ test artifacts
+cam-rust/test_*
+
+# Debug/test files in mnn_sys
+cam-rust/cam-isp/mnn_sys/mnn_*_debug*
+cam-rust/cam-isp/mnn_sys/mnn_*_fix*
+cam-rust/cam-isp/mnn_sys/mnn_*_test*
+
+# Example test artifacts
+cam-rust/cam-isp/lib/
+cam-rust/cam-isp/tools/
+
 # ONNX model output
 *.onnx
 
