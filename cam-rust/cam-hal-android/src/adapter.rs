@@ -13,6 +13,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use crate::util;
+use cam_hal::buffer::{self as hal_buffer};
 use cam_hal::camera::{ByteFrame, CameraState, FrameCallback, ICameraAdapter, StreamConfig};
 
 // ── AHardwareBuffer FFI ─────────────────────────────────────────────────────
@@ -66,6 +67,134 @@ pub mod ahardware_buffer {
 }
 
 pub use ahardware_buffer::*;
+
+// ── CameraBuffer implementation for AHardwareBuffer ─────────────────────────
+
+/// Wraps an `AHardwareBuffer` pointer as a `cam_hal::buffer::CameraBuffer`.
+#[derive(Debug)]
+pub struct AHardwareBufferBacked {
+    buffer: *mut ahardware_buffer::AHardwareBuffer,
+    width: u32,
+    height: u32,
+    stride: u32,
+    format: i32,
+    mapped_ptr: std::cell::Cell<*mut u8>,
+    size: usize,
+    frame_number: u64,
+}
+
+// SAFETY: The AHardwareBuffer is externally synchronized by the camera framework.
+unsafe impl Send for AHardwareBufferBacked {}
+unsafe impl Sync for AHardwareBufferBacked {}
+
+impl AHardwareBufferBacked {
+    /// Wrap a raw AHardwareBuffer pointer.
+    ///
+    /// # Safety
+    /// `buffer` must be a valid AHardwareBuffer pointer for the lifetime of this struct.
+    pub unsafe fn new(
+        buffer: *mut ahardware_buffer::AHardwareBuffer,
+        width: u32,
+        height: u32,
+        format: i32,
+        frame_number: u64,
+    ) -> Self {
+        let mut desc: AHardwareBuffer_Desc = std::mem::zeroed();
+        AHardwareBuffer_describe(buffer, &mut desc);
+        let stride = desc.stride;
+        let bpp = util::hal_format_bpp(format);
+        let size = ((stride.max(width) as u64) * (height as u64) * (bpp as u64)) as usize;
+
+        Self {
+            buffer,
+            width,
+            height,
+            stride: stride.max(width),
+            format,
+            mapped_ptr: std::cell::Cell::new(std::ptr::null_mut()),
+            size,
+            frame_number,
+        }
+    }
+}
+
+impl cam_hal::buffer::MappedBuffer for AHardwareBufferBacked {
+    fn map(&self) -> Result<(*mut u8, usize), String> {
+        let mut cpu_ptr: *mut c_void = std::ptr::null_mut();
+        let ret = unsafe {
+            AHardwareBuffer_lock(
+                self.buffer,
+                AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
+                -1,
+                std::ptr::null(),
+                &mut cpu_ptr,
+            )
+        };
+        if ret != 0 {
+            return Err(format!("AHardwareBuffer_lock failed: {}", ret));
+        }
+        self.mapped_ptr.set(cpu_ptr as *mut u8);
+        Ok((cpu_ptr as *mut u8, self.size))
+    }
+
+    fn unmap(&self) -> Result<(), String> {
+        let ret = unsafe { AHardwareBuffer_unlock(self.buffer, std::ptr::null_mut()) };
+        self.mapped_ptr.set(std::ptr::null_mut());
+        if ret != 0 {
+            return Err(format!("AHardwareBuffer_unlock failed: {}", ret));
+        }
+        Ok(())
+    }
+
+    fn is_mapped(&self) -> bool {
+        !self.mapped_ptr.get().is_null()
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+impl cam_hal::buffer::CameraBuffer for AHardwareBufferBacked {
+    fn width(&self) -> u32 { self.width }
+    fn height(&self) -> u32 { self.height }
+    fn stride(&self) -> u32 { self.stride }
+    fn format(&self) -> i32 { self.format }
+    fn timestamp(&self) -> u64 { 0 }
+    fn frame_number(&self) -> u64 { self.frame_number }
+}
+
+/// Allocator backend for AHardwareBuffer.
+#[derive(Debug)]
+pub struct AHardwareBufferAllocator;
+
+impl cam_hal::buffer::BufferAllocator for AHardwareBufferAllocator {
+    fn name(&self) -> &'static str {
+        "ahardwarebuffer"
+    }
+
+    fn allocate(&self, size: usize) -> Result<Box<dyn cam_hal::buffer::MappedBuffer>, String> {
+        // AHardwareBuffer doesn't support arbitrary allocations.
+        // Fall back to heap for non-camera buffers.
+        Ok(Box::new(hal_buffer::HeapBuffer::new(size)))
+    }
+
+    fn allocate_frame(
+        &self,
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: i32,
+    ) -> Result<Box<dyn cam_hal::buffer::CameraBuffer>, String> {
+        // For now, delegate to heap. Real impl would create AHardwareBuffer via NDK.
+        let bpp = util::hal_format_bpp(format);
+        let size = (stride as usize) * (height as usize) * bpp;
+        Ok(Box::new(hal_buffer::HeapCameraBuffer::new(
+            width, height, stride, format,
+            cam_hal::buffer::HeapBuffer::new(size),
+        )))
+    }
+}
 
 // ── Processing function type ────────────────────────────────────────────────
 //
