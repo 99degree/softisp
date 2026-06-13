@@ -7,3 +7,6 @@ edition = "2021"
 cam-types = { path = "../cam-types" }
 log = { workspace = true }
 thiserror = { workspace = true }
+
+[features]
+default = []
