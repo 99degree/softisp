@@ -4,7 +4,7 @@
 //! processing cost. Ported from `com.camcore.isp.pipeline.PipelineProfile` (Java).
 
 use crate::blocks::*;
-use crate::pipeline::{GraphComposer, IspBlock};
+use crate::pipeline::IspBlock;
 
 /// Demosaic quality selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,11 +28,6 @@ pub enum PipelineLevel {
     Medium = 1,
     Heavy = 2,
     Pro = 3,
-    /// Reference pipeline — uses proper block implementations where available
-    /// instead of placeholders (EeBlock for unsharp, LdciBlock for LDCI, etc.).
-    Reference = 4,
-    /// Maximum pipeline — everything enabled including warp and HDR.
-    Infinite = 5,
 }
 
 /// Pipeline profile defining which ISP blocks to enable.
@@ -47,8 +42,6 @@ pub struct PipelineProfile {
     pub level: PipelineLevel,
     /// Enable defective pixel correction (hot pixel removal).
     pub use_bad_pixel: bool,
-    /// ONNX element type for raw input: 1=FLOAT, 4=UINT16, 5=INT16.
-    pub input_elem_type: i32,
     /// Demosaic quality.
     pub demosaic_quality: DemosaicQuality,
     /// Enable local contrast enhancement.
@@ -61,8 +54,6 @@ pub struct PipelineProfile {
     pub use_warp: bool,
     /// Enable HDR merge.
     pub use_hdr: bool,
-    /// Enable false color suppression (FCS).
-    pub use_fcs: bool,
 }
 
 impl PipelineProfile {
@@ -71,14 +62,12 @@ impl PipelineProfile {
         label: "LITE",
         level: PipelineLevel::Lite,
         use_bad_pixel: false,
-        input_elem_type: 5, // INT16
         demosaic_quality: DemosaicQuality::HqLinear,
         use_local_contrast: false,
         use_unsharp: false,
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
-        use_fcs: false,
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -86,14 +75,12 @@ impl PipelineProfile {
         label: "MED",
         level: PipelineLevel::Medium,
         use_bad_pixel: true,
-        input_elem_type: 5, // INT16
         demosaic_quality: DemosaicQuality::Standard,
         use_local_contrast: false,
         use_unsharp: true,
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
-        use_fcs: false,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -101,79 +88,43 @@ impl PipelineProfile {
         label: "HEAVY",
         level: PipelineLevel::Heavy,
         use_bad_pixel: true,
-        input_elem_type: 5, // INT16
         demosaic_quality: DemosaicQuality::Edge,
         use_local_contrast: true,
         use_unsharp: true,
         use_lsc: true,
         use_warp: false,
         use_hdr: false,
-        use_fcs: false,
     };
 
-    /// Everything-on profile: all available blocks enabled (placeholders for advanced blocks).
+    /// Everything-on profile: all available blocks enabled.
     pub const PRO: Self = Self {
         label: "PRO",
         level: PipelineLevel::Pro,
         use_bad_pixel: true,
-        input_elem_type: 5, // INT16
         demosaic_quality: DemosaicQuality::Edge,
         use_local_contrast: true,
         use_unsharp: true,
         use_lsc: true,
         use_warp: true,
         use_hdr: true,
-        use_fcs: false,
     };
 
-    /// Reference pipeline — proper block implementations for all features.
-    /// Uses EeBlock for unsharp, LdciBlock for LDCI, includes FCS.
-    pub const REFERENCE: Self = Self {
-        label: "REFERENCE",
-        level: PipelineLevel::Reference,
-        use_bad_pixel: true,
-        input_elem_type: 5, // INT16
-        demosaic_quality: DemosaicQuality::Edge,
-        use_local_contrast: true,
-        use_unsharp: true,
-        use_lsc: true,
-        use_warp: false,
-        use_hdr: false,
-        use_fcs: true,
-    };
-
-    /// Infinite pipeline — maximum quality with all blocks including warp and HDR.
-    pub const INFINITE: Self = Self {
-        label: "INFINITE",
-        level: PipelineLevel::Infinite,
-        use_bad_pixel: true,
-        input_elem_type: 5, // INT16
-        demosaic_quality: DemosaicQuality::Edge,
-        use_local_contrast: true,
-        use_unsharp: true,
-        use_lsc: true,
-        use_warp: true,
-        use_hdr: true,
-        use_fcs: true,
-    };
-
-    /// Test profile: minimal identity blocks for fast ONNX path verification.
+    /// Test profile: minimal blocks for fast unit testing.
+    /// Uses identity/placeholder blocks that skip expensive computation.
     pub const TEST: Self = Self {
         label: "TEST",
         level: PipelineLevel::Lite,
         use_bad_pixel: false,
-        input_elem_type: 1, // FLOAT (MNN-compatible)
         demosaic_quality: DemosaicQuality::Standard,
         use_local_contrast: false,
         use_unsharp: false,
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
-        use_fcs: false,
     };
 
     /// All built-in profiles.
-    pub const ALL: [Self; 7] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::REFERENCE, Self::INFINITE, Self::TEST];
+    pub const ALL: [Self; 5] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::TEST];
 
     /// Create a custom profile with override flags.
     pub const fn custom(
@@ -186,8 +137,6 @@ impl PipelineProfile {
         use_lsc: bool,
         use_warp: bool,
         use_hdr: bool,
-        use_fcs: bool,
-        input_elem_type: i32,
     ) -> Self {
         Self {
             label,
@@ -199,8 +148,6 @@ impl PipelineProfile {
             use_lsc,
             use_warp,
             use_hdr,
-            use_fcs,
-            input_elem_type,
         }
     }
 
@@ -209,59 +156,39 @@ impl PipelineProfile {
     /// Returns `(head, blocks)` where `head` is the first block
     /// and `blocks` is the full ordered list for `GraphComposer::compose_from_vec()`.
     pub fn build_blocks(&self, target_width: u32, bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
-        // TEST profile: use minimal identity blocks for fast ONNX path verification
-        if self.label == "TEST" {
-            return self.build_test_blocks(target_width, bayer_pattern);
-        }
-
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
 
-        // Compute concrete dims from target_width (4:3 aspect)
-        let input_h = (target_width as f64 * 0.75) as u32;
-        let input_w = target_width;
-        let cfa_h = input_h / 2;
-        let cfa_w = input_w / 2;
-        let demo_h = input_h / 2;
-        let demo_w = input_w / 2;
-
         // ── Raw input ──
-        // Use concrete dims for all profiles (avoids MNN symbolic dim issues).
-        // These are the model's declared input dimensions — MNN can resize at runtime.
-        blocks.push(Box::new(RawInputBlock::new()
-            .with_elem_type(self.input_elem_type)
-            .with_concrete_dims(input_h as i64, input_w as i64)));
+        blocks.push(Box::new(RawInputBlock::new()));
 
         // ── Normalize ──
         blocks.push(Box::new(NormalizeBlock::new()));
 
         // ── Defective pixel correction (optional) ──
         if self.use_bad_pixel {
-            blocks.push(Box::new(BlcBlock::with_instance("dpc"))); // BLC acts as DPC
+            blocks.push(Box::new(BlcBlock::new())); // BLC acts as DPC in our impl
         }
 
         // ── CFA unpack ──
-        blocks.push(Box::new(CfaBlock::new().with_concrete_dims(cfa_h as i64, cfa_w as i64)));
+        blocks.push(Box::new(CfaBlock::new()));
 
         // ── Black level correction ──
         blocks.push(Box::new(BlcBlock::new()));
 
         // ── Lens shading correction (optional) ──
         if self.use_lsc {
-            // Use a 4-channel CCM (LSC operates on Bayer data before demosaic)
-            blocks.push(Box::new(CcmBlock::with_instance("lsc").with_channels(4)));
+            blocks.push(Box::new(CcmBlock::new())); // simplified: reuse CCM for LSC
         }
 
         // ── Bayer white balance ──
         blocks.push(Box::new(BayerWbBlock::new()));
 
         // ── Demosaic ──
-        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern).with_concrete_dims(demo_h as i64, demo_w as i64)));
+        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
 
         // ── Warp (optional, EIS/deshake) ──
         if self.use_warp {
-            // Note: WarpBlock uses GridSampler which is not a standard ONNX op.
-            // Use CcmBlock placeholder for now (warp can be done in CPU backend).
-            blocks.push(Box::new(CcmBlock::with_instance("warp"))); // placeholder
+            blocks.push(Box::new(CcmBlock::new())); // placeholder
         }
 
         // ── Color correction matrix ──
@@ -270,52 +197,19 @@ impl PipelineProfile {
         // ── Tone curve ──
         blocks.push(Box::new(ToneBlock::new()));
 
-        // ── False color suppression (optional, REFERENCE+) ──
-        if self.use_fcs {
-            blocks.push(Box::new(FcsBlock::new()));
-        }
-
         // ── Local contrast (optional) ──
         if self.use_local_contrast {
-            if self.level >= PipelineLevel::Reference {
-                blocks.push(Box::new(LdciBlock::new())); // real LDCI
-            } else {
-                blocks.push(Box::new(CcmBlock::with_instance("ldci"))); // placeholder
-            }
+            blocks.push(Box::new(CcmBlock::new())); // placeholder
         }
 
         // ── Unsharp mask (optional) ──
         if self.use_unsharp {
-            if self.level >= PipelineLevel::Reference {
-                blocks.push(Box::new(EeBlock::new())); // real edge enhancement
-            } else {
-                blocks.push(Box::new(CcmBlock::with_instance("unsharp"))); // placeholder
-            }
+            blocks.push(Box::new(CcmBlock::new())); // placeholder
         }
 
         // ── Display output ──
         blocks.push(Box::new(DisplayBlock::new(target_width)));
 
-        // Wire block chain internally so callers don't need to call wire_blocks.
-        // Without wiring, MNNConvert segfaults on the generated ONNX model.
-        GraphComposer::wire_blocks(&mut blocks);
-
-        blocks
-    }
-
-    /// Build minimal blocks for TEST profile — fast ONNX/MNN path verification.
-    /// Uses FLOAT input with concrete dims for MNN compatibility.
-    fn build_test_blocks(&self, target_width: u32, _bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
-        let input_h = (target_width as f64 * 0.75) as u32;
-        let input_w = target_width;
-        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(RawInputBlock::new()
-                .with_elem_type(self.input_elem_type)
-                .with_concrete_dims(input_h as i64, input_w as i64)),
-            Box::new(DisplayBlock::new(target_width)),
-        ];
-        // Wire test blocks too — ORT requires all inputs to be connected.
-        GraphComposer::wire_blocks(&mut blocks);
         blocks
     }
 
@@ -328,7 +222,6 @@ impl PipelineProfile {
         if self.use_unsharp { count += 1; }
         if self.use_warp { count += 1; }
         if self.use_hdr { count += 1; }
-        if self.use_fcs { count += 1; }
         count
     }
 
@@ -383,13 +276,10 @@ mod tests {
         let p = PipelineProfile::custom(
             "CUSTOM", PipelineLevel::Pro, true,
             DemosaicQuality::Edge, true, true, true, true, false,
-            true, // use_fcs
-            5, // INT16
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
         assert!(!p.use_hdr);
-        assert!(p.use_fcs);
     }
 
     #[test]

@@ -191,6 +191,7 @@ impl GraphComposer {
         aux_blocks: &[&dyn IspBlock],
         opset_version: i64,
     ) -> Result<Vec<u8>, String> {
+        eprintln!("GraphComposer::compose_from_vec: pipeline len={}, aux len={}", pipeline.len(), aux_blocks.len());
         if pipeline.is_empty() {
             return Err("Empty pipeline".to_string());
         }
@@ -201,6 +202,7 @@ impl GraphComposer {
 
         let pipeline_head = pipeline[0];
         let pipeline_tail = pipeline[pipeline.len() - 1];
+        eprintln!("GraphComposer::compose_from_vec: head={}, tail={}", pipeline_head.id(), pipeline_tail.id());
 
         // 2. Walk blocks and set inputSource based on predecessor
         // Since blocks hold their own `input_source` as mutable state,
@@ -352,7 +354,19 @@ impl GraphComposer {
         opset_version: i64,
     ) -> Result<Vec<u8>, String> {
         let chain = Self::walk_chain(head)?;
-        Self::compose_from_vec(&chain, aux_blocks, opset_version)
+        eprintln!("GraphComposer::compose: chain length = {}", chain.len());
+        eprintln!("GraphComposer::compose: aux_blocks length = {}", aux_blocks.len());
+        // If the chain only has the head and there are aux_blocks,
+        // treat aux_blocks as part of the main pipeline
+        if chain.len() == 1 && !aux_blocks.is_empty() {
+            let mut full_chain = chain;
+            full_chain.extend_from_slice(aux_blocks);
+            eprintln!("GraphComposer::compose: using full_chain length = {}", full_chain.len());
+            Self::compose_from_vec(&full_chain, &[], opset_version)
+        } else {
+            eprintln!("GraphComposer::compose: using chain + aux_blocks");
+            Self::compose_from_vec(&chain, aux_blocks, opset_version)
+        }
     }
 
     /// Walk the main chain starting from head.
