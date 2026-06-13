@@ -13,15 +13,16 @@ pub enum FrameFormat {
 /// Camera source type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CameraSourceType {
+    /// No camera source.
     None,
+    /// Test stub.
     Stub,
-    Camerax,
-    Camera2,
-    Virtual,
-    RawCamera2,
+    /// Raw frame stub.
     RawStub,
-    /// Android Camera HAL v3 device.
+    /// Android Camera HAL v3.
     AndroidHal,
+    /// Linux V4L2 camera.
+    V4l2,
 }
 
 /// Frame type for HDR and normal captures.
