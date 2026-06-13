@@ -20,11 +20,10 @@ pub fn default_tone_params() -> ToneParams {
 }
 
 /// Factory for creating an IspEngine instance.
-#[derive(Clone)]
 pub struct EngineFactory {
     pub name: &'static str,
     pub priority: i32,
-    pub create_fn: fn() -> Box<dyn IspEngine>,
+    pub create_fn: Box<dyn Fn() -> Box<dyn IspEngine> + Send>,
 }
 
 impl fmt::Debug for EngineFactory {
