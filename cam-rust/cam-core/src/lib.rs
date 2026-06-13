@@ -3,6 +3,7 @@
 pub mod pipeline;
 pub mod debug;
 pub mod logger;
+pub mod hal_bridge;
 
 use std::sync::{Arc, Mutex};
 use log::{info, error};
