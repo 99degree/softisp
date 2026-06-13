@@ -36,15 +36,30 @@ pub mod demosaic;
 pub mod isp_ops;
 pub mod warp;
 pub mod stats;
+pub mod simd;
 
 use std::sync::Once;
+use log::info;
 
 /// Initialize the ISP library — registers all built-in engines.
 /// Safe to call multiple times.
+///
+/// Registers CPU, MNN (if `mnn` feature), and ONNX (if `ort` feature)
+/// engines. After calling `init()`, use `engine::select_engine()` or
+/// `engine::select_engine_by_name()` to get an engine instance.
 pub fn init() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
+        info!("cam_isp::init — SIMD backend: {}", simd::selector::active_backend_name());
         cpu::register_cpu_engine();
+        #[cfg(feature = "mnn")]
+        {
+            mnnengine::MnnEngine::register_factories();
+        }
+        #[cfg(feature = "ort")]
+        {
+            onnx::OnnxEngine::register_factories();
+        }
         blocks::register_builtin_blocks();
     });
 }
