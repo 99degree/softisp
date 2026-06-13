@@ -9,6 +9,7 @@
 #![allow(dead_code)]
 
 pub mod adapter;
+pub mod util;
 
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
@@ -113,12 +114,6 @@ unsafe impl Sync for camera_module_t {}
 pub const CAMERA3_STREAM_OUTPUT: i32 = 0;
 pub const CAMERA3_STREAM_INPUT: i32 = 1;
 pub const CAMERA3_STREAM_BIDIRECTIONAL: i32 = 2;
-
-// Formats
-pub const HAL_PIXEL_FORMAT_RAW16: i32 = 0x20;
-pub const HAL_PIXEL_FORMAT_BLOB: i32 = 0x21;
-pub const HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED: i32 = 0x22;
-pub const HAL_PIXEL_FORMAT_YCrCb_420_SP: i32 = 0x11;
 
 // Message types for notify
 pub const CAMERA3_MSG_SHUTTER: u32 = 1;
@@ -341,8 +336,8 @@ unsafe extern "C" fn device_initialize(
     log::info!("device_initialize");
     if !callback_ops.is_null() {
         GLOBAL_CALLBACK_PTR = Some(callback_ops);
+        log::debug!("callback_ops stored");
     }
-    // TODO: Initiate the SoftISP pipeline for this device
     0
 }
 
