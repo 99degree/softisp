@@ -216,12 +216,20 @@ impl PipelineProfile {
 
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
 
+        // Compute concrete dims from target_width (4:3 aspect)
+        let input_h = (target_width as f64 * 0.75) as u32;
+        let input_w = target_width;
+        let cfa_h = input_h / 2;
+        let cfa_w = input_w / 2;
+        let demo_h = input_h / 2;
+        let demo_w = input_w / 2;
+
         // ── Raw input ──
         // Use concrete dims for all profiles (avoids MNN symbolic dim issues).
         // These are the model's declared input dimensions — MNN can resize at runtime.
         blocks.push(Box::new(RawInputBlock::new()
             .with_elem_type(self.input_elem_type)
-            .with_concrete_dims(48, 64)));
+            .with_concrete_dims(input_h as i64, input_w as i64)));
 
         // ── Normalize ──
         blocks.push(Box::new(NormalizeBlock::new()));
@@ -232,7 +240,7 @@ impl PipelineProfile {
         }
 
         // ── CFA unpack ──
-        blocks.push(Box::new(CfaBlock::new().with_concrete_dims(48, 64)));
+        blocks.push(Box::new(CfaBlock::new().with_concrete_dims(cfa_h as i64, cfa_w as i64)));
 
         // ── Black level correction ──
         blocks.push(Box::new(BlcBlock::new()));
@@ -247,7 +255,7 @@ impl PipelineProfile {
         blocks.push(Box::new(BayerWbBlock::new()));
 
         // ── Demosaic ──
-        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern).with_concrete_dims(24, 32)));
+        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern).with_concrete_dims(demo_h as i64, demo_w as i64)));
 
         // ── Warp (optional, EIS/deshake) ──
         if self.use_warp {
@@ -298,10 +306,12 @@ impl PipelineProfile {
     /// Build minimal blocks for TEST profile — fast ONNX/MNN path verification.
     /// Uses FLOAT input with concrete dims for MNN compatibility.
     fn build_test_blocks(&self, target_width: u32, _bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
+        let input_h = (target_width as f64 * 0.75) as u32;
+        let input_w = target_width;
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
             Box::new(RawInputBlock::new()
                 .with_elem_type(self.input_elem_type)
-                .with_concrete_dims(48, 64)),
+                .with_concrete_dims(input_h as i64, input_w as i64)),
             Box::new(DisplayBlock::new(target_width)),
         ];
         // Wire test blocks too — ORT requires all inputs to be connected.

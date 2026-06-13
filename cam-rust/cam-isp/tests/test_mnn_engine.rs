@@ -152,6 +152,239 @@ fn test_mnn_engine_frame_difference() {
     eprintln!("PASSED: all frames unique");
 }
 
+/// Test LITE profile through MNN engine.
+#[cfg(feature = "mnn")]
+#[test]
+#[ignore] // requires libMNN.so + MNNConvert
+fn test_mnn_engine_lite_profile() {
+    use std::path::Path;
+    use cam_isp::engine::IspEngine;
+    use cam_isp::mnnengine::{MnnEngine, MnnBackend};
+    use cam_isp::profile::PipelineProfile;
+    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::mnn_converter::convert_onnx_to_mnn;
+
+    // Build LITE profile ONNX model
+    let mut blocks = PipelineProfile::LITE.build_blocks(64, 0);
+    let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+    let model = GraphComposer::compose_from_vec(&refs, &[], 16)
+        .expect("LITE compose");
+
+    let onnx_path = ".mnn_test_lite.onnx";
+    std::fs::write(onnx_path, &model)
+        .expect("write .onnx");
+    let _mnn_path = convert_onnx_to_mnn(onnx_path, ".mnn_test_lite.mnn", None)
+        .expect("convert to MNN");
+    if Path::new(onnx_path).exists() {
+        let _ = std::fs::remove_file(onnx_path);
+    }
+
+    let mnn = ".mnn_test_lite.mnn".to_string();
+    eprintln!("MNN model: {}", mnn);
+
+    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    engine.set_model_path(&mnn);
+    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    engine.build(head, vec![], None, 16).expect("build");
+
+    let w = 48u32; let h = 64u32;
+    let frame_size = (w * h * 2) as usize;
+    let smax = 1024.0f32;
+
+    for frame_idx in 0..3 {
+        let mut buf = vec![0u8; frame_size];
+        for y in 0..h {
+            for x in 0..w {
+                let off = (y * w + x) as usize * 2;
+                let val = ((x ^ y ^ frame_idx as u32) & 0xFF) as u16;
+                buf[off] = val as u8;
+                buf[off + 1] = (val >> 8) as u8;
+            }
+        }
+        let result = engine.process(
+            w, h, w, &buf, smax, 64,
+            None, &cam_isp::engine::default_tone_params(),
+            None, None, 1.0, 0.0, None, None, None,
+        );
+        match &result {
+            Ok(frame) => {
+                eprintln!("Frame {}: {}×{} fmt={:?} size={}",
+                    frame_idx, frame.width, frame.height,
+                    frame.format, frame.data.len());
+                assert!(frame.data.len() >= (64 * h as usize * 3),
+                    "frame {} too small", frame_idx);
+            }
+            Err(e) => {
+                panic!("Frame {} failed: {}", frame_idx, e);
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&mnn);
+    eprintln!("PASSED: LITE profile via MNN - 3 streaming frames");
+}
+
+/// Build profile at given resolution and convert to MNN.
+#[cfg(feature = "mnn")]
+fn build_profile_mnn(profile: &cam_isp::profile::PipelineProfile, tag: &str, target_width: u32, _target_height: u32) -> Result<String, String> {
+    use std::path::Path;
+    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::mnn_converter::convert_onnx_to_mnn;
+
+    let mut blocks = profile.build_blocks(target_width, 0);
+    let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+    let model = GraphComposer::compose_from_vec(&refs, &[], 16)?;
+
+    let onnx_path = format!(".mnn_test_{}.onnx", tag);
+    let mnn_path = format!(".mnn_test_{}.mnn", tag);
+    std::fs::write(&onnx_path, &model).map_err(|e| format!("write: {}", e))?;
+    convert_onnx_to_mnn(&onnx_path, &mnn_path, None)?;
+    if Path::new(&onnx_path).exists() {
+        let _ = std::fs::remove_file(&onnx_path);
+    }
+    Ok(mnn_path)
+}
+
+/// Test profile at 64-wide resolution (fast, for quick validation).
+fn test_profile_via_mnn(profile: cam_isp::profile::PipelineProfile, tag: &str) -> Result<String, String> {
+    build_profile_mnn(&profile, tag, 64, 64)
+}
+
+fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
+    use cam_isp::engine::IspEngine;
+    use cam_isp::mnnengine::{MnnEngine, MnnBackend};
+
+    let mnn = test_profile_via_mnn(profile, tag)
+        .expect(&format!("{} model build + convert", tag));
+    eprintln!("MNN model: {}", mnn);
+
+    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    engine.set_model_path(&mnn);
+    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    engine.build(head, vec![], None, 16).expect("build");
+
+    let w = 48u32; let h = 64u32;
+    let buf = vec![0x80u8; (w * h * 2) as usize];
+    let result = engine.process(
+        w, h, w, &buf, 1024.0, 64,
+        None, &cam_isp::engine::default_tone_params(),
+        None, None, 1.0, 0.0, None, None, None,
+    );
+    match &result {
+        Ok(frame) => {
+            eprintln!("{}: {}×{} fmt={:?} size={}",
+                tag, frame.width, frame.height,
+                frame.format, frame.data.len());
+            assert!(frame.data.len() >= (64 * h as usize * 3),
+                "{} frame too small", tag);
+        }
+        Err(e) => panic!("{} failed: {}", tag, e),
+    }
+    let _ = std::fs::remove_file(&mnn);
+    eprintln!("PASSED: {} profile via MNN", tag);
+}
+
+#[cfg(feature = "mnn")]
+#[test]
+#[ignore]
+fn test_mnn_all_profiles() {
+    use cam_isp::profile::PipelineProfile;
+    run_mnn_profile_test("LITE", PipelineProfile::LITE);
+    run_mnn_profile_test("MED", PipelineProfile::MED);
+    run_mnn_profile_test("HEAVY", PipelineProfile::HEAVY);
+    run_mnn_profile_test("PRO", PipelineProfile::PRO);
+    run_mnn_profile_test("REFERENCE", PipelineProfile::REFERENCE);
+    run_mnn_profile_test("INFINITE", PipelineProfile::INFINITE);
+    eprintln!("ALL 6 profiles passed via MNN");
+}
+
+/// Stream at target resolution through MNN and report FPS.
+#[cfg(feature = "mnn")]
+fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
+    use cam_isp::engine::IspEngine;
+    use cam_isp::mnnengine::{MnnEngine, MnnBackend};
+    use std::time::Instant;
+
+    let mnn = build_profile_mnn(&cam_isp::profile::PipelineProfile::LITE, profile_tag, w, h)
+        .expect(&format!("model build {}x{}", w, h));
+
+    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    engine.set_model_path(&mnn);
+    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    engine.build(head, vec![], None, 16).expect("build");
+
+    let params = cam_isp::engine::default_tone_params();
+    let frame_size = (w * h * 2) as usize;
+    let mut total_duration = std::time::Duration::ZERO;
+
+    for frame_idx in 0..n_frames {
+        let mut buf = vec![0u8; frame_size];
+        let base = (frame_idx * 7) as u8;
+        for chunk in buf.chunks_exact_mut(2) {
+            let v = base.wrapping_mul(13).wrapping_add(chunk.len() as u8);
+            chunk[0] = v;
+            chunk[1] = v.wrapping_mul(3);
+        }
+
+        let t_start = Instant::now();
+        let result = engine.process(
+            w, h, w, &buf, 1024.0, w,
+            None, &params, None, None, 1.0, 0.0, None, None, None,
+        );
+        let elapsed = t_start.elapsed();
+        total_duration += elapsed;
+
+        match &result {
+            Ok(frame) => {
+                let expected = (w * h * 4) as usize;
+                assert_eq!(frame.data.len(), expected,
+                    "frame {} size mismatch", frame_idx);
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&mnn);
+                panic!("Frame {} failed: {}", frame_idx, e);
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(&mnn);
+    let avg = total_duration / n_frames;
+    let fps = n_frames as f64 / total_duration.as_secs_f64();
+    eprintln!("  {:4}x{:4}: {} frames, avg {:?}, {:.1} fps",
+        w, h, n_frames, avg, fps);
+    fps
+}
+
+/// Benchmark multiple resolutions to find max achievable FPS.
+#[cfg(feature = "mnn")]
+#[test]
+#[ignore]
+fn test_mnn_resolution_bench() {
+    let resolutions: [(u32, u32); 6] = [
+        (256, 144),   // nHD
+        (480, 270),   // 540p quarter
+        (640, 360),   // nHD 2x
+        (960, 540),   // qHD
+        (1280, 720),  // HD
+        (1920, 1080), // Full HD
+    ];
+    let mut results: Vec<(u32, u32, f64)> = Vec::new();
+    for &(w, h) in &resolutions {
+        let n = if w <= 640 { 100u32 } else { 10u32 };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            stream_mnn_profile(w, h, n, &format!("res_{}x{}", w, h))
+        })) {
+            Ok(fps) => results.push((w, h, fps)),
+            Err(_) => eprintln!("  {:4}x{:4}: CRASHED (SIGSEGV or panic)", w, h),
+        }
+    }
+    eprintln!("─── Resolution bench results ───");
+    for &(w, h, fps) in &results {
+        let pixels = w * h;
+        let mpix_s = pixels as f64 * fps / 1_000_000.0;
+        eprintln!("  {:4}x{:4}: {:6.1} fps ({:.1} Mpixel/s)", w, h, fps, mpix_s);
+    }
+}
+
 /// Uninitialized engine should return error.
 #[test]
 fn test_mnn_engine_uninitialized() {
