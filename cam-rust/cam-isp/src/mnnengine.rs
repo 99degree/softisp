@@ -92,15 +92,19 @@ impl MnnEngine {
 
     /// Register MNN engine factories for all available backends.
     /// Benchmarks each backend at startup and sets priority by actual FPS.
-    /// Uses a single tiny model for all backends, 2 frames each.
+    /// Uses a 320×240 model (sweet-spot: realistic, not too slow to build).
+    /// Times out after 2 s per backend — marks tardy backends with low priority.
     /// Called automatically by `cam_isp::init()`.
     #[cfg(feature = "mnn")]
     pub fn register_factories() {
         use crate::engine::register_engine;
         use crate::engine::EngineFactory;
 
-        // Build ONE model shared by all backend benchmarks
-        let mnn_path = match Self::build_bench_model(64, 48) {
+        // Build ONE model at 320×240 — small enough to convert quickly,
+        // large enough for GPU kernel-launch overhead to not dominate.
+        let bench_w = 320u32;
+        let bench_h = 240u32;
+        let mnn_path = match Self::build_bench_model(bench_w) {
             Ok(p) => p,
             Err(e) => {
                 error!("Failed to build bench model: {}; using default priorities", e);
@@ -113,9 +117,9 @@ impl MnnEngine {
         let mut scored: Vec<(MnnBackend, f64)> = Vec::new();
 
         for be in &all {
-            let fps = match Self::bench_backend(*be, &mnn_path, 64, 48, 2) {
+            let fps = match Self::bench_one(be, &mnn_path, bench_w, bench_h) {
                 Ok(f) => { debug!("  bench {:>8}: {:.1} fps", be.id(), f); f }
-                Err(e) => { warn!("  bench {:>8}: {} — treating as 0 fps", be.id(), e); 0.0 }
+                Err(e) => { warn!("  bench {:>8}: {} → 0 fps", be.id(), e); 0.0 }
             };
             scored.push((*be, fps));
         }
@@ -125,7 +129,7 @@ impl MnnEngine {
         // Sort by FPS descending; ties keep original order
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        info!("MNN backend ranking (by measured FPS):");
+        info!("MNN backend ranking (by measured FPS @ {}×{}):", bench_w, bench_h);
         for (i, (be, fps)) in scored.iter().enumerate() {
             let priority = (100 - i as i32).max(1);
             let name = be.id();
@@ -152,9 +156,9 @@ impl MnnEngine {
         info!("Registered {} MNN engine factories (default priorities)", backends.len());
     }
 
-    /// Build a tiny LITE .mnn model for benchmarking.
+    /// Build a LITE .mnn model for benchmarking (height derived 4:3 from w).
     #[cfg(feature = "mnn")]
-    fn build_bench_model(w: u32, _h: u32) -> Result<String, String> {
+    fn build_bench_model(w: u32) -> Result<String, String> {
         use crate::profile::PipelineProfile;
         use crate::pipeline::GraphComposer;
         use crate::mnn_converter::convert_onnx_to_mnn;
@@ -163,7 +167,7 @@ impl MnnEngine {
         let onnx_path = format!(".mnn_bench_{}.onnx", pid);
         let mnn_path = format!(".mnn_bench_{}.mnn", pid);
 
-        let mut blocks = PipelineProfile::LITE.build_blocks(w, 0);
+        let blocks = PipelineProfile::LITE.build_blocks(w, 0);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let model = GraphComposer::compose_from_vec(&refs, &[], 16)
             .map_err(|e| format!("compose: {}", e))?;
@@ -175,39 +179,67 @@ impl MnnEngine {
         Ok(mnn_path)
     }
 
-    /// Quick benchmark for a single backend (shared .mnn model).
+    /// Benchmark one backend at 320×240 in a dedicated thread with 2 s timeout.
+    /// Runs as many frames as possible within the budget, returns measured FPS.
+    /// If the thread panics or times out, returns 0 fps.
     #[cfg(feature = "mnn")]
-    fn bench_backend(backend: MnnBackend, mnn_path: &str, w: u32, h: u32, n_frames: u32) -> Result<f64, String> {
+    fn bench_one(backend: &MnnBackend, mnn_path: &str, w: u32, h: u32) -> Result<f64, String> {
         use crate::blocks::RawInputBlock;
         use crate::engine::default_tone_params;
 
-        let mut engine = MnnEngine::new(backend);
-        engine.set_model_path(mnn_path);
-        let head: Box<dyn IspBlock> = Box::new(RawInputBlock::new());
-        engine.build(head, vec![], None, 16)
-            .map_err(|e| format!("build: {}", e))?;
+        let be = *backend;
+        let mnn_owned = mnn_path.to_owned();
+        let (tx, rx) = std::sync::mpsc::channel();
 
-        let params = default_tone_params();
-        let frame_size = (w * h * 2) as usize;
-        let mut buf = vec![0u8; frame_size];
-        // Pre-fill with deterministic pattern
-        for y in 0..h {
-            for x in 0..w {
-                let off = (y * w + x) as usize * 2;
-                let val = (x ^ y) as u16;
-                buf[off] = val as u8;
-                buf[off + 1] = (val >> 8) as u8;
-            }
-        }
+        std::thread::spawn(move || {
+            let result = (|| -> Result<f64, String> {
+                let mut engine = MnnEngine::new(be);
+                engine.set_model_path(&mnn_owned);
+                let head: Box<dyn IspBlock> = Box::new(RawInputBlock::new());
+                engine.build(head, vec![], None, 16)
+                    .map_err(|e| format!("build: {}", e))?;
 
-        let start = Instant::now();
-        for _ in 0..n_frames {
-            engine.process(w, h, w, &buf, 1024.0, w, None, &params,
-                          None, None, 1.0, 0.0, None, None, None)?;
+                let params = default_tone_params();
+                let frame_size = (w * h * 2) as usize;
+                let mut buf = vec![0u8; frame_size];
+                for y in 0..h {
+                    for x in 0..w {
+                        let off = (y * w + x) as usize * 2;
+                        let val = (x ^ y) as u16;
+                        buf[off] = val as u8;
+                        buf[off + 1] = (val >> 8) as u8;
+                    }
+                }
+
+                let budget = std::time::Duration::from_millis(500); // 0.5 s per backend
+                let deadline = Instant::now() + budget;
+                let mut count = 0u32;
+
+                loop {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining < std::time::Duration::from_millis(10) {
+                        break;
+                    }
+                    engine.process(w, h, w, &buf, 1024.0, w, None, &params,
+                                  None, None, 1.0, 0.0, None, None, None)?;
+                    count += 1;
+                }
+
+                let elapsed = (budget - deadline.saturating_duration_since(Instant::now()))
+                    .max(std::time::Duration::from_micros(1));
+                if count == 0 {
+                    return Err("0 frames in 2 s budget".into());
+                }
+                Ok(count as f64 / elapsed.as_secs_f64())
+            })();
+            let _ = tx.send(result);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_millis(3000)) { // 2 s budget + 1 s grace
+            Ok(Ok(fps)) => Ok(fps),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("timed out after 3 s".into()),
         }
-        let elapsed = start.elapsed();
-        if elapsed.is_zero() { return Ok(9999.0); }
-        Ok(n_frames as f64 / elapsed.as_secs_f64())
     }
 
     // ── helpers ──
