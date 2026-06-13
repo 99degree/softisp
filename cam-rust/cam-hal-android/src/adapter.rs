@@ -46,6 +46,7 @@ pub mod ahardware_buffer {
     }
 
     pub const AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN: u64 = 0x00000003;
+    pub const AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN: u64 = 0x00000030;
 
     extern "C" {
         pub fn AHardwareBuffer_lock(
@@ -388,7 +389,7 @@ impl AndroidCameraAdapter {
         }
     }
 
-    /// Lock an AHardwareBuffer and process its contents.
+    /// Lock an AHardwareBuffer and process its contents (read-only).
     ///
     /// # Safety
     /// `buffer` must be valid.
@@ -415,6 +416,44 @@ impl AndroidCameraAdapter {
             format: cam_types::FrameFormat::Rgba8888, // pipeline produces RGBA
             timestamp: 0, // TODO: get from capture request
         })
+    }
+
+    /// Lock an AHardwareBuffer for CPU write access.
+    /// Returns (pointer, size_in_bytes).
+    ///
+    /// # Safety
+    /// `buffer` must be valid. Caller must unlock with `unlock_buffer`.
+    pub unsafe fn lock_for_write(
+        buffer: *mut ahardware_buffer::AHardwareBuffer,
+    ) -> Result<(*mut u8, usize), String> {
+        if buffer.is_null() {
+            return Err("Null buffer".to_string());
+        }
+        let mut cpu_ptr: *mut c_void = std::ptr::null_mut();
+        let ret = AHardwareBuffer_lock(
+            buffer,
+            AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+            -1,
+            std::ptr::null(),
+            &mut cpu_ptr,
+        );
+        if ret != 0 {
+            return Err(format!("AHB lock write failed: {}", ret));
+        }
+        // We don't know exact size here; caller must know or query via describe
+        let mut desc: AHardwareBuffer_Desc = std::mem::zeroed();
+        AHardwareBuffer_describe(buffer, &mut desc);
+        let size = (desc.stride.max(desc.width) as usize) * (desc.height as usize) * 4;
+        Ok((cpu_ptr as *mut u8, size))
+    }
+
+    /// Unlock a previously write-locked buffer.
+    pub unsafe fn unlock_buffer(buffer: *mut ahardware_buffer::AHardwareBuffer) -> Result<(), String> {
+        let ret = AHardwareBuffer_unlock(buffer, std::ptr::null_mut());
+        if ret != 0 {
+            return Err(format!("AHB unlock failed: {}", ret));
+        }
+        Ok(())
     }
 }
 
