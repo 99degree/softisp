@@ -4,13 +4,35 @@ use crate::onnx::proto::Proto;
 pub struct BlcBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
+    instance: String,
 }
 impl BlcBlock {
-    pub fn new() -> Self { Self { id: "blc".into(), prev: None, next: None, frame_tensor: "BlcBlock/frame".into(), input_source: String::new() } }
+    /// Create BlcBlock with default instance (single-use).
+    pub fn new() -> Self { Self::with_instance("") }
+    
+    /// Create BlcBlock with a unique instance suffix.
+    /// Required when multiple BlcBlocks are used in the same pipeline
+    /// (e.g., one for DPC, one for black level correction) to avoid
+    /// duplicate tensor names.
+    pub fn with_instance(suffix: &str) -> Self {
+        let inst = suffix.to_string();
+        let ns = if suffix.is_empty() { "BlcBlock".to_string() } else { format!("BlcBlock_{}", suffix) };
+        let bid = if suffix.is_empty() { "blc".to_string() } else { format!("blc_{}", suffix) };
+        Self {
+            id: bid,
+            prev: None,
+            next: None,
+            frame_tensor: format!("{}/frame", ns),
+            input_source: String::new(),
+            instance: inst,
+        }
+    }
 }
 impl IspBlock for BlcBlock {
     fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "BlcBlock".to_string() }
+    fn tensor_ns(&self) -> String {
+        if self.instance.is_empty() { "BlcBlock".to_string() } else { format!("BlcBlock_{}", self.instance) }
+    }
     fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
     fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
     fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
@@ -21,7 +43,7 @@ impl IspBlock for BlcBlock {
     fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
     fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source, &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(4), Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(&self.input_source, &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"), Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> { self.input_value_info() }
     fn nodes(&self) -> Vec<Vec<u8>> {
