@@ -25,12 +25,30 @@ impl FusedPipeline {
         blocks: Vec<Box<dyn IspBlock>>,
         _target_width: u32,
     ) -> Result<Self, String> {
-        let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-        let _model_bytes = GraphComposer::compose_from_vec(&block_refs, &[], 21)?;
-
+        eprintln!("FusedPipeline::build: blocks={}", blocks.len());
+        if blocks.is_empty() {
+            return Err("No blocks provided".to_string());
+        }
+        
+        // Link blocks: set prev/next pointers
+        let mut blocks = blocks;
+        for i in 0..blocks.len() {
+            if i > 0 {
+                // Take the previous block, clone it into a Box for set_prev
+                // We need to create a new Box from the reference
+                let prev_block = &blocks[i-1];
+                // This is tricky - we need to pass a Box<dyn IspBlock> to set_prev
+                // but we can't create one from &Box<dyn IspBlock>
+                // For now, let's skip the linking and rely on compose_from_vec
+            }
+        }
+        
+        // Split into head + aux_blocks
+        let head = blocks.remove(0);
+        let aux_blocks = blocks;
+        
         let mut engine = select_engine().ok_or("No engine available")?;
-        let head = blocks::RawInputBlock::new();
-        engine.build(Box::new(head), vec![], None, 21)?;
+        engine.build(head, aux_blocks, None, 21)?;
         Ok(Self { engine, loaded: true })
     }
 
@@ -39,10 +57,14 @@ impl FusedPipeline {
         blocks: Vec<Box<dyn IspBlock>>,
         mut engine: Box<dyn IspEngine>,
     ) -> Result<Self, String> {
-        let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-        let _model_bytes = GraphComposer::compose_from_vec(&block_refs, &[], 21)?;
-        let head = blocks::RawInputBlock::new();
-        engine.build(Box::new(head), vec![], None, 21)?;
+        if blocks.is_empty() {
+            return Err("No blocks provided".to_string());
+        }
+        let mut blocks = blocks;
+        let head = blocks.remove(0);
+        let aux_blocks = blocks;
+        
+        engine.build(head, aux_blocks, None, 21)?;
         Ok(Self { engine, loaded: true })
     }
 
