@@ -32,6 +32,7 @@ impl V4l2CameraAdapter {
             drop(cam);
 
             Ok(Self {
+                base: BaseCameraAdapter::new(CameraSourceType::V4l2),
                 device_path: device_path.to_string(),
                 config: None,
                 callback: None,
