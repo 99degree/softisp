@@ -28,6 +28,11 @@ pub enum PipelineLevel {
     Medium = 1,
     Heavy = 2,
     Pro = 3,
+    /// Reference pipeline — uses proper block implementations where available
+    /// instead of placeholders (EeBlock for unsharp, LdciBlock for LDCI, etc.).
+    Reference = 4,
+    /// Maximum pipeline — everything enabled including warp and HDR.
+    Infinite = 5,
 }
 
 /// Pipeline profile defining which ISP blocks to enable.
@@ -56,6 +61,8 @@ pub struct PipelineProfile {
     pub use_warp: bool,
     /// Enable HDR merge.
     pub use_hdr: bool,
+    /// Enable false color suppression (FCS).
+    pub use_fcs: bool,
 }
 
 impl PipelineProfile {
@@ -71,6 +78,7 @@ impl PipelineProfile {
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
+        use_fcs: false,
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -85,6 +93,7 @@ impl PipelineProfile {
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
+        use_fcs: false,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -99,9 +108,10 @@ impl PipelineProfile {
         use_lsc: true,
         use_warp: false,
         use_hdr: false,
+        use_fcs: false,
     };
 
-    /// Everything-on profile: all available blocks enabled.
+    /// Everything-on profile: all available blocks enabled (placeholders for advanced blocks).
     pub const PRO: Self = Self {
         label: "PRO",
         level: PipelineLevel::Pro,
@@ -113,6 +123,38 @@ impl PipelineProfile {
         use_lsc: true,
         use_warp: true,
         use_hdr: true,
+        use_fcs: false,
+    };
+
+    /// Reference pipeline — proper block implementations for all features.
+    /// Uses EeBlock for unsharp, LdciBlock for LDCI, includes FCS.
+    pub const REFERENCE: Self = Self {
+        label: "REFERENCE",
+        level: PipelineLevel::Reference,
+        use_bad_pixel: true,
+        input_elem_type: 5, // INT16
+        demosaic_quality: DemosaicQuality::Edge,
+        use_local_contrast: true,
+        use_unsharp: true,
+        use_lsc: true,
+        use_warp: false,
+        use_hdr: false,
+        use_fcs: true,
+    };
+
+    /// Infinite pipeline — maximum quality with all blocks including warp and HDR.
+    pub const INFINITE: Self = Self {
+        label: "INFINITE",
+        level: PipelineLevel::Infinite,
+        use_bad_pixel: true,
+        input_elem_type: 5, // INT16
+        demosaic_quality: DemosaicQuality::Edge,
+        use_local_contrast: true,
+        use_unsharp: true,
+        use_lsc: true,
+        use_warp: true,
+        use_hdr: true,
+        use_fcs: true,
     };
 
     /// Test profile: minimal identity blocks for fast ONNX path verification.
@@ -127,10 +169,11 @@ impl PipelineProfile {
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
+        use_fcs: false,
     };
 
     /// All built-in profiles.
-    pub const ALL: [Self; 5] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::TEST];
+    pub const ALL: [Self; 7] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::REFERENCE, Self::INFINITE, Self::TEST];
 
     /// Create a custom profile with override flags.
     pub const fn custom(
@@ -143,6 +186,7 @@ impl PipelineProfile {
         use_lsc: bool,
         use_warp: bool,
         use_hdr: bool,
+        use_fcs: bool,
         input_elem_type: i32,
     ) -> Self {
         Self {
@@ -155,6 +199,7 @@ impl PipelineProfile {
             use_lsc,
             use_warp,
             use_hdr,
+            use_fcs,
             input_elem_type,
         }
     }
@@ -206,6 +251,8 @@ impl PipelineProfile {
 
         // ── Warp (optional, EIS/deshake) ──
         if self.use_warp {
+            // Note: WarpBlock uses GridSampler which is not a standard ONNX op.
+            // Use CcmBlock placeholder for now (warp can be done in CPU backend).
             blocks.push(Box::new(CcmBlock::with_instance("warp"))); // placeholder
         }
 
@@ -215,14 +262,27 @@ impl PipelineProfile {
         // ── Tone curve ──
         blocks.push(Box::new(ToneBlock::new()));
 
+        // ── False color suppression (optional, REFERENCE+) ──
+        if self.use_fcs {
+            blocks.push(Box::new(FcsBlock::new()));
+        }
+
         // ── Local contrast (optional) ──
         if self.use_local_contrast {
-            blocks.push(Box::new(CcmBlock::with_instance("ldci"))); // placeholder
+            if self.level >= PipelineLevel::Reference {
+                blocks.push(Box::new(LdciBlock::new())); // real LDCI
+            } else {
+                blocks.push(Box::new(CcmBlock::with_instance("ldci"))); // placeholder
+            }
         }
 
         // ── Unsharp mask (optional) ──
         if self.use_unsharp {
-            blocks.push(Box::new(CcmBlock::with_instance("unsharp"))); // placeholder
+            if self.level >= PipelineLevel::Reference {
+                blocks.push(Box::new(EeBlock::new())); // real edge enhancement
+            } else {
+                blocks.push(Box::new(CcmBlock::with_instance("unsharp"))); // placeholder
+            }
         }
 
         // ── Display output ──
@@ -258,6 +318,7 @@ impl PipelineProfile {
         if self.use_unsharp { count += 1; }
         if self.use_warp { count += 1; }
         if self.use_hdr { count += 1; }
+        if self.use_fcs { count += 1; }
         count
     }
 
@@ -312,11 +373,13 @@ mod tests {
         let p = PipelineProfile::custom(
             "CUSTOM", PipelineLevel::Pro, true,
             DemosaicQuality::Edge, true, true, true, true, false,
+            true, // use_fcs
             5, // INT16
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
         assert!(!p.use_hdr);
+        assert!(p.use_fcs);
     }
 
     #[test]

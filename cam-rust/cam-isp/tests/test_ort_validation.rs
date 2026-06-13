@@ -94,6 +94,24 @@ fn test_pro_model_ort_validation() {
 }
 
 #[test]
+fn test_reference_model_ort_validation() {
+    let blocks = wired_blocks(PipelineProfile::REFERENCE);
+    let model = compose_wired(&blocks);
+    let result = validate_with_ort(&model);
+    eprintln!("REFERENCE: {}", result.as_ref().unwrap_or(&"FAILED".to_string()));
+    assert!(result.is_ok(), "REFERENCE model should be valid ORT model: {:?}", result.err());
+}
+
+#[test]
+fn test_infinite_model_ort_validation() {
+    let blocks = wired_blocks(PipelineProfile::INFINITE);
+    let model = compose_wired(&blocks);
+    let result = validate_with_ort(&model);
+    eprintln!("INFINITE: {}", result.as_ref().unwrap_or(&"FAILED".to_string()));
+    assert!(result.is_ok(), "INFINITE model should be valid ORT model: {:?}", result.err());
+}
+
+#[test]
 fn test_test_model_ort_validation() {
     let blocks = wired_blocks(PipelineProfile::TEST);
     let model = compose_wired(&blocks);
