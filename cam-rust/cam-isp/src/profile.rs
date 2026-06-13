@@ -4,7 +4,7 @@
 //! processing cost. Ported from `com.camcore.isp.pipeline.PipelineProfile` (Java).
 
 use crate::blocks::*;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{GraphComposer, IspBlock};
 
 /// Demosaic quality selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,7 +183,7 @@ impl PipelineProfile {
 
         // ── Defective pixel correction (optional) ──
         if self.use_bad_pixel {
-            blocks.push(Box::new(BlcBlock::new())); // BLC acts as DPC in our impl
+            blocks.push(Box::new(BlcBlock::with_instance("dpc"))); // BLC acts as DPC
         }
 
         // ── CFA unpack ──
@@ -194,7 +194,8 @@ impl PipelineProfile {
 
         // ── Lens shading correction (optional) ──
         if self.use_lsc {
-            blocks.push(Box::new(CcmBlock::new())); // simplified: reuse CCM for LSC
+            // Use a 4-channel CCM (LSC operates on Bayer data before demosaic)
+            blocks.push(Box::new(CcmBlock::with_instance("lsc").with_channels(4)));
         }
 
         // ── Bayer white balance ──
@@ -205,7 +206,7 @@ impl PipelineProfile {
 
         // ── Warp (optional, EIS/deshake) ──
         if self.use_warp {
-            blocks.push(Box::new(CcmBlock::new())); // placeholder
+            blocks.push(Box::new(CcmBlock::with_instance("warp"))); // placeholder
         }
 
         // ── Color correction matrix ──
@@ -216,16 +217,20 @@ impl PipelineProfile {
 
         // ── Local contrast (optional) ──
         if self.use_local_contrast {
-            blocks.push(Box::new(CcmBlock::new())); // placeholder
+            blocks.push(Box::new(CcmBlock::with_instance("ldci"))); // placeholder
         }
 
         // ── Unsharp mask (optional) ──
         if self.use_unsharp {
-            blocks.push(Box::new(CcmBlock::new())); // placeholder
+            blocks.push(Box::new(CcmBlock::with_instance("unsharp"))); // placeholder
         }
 
         // ── Display output ──
         blocks.push(Box::new(DisplayBlock::new(target_width)));
+
+        // Wire block chain internally so callers don't need to call wire_blocks.
+        // Without wiring, MNNConvert segfaults on the generated ONNX model.
+        GraphComposer::wire_blocks(&mut blocks);
 
         blocks
     }
@@ -233,12 +238,15 @@ impl PipelineProfile {
     /// Build minimal blocks for TEST profile — fast ONNX/MNN path verification.
     /// Uses FLOAT input with concrete dims for MNN compatibility.
     fn build_test_blocks(&self, target_width: u32, _bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
-        vec![
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
             Box::new(RawInputBlock::new()
                 .with_elem_type(self.input_elem_type)
                 .with_concrete_dims(48, 64)),
             Box::new(DisplayBlock::new(target_width)),
-        ]
+        ];
+        // Wire test blocks too — ORT requires all inputs to be connected.
+        GraphComposer::wire_blocks(&mut blocks);
+        blocks
     }
 
     /// Number of blocks in this profile's chain.
