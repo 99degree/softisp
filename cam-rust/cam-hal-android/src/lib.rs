@@ -10,6 +10,7 @@
 
 pub mod adapter;
 pub mod util;
+pub mod gralloc;
 
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};

@@ -8,6 +8,7 @@ cam-types = { path = "../cam-types" }
 cam-hal = { path = "../cam-hal" }
 log = { workspace = true }
 thiserror = { workspace = true }
+libc = "0.2"
 
 [features]
 default = []
