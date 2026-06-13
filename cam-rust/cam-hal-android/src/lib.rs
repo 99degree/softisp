@@ -122,6 +122,7 @@ pub const CAMERA3_MSG_ERROR: u32 = 2;
 
 // Buffer status
 pub const CAMERA_BUFFER_STATUS_OK: i32 = 0;
+const CAMERA_BUFFER_STATUS_ERROR: i32 = -1;
 
 #[repr(C)]
 pub struct camera3_stream_t {
@@ -419,57 +420,124 @@ unsafe extern "C" fn device_process_capture_request(
             );
         }
 
-        // ── Process each output buffer ─────────────────────────────────
-        for i in 0..req.num_output_buffers {
-            let buf = &*req.stream_buffer.add(i);
-            log::debug!(
-                "  buffer[{}]: stream={}x{}, format=0x{:x}, fence_in={}",
-                i,
-                (*buf.stream).width,
-                (*buf.stream).height,
-                (*buf.stream).format,
-                buf.acquire_fence,
-            );
+        // ── Process input buffers (read) ────────────────────────────────
+        let num_inputs = req.num_input_buffers;
+        let mut processed_data: Option<Vec<u8>> = None;
 
-            // Lock the AHardwareBuffer and process it through the adapter
-            if !buf.buffer.is_null() {
+        if num_inputs > 0 {
+            let in_buf = &*req.stream_buffer.add(0);
+            if !in_buf.buffer.is_null() {
+                log::debug!(
+                    "  input[0]: {}x{} fmt=0x{:x}",
+                    (*in_buf.stream).width,
+                    (*in_buf.stream).height,
+                    (*in_buf.stream).format,
+                );
+
                 match adapter.lock_and_process(
-                    buf.buffer as *mut adapter::AHardwareBuffer,
-                    (*buf.stream).format,
-                    (*buf.stream).width,
-                    (*buf.stream).height,
+                    in_buf.buffer as *mut adapter::AHardwareBuffer,
+                    (*in_buf.stream).format,
+                    (*in_buf.stream).width,
+                    (*in_buf.stream).height,
                 ) {
-                    Ok(_frame) => {
-                        // TODO: The processed frame should be written back to buffer
-                        // or sent via callback. For now, we just unlock and return.
+                    Ok(frame) => {
+                        let w = frame.width;
+                        let h = frame.height;
+                        let len = frame.data.len();
+                        processed_data = Some(frame.data);
+                        log::debug!("  processed input -> {}x{} bytes={}", w, h, len);
                     },
                     Err(e) => {
-                        log::error!("Buffer processing failed: {}", e);
+                        log::error!("Input processing failed: {}", e);
                     }
                 }
             }
+        }
 
-            // Mark buffer as filled
-            let mut filled = camera3_stream_buffer_t {
-                stream: buf.stream,
-                buffer: buf.buffer,
-                status: CAMERA_BUFFER_STATUS_OK,
-                acquire_fence: -1, // consumed
-                release_fence: -1,
-            };
+        // ── Process output buffers (write) ───────────────────────────────
+        if let Some(ref data) = processed_data {
+            for i in 0..req.num_output_buffers {
+                let out_buf = &*req.stream_buffer.add(num_inputs + i);
+                if out_buf.buffer.is_null() {
+                    continue;
+                }
 
-            // Return buffer via process_capture_result
-            if let Some(process_result) = cb.process_capture_result {
-                let result = camera3_capture_result_t {
-                    frame_number: req.frame_number,
-                    stream_buffer: &mut filled,
-                    num_output_buffers: 1,
-                    num_input_buffers: 0,
-                    result: std::ptr::null_mut(),
-                    partial_result: 0,
-                    input_buffer: std::ptr::null_mut(),
+                log::debug!(
+                    "  output[{}]: {}x{} fmt=0x{:x}",
+                    i,
+                    (*out_buf.stream).width,
+                    (*out_buf.stream).height,
+                    (*out_buf.stream).format,
+                );
+
+                match adapter::AndroidCameraAdapter::lock_for_write(
+                    out_buf.buffer as *mut adapter::AHardwareBuffer,
+                ) {
+                    Ok((dst_ptr, dst_size)) => {
+                        let copy_len = data.len().min(dst_size);
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                data.as_ptr(),
+                                dst_ptr,
+                                copy_len,
+                            );
+                        }
+                        log::debug!("  copied {} bytes to output buffer", copy_len);
+
+                        if let Err(e) = adapter::AndroidCameraAdapter::unlock_buffer(
+                            out_buf.buffer as *mut adapter::AHardwareBuffer,
+                        ) {
+                            log::warn!("Output unlock failed: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("Output lock failed: {}", e);
+                    }
+                }
+
+                let mut filled = camera3_stream_buffer_t {
+                    stream: out_buf.stream,
+                    buffer: out_buf.buffer,
+                    status: CAMERA_BUFFER_STATUS_OK,
+                    acquire_fence: -1,
+                    release_fence: -1,
                 };
-                process_result(cb as *const _, &result as *const _);
+
+                if let Some(process_result) = cb.process_capture_result {
+                    let result = camera3_capture_result_t {
+                        frame_number: req.frame_number,
+                        stream_buffer: &mut filled,
+                        num_output_buffers: 1,
+                        num_input_buffers: 0,
+                        result: std::ptr::null_mut(),
+                        partial_result: 0,
+                        input_buffer: std::ptr::null_mut(),
+                    };
+                    process_result(cb as *const _, &result as *const _);
+                }
+            }
+        } else {
+            for i in 0..req.num_output_buffers {
+                let out_buf = &*req.stream_buffer.add(num_inputs + i);
+                let mut filled = camera3_stream_buffer_t {
+                    stream: out_buf.stream,
+                    buffer: out_buf.buffer,
+                    status: CAMERA_BUFFER_STATUS_ERROR,
+                    acquire_fence: -1,
+                    release_fence: -1,
+                };
+                if let Some(process_result) = cb.process_capture_result {
+                    let result = camera3_capture_result_t {
+                        frame_number: req.frame_number,
+                        stream_buffer: &mut filled,
+                        num_output_buffers: 1,
+                        num_input_buffers: 0,
+                        result: std::ptr::null_mut(),
+                        partial_result: 0,
+                        input_buffer: std::ptr::null_mut(),
+                    };
+                    process_result(cb as *const _, &result as *const _);
+                }
             }
         }
     }
