@@ -29,7 +29,7 @@ impl V4l2CameraAdapter {
             drop(cam); // close — we'll reopen on start_streaming
 
             Ok(Self {
-                base: BaseCameraAdapter::new(CameraSourceType::RawCamera2),
+                base: BaseCameraAdapter::new(CameraSourceType::V4l2),
                 device_path: device_path.to_string(),
                 config: Mutex::new(None),
                 running: Arc::new(Mutex::new(false)),
