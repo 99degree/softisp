@@ -240,26 +240,61 @@ impl GraphComposer {
 
         let mut all_nodes = Vec::new();
         let mut all_initializers = Vec::new();
-        let mut all_inputs = Vec::new();
+        let mut graph_inputs = Vec::new();
         let mut all_outputs = Vec::new();
+        let mut value_infos = Vec::new();
         let mut extra_input_names = HashSet::new();
         let graph_name = format!("{}_pipeline", pipeline_head.id());
 
         for blk in &all_blocks {
             all_nodes.extend(blk.nodes());
             all_initializers.extend(blk.initializers());
+            
+            // Intermediate tensor value info for type inference (→ field 13)
+            // Only for non-Identity blocks
+            let is_identity = blk.id() == "normalize" || blk.id() == "cfa" || blk.id() == "blc" 
+                || blk.id() == "wb" || blk.id() == "ccm" || blk.id() == "tone" || blk.id() == "demosaic";
+            if !is_identity {
+                // Add value_info for all output tensors (except graph input/output)
+                for tname in blk.output_tensors() {
+                    let is_input = pipeline_head.graph_input_name().map_or(false, |n| n == tname);
+                    let is_output = pipeline_tail.graph_output_name().map_or(false, |n| n == tname);
+                    if !is_input && !is_output {
+                        value_infos.push(Proto::value_info(&tname, &[
+                            Proto::tensor_dim_param("N"),
+                            Proto::tensor_dim_param("C"),
+                            Proto::tensor_dim_param("H"),
+                            Proto::tensor_dim_param("W"),
+                        ], blk.output_elem_type()));
+                    }
+                }
+                // Add value_info for all input tensors that have a producer
+                for tname in blk.input_tensors() {
+                    if produced_by.contains_key(&tname) && !tname.is_empty() {
+                        let is_input = pipeline_head.graph_input_name().map_or(false, |n| n == tname);
+                        if !is_input {
+                            value_infos.push(Proto::value_info(&tname, &[
+                                Proto::tensor_dim_param("N"),
+                                Proto::tensor_dim_param("C"),
+                                Proto::tensor_dim_param("H"),
+                                Proto::tensor_dim_param("W"),
+                            ], blk.input_elem_type()));
+                        }
+                    }
+                }
+            }
 
-            // Graph input from head block
+            // Graph input from head block (→ field 11)
             if std::ptr::eq(*blk as *const _, pipeline_head as *const _) {
                 if let Some(name) = blk.graph_input_name() {
                     let vi = blk.input_value_info()
                         .ok_or_else(|| format!("Head block {} has no input_value_info", blk.id()))?;
-                    all_inputs.push(vi);
+                    graph_inputs.push(vi);
                     info!("{}: graph input: {} → {}", Self::TAG, blk.id(), name);
                 }
             }
 
-            // Graph output: tail block
+            // Graph output: tail block (→ field 12)
             if std::ptr::eq(*blk as *const _, pipeline_tail as *const _) {
                 if let Some(name) = blk.graph_output_name() {
                     if let Some(vi) = blk.output_value_info() {
@@ -278,31 +313,32 @@ impl GraphComposer {
                 let shape_dims: Vec<Vec<u8>> = dims.iter()
                     .map(|d| Proto::tensor_dim_value(*d))
                     .collect();
-                all_inputs.push(Proto::value_info(&name, &shape_dims, elem_type as i32));
+                value_infos.push(Proto::value_info(&name, &shape_dims, elem_type as i32));
                 info!("{}: extra input: {} (elem_type={})", Self::TAG, name, elem_type);
             }
         }
 
-        if all_inputs.is_empty() {
+        if graph_inputs.is_empty() {
             return Err("No graph inputs".to_string());
         }
         if all_outputs.is_empty() {
             return Err("No graph outputs".to_string());
         }
 
-        info!("{}: {} nodes, {} initializers, {} inputs, {} outputs",
+        info!("{}: {} nodes, {} initializers, {} graph inputs, {} outputs, {} value_infos",
             Self::TAG, all_nodes.len(), all_initializers.len(),
-            all_inputs.len(), all_outputs.len());
+            graph_inputs.len(), all_outputs.len(), value_infos.len());
 
         let graph = Proto::graph(
             &graph_name,
             &all_nodes,
-            &all_inputs,
+            &graph_inputs,
             &all_outputs,
             &all_initializers,
+            &value_infos,
         );
         let opset = Proto::opset("", opset_version);
-        let model = Proto::model(7, &opset, "cam_rust_graph_composer", &graph);
+        let model = Proto::model(11, &opset, "cam_rust_graph_composer", &graph);
 
         Ok(model)
     }
@@ -331,6 +367,15 @@ impl GraphComposer {
             return Err("Empty main chain".to_string());
         }
         Ok(chain)
+    }
+
+    /// Wire each block's input_source to the previous block's frame_tensor.
+    /// Must be called before `compose_from_vec`.
+    pub fn wire_blocks(blocks: &mut [Box<dyn IspBlock>]) {
+        for i in 1..blocks.len() {
+            let prev = blocks[i - 1].frame_tensor().unwrap_or("").to_string();
+            blocks[i].set_input_source(&prev);
+        }
     }
 }
 

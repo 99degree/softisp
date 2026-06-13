@@ -25,7 +25,7 @@ impl IspBlock for ToneBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
-            Proto::node("Mul", &[&self.input_source, &format!("{}/contrast_mat", ns)], &[&format!("{}/contrasted", ns)], &[]),
+            Proto::node("Mul", &[&self.input_source, &format!("{}/contrast", ns)], &[&format!("{}/contrasted", ns)], &[]),
             Proto::node("Add", &[&format!("{}/contrasted", ns), &format!("{}/brightness", ns)], &[&format!("{}/brightened", ns)], &[]),
             Proto::node("Clip", &[&format!("{}/brightened", ns), &format!("{}/zero", ns), &format!("{}/one", ns)], &[&self.frame_tensor], &[]),
         ]
