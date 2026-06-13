@@ -3,7 +3,6 @@
 
 pub mod proto;
 
-
 use log::info;
 #[cfg(feature = "ort")]
 use log::warn;

@@ -20,6 +20,7 @@ cc = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 clap = { version = "4", features = ["derive"] }
 env_logger = { workspace = true }
+prost = "0.14.4"
 
 [[example]]
 name = "mnn_memfd_test"
@@ -33,5 +34,4 @@ mnn = []
 [dependencies.ort]
 version = "2.0.0-rc.12"
 optional = true
-
 
