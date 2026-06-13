@@ -37,7 +37,7 @@ impl MnnBackend {
         match self { Self::Vulkan => "mnn_vulkan", Self::Opencl => "mnn_opencl", Self::CpuNeon => "mnn_neon", Self::Cpu => "mnn_cpu" }
     }
     pub fn priority(&self) -> i32 {
-        match self { Self::Vulkan => 95, Self::Opencl => 85, Self::CpuNeon => 75, Self::Cpu => 65 }
+        match self { Self::Vulkan => 99, Self::Opencl => 93, Self::CpuNeon => 75, Self::Cpu => 65 }
     }
     #[cfg(feature = "mnn")]
     fn to_sys(&self) -> MnnBackendType {
@@ -88,6 +88,23 @@ impl MnnEngine {
 
     /// Point to pre-converted .mnn file (skips on-the-fly conversion).
     pub fn set_model_path(&mut self, path: impl Into<String>) { self.model_path = Some(path.into()); }
+
+    /// Register MNN engine factories for all available backends.
+    /// Called automatically by `cam_isp::init()`.
+    #[cfg(feature = "mnn")]
+    pub fn register_factories() {
+        use crate::engine::register_engine;
+        use crate::engine::EngineFactory;
+        let backends = [MnnBackend::CpuNeon, MnnBackend::Cpu, MnnBackend::Vulkan, MnnBackend::Opencl];
+        for be in &backends {
+            let name = be.id();
+            let pri = be.priority();
+            let b = *be;
+            let create_fn = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
+            register_engine(EngineFactory { name, priority: pri, create_fn });
+        }
+        info!("Registered {} MNN engine factories", backends.len());
+    }
 
     // ── helpers ──
 

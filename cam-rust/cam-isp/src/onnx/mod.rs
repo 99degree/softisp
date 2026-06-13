@@ -73,6 +73,19 @@ impl OnnxEngine {
             session: std::sync::Mutex::new(None),
         }
     }
+
+    /// Register ONNX engine factories for all available backends.
+    /// Called automatically by `cam_isp::init()`.
+    pub fn register_factories() {
+        use crate::engine::{register_engine, EngineFactory};
+        for be in &[OrtBackend::Cpu, OrtBackend::Nnapi, OrtBackend::Xnnpack, OrtBackend::Tensorrt, OrtBackend::Coreml] {
+            let name = be.id();
+            let pri = be.priority();
+            let b = *be;
+            let create_fn = Box::new(move || Box::new(OnnxEngine::new(b)) as Box<dyn IspEngine>);
+            register_engine(EngineFactory { name, priority: pri, create_fn });
+        }
+    }
 }
 
 impl IspEngine for OnnxEngine {
