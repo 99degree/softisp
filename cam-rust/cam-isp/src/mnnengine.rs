@@ -28,20 +28,21 @@ pub use crate::mnn_sys::*;
 pub enum MnnBackend {
     Vulkan,
     Opencl,
+    OpenGl,
     CpuNeon,
     Cpu,
 }
 
 impl MnnBackend {
     pub fn id(&self) -> &'static str {
-        match self { Self::Vulkan => "mnn_vulkan", Self::Opencl => "mnn_opencl", Self::CpuNeon => "mnn_neon", Self::Cpu => "mnn_cpu" }
+        match self { Self::Vulkan => "mnn_vulkan", Self::Opencl => "mnn_opencl", Self::OpenGl => "mnn_opengl", Self::CpuNeon => "mnn_neon", Self::Cpu => "mnn_cpu" }
     }
     pub fn priority(&self) -> i32 {
-        match self { Self::Vulkan => 99, Self::Opencl => 93, Self::CpuNeon => 75, Self::Cpu => 65 }
+        match self { Self::Vulkan => 99, Self::Opencl => 55, Self::OpenGl => 50, Self::CpuNeon => 75, Self::Cpu => 65 }
     }
     #[cfg(feature = "mnn")]
     fn to_sys(&self) -> MnnBackendType {
-        match self { Self::Vulkan => MnnBackendType::Vulkan, Self::Opencl => MnnBackendType::Opencl, _ => MnnBackendType::Cpu }
+        match self { Self::Vulkan => MnnBackendType::Vulkan, Self::Opencl => MnnBackendType::Opencl, Self::OpenGl => MnnBackendType::Opengl, _ => MnnBackendType::Cpu }
     }
 }
 
@@ -95,7 +96,7 @@ impl MnnEngine {
     pub fn register_factories() {
         use crate::engine::register_engine;
         use crate::engine::EngineFactory;
-        let backends = [MnnBackend::CpuNeon, MnnBackend::Cpu, MnnBackend::Vulkan, MnnBackend::Opencl];
+        let backends = [MnnBackend::CpuNeon, MnnBackend::Cpu, MnnBackend::Vulkan, MnnBackend::Opencl, MnnBackend::OpenGl];
         for be in &backends {
             let name = be.id();
             let pri = be.priority();
@@ -158,6 +159,20 @@ impl IspEngine for MnnEngine {
                     mn
                 }
             };
+
+            // Preload GPU backend libraries to register them with MNN.
+            // On real Android (not Termux), the proprietary Adreno/Mali driver
+            // will be accessible and Vulkan/OpenCL sessions will initialize.
+            // On Termux, GPU libs load but VulkanDevice init throws
+            // length_error("vector") due to Android linker namespace isolation.
+            unsafe {
+                let vk = libloading::os::unix::Library::new("libMNN_Vulkan.so");
+                if let Ok(lib) = vk { std::mem::forget(lib); }
+                let cl = libloading::os::unix::Library::new("libMNN_CL.so");
+                if let Ok(lib) = cl { std::mem::forget(lib); }
+                let gl = libloading::os::unix::Library::new("libMNN_GL.so");
+                if let Ok(lib) = gl { std::mem::forget(lib); }
+            }
 
             if !Path::new(&mnn).exists() {
                 error!("MNN model not found: {}", mnn);
