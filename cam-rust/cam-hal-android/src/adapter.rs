@@ -12,6 +12,7 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Arc;
 
+use crate::util;
 use cam_hal::camera::{ByteFrame, CameraState, FrameCallback, ICameraAdapter, StreamConfig};
 
 // ── AHardwareBuffer FFI ─────────────────────────────────────────────────────
@@ -96,13 +97,7 @@ unsafe fn lock_and_copy_buffer(
     let height = _stream_height;
 
     // Estimate bytes-per-pixel from format
-    let bpp = match _stream_format {
-        0x20 => 2,    // RAW16
-        0x25 | 0x26 => 2, // RAW10/12
-        0x11 => 1,    // NV21 Y-plane
-        0x22 => 4,    // IMPLEMENTATION_DEFINED (assume RGBA)
-        _ => 2,
-    };
+    let bpp = util::hal_format_bpp(_stream_format);
     let buf_size = (width as u64) * (height as u64) * (bpp as u64);
 
     let mut cpu_ptr: *mut c_void = ptr::null_mut();
