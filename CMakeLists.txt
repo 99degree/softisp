@@ -7,10 +7,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Add source to this project
-add_executable(softisp main.cpp src/session_manager.cpp src/monitor.cpp src/scheduler.cpp src/worker.cpp src/allocator.cpp)
+add_executable(softisp src/main.cpp src/session_manager.cpp src/monitor.cpp src/scheduler.cpp src/worker.cpp src/allocator.cpp)
 
 # Include directories
-include_directories(src/include)
+include_directories(src/include src)
 
 # Add tests
 enable_testing()
