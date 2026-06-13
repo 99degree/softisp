@@ -8,5 +8,6 @@ cam-types = { path = "../cam-types" }
 cam-hal = { path = "../cam-hal" }
 log = { workspace = true }
 thiserror = { workspace = true }
-ndk-sys = "0.3"
-ndk = { version = "0.6", features = ["hardware_buffer"] }
+
+[features]
+default = []

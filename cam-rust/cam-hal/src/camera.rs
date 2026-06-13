@@ -2,7 +2,6 @@
 //!
 //! Trait for camera adapters (V4L2, Android NDK, stub, etc.).
 
-use std::sync::Mutex;
 use cam_types::{FrameFormat, CameraSourceType};
 
 /// A byte frame sent from the camera adapter to the ISP pipeline.
@@ -81,63 +80,4 @@ pub trait ICameraAdapter: Send + Sync {
 
     /// Send a frame to the adapter for processing.
     fn send_frame(&self, frame: ByteFrame) -> Result<(), String>;
-}
-
-/// Base camera adapter providing shared state.
-pub struct BaseCameraAdapter {
-    pub source_type: CameraSourceType,
-    frame_callback: Mutex<Option<FrameCallback>>,
-    state: Mutex<CameraState>,
-}
-
-impl BaseCameraAdapter {
-    pub fn new(source_type: CameraSourceType) -> Self {
-        Self {
-            source_type,
-            frame_callback: Mutex::new(None),
-            state: Mutex::new(CameraState::Closed),
-        }
-    }
-
-    pub fn set_frame_callback(&self, callback: FrameCallback) {
-        *self.frame_callback.lock().unwrap() = Some(callback);
-    }
-
-    pub fn invoke_frame_callback(&self, frame: ByteFrame) {
-        if let Some(cb) = self.frame_callback.lock().unwrap().as_ref() {
-            cb(frame);
-        }
-    }
-
-    pub fn has_frame_callback(&self) -> bool {
-        self.frame_callback.lock().unwrap().is_some()
-    }
-
-    pub fn set_state(&self, state: CameraState) {
-        *self.state.lock().unwrap() = state;
-    }
-
-    pub fn get_state(&self) -> CameraState {
-        *self.state.lock().unwrap()
-    }
-}
-
-/// Buffer manager for camera frames.
-#[allow(dead_code)]
-pub struct BufferManager {
-    allocated_buffers: Mutex<Vec<Vec<u8>>>,
-}
-
-impl BufferManager {
-    pub fn new() -> Self {
-        Self { allocated_buffers: Mutex::new(Vec::new()) }
-    }
-
-    pub fn allocate_buffer(&self, size: usize) -> Vec<u8> {
-        vec![0u8; size]
-    }
-
-    pub fn release_buffer(&self, _buf: Vec<u8>) {
-        // Return to pool
-    }
 }
