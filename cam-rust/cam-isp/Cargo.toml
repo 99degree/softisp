@@ -9,6 +9,9 @@ serde = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 rand = "0.8"
+libloading = "0.8"
+libc = "0.2"
+tempfile = "3.8"
 
 [build-dependencies]
 cc = "1"
@@ -18,6 +21,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 clap = { version = "4", features = ["derive"] }
 env_logger = { workspace = true }
 
+[[example]]
+name = "mnn_memfd_test"
+required-features = ["mnn"]
+
 [features]
 default = []
 ort = ["dep:ort"]
@@ -26,3 +33,5 @@ mnn = []
 [dependencies.ort]
 version = "2.0.0-rc.12"
 optional = true
+
+
