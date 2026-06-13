@@ -11,7 +11,7 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use log::{info, debug};
+use log::{info, debug, warn, error};
 use cam_types::ToneParams;
 
 use crate::engine::{IspEngine, EngineFactory, register_engine};
@@ -23,11 +23,13 @@ use crate::eis::EisEngine;
 use crate::demosaic::{demosaic_malvar, bayer_to_quads};
 use crate::isp_ops::{
     generate_simulated_raw, apply_dpc, apply_gaussian_denoise, apply_blc_wb_raw,
-    apply_lsc, apply_ccm, apply_tone, apply_ae_gain, apply_fcs, apply_ldci,
-    display_output, calculate_ae_gain,
+    apply_lsc, apply_tone, apply_fcs, apply_ldci,
+    calculate_ae_gain,
 };
 use crate::stats::{compute_channel_means, compute_tone_stats, compute_histogram, compute_zone_stats};
 use crate::warp::{generate_identity_grid, warp_image};
+use crate::simd::selector::{SimdEngine, best_backend};
+
 
 // ── Engine registration ──
 
@@ -40,16 +42,21 @@ pub struct CpuEngine {
     pub af_engine: Mutex<AfState>,
     /// EIS engine for gyro stabilization.
     pub eis_engine: Mutex<EisEngine>,
+    /// Auto-selected SIMD backend (Neon, SSE2, or Scalar).
+    simd: &'static dyn SimdEngine,
 }
 
 impl CpuEngine {
     pub fn new() -> Self {
+        let simd = best_backend();
+        info!("CpuEngine: SIMD backend selected: {}", simd.name());
         Self {
             loaded: false,
             _target_width: 0,
             controller: Mutex::new(IspController::new()),
             af_engine: Mutex::new(AfState::default()),
             eis_engine: Mutex::new(EisEngine::new()),
+            simd,
         }
     }
 }
@@ -61,11 +68,16 @@ impl IspEngine for CpuEngine {
 
     fn build(
         &mut self,
-        _pipeline_head: Box<dyn IspBlock>,
-        _aux_blocks: Vec<Box<dyn IspBlock>>,
+        pipeline_head: Box<dyn IspBlock>,
+        aux_blocks: Vec<Box<dyn IspBlock>>,
         _warp_block: Option<Box<dyn IspBlock>>,
         _opset_version: i64,
     ) -> Result<(), String> {
+        let n_aux = aux_blocks.len();
+        let head_id = pipeline_head.id();
+        info!("CpuEngine::build head={} aux={} blocks", head_id, n_aux);
+        // Blocks are consumed for compatibility with IspEngine trait
+        // (CPU engine doesn't need block composition)
         self.loaded = true;
         Ok(())
     }
@@ -89,24 +101,32 @@ impl IspEngine for CpuEngine {
         blc_values: Option<&[f32; 4]>,
         _warp_grid: Option<&[f32]>,
     ) -> Result<IspFrame, String> {
+        if !self.loaded {
+            error!("CpuEngine::process called before build()");
+            return Err("Engine not initialized".to_string());
+        }
         let t0 = Instant::now();
 
         debug!("CpuEngine::process start {}x{} → target {}", width, height, target_width);
 
         // ── 1. RawInput: interpret as INT16 Bayer ──
-        let raw: Vec<u16> = if buf.len() >= (width * height * 2) as usize {
+        let expected = (width * height * 2) as usize;
+        let raw: Vec<u16> = if buf.len() >= expected {
             buf.chunks_exact(2)
                 .take((width * height) as usize)
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
                 .collect()
         } else {
+            warn!("CpuEngine: input buffer too small ({} < {}), using simulated data",
+                buf.len(), expected);
             generate_simulated_raw(width, height, buf)
         };
         let t_input = t0.elapsed();
 
         // ── 2. Normalize: INT16 → FLOAT [0, 1] ──
         let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
-        let float: Vec<f32> = raw.iter().map(|&v| v as f32 / max_val).collect();
+        let mut float = vec![0.0f32; raw.len()];
+        self.simd.normalize_u16_to_f32(&raw, &mut float, max_val);
 
         // ── 2b. DPC (defective pixel correction) ──
         let dpc_data = apply_dpc(&float, width as usize, height as usize,
@@ -201,10 +221,10 @@ impl IspEngine for CpuEngine {
 
         // ── 7. CCM ──
         let ccm: &[f32; 9] = ccm_matrix.unwrap_or(&ctrl_ccm);
-        let ccm_applied = apply_ccm(&rgb, ccm);
+        let ccm_applied = self.simd.apply_ccm(&rgb, ccm);
 
         // ── 8. Tone + FCS + LDCI + Warp ──
-        let adjusted = apply_ae_gain(&ccm_applied, ae_gain);
+        let adjusted = self.simd.apply_ae_gain(&ccm_applied, ae_gain);
         let mut toned = apply_tone(&adjusted, _tone_params, width as usize, height as usize);
         toned = apply_fcs(&toned, width as usize, height as usize, 0.4);
         toned = apply_ldci(&toned, width as usize, height as usize, 0.3);
@@ -238,7 +258,7 @@ impl IspEngine for CpuEngine {
 
         // ── 9. Display ──
         let out_width = if target_width > 0 { target_width } else { width };
-        let out_bytes = display_output(&toned, width as usize, height as usize, out_width as usize);
+        let out_bytes = self.simd.display_output(&toned, width as usize, height as usize, out_width as usize);
         let t_total = t0.elapsed();
 
         debug!("CpuEngine: {}x{} -> {}x{} (input={:?} pre={:?} process={:?} total={:?})",

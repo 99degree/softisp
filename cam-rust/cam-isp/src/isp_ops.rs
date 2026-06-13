@@ -130,6 +130,7 @@ pub(crate) fn apply_lsc(raw: &[f32], w: usize, h: usize, k: f32) -> Vec<f32> {
 }
 
 /// Apply 3x3 color correction matrix to RGB.
+#[allow(dead_code)]
 pub(crate) fn apply_ccm(rgb: &[f32], matrix: &[f32; 9]) -> Vec<f32> {
     let count = rgb.len() / 3;
     let mut out = Vec::with_capacity(rgb.len());
@@ -221,6 +222,7 @@ pub(crate) fn apply_unsharp_mask(rgb: &mut [f32], w: usize, h: usize, strength: 
 }
 
 /// Apply AE gain to RGB.
+#[allow(dead_code)]
 pub(crate) fn apply_ae_gain(rgb: &[f32], gain: f32) -> Vec<f32> {
     if (gain - 1.0).abs() < 0.001 {
         return rgb.to_vec();
@@ -289,6 +291,7 @@ pub(crate) fn calculate_awb_gains(cfa: &[f32], width: usize, height: usize) -> [
 }
 
 /// Display output: resize (nearest neighbor) + convert to UINT8 BGRA.
+#[allow(dead_code)]
 pub(crate) fn display_output(rgb: &[f32], src_w: usize, src_h: usize, target_w: usize) -> Vec<u8> {
     if rgb.len() < 3 {
         return Vec::new();
