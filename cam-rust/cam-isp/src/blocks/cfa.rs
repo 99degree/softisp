@@ -165,3 +165,54 @@ impl IspBlock for CfaBlock {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::GraphComposer;
+
+    #[test]
+    fn test_cfa_block_generates_conv_op() {
+        let block = CfaBlock::new();
+        let nodes = block.nodes();
+        assert_eq!(nodes.len(), 1, "CfaBlock should produce 1 node");
+        // The node should be Conv (not Slice+Reshape)
+        assert!(!nodes[0].is_empty(), "Node should not be empty");
+    }
+
+    #[test]
+    fn test_cfa_block_with_concrete_dims() {
+        let block = CfaBlock::new().with_concrete_dims(48, 64);
+        let vi = block.output_value_info().unwrap();
+        assert!(!vi.is_empty(), "Output value_info should not be empty");
+        // Output should have halved dims: [1, 4, 24, 32]
+        assert!(vi.len() > 10, "value_info should have reasonable size");
+    }
+
+    #[test]
+    fn test_cfa_block_conv_weights() {
+        let block = CfaBlock::new();
+        let inits = block.initializers();
+        assert_eq!(inits.len(), 2, "Should have weight and bias initializers");
+        // Weight should have shape [4, 1, 2, 2]
+        // Bias should have shape [4]
+    }
+
+    #[test]
+    fn test_cfa_pipeline_integration() {
+        // Build a minimal pipeline: RawInput -> Normalize -> CfaBlock
+        let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
+            .with_elem_type(1).with_concrete_dims(48, 64));
+        let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
+        let b3: Box<dyn IspBlock> = Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
+        
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![b1, b2, b3];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let result = GraphComposer::compose_from_vec(&refs, &[], 16);
+        assert!(result.is_ok(), "CfaBlock pipeline should compose: {:?}", result.err());
+        let model = result.unwrap();
+        assert!(!model.is_empty(), "Model should not be empty");
+        assert!(model.len() > 100, "Model should be substantial");
+    }
+}

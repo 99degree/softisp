@@ -186,3 +186,76 @@ impl IspBlock for DemosaicBlock {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::GraphComposer;
+
+    #[test]
+    fn test_demosaic_block_generates_conv_op() {
+        let block = DemosaicBlock::new(2); // GBRG
+        let nodes = block.nodes();
+        assert_eq!(nodes.len(), 1, "DemosaicBlock should produce 1 node (Conv 1x1)");
+    }
+
+    #[test]
+    fn test_demosaic_block_weights_shape() {
+        let block = DemosaicBlock::new(2);
+        let inits = block.initializers();
+        assert_eq!(inits.len(), 2, "Should have weight and bias");
+    }
+
+    #[test]
+    fn test_demosaic_block_bayer_patterns() {
+        // Test all 4 Bayer patterns produce valid weights
+        for pattern in 0..=3 {
+            let block = DemosaicBlock::new(pattern);
+            let weights = block.conv_weights();
+            assert_eq!(weights.len(), 12, "Pattern {} should produce 12 weights", pattern);
+            // Sum should be correct: R+G+B channels with appropriate weights
+            let sum: f32 = weights.iter().sum();
+            assert!((sum - 3.0).abs() < 0.01, "Pattern {} weight sum should be 3.0, got {}", pattern, sum);
+        }
+    }
+
+    #[test]
+    fn test_demosaic_block_first_weight_is_one() {
+        // RGGB: R=TL (ch0), weight[0] = 1.0
+        let rggb = DemosaicBlock::new(0);
+        let w = rggb.conv_weights();
+        assert!((w[0] - 1.0).abs() < 0.01, "RGGB R channel should take ch0 with weight 1");
+        
+        // BGGR: R=BR (ch3), weight[3] = 1.0
+        let bggr = DemosaicBlock::new(3);
+        let w = bggr.conv_weights();
+        assert!((w[3] - 1.0).abs() < 0.01, "BGGR R channel should take ch3 with weight 1");
+    }
+
+    #[test]
+    fn test_demosaic_with_concrete_dims() {
+        let block = DemosaicBlock::new(2).with_concrete_dims(24, 32);
+        let vi = block.input_value_info().unwrap();
+        assert!(!vi.is_empty(), "Input value_info should exist");
+        let ovi = block.output_value_info().unwrap();
+        assert!(!ovi.is_empty(), "Output value_info should exist");
+    }
+
+    #[test]
+    fn test_demosaic_pipeline_integration() {
+        // Build pipeline through DemosaicBlock
+        let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
+            .with_elem_type(1).with_concrete_dims(48, 64));
+        let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
+        let b3: Box<dyn IspBlock> = Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
+        let b4: Box<dyn IspBlock> = Box::new(crate::blocks::BlcBlock::new());
+        let b5: Box<dyn IspBlock> = Box::new(crate::blocks::BayerWbBlock::new());
+        let b6: Box<dyn IspBlock> = Box::new(crate::blocks::DemosaicBlock::new(2).with_concrete_dims(24, 32));
+        
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![b1, b2, b3, b4, b5, b6];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let result = GraphComposer::compose_from_vec(&refs, &[], 16);
+        assert!(result.is_ok(), "Pipeline through DemosaicBlock should compose: {:?}", result.err());
+    }
+}
