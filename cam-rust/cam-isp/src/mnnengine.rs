@@ -91,9 +91,54 @@ impl MnnEngine {
     pub fn set_model_path(&mut self, path: impl Into<String>) { self.model_path = Some(path.into()); }
 
     /// Register MNN engine factories for all available backends.
+    /// Benchmarks each backend at startup and sets priority by actual FPS.
+    /// Uses a single tiny model for all backends, 2 frames each.
     /// Called automatically by `cam_isp::init()`.
     #[cfg(feature = "mnn")]
     pub fn register_factories() {
+        use crate::engine::register_engine;
+        use crate::engine::EngineFactory;
+
+        // Build ONE model shared by all backend benchmarks
+        let mnn_path = match Self::build_bench_model(64, 48) {
+            Ok(p) => p,
+            Err(e) => {
+                error!("Failed to build bench model: {}; using default priorities", e);
+                Self::register_with_defaults();
+                return;
+            }
+        };
+
+        let all = [MnnBackend::Vulkan, MnnBackend::Opencl, MnnBackend::OpenGl, MnnBackend::CpuNeon, MnnBackend::Cpu];
+        let mut scored: Vec<(MnnBackend, f64)> = Vec::new();
+
+        for be in &all {
+            let fps = match Self::bench_backend(*be, &mnn_path, 64, 48, 2) {
+                Ok(f) => { debug!("  bench {:>8}: {:.1} fps", be.id(), f); f }
+                Err(e) => { warn!("  bench {:>8}: {} — treating as 0 fps", be.id(), e); 0.0 }
+            };
+            scored.push((*be, fps));
+        }
+
+        let _ = std::fs::remove_file(&mnn_path);
+
+        // Sort by FPS descending; ties keep original order
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        info!("MNN backend ranking (by measured FPS):");
+        for (i, (be, fps)) in scored.iter().enumerate() {
+            let priority = (100 - i as i32).max(1);
+            let name = be.id();
+            let b = *be;
+            let create_fn = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
+            register_engine(EngineFactory { name, priority, create_fn });
+            info!("  {:>2}. {} → {:.1} fps (pri={})", i + 1, name, fps, priority);
+        }
+    }
+
+    /// Fallback: register with static default priorities (no benchmark).
+    #[cfg(feature = "mnn")]
+    fn register_with_defaults() {
         use crate::engine::register_engine;
         use crate::engine::EngineFactory;
         let backends = [MnnBackend::CpuNeon, MnnBackend::Cpu, MnnBackend::Vulkan, MnnBackend::Opencl, MnnBackend::OpenGl];
@@ -104,7 +149,65 @@ impl MnnEngine {
             let create_fn = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
             register_engine(EngineFactory { name, priority: pri, create_fn });
         }
-        info!("Registered {} MNN engine factories", backends.len());
+        info!("Registered {} MNN engine factories (default priorities)", backends.len());
+    }
+
+    /// Build a tiny LITE .mnn model for benchmarking.
+    #[cfg(feature = "mnn")]
+    fn build_bench_model(w: u32, _h: u32) -> Result<String, String> {
+        use crate::profile::PipelineProfile;
+        use crate::pipeline::GraphComposer;
+        use crate::mnn_converter::convert_onnx_to_mnn;
+
+        let pid = std::process::id();
+        let onnx_path = format!(".mnn_bench_{}.onnx", pid);
+        let mnn_path = format!(".mnn_bench_{}.mnn", pid);
+
+        let mut blocks = PipelineProfile::LITE.build_blocks(w, 0);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let model = GraphComposer::compose_from_vec(&refs, &[], 16)
+            .map_err(|e| format!("compose: {}", e))?;
+        std::fs::write(&onnx_path, &model).map_err(|e| format!("write: {}", e))?;
+
+        convert_onnx_to_mnn(&onnx_path, &mnn_path, None)
+            .map_err(|e| format!("convert: {}", e))?;
+        let _ = std::fs::remove_file(&onnx_path);
+        Ok(mnn_path)
+    }
+
+    /// Quick benchmark for a single backend (shared .mnn model).
+    #[cfg(feature = "mnn")]
+    fn bench_backend(backend: MnnBackend, mnn_path: &str, w: u32, h: u32, n_frames: u32) -> Result<f64, String> {
+        use crate::blocks::RawInputBlock;
+        use crate::engine::default_tone_params;
+
+        let mut engine = MnnEngine::new(backend);
+        engine.set_model_path(mnn_path);
+        let head: Box<dyn IspBlock> = Box::new(RawInputBlock::new());
+        engine.build(head, vec![], None, 16)
+            .map_err(|e| format!("build: {}", e))?;
+
+        let params = default_tone_params();
+        let frame_size = (w * h * 2) as usize;
+        let mut buf = vec![0u8; frame_size];
+        // Pre-fill with deterministic pattern
+        for y in 0..h {
+            for x in 0..w {
+                let off = (y * w + x) as usize * 2;
+                let val = (x ^ y) as u16;
+                buf[off] = val as u8;
+                buf[off + 1] = (val >> 8) as u8;
+            }
+        }
+
+        let start = Instant::now();
+        for _ in 0..n_frames {
+            engine.process(w, h, w, &buf, 1024.0, w, None, &params,
+                          None, None, 1.0, 0.0, None, None, None)?;
+        }
+        let elapsed = start.elapsed();
+        if elapsed.is_zero() { return Ok(9999.0); }
+        Ok(n_frames as f64 / elapsed.as_secs_f64())
     }
 
     // ── helpers ──
