@@ -39,6 +39,14 @@ pub struct IspFrame {
     pub format: FrameFormat,
     pub float_data: Option<Vec<f32>>,
     pub aux: Option<IspAuxOutput>,
+    /// Capture timestamp from sensor (ns since epoch, monotonic).
+    pub timestamp_ns: u64,
+    /// Frame preparation duration (ns) - time from capture to inference input ready.
+    pub prep_duration_ns: u64,
+    /// Inference duration (ns).
+    pub inference_duration_ns: u64,
+    /// Total pipeline duration (ns).
+    pub total_duration_ns: u64,
 }
 
 impl IspFrame {
@@ -51,6 +59,10 @@ impl IspFrame {
             format,
             float_data: None,
             aux: None,
+            timestamp_ns: 0,
+            prep_duration_ns: 0,
+            inference_duration_ns: 0,
+            total_duration_ns: 0,
         }
     }
 }
