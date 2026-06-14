@@ -385,41 +385,58 @@ pub(crate) fn apply_fcs(rgb: &mut [f32], w: usize, h: usize, strength: f32) {
     }
 }
 
-/// Local Dynamic Contrast Improvement — tile-based contrast stretch.
+/// Local Dynamic Contrast Improvement — integral-image-based local contrast stretch.
+/// Uses prefix sum (integral image) for O(1) box filter instead of O(r²) naive loop.
 pub(crate) fn apply_ldci(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<f32> {
     if strength <= 0.0 || rgb.len() < 9 {
         return rgb.to_vec();
     }
     let mut out = vec![0.0f32; rgb.len()];
     let radius: usize = 4; // 9x9 box
+
+    // Build luminance integral image (prefix sum)
+    // ii[y][x] = sum of luma for all pixels (0..y, 0..x)
+    let mut ii = vec![0.0f32; (h + 1) * (w + 1)];
+    for y in 0..h {
+        let row_sum = y * w * 3;
+        let ii_row = (y + 1) * (w + 1);
+        let ii_prev = y * (w + 1);
+        let mut row_acc = 0.0f32;
+        for x in 0..w {
+            let idx = row_sum + x * 3;
+            let luma = 0.299 * rgb[idx] + 0.587 * rgb[idx + 1] + 0.114 * rgb[idx + 2];
+            row_acc += luma;
+            ii[ii_row + x + 1] = ii[ii_prev + x + 1] + row_acc;
+        }
+    }
+
+    let r = radius;
     for y in 0..h {
         for x in 0..w {
             let idx = (y * w + x) * 3;
             if idx + 2 >= rgb.len() { continue; }
-            let r = rgb[idx];
+            let r_val = rgb[idx];
             let g = rgb[idx + 1];
             let b = rgb[idx + 2];
-            let luma = 0.299 * r + 0.587 * g + 0.114 * b;
-            let mut sum = 0.0f32;
-            let mut count_px = 0u32;
-            for dy in -(radius as isize)..=radius as isize {
-                for dx in -(radius as isize)..=radius as isize {
-                    let py = y as isize + dy;
-                    let px = x as isize + dx;
-                    if py < 0 || py >= h as isize || px < 0 || px >= w as isize { continue; }
-                    let p_idx = (py as usize * w + px as usize) * 3;
-                    if p_idx + 2 >= rgb.len() { continue; }
-                    let pl = 0.299 * rgb[p_idx] + 0.587 * rgb[p_idx + 1] + 0.114 * rgb[p_idx + 2];
-                    sum += pl;
-                    count_px += 1;
-                }
-            }
-            let local_mean = sum / count_px.max(1) as f32;
+            let luma = 0.299 * r_val + 0.587 * g + 0.114 * b;
+
+            // Box sum via integral image (4 lookups)
+            let y0 = if y >= r { y - r } else { 0 };
+            let y1 = (y + r + 1).min(h);
+            let x0 = if x >= r { x - r } else { 0 };
+            let x1 = (x + r + 1).min(w);
+            let area = ((y1 - y0) * (x1 - x0)) as f32;
+            let sum = ii[y1 * (w + 1) + x1]
+                - ii[y0 * (w + 1) + x1]
+                - ii[y1 * (w + 1) + x0]
+                + ii[y0 * (w + 1) + x0];
+            let local_mean = sum / area.max(1.0);
+
             let local_contrast = luma - local_mean;
             let boost = local_contrast * strength.clamp(0.0, 1.0);
             let enhanced_luma = (luma + boost).clamp(0.0, 1.0);
             let scale = if luma > 0.001 { enhanced_luma / luma } else { 1.0 };
-            out[idx]     = (r * scale).clamp(0.0, 1.0);
+            out[idx]     = (r_val * scale).clamp(0.0, 1.0);
             out[idx + 1] = (g * scale).clamp(0.0, 1.0);
             out[idx + 2] = (b * scale).clamp(0.0, 1.0);
         }
