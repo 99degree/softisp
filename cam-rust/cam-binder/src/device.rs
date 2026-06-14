@@ -47,13 +47,19 @@ impl CameraDevice {
     ///
     /// Creates a capture session and delivers it via the callback's onOpened().
     pub fn open(&self, callback: Arc<dyn ICameraDeviceCallback>) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
-        if *self.opened.lock().unwrap() {
+        // Check if already opened — use try_lock to avoid deadlock
+        let already_opened = self.opened.try_lock()
+            .map(|g| *g)
+            .unwrap_or(false);
+        if already_opened {
             return Err(format!("Camera {} already opened", self.camera_id));
         }
 
         // Clone before moving into self.callback
         let callback_for_session = callback.clone();
-        *self.callback.lock().unwrap() = Some(callback);
+        if let Ok(mut cb) = self.callback.try_lock() {
+            *cb = Some(callback);
+        }
 
         // Create a new session for this device
         let session = Arc::new(Mutex::new(CameraDeviceSession::new(
@@ -61,8 +67,12 @@ impl CameraDevice {
             self.device_path.clone(),
             self.info.clone(),
         )));
-        *self.session.lock().unwrap() = Some(session.clone());
-        *self.opened.lock().unwrap() = true;
+        if let Ok(mut s) = self.session.try_lock() {
+            *s = Some(session.clone());
+        }
+        if let Ok(mut op) = self.opened.try_lock() {
+            *op = true;
+        }
 
         // Give the session a reference to the same callback
         session.lock().unwrap().set_callback(callback_for_session);
@@ -79,7 +89,11 @@ impl CameraDevice {
 
     /// Close the camera and all sessions.
     pub fn close(&self) {
-        if !*self.opened.lock().unwrap() {
+        // Use try_lock to check opened state
+        let is_open = self.opened.try_lock()
+            .map(|g| *g)
+            .unwrap_or(false);
+        if !is_open {
             return;
         }
 
@@ -88,7 +102,9 @@ impl CameraDevice {
             session.lock().unwrap().close();
         }
 
-        *self.opened.lock().unwrap() = false;
+        if let Ok(mut op) = self.opened.try_lock() {
+            *op = false;
+        }
         info!("CameraDevice({}): closed", self.camera_id);
     }
 
