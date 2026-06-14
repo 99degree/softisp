@@ -31,9 +31,8 @@ impl IspBlock for EeBlock {
                   Proto::attribute_ints("pads", &[1, 2, 1, 2]),
                   Proto::attribute_ints("strides", &[1, 1]),
                   Proto::attribute_int("group", 3)]),
-            Proto::node("Mul", &[&format!("{}/ee_gain", ns), &format!("{}/inv_256", ns)], &[&format!("{}/gain_scaled", ns)], &[]),
             Proto::node("Mul", &[&format!("{}/edge_3ch", ns), &format!("{}/y_mask", ns)], &[&format!("{}/edge_y", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/edge_y", ns), &format!("{}/gain_scaled", ns)], &[&format!("{}/boost_raw", ns)], &[]),
+            Proto::node("Mul", &[&format!("{}/edge_y", ns), &format!("{}/ee_gain_scaled", ns)], &[&format!("{}/boost_raw", ns)], &[]),
             Proto::node("Clip", &[&format!("{}/boost_raw", ns), &format!("{}/boost_min", ns), &format!("{}/boost_max", ns)], &[&format!("{}/boost", ns)], &[]),
             Proto::node("Add", &[&self.input_source, &format!("{}/boost", ns)], &[&format!("{}/enhanced", ns)], &[]),
             Proto::node("Clip", &[&format!("{}/enhanced", ns), &format!("{}/zero", ns), &format!("{}/one", ns)], &[&self.frame_tensor], &[]),
@@ -56,6 +55,6 @@ impl IspBlock for EeBlock {
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(format!("{}/ee_gain", self.tensor_ns()), 1, vec![1])]
+        vec![(format!("{}/ee_gain_scaled", self.tensor_ns()), 1, vec![1])]
     }
 }
