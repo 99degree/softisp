@@ -94,9 +94,12 @@ impl StubAdapter {
 
         match format {
             FrameFormat::Rgba8888 => self.render_rgba(w, h),
+            FrameFormat::Rgb888 => self.render_rgba(w, h),   // same as RGBA but with stride=3
             FrameFormat::RawSensor => self.render_raw16(w, h),
+            FrameFormat::Raw10 => vec![0u8; w * h * 2],       // raw placeholder
+            FrameFormat::Raw12 => vec![0u8; w * h * 2],       // raw placeholder
             FrameFormat::Yuv420888 => self.render_nv21(w, h),
-            FrameFormat::NchwFloat => vec![0u8; w * h * 4], // float placeholder
+            FrameFormat::NchwFloat => vec![0u8; w * h * 4],
         }
     }
 

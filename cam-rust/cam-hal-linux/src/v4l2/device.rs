@@ -66,6 +66,6 @@ pub fn list_devices() -> Vec<String> {
 }
 
 #[cfg(not(feature = "v4l2"))]
-pub fn get_device_info(_device_path: &str) -> Option<()> {
+pub fn get_device_info(_device_path: &str) -> Option<DeviceInfo> {
     None
 }
