@@ -4,9 +4,8 @@
 //! Provides a simpler API for PipelineManager: accepts blocks, builds
 //! the best available engine, and processes frames with named parameters.
 
-use crate::blocks;
 use crate::engine::{IspEngine, select_engine, default_tone_params};
-use crate::pipeline::{IspBlock, IspFrame, GraphComposer};
+use crate::pipeline::{IspBlock, IspFrame};
 
 /// A fused ISP pipeline wrapping a backend engine.
 ///
@@ -36,7 +35,7 @@ impl FusedPipeline {
             if i > 0 {
                 // Take the previous block, clone it into a Box for set_prev
                 // We need to create a new Box from the reference
-                let prev_block = &blocks[i-1];
+                let _prev_block = &blocks[i-1];
                 // This is tricky - we need to pass a Box<dyn IspBlock> to set_prev
                 // but we can't create one from &Box<dyn IspBlock>
                 // For now, let's skip the linking and rely on compose_from_vec

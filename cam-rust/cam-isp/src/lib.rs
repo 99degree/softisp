@@ -28,6 +28,7 @@ pub mod eis;
 pub mod af;
 pub mod calibration;
 pub mod scene;
+pub mod r#match;
 pub mod predictor;
 pub mod regression;
 pub mod store;
