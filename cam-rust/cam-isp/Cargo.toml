@@ -26,6 +26,10 @@ prost = "0.14.4"
 name = "mnn_memfd_test"
 required-features = ["mnn"]
 
+[[example]]
+name = "bench_hd"
+required-features = ["mnn"]
+
 [features]
 default = []
 mnn_buffer = []
