@@ -25,27 +25,47 @@ pub(crate) fn generate_simulated_raw(width: u32, height: u32, rgba: &[u8]) -> Ve
     raw
 }
 
+/// Build gamma lookup table (4096 entries covering [0, 1]).
+pub(crate) fn build_gamma_lut(gamma: f32) -> [f32; 4096] {
+    let mut lut = [0.0f32; 4096];
+    for i in 0..4096 {
+        let x = i as f32 / 4095.0;
+        lut[i] = x.powf(gamma);
+    }
+    lut
+}
+
 /// Apply defective pixel correction (DPC) — 3x3 median-based hot pixel removal.
 pub(crate) fn apply_dpc(cfa: &[f32], w: usize, h: usize, threshold: f32) -> Vec<f32> {
     let mut out = cfa.to_vec();
+    let mut neighbors = [0.0f32; 9];
     for y in 1..h - 1 {
         for x in 1..w - 1 {
             let idx = y * w + x;
             let center = cfa[idx];
 
-            // Collect 3x3 neighborhood
-            let mut neighbors = Vec::with_capacity(9);
+            // Collect 3x3 neighborhood into fixed array (no heap alloc)
+            let mut ni = 0;
             for dy in -1..=1 {
                 for dx in -1..=1 {
                     let nx = (x as isize + dx) as usize;
                     let ny = (y as isize + dy) as usize;
-                    neighbors.push(cfa[ny * w + nx]);
+                    neighbors[ni] = cfa[ny * w + nx];
+                    ni += 1;
                 }
             }
-            neighbors.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            // Insertion sort for 9 elements (fast: O(9) swaps)
+            for i in 1..9 {
+                let key = neighbors[i];
+                let mut j = i;
+                while j > 0 && neighbors[j - 1] > key {
+                    neighbors[j] = neighbors[j - 1];
+                    j -= 1;
+                }
+                neighbors[j] = key;
+            }
             let median = neighbors[4];
 
-            // If center deviates too much from median, replace
             if (center - median).abs() > threshold {
                 out[idx] = median;
             }
@@ -149,7 +169,7 @@ pub(crate) fn apply_ccm(rgb: &[f32], matrix: &[f32; 9]) -> Vec<f32> {
     out
 }
 
-/// Apply tone curve: gamma, contrast, brightness, saturation, unsharp mask.
+/// Apply tone curve: gamma (via 4096-entry LUT), contrast, brightness, saturation, unsharp mask.
 pub(crate) fn apply_tone(rgb: &[f32], params: &ToneParams, w: usize, h: usize) -> Vec<f32> {
     let gamma_recip = params.gamma_recip;
     let gamma = if gamma_recip > 0.0 { 1.0 / gamma_recip } else { 1.0 };
@@ -161,15 +181,20 @@ pub(crate) fn apply_tone(rgb: &[f32], params: &ToneParams, w: usize, h: usize) -
     let count = rgb.len() / 3;
     let mut toned = Vec::with_capacity(rgb.len());
 
+    // Build gamma lookup table (4096 entries, ~16KB)
+    let gamma_lut = build_gamma_lut(gamma);
+    const LUT_MASK: usize = 4095;
+
     for i in 0..count {
         let idx = i * 3;
-        let mut r = rgb[idx];
-        let mut g = rgb[idx + 1];
-        let mut b = rgb[idx + 2];
+        let r_in = rgb[idx];
+        let g_in = rgb[idx + 1];
+        let b_in = rgb[idx + 2];
 
-        r = r.powf(gamma);
-        g = g.powf(gamma);
-        b = b.powf(gamma);
+        // Gamma via LUT (avoid powf — 50-100× faster)
+        let mut r = gamma_lut[((r_in * 4095.0f32).min(4095.0) as usize) & 4095];
+        let mut g = gamma_lut[((g_in * 4095.0f32).min(4095.0) as usize) & 4095];
+        let mut b = gamma_lut[((b_in * 4095.0f32).min(4095.0) as usize) & 4095];
 
         r = ((r - 0.5) * contrast) + 0.5;
         g = ((g - 0.5) * contrast) + 0.5;
@@ -319,12 +344,11 @@ pub(crate) fn display_output(rgb: &[f32], src_w: usize, src_h: usize, target_w: 
     out
 }
 
-/// False Color Suppression — edge-aware chroma desaturation.
-pub(crate) fn apply_fcs(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<f32> {
+/// False Color Suppression — edge-aware chroma desaturation (in-place).
+pub(crate) fn apply_fcs(rgb: &mut [f32], w: usize, h: usize, strength: f32) {
     if strength <= 0.0 || rgb.len() < 9 {
-        return rgb.to_vec();
+        return;
     }
-    let mut out = rgb.to_vec();
     // 3x5 edge detection kernel (openISP style)
     let kernel: [f32; 15] = [
         -0.125, 0.0, -0.125, 0.0, -0.125,
@@ -350,16 +374,15 @@ pub(crate) fn apply_fcs(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<f
             }
             let edge_strength = (edge_y.abs() * gain).clamp(0.0, 1.0);
             let atten = 1.0 - edge_strength;
-            let r = out[idx];
-            let g = out[idx + 1];
-            let b = out[idx + 2];
+            let r = rgb[idx];
+            let g = rgb[idx + 1];
+            let b = rgb[idx + 2];
             let luma = 0.299 * r + 0.587 * g + 0.114 * b;
-            out[idx]     = luma + (r - luma) * atten;
-            out[idx + 1] = luma + (g - luma) * atten;
-            out[idx + 2] = luma + (b - luma) * atten;
+            rgb[idx]     = luma + (r - luma) * atten;
+            rgb[idx + 1] = luma + (g - luma) * atten;
+            rgb[idx + 2] = luma + (b - luma) * atten;
         }
     }
-    out
 }
 
 /// Local Dynamic Contrast Improvement — tile-based contrast stretch.

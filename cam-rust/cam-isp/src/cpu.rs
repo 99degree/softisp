@@ -264,7 +264,7 @@ impl IspEngine for CpuEngine {
         // ── 8. Tone + FCS + LDCI + Warp ──
         let adjusted = self.simd.apply_ae_gain(&ccm_applied, ae_gain);
         let mut toned = apply_tone(&adjusted, _tone_params, width as usize, height as usize);
-        toned = apply_fcs(&toned, width as usize, height as usize, 0.4);
+        apply_fcs(&mut toned, width as usize, height as usize, 0.4);
         toned = apply_ldci(&toned, width as usize, height as usize, 0.3);
 
         // Warp (EIS or external)
