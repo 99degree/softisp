@@ -31,9 +31,8 @@ impl IspBlock for FcsBlock {
                   Proto::attribute_ints("pads", &[1, 2, 1, 2]),
                   Proto::attribute_ints("strides", &[1, 1]),
                   Proto::attribute_int("group", 3)]),
-            Proto::node("Mul", &[&format!("{}/fcs_gain", ns), &format!("{}/inv_64", ns)], &[&format!("{}/gain_scaled", ns)], &[]),
             Proto::node("Abs", &[&format!("{}/edge_3ch", ns)], &[&format!("{}/edge_abs", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/edge_abs", ns), &format!("{}/gain_scaled", ns)], &[&format!("{}/fcs_raw", ns)], &[]),
+            Proto::node("Mul", &[&format!("{}/edge_abs", ns), &format!("{}/fcs_gain_scaled", ns)], &[&format!("{}/fcs_raw", ns)], &[]),
             Proto::node("Clip", &[&format!("{}/fcs_raw", ns), &format!("{}/zero", ns), &format!("{}/one", ns)], &[&format!("{}/fcs_clamped", ns)], &[]),
             Proto::node("Sub", &[&format!("{}/one", ns), &format!("{}/fcs_clamped", ns)], &[&format!("{}/fcs_attn", ns)], &[]),
             Proto::node("Mul", &[&format!("{}/fcs_attn", ns), &format!("{}/uv_mask", ns)], &[&format!("{}/uv_gain", ns)], &[]),
@@ -62,6 +61,6 @@ impl IspBlock for FcsBlock {
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(format!("{}/fcs_gain", self.tensor_ns()), 1, vec![1])]
+        vec![(format!("{}/fcs_gain_scaled", self.tensor_ns()), 1, vec![1])]
     }
 }
