@@ -542,11 +542,17 @@ impl IspEngine for MnnEngine {
                 (code == 0 || code == 1) && (bits == 16 || bits == 32)
             });
 
-            let n = if use_true_zero_copy {
+            // Track prep vs inference timing
+            let n;
+            // Prep time: time for setup before MNN inference call
+            let t_prep_end = Instant::now();  // setup done, about to call MNN
+            let t_infer_start = Instant::now();  // reset for actual inference timing
+
+            if use_true_zero_copy {
                 // TRUE ZERO-COPY: pass raw u16 buffer directly, no allocation, no copy
                 // Buffer is u16 (UINT16 = code 1, bits 16)
                 unsafe {
-                    crate::mnn_sys::mnn_run_true_zero_copy(
+                    n = crate::mnn_sys::mnn_run_true_zero_copy(
                         interp.as_ptr(),
                         sess.as_ptr(),
                         buf.as_ptr() as *const c_void,
@@ -556,12 +562,12 @@ impl IspEngine for MnnEngine {
                         shape.len() as i32,
                         out_data.as_mut_ptr(),
                         max_out,
-                    )
+                    );
                 }
             } else if use_u16_conversion {
                 // u16 path: pass raw u16 buffer, MNN will convert to model type
                 unsafe {
-                    crate::mnn_sys::mnn_run_host_tensors_u16(
+                    n = crate::mnn_sys::mnn_run_host_tensors_u16(
                         interp.as_ptr(),
                         sess.as_ptr(),
                         buf.as_ptr() as *const u16,
@@ -569,13 +575,16 @@ impl IspEngine for MnnEngine {
                         shape.len() as i32,
                         out_data.as_mut_ptr(),
                         max_out,
-                    )
+                    );
                 }
             } else {
                 // Fallback: normalize to float and use host_tensors
+                // Normalization is prep work
                 let f32d = Self::norm(buf, smax);
+                let t_prep_end = Instant::now();  // norm done, about to call MNN
+                let t_infer_start = Instant::now();  // MNN timing only
                 unsafe {
-                    crate::mnn_sys::mnn_run_host_tensors(
+                    n = crate::mnn_sys::mnn_run_host_tensors(
                         interp.as_ptr(),
                         sess.as_ptr(),
                         f32d.as_ptr(),
@@ -583,11 +592,12 @@ impl IspEngine for MnnEngine {
                         shape.len() as i32,
                         out_data.as_mut_ptr(),
                         max_out,
-                    )
+                    );
                 }
             };
 
-            let t_infer = t_start.elapsed();
+            let t_total_elapsed = t_start.elapsed();
+            let t_infer_elapsed = t_infer_start.elapsed();
 
             if n <= 0 {
                 let path = if use_true_zero_copy { "true_zero_copy" } else if use_u16_conversion { "u16_conversion" } else { "float_fallback" };
@@ -597,7 +607,7 @@ impl IspEngine for MnnEngine {
 
             let path = if use_true_zero_copy { "true_zero_copy" } else if use_u16_conversion { "u16_conversion" } else { "float_fallback" };
             debug!("MNN inference: path={} total={:?} ({}x{} -> {} flt)",
-                path, t_infer, w, h, n);
+                path, t_infer_elapsed, w, h, n);
 
             let nf = n as usize;
             let oh = h as usize;
@@ -606,7 +616,7 @@ impl IspEngine for MnnEngine {
 
             let bgra = Self::to_bgra(&out_data[..nf], ch, oh, ow);
 
-            let total_duration_ns = t_start.elapsed().as_nanos() as u64;
+            let total_duration_ns = t_total_elapsed.as_nanos() as u64;
             let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
             frame.data = bgra;
             frame.aux = Some(IspAuxOutput {
@@ -618,8 +628,14 @@ impl IspEngine for MnnEngine {
                 vcm_position: None, eis_compensation: None,
             });
             frame.timestamp_ns = 0;  // TODO: pass from HAL
-            frame.prep_duration_ns = t_infer.as_nanos() as u64;  // prep = norm + inference prep
-            frame.inference_duration_ns = t_infer.as_nanos() as u64;
+            // prep = time before inference starts (setup + norm for float path)
+            // infer = time for MNN inference only
+            // total = prep + infer + bgra conversion
+            // t_prep_end - t_start = prep time (shape setup, allocation)
+            // For float fallback: prep also includes norm time (t_prep_end reset after norm)
+            let prep_ns = t_prep_end.duration_since(t_start).as_nanos() as u64;
+            frame.prep_duration_ns = prep_ns;
+            frame.inference_duration_ns = t_infer_elapsed.as_nanos() as u64;
             frame.total_duration_ns = total_duration_ns;
             return Ok(frame);
         }
