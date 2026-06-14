@@ -40,6 +40,7 @@ pub struct StubAdapter {
     /// Frame counter (for changing patterns).
     frame_count: u64,
     /// Simulated FPS interval.
+    #[allow(dead_code)]
     fps: u32,
     /// Whether to add random noise to raw frames.
     add_noise: bool,
