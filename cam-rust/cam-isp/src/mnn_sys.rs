@@ -459,3 +459,56 @@ mod tests {
         assert!(true);
     }
 }
+
+// ── MNN Convert C API (libMNNConvertDeps.so) ──────────────────────────────
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MnnConvert_Options {
+    pub bizCode: *const c_char,
+    pub optimizeLevel: c_int,
+    pub fp16: c_int,
+    pub weightQuantBits: c_int,
+    pub weightQuantBlock: c_int,
+    pub saveStaticModel: c_int,
+    pub targetVersion: c_float,
+    pub transformerFuse: c_int,
+    pub allowCustomOp: c_int,
+    pub useGeluApproximation: c_int,
+    pub inputConfigFile: *const c_char,
+}
+
+impl Default for MnnConvert_Options {
+    fn default() -> Self {
+        Self {
+            bizCode: c"MNN".as_ptr(),
+            optimizeLevel: 1,
+            fp16: 0,
+            weightQuantBits: 0,
+            weightQuantBlock: -1,
+            saveStaticModel: 0,
+            targetVersion: 0.0,
+            transformerFuse: 0,
+            allowCustomOp: 0,
+            useGeluApproximation: 1,
+            inputConfigFile: std::ptr::null(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct MnnConvert_Result {
+    pub code: c_int,
+    pub message: *mut c_char,
+}
+
+extern "C" {
+    pub fn MnnConvert_OnnxToMnn(
+        onnxPath: *const c_char,
+        mnnPath: *const c_char,
+        options: *const MnnConvert_Options,
+    ) -> MnnConvert_Result;
+
+    pub fn MnnConvert_FreeResult(result: *mut MnnConvert_Result);
+}
