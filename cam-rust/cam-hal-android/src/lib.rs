@@ -397,7 +397,9 @@ unsafe extern "C" fn device_process_capture_request(
 ) -> i32 {
     let dev = &*device;
     let req = &*request;
-    log::debug!("process_capture_request: frame {}", req.frame_number);
+    let frame_num = req.frame_number;
+    let total_start = std::time::Instant::now();
+    log::trace!("process_capture_request: frame {}", frame_num);
 
     // Retrieve the adapter from priv_
     let adapter_ptr = dev.priv_ as *mut adapter::AndroidCameraAdapter;
@@ -541,6 +543,10 @@ unsafe extern "C" fn device_process_capture_request(
             }
         }
     }
+
+    let total_elapsed = total_start.elapsed();
+    log::trace!("process_capture_request: frame {} total: {:.2}ms",
+        frame_num, total_elapsed.as_secs_f64() * 1000.0);
 
     0
 }
