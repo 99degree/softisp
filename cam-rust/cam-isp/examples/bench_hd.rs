@@ -73,19 +73,27 @@ fn main() {
                 }
 
                 let mut count = 0u32;
+                let mut total_prep_ns = 0u64;
+                let mut total_infer_ns = 0u64;
+                let mut total_total_ns = 0u64;
                 while Instant::now() < deadline {
-                    if engine.process(w, h, w, &buf, 1024.0, w, None, &params,
-                        None, None, 1.0, 0.0, None, None, None).is_ok() {
+                    let frame = engine.process(w, h, w, &buf, 1024.0, w, None, &params,
+                        None, None, 1.0, 0.0, None, None, None);
+                    if frame.is_ok() {
+                        let f = frame.unwrap();
+                        total_prep_ns += f.prep_duration_ns;
+                        total_infer_ns += f.inference_duration_ns;
+                        total_total_ns += f.total_duration_ns;
                         count += 1;
                     } else {
                         break;
                     }
                 }
-                let _ = tx.send(Some(count));
+                let _ = tx.send(Some((count, total_prep_ns, total_infer_ns, total_total_ns)));
             });
 
-            let count = match rx.recv_timeout(std::time::Duration::from_secs(if w * h > 1280 * 720 { 12 } else { 3 })) {
-                Ok(Some(c)) => c,
+            let (count, total_prep_ns, total_infer_ns, total_total_ns) = match rx.recv_timeout(std::time::Duration::from_secs(if w * h > 1280 * 720 { 12 } else { 3 })) {
+                Ok(Some(t)) => t,
                 _ => { eprintln!("  {:4}x{:4} {:>8}: CRASHED/TIMEOUT", w, h, be_name); continue; }
             };
 
@@ -93,7 +101,11 @@ fn main() {
             let secs = elapsed.as_secs_f64().max(0.001);
             let fps = count as f64 / secs;
             let mpix_s = (w as f64 * h as f64 * fps) / 1_000_000.0;
-            eprintln!("  {:4}x{:4} {:>8}: {:5.1} fps ({:.1} Mpix/s)", w, h, be_name, fps, mpix_s);
+            let avg_prep_ms = if count > 0 { total_prep_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
+            let avg_infer_ms = if count > 0 { total_infer_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
+            let avg_total_ms = if count > 0 { total_total_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
+            eprintln!("  {:4}x{:4} {:>8}: {:5.1} fps ({:.1} Mpix/s) prep={:.1}ms infer={:.1}ms total={:.1}ms",
+                w, h, be_name, fps, mpix_s, avg_prep_ms, avg_infer_ms, avg_total_ms);
         }
 
         let _ = std::fs::remove_file(&mnn);
