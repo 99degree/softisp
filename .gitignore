@@ -34,11 +34,15 @@ cam-rust/cam-isp/tools/
 *.swp
 *.swo
 
+# Mesa Vulkan libs (prebuilt for portability)
+!cam-rust/lib/mesa/
+
 # OS
 .DS_Store
 Thumbs.db
 frames/
 *.o
 *.obj
-mnn_wrapper.o
+!mnn_wrapper.o
+!mnn_convert_api.o
 *.mnn
