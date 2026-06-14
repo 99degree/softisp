@@ -135,11 +135,18 @@ pub struct Frame {
     pub height: u32,
     pub format: FrameFormat,
     pub stride: u32,
+    /// Capture timestamp in nanoseconds since epoch (monotonic preferred).
+    /// Used for gyro sync, frame prep timing, and deshake.
+    pub timestamp_ns: u64,
 }
 
 impl Frame {
     pub fn new(data: Vec<u8>, width: u32, height: u32, format: FrameFormat, stride: u32) -> Self {
-        Self { data, width, height, format, stride }
+        Self { data, width, height, format, stride, timestamp_ns: 0 }
+    }
+
+    pub fn new_with_timestamp(data: Vec<u8>, width: u32, height: u32, format: FrameFormat, stride: u32, timestamp_ns: u64) -> Self {
+        Self { data, width, height, format, stride, timestamp_ns }
     }
 
     pub fn bytes_per_pixel(&self) -> u32 {
@@ -166,6 +173,7 @@ impl Frame {
             height,
             format,
             stride: width,
+            timestamp_ns: 0,
         }
     }
 }
