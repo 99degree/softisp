@@ -234,9 +234,13 @@ impl CameraDeviceSession {
 
     /// Flush all pending capture requests.
     pub fn flush(&self) {
-        *self.state.lock().unwrap() = SessionState::Flushing;
+        if let Ok(mut s) = self.state.try_lock() {
+            *s = SessionState::Flushing;
+        }
         info!("CameraDeviceSession({}): flush", self.camera_id);
-        *self.state.lock().unwrap() = SessionState::Configured;
+        if let Ok(mut s) = self.state.try_lock() {
+            *s = SessionState::Configured;
+        }
     }
 
     /// Close the session.
