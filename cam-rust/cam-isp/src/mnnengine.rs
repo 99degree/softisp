@@ -532,13 +532,38 @@ impl IspEngine for MnnEngine {
             let mut out_data = vec![0.0f32; max_out as usize];
 
             // Check if we can use zero-copy (model expects INT16/UINT16)
-            let use_u16_path = self.model_input_type.map_or(false, |(code, bits)| {
-                // halide_type_int=0, halide_type_uint=1; any bits
+            // Check if we can use true zero-copy (exact type match)
+            let use_true_zero_copy = self.model_input_type.map_or(false, |(code, bits)| {
+                // Model expects INT16 (code=0, bits=16) or UINT16 (code=1, bits=16)
+                // Our buffer is u16 (UINT16)
+                (code == 1 && bits == 16) || (code == 0 && bits == 16)
+            });
+
+            let use_true_zero_copy = self.model_input_type.map_or(false, |(code, bits)| {
+                (code == 1 && bits == 16) || (code == 0 && bits == 16)
+            });
+            let use_u16_conversion = self.model_input_type.map_or(false, |(code, bits)| {
                 (code == 0 || code == 1) && (bits == 16 || bits == 32)
             });
 
-            let n = if use_u16_path {
-                // u16 path: pass raw u16 buffer directly, no float normalization
+            let n = if use_true_zero_copy {
+                // TRUE ZERO-COPY: pass raw u16 buffer directly, no allocation, no copy
+                // Buffer is u16 (UINT16 = code 1, bits 16)
+                unsafe {
+                    crate::mnn_sys::mnn_run_true_zero_copy(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        buf.as_ptr() as *const c_void,
+                        1,  // halide_type_uint = 1
+                        16, // bits
+                        shape.as_ptr(),
+                        shape.len() as i32,
+                        out_data.as_mut_ptr(),
+                        max_out,
+                    )
+                }
+            } else if use_u16_conversion {
+                // u16 path: pass raw u16 buffer, MNN will convert to model type
                 unsafe {
                     crate::mnn_sys::mnn_run_host_tensors_u16(
                         interp.as_ptr(),
@@ -569,12 +594,14 @@ impl IspEngine for MnnEngine {
             let t_infer = t_start.elapsed();
 
             if n <= 0 {
-                error!("MNN inference failed: {} (input={}x{}, use_u16_path={})", n, w, h, use_u16_path);
+                let path = if use_true_zero_copy { "true_zero_copy" } else if use_u16_conversion { "u16_conversion" } else { "float_fallback" };
+                error!("MNN inference failed: {} (input={}x{}, path={})", n, w, h, path);
                 return Err(format!("MNN inference failed: {}", n));
             }
 
-            debug!("MNN inference: use_u16_path={} total={:?} ({}x{} -> {} flt)",
-                use_u16_path, t_infer, w, h, n);
+            let path = if use_true_zero_copy { "true_zero_copy" } else if use_u16_conversion { "u16_conversion" } else { "float_fallback" };
+            debug!("MNN inference: path={} total={:?} ({}x{} -> {} flt)",
+                path, t_infer, w, h, n);
 
             let nf = n as usize;
             let oh = h as usize;
