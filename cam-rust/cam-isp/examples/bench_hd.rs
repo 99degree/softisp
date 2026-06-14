@@ -17,10 +17,11 @@ fn main() {
     // Reuse cam_isp::init() which registers our benchmark
     cam_isp::init();
 
-    let resolutions: [(u32, u32, &str); 3] = [
+    let resolutions: [(u32, u32, &str); 4] = [
         (640, 480, "480p"),
         (960, 540, "540p"),
         (1280, 720, "720p"),
+        (1920, 1080, "1080p"),
     ];
 
     let backends = ["opencl", "opengl", "vulkan", "cpu"];
@@ -44,7 +45,7 @@ fn main() {
                 _ => unreachable!(),
             };
 
-            let budget = std::time::Duration::from_millis(2000);
+            let budget = std::time::Duration::from_millis(if w * h > 1280 * 720 { 8000 } else { 2000 });
             let deadline = Instant::now() + budget;
             let (tx, rx) = std::sync::mpsc::channel();
             let mnn_owned = mnn.clone();
@@ -83,7 +84,7 @@ fn main() {
                 let _ = tx.send(Some(count));
             });
 
-            let count = match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            let count = match rx.recv_timeout(std::time::Duration::from_secs(if w * h > 1280 * 720 { 12 } else { 3 })) {
                 Ok(Some(c)) => c,
                 _ => { eprintln!("  {:4}x{:4} {:>8}: CRASHED/TIMEOUT", w, h, be_name); continue; }
             };

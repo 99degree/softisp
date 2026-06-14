@@ -366,7 +366,6 @@ mod tests {
     use crate::blocks::RawInputBlock;
 
     #[test]
-    #[ignore = "extended — runs full ISP pipeline"]
     fn test_cpu_engine_process() {
         let mut engine = CpuEngine::new();
         assert!(engine.build(Box::new(RawInputBlock::new()), vec![], None, 21).is_ok());
@@ -390,11 +389,12 @@ mod tests {
             w, h, w, &raw_buf, 65535.0, w,
             None, &params, None, None, 1.0, 0.0, None, None, None,
         );
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "process failed: {:?}", result.err());
         let frame = result.unwrap();
         assert_eq!(frame.width, w);
         assert_eq!(frame.height, h);
         assert!(!frame.data.is_empty());
-        assert!(frame.data[0] > 0);
+        // display_output produces BGRA bytes; data[2] is Red channel
+        assert!(frame.data[2] > 0, "first pixel R channel is zero: data[0..4]={:?}", &frame.data[..4]);
     }
 }
