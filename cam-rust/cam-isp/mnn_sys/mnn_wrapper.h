@@ -237,6 +237,21 @@ int mnn_run_with_buffer(MnnInterpreter interpreter, MnnSession session,
                           const int* in_shape, int in_ndim,
                           float* out_data, int max_out);
 
+// ── Zero-copy inference ────────────────────────────────────────────────
+extern "C" int mnn_run_zero_copy(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const void* buffer,
+    const int* in_shape,
+    int in_ndim,
+    float* out_data,
+    int max_out
+);
+
+// ── Get model input type ──────────────────────────────────────────────────
+extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession session,
+    int* out_code, int* out_bits);
+
 // ── Express Module API ──────────────────────────────────────────────────
 
 typedef void* MnnExpressModule;
@@ -257,28 +272,5 @@ void mnn_varps_destroy(MnnVARP* varps, int count);
 }
 #endif
 
+
 #endif /* MNN_WRAPPER_H */
-
-/**
- * Zero-copy inference with direct host pointer assignment.
- * Bypasses copyFromHostTensor for tensors with null backend.
- * 
- * @param interpreter Interpreter handle.
- * @param session Session handle.
- * @param buffer Pointer to existing buffer with input data.
- * @param in_shape Input shape array.
- * @param in_ndim Number of dimensions.
- * @param out_data Output buffer (float32).
- * @param max_out Max number of output elements.
- * @return Number of output elements written, or negative on error.
- */
-int mnn_run_zero_copy(
-    MnnInterpreter interpreter,
-    MnnSession session,
-    const void* buffer,
-    const int* in_shape,
-    int in_ndim,
-    float* out_data,
-    int max_out
-);
-
