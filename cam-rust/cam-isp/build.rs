@@ -19,6 +19,10 @@ fn main() {
     // --- MNN (mnn feature only) ---
     #[cfg(feature = "mnn")]
     link_mnn();
+
+    // --- MNN Convert (mnn feature only) ---
+    #[cfg(feature = "mnn")]
+    link_mnnconvert();
 }
 
 #[cfg(feature = "ort")]
@@ -73,6 +77,46 @@ fn link_mnn() {
     println!("cargo:rustc-link-lib=MNN_Vulkan");
     println!("cargo:rustc-link-lib=MNN_CL");
     println!("cargo:rustc-link-lib=MNN_GL");
+}
+
+#[cfg(feature = "mnn")]
+fn link_mnnconvert() {
+    let abi_dir = compute_abi_dir();
+    let mnn_include = std::env::var("MNN_INCLUDE_DIR").unwrap_or_else(|_| {
+        "vendor/mnn/include".to_string()
+    });
+    
+    // Include path for mnnconvert headers
+    let mnnconvert_include = "vendor/mnn/mnnconvert/include";
+    
+    let src_dir = std::path::Path::new("vendor/mnn/mnnconvert/source");
+    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    
+    // Build mnnconvert wrapper (C API)
+    cc::Build::new()
+        .cpp(true)
+        .std("c++17")
+        .file(src_dir.join("mnnconvert_shared.cpp"))
+        .include(&mnn_include)
+        .include(mnnconvert_include).include("vendor/mnn/mnnconvert/include/converter")
+        .define("MNN_CONVERT_API_EXPORTS", None)
+        .compile("mnnconvert");
+    
+    // Link libMNNConvertDeps.so from vendor lib
+    let lib_dir = std::path::Path::new(&abi_dir);
+    std::fs::create_dir_all(lib_dir).ok();
+    
+    let src = std::path::Path::new("vendor/mnn/mnnconvert/lib/libMNNConvertDeps.so");
+    let dst = lib_dir.join("libMNNConvertDeps.so");
+    if src.exists() {
+        std::fs::copy(src, &dst).ok();
+        println!("cargo:rerun-if-changed={}", dst.display());
+    }
+    
+    // Link flags
+    println!("cargo:rustc-link-search=native={}", abi_dir);
+    println!("cargo:rustc-link-lib=MNNConvertDeps");
+    println!("cargo:rustc-link-lib=mnnconvert");
 }
 
 /// Compute the ABI-specific library directory.
