@@ -14,7 +14,7 @@ pub mod buffer;
 
 /// Re-export commonly used types
 pub use memfd::{MemfdBuffer, MemfdBufferManager, Alignment as MemfdAlignment};
-pub use cma_buffer::{CMABuffer, CMABufferManager, Alignment as CMAAlignment, BufferUsage, CMAAllocator};
+pub use cma_buffer::{CMABuffer, CMABufferManager, BufferAlignment as CMAAlignment, BufferUsage, CMAAllocator};
 
 /// MNN data type codes (from MNN DataType enum)
 pub const DT_FLOAT: u8 = 2;
@@ -151,14 +151,14 @@ impl MNNBufferProvider for MemfdBufferManager {
     
     fn sync_for_device(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
         let buffer = self.get_existing(name)
-            .ok_or_else(|| format!("Buffer {} not found", name).into())?;
+            .ok_or_else::<Box<dyn std::error::Error>, _>(|| format!("Buffer {} not found", name).into())?;
         buffer.sync_for_device()?;
         Ok(())
     }
     
     fn sync_for_cpu(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
         let buffer = self.get_existing(name)
-            .ok_or_else(|| format!("Buffer {} not found", name).into())?;
+            .ok_or_else::<Box<dyn std::error::Error>, _>(|| format!("Buffer {} not found", name).into())?;
         buffer.sync_for_cpu()?;
         Ok(())
     }
