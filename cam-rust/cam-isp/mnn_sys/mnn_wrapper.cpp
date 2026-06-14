@@ -316,6 +316,100 @@ int mnn_run_host_tensors(MnnInterpreter interpreter, MnnSession session,
     return n;
 }
 
+
+// ── Host tensors with u16 input ──────────────────────────────────────────
+
+extern "C" int mnn_run_host_tensors_u16(MnnInterpreter interpreter, MnnSession session,
+                          const uint16_t* in_data, const int* in_shape, int in_ndim,
+                          float* out_data, int max_out) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !in_data || !out_data) return -1;
+
+    // Get input tensor
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+
+    // Use the model input tensor's type for the host tensor
+    auto model_type = in_tensor->getType();
+    
+    std::vector<int> shape(in_shape, in_shape + in_ndim);
+    auto* host_in = MNN::Tensor::create(shape, model_type, nullptr, MNN::Tensor::CAFFE);
+    if (!host_in) return -1;
+
+    int total = 1;
+    for (int i = 0; i < in_ndim; i++) total *= in_shape[i];
+    
+    // Copy u16 data and convert to proper type
+    if (model_type.code == halide_type_int && model_type.bits == 16) {
+        auto* ptr = host_in->host<int16_t>();
+        if (!ptr) { MNN::Tensor::destroy(host_in); return -1; }
+        for (int i = 0; i < total; i++) ptr[i] = (int16_t)in_data[i];
+    } else if (model_type.code == halide_type_uint && model_type.bits == 16) {
+        auto* ptr = host_in->host<uint16_t>();
+        if (!ptr) { MNN::Tensor::destroy(host_in); return -1; }
+        for (int i = 0; i < total; i++) ptr[i] = in_data[i];
+    } else if (model_type.code == halide_type_int && model_type.bits == 32) {
+        auto* ptr = host_in->host<int32_t>();
+        if (!ptr) { MNN::Tensor::destroy(host_in); return -1; }
+        for (int i = 0; i < total; i++) ptr[i] = (int32_t)in_data[i];
+    } else if (model_type.code == halide_type_uint && model_type.bits == 32) {
+        auto* ptr = host_in->host<uint32_t>();
+        if (!ptr) { MNN::Tensor::destroy(host_in); return -1; }
+        for (int i = 0; i < total; i++) ptr[i] = (uint32_t)in_data[i];
+    } else if (model_type.code == halide_type_float && model_type.bits == 32) {
+        auto* ptr = host_in->host<float>();
+        if (!ptr) { MNN::Tensor::destroy(host_in); return -1; }
+        for (int i = 0; i < total; i++) ptr[i] = (float)in_data[i] / 1024.0f; // normalize
+    } else {
+        // Fallback: convert to float
+        auto* ptr = host_in->host<float>();
+        if (!ptr) { MNN::Tensor::destroy(host_in); return -1; }
+        for (int i = 0; i < total; i++) ptr[i] = (float)in_data[i] / 1024.0f;
+    }
+
+    // Resize session to match host shape (handles symbolic dims)
+    net->resizeSession(sess);
+    auto copy_ok = in_tensor->copyFromHostTensor(host_in);
+    if (!copy_ok) { MNN::Tensor::destroy(host_in); return -12; }
+    auto run_ok = net->runSession(sess);
+    if (run_ok != 0) { MNN::Tensor::destroy(host_in); return -13; }
+
+    // Get output
+    auto* out_tensor = net->getSessionOutput(sess, nullptr);
+    if (!out_tensor) { MNN::Tensor::destroy(host_in); return -1; }
+
+    // Create host output tensor matching output type
+    auto out_type = out_tensor->getType();
+    auto* host_out = new MNN::Tensor(out_tensor, MNN::Tensor::CAFFE);
+    out_tensor->copyToHostTensor(host_out);
+
+    // Read output as float
+    auto out_shape = host_out->shape();
+    int out_total = 1;
+    for (auto d : out_shape) out_total *= d;
+    int n = out_total < max_out ? out_total : max_out;
+    
+    if (out_type.code == halide_type_float && out_type.bits == 32) {
+        auto* ptr = host_out->host<float>();
+        if (ptr) memcpy(out_data, ptr, n * sizeof(float));
+    } else if (out_type.code == halide_type_int && out_type.bits == 16) {
+        auto* ptr = host_out->host<int16_t>();
+        if (ptr) for (int i = 0; i < n; i++) out_data[i] = (float)ptr[i];
+    } else if (out_type.code == halide_type_uint && out_type.bits == 16) {
+        auto* ptr = host_out->host<uint16_t>();
+        if (ptr) for (int i = 0; i < n; i++) out_data[i] = (float)ptr[i];
+    } else {
+        auto* ptr = host_out->host<float>();
+        if (ptr) memcpy(out_data, ptr, n * sizeof(float));
+    }
+
+    MNN::Tensor::destroy(host_in);
+    delete host_out;
+    return n;
+}
+
+
 // ── Zero-copy inference (wrap existing buffer directly) ──────────────────
 
 int mnn_run_with_buffer(MnnInterpreter interpreter, MnnSession session,
@@ -669,5 +763,22 @@ int mnn_run_zero_copy(
     
     delete host_out;
     return n;
+}
+
+
+// ── Get model input type ──────────────────────────────────────────────────
+
+extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession session, int* out_code, int* out_bits) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !out_code || !out_bits) return -1;
+
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+
+    auto model_type = in_tensor->getType();
+    *out_code = model_type.code;
+    *out_bits = model_type.bits;
+    return 0;
 }
 
