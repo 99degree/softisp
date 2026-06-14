@@ -16,7 +16,7 @@
 #![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
-use std::os::raw::{c_char, c_float, c_int, c_void};
+pub use std::os::raw::{c_char, c_float, c_int, c_void};
 
 // ── Backend enum ─────────────────────────────────────────────────────────
 
@@ -86,6 +86,48 @@ extern "C" {
     ) -> c_int;
 
     // ── Express Module API ──
+// ── Zero-copy inference with existing buffer ──────────────────────
+
+fn mnn_run_with_buffer(
+    interpreter: *mut c_void,
+    session: *mut c_void,
+    buffer: *const c_void,
+    buffer_type_code: c_int,
+    buffer_type_bits: c_int,
+    in_shape: *const c_int,
+    in_ndim: c_int,
+    out_data: *mut c_float,
+    max_out: c_int,
+) -> c_int;
+
+
+pub fn mnn_run_zero_copy(
+    interpreter: *mut c_void,
+    session: *mut c_void,
+    buffer: *const c_void,
+    in_shape: *const c_int,
+    in_ndim: c_int,
+    out_data: *mut c_float,
+    max_out: c_int,
+) -> c_int;
+
+pub fn mnn_get_model_input_type(
+    interpreter: *mut c_void,
+    session: *mut c_void,
+    out_code: *mut c_int,
+    out_bits: *mut c_int,
+) -> c_int;
+
+pub fn mnn_run_host_tensors_u16(
+    interpreter: *mut c_void,
+    session: *mut c_void,
+    in_data: *const u16,
+    in_shape: *const c_int,
+    in_ndim: c_int,
+    out_data: *mut c_float,
+    max_out: c_int,
+) -> c_int;
+
     fn mnn_express_load_vars(path: *const c_char, out_count: *mut c_int) -> *mut *mut c_void;
     fn mnn_express_extract(inputs: *mut *mut c_void, n_inputs: c_int, outputs: *mut *mut c_void, n_outputs: c_int) -> *mut c_void;
     fn mnn_express_destroy_module(module: *mut c_void);

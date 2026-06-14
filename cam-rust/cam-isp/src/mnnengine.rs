@@ -12,6 +12,7 @@
 //!   4. Read output float32 → BGRA U8
 
 use std::sync::Mutex;
+use std::os::raw::c_void;
 use std::time::Instant;
 use log::{info, debug, warn, error};
 
@@ -52,6 +53,7 @@ pub struct MnnEngine {
     backend: MnnBackend,
     initialized: bool,
     model_path: Option<String>,
+    model_input_type: Option<(i32, i32)>,
     /// MNN interpreter (owning the model). Must outlive session.
     #[cfg(feature = "mnn")]
     interp: Option<MnnInterpreterSafe>,
@@ -80,6 +82,7 @@ impl MnnEngine {
             backend,
             initialized: false,
             model_path: None,
+            model_input_type: None,
             #[cfg(feature = "mnn")]
             interp: None,
             #[cfg(feature = "mnn")]
@@ -278,7 +281,7 @@ impl MnnEngine {
         ];
 
         // ── Value info ──
-        let inputs = vec![Proto::value_info("input", &dim_1hw(), 1)];
+        let inputs = vec![Proto::value_info("input", &dim_1hw(), 5)];  // 5 = INT16
         let outputs = vec![Proto::value_info("output", &dim_3hw(), 1)];
         let vi = vec![
             Proto::value_info("conv1_out", &dim_8hw(), 1),
@@ -483,6 +486,21 @@ impl IspEngine for MnnEngine {
             })?;
             let sess = interp.create_session(self.backend.to_sys(), 4)
                 .ok_or("session create fail")?;
+            
+            // Query model input type for zero-copy optimization
+            let mut input_code = 0i32;
+            let mut input_bits = 0i32;
+            unsafe {
+                crate::mnn_sys::mnn_get_model_input_type(
+                    interp.as_ptr(),
+                    sess.as_ptr(),
+                    &mut input_code,
+                    &mut input_bits,
+                );
+            }
+            self.model_input_type = Some((input_code, input_bits));
+            info!("MNN model input type: code={}, bits={}", input_code, input_bits);
+            
             self.interp = Some(interp);
             self.sess = Some(Mutex::new(sess));
             info!("MNN engine loaded from {} (backend={:?})", mnn, self.backend);
@@ -507,46 +525,56 @@ impl IspEngine for MnnEngine {
 
             let t_start = Instant::now();
 
-            // Normalize INT16/UINT16 sensor data to float32
-            let f32d = Self::norm(buf, smax);
-            let t_norm = t_start.elapsed();
-
             let shape = [1, 1, h as i32, w as i32];
 
             // Allocate output buffer (enough for 4K HD RGBA floats)
             let max_out = (tw * h * 4) as i32;
             let mut out_data = vec![0.0f32; max_out as usize];
 
-            // Use mnn_run_host_tensors which handles:
-            // 1. Creating proper host tensors (with backend, not portal tensors)
-            // 2. Converting float32 input to model's native type (INT16/UINT16/F32)
-            // 3. resizeSession + copyFromHostTensor
-            // 4. runSession
-            // 5. copyToHostTensor output back to float32
-            //
-            // This bypasses the portal tensor issue where copyFromHostTensor
-            // fails because the portal tensor has backend=NULL.
-            let n = unsafe {
-                crate::mnn_sys::mnn_run_host_tensors(
-                    interp.as_ptr(),
-                    sess.as_ptr(),
-                    f32d.as_ptr(),
-                    shape.as_ptr(),
-                    shape.len() as i32,
-                    out_data.as_mut_ptr(),
-                    max_out,
-                )
+            // Check if we can use zero-copy (model expects INT16/UINT16)
+            let use_u16_path = self.model_input_type.map_or(false, |(code, bits)| {
+                // halide_type_int=0, halide_type_uint=1; any bits
+                (code == 0 || code == 1) && (bits == 16 || bits == 32)
+            });
+
+            let n = if use_u16_path {
+                // u16 path: pass raw u16 buffer directly, no float normalization
+                unsafe {
+                    crate::mnn_sys::mnn_run_host_tensors_u16(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        buf.as_ptr() as *const u16,
+                        shape.as_ptr(),
+                        shape.len() as i32,
+                        out_data.as_mut_ptr(),
+                        max_out,
+                    )
+                }
+            } else {
+                // Fallback: normalize to float and use host_tensors
+                let f32d = Self::norm(buf, smax);
+                unsafe {
+                    crate::mnn_sys::mnn_run_host_tensors(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        f32d.as_ptr(),
+                        shape.as_ptr(),
+                        shape.len() as i32,
+                        out_data.as_mut_ptr(),
+                        max_out,
+                    )
+                }
             };
 
             let t_infer = t_start.elapsed();
 
             if n <= 0 {
-                error!("mnn_run_host_tensors failed: {} (input={}x{})", n, w, h);
-                return Err(format!("mnn_run_host_tensors failed: {}", n));
+                error!("MNN inference failed: {} (input={}x{}, use_u16_path={})", n, w, h, use_u16_path);
+                return Err(format!("MNN inference failed: {}", n));
             }
 
-            debug!("MNN inference: norm={:?} infer={:?} total={:?} ({}x{} -> {} flt)",
-                t_norm, t_infer - t_norm, t_infer, w, h, n);
+            debug!("MNN inference: use_u16_path={} total={:?} ({}x{} -> {} flt)",
+                use_u16_path, t_infer, w, h, n);
 
             let nf = n as usize;
             let oh = h as usize;
