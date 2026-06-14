@@ -1,10 +1,20 @@
 //! V4L2 stream configuration.
 
 #[cfg(feature = "v4l2")]
-use rscam::{Camera, Config, Format};
+use rscam::{Camera, Config};
 
 use log::info;
 use cam_types::FrameFormat;
+
+/// V4L2 stream configuration info (returned by get_stream_config).
+#[derive(Debug, Clone)]
+pub struct StreamConfig {
+    pub width: u32,
+    pub height: u32,
+    pub format: FrameFormat,
+    pub fps: u32,
+    pub bytes_per_line: u32,
+}
 
 /// Configure a V4L2 stream.
 #[cfg(feature = "v4l2")]
@@ -53,27 +63,13 @@ pub fn get_stream_config(cam: &Camera) -> Option<StreamConfig> {
     })
 }
 
-#[derive(Debug, Clone)]
-pub struct StreamConfig {
-    pub width: u32,
-    pub height: u32,
-    pub format: FrameFormat,
-    pub fps: u32,
-    pub bytes_per_line: u32,
+/// Non-V4L2 stubs (compile when feature disabled).
+#[cfg(not(feature = "v4l2"))]
+pub fn configure_stream() -> Result<(), String> {
+    Err("V4L2 feature not enabled".into())
 }
 
 #[cfg(not(feature = "v4l2"))]
-pub fn configure_stream(
-    _cam: &mut rscam::Camera,
-    _width: u32,
-    _height: u32,
-    _format: FrameFormat,
-    _fps: u32,
-) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(not(feature = "v4l2"))]
-pub fn get_stream_config(_cam: &rscam::Camera) -> Option<StreamConfig> {
+pub fn get_stream_config() -> Option<StreamConfig> {
     None
 }
