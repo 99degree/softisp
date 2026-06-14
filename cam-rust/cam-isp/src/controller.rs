@@ -106,6 +106,12 @@ pub struct IspController {
     // ── Scene luminance ──
     pub scene_luminance: f32,
 
+    // ── Scene change tracking ──
+    /// Previous frame's channel means for scene change detection.
+    pub prev_channel_means: Option<[f32; 3]>,
+    /// Scene change metric (0..1), computed from channel mean deltas.
+    pub scene_change: f32,
+
     // ── User brightness control ──
     /// Normalized brightness bias (0..1, 0.5 = default).
     pub brightness_bias: f32,
@@ -195,6 +201,8 @@ impl IspController {
             hist_constrained_gain: 1.5,
             ae_state: AutoExposureState::default(),
             scene_luminance: 0.0,
+            prev_channel_means: None,
+            scene_change: 0.0,
             brightness_bias: 0.5,
             last_applied_brightness: 0.5,
             analog_gain: 1.0,
@@ -266,6 +274,16 @@ impl IspController {
             self.estimated_cct = Some(5500);
             self.clamp_flags = 0;
         }
+
+        // Scene change tracking (compare to previous frame)
+        if let Some(prev) = self.prev_channel_means {
+            let max_prev = prev[0].max(prev[1]).max(prev[2]).max(1e-6);
+            let md = (channel_means[0] - prev[0]).abs()
+                .max((channel_means[1] - prev[1]).abs())
+                .max((channel_means[2] - prev[2]).abs());
+            self.scene_change = (md / max_prev).clamp(0.0, 1.0);
+        }
+        self.prev_channel_means = Some(*channel_means);
 
         self.frame_count += 1;
 
@@ -838,8 +856,133 @@ impl IspController {
             self.dominant_cluster_fraction
         );
     }
-}
 
+    // ── ControllerApi ONNX override methods ──
+
+    /// Apply ONNX AWB gains with EMA smoothing and B-gain CCT capping.
+    pub fn set_onnx_awb_gains(&mut self, gains: &[f32; 3], alpha: f32) {
+        let raw_r = gains[0].clamp(0.1, 5.0);
+        let mut raw_b = gains[2].clamp(0.1, 5.0);
+        let cct = self.estimated_cct.unwrap_or(5000) as f32;
+        let diff_to_center = cct - 5250.0;
+        let warm_slope = if diff_to_center < 0.0 { 0.0006 } else { 0.0003 };
+        let max_b = (1.4 + diff_to_center.abs() * warm_slope).clamp(1.4, 2.8);
+        if raw_b > max_b {
+            log::debug!("AWB: B capped from {:.2} to {:.2} (CCT={:.0})", raw_b, max_b, cct);
+            raw_b = max_b;
+        }
+        // Use the same smoothed fields (avg_r/avg_b serve as smoothed state)
+        self.avg_r += (raw_r - self.avg_r) * alpha;
+        self.avg_b += (raw_b - self.avg_b) * alpha;
+        self.awb_gains = [self.avg_r, 1.0, self.avg_b];
+    }
+
+    /// Apply ONNX gamma override with EMA.
+    pub fn set_onnx_gamma(&mut self, gamma: f32, alpha: f32) {
+        let clamped = gamma.clamp(0.5, 4.0);
+        // Use smoothing_alpha field for gamma smoothing if we had one;
+        // for now the tone_gamma field itself is the smoothed state
+        self.tone_gamma += (clamped - self.tone_gamma) * alpha;
+    }
+
+    /// Apply ONNX exposure gain with EMA.
+    pub fn set_onnx_exposure_gain(&mut self, gain: f32, alpha: f32) {
+        let clamped = gain.clamp(0.25, 8.0);
+        self.exposure_gain += (clamped - self.exposure_gain) * alpha;
+    }
+
+    /// Apply ONNX CCT override with EMA and CCM recompute.
+    pub fn set_onnx_cct(&mut self, cct: f32, alpha: f32) {
+        let target = (cct as i32).clamp(2000, 10000);
+        let prev = self.estimated_cct.unwrap_or(5500);
+        let smoothed = (prev as f32 + (target - prev) as f32 * alpha) as i32;
+        self.estimated_cct = Some(smoothed.clamp(2000, 10000));
+        self.scene_luminance = 0.5;
+        // Recompute CCM with the overridden CCT
+        let ccm = select_ccm(self.estimated_cct.unwrap_or(5500));
+        if ccm.len() == 9 {
+            let mut arr = [0.0f32; 9];
+            arr.copy_from_slice(&ccm[..9]);
+            self.ccm_matrix = arr;
+        }
+    }
+
+    /// Update from hardware ISP parameters (Camera2 HAL).
+    pub fn update_from_hardware(
+        &mut self,
+        hw_awb: Option<&[f32; 4]>,
+        hw_ccm: Option<&[f32; 9]>,
+        _hw_gamma: Option<f32>,
+    ) {
+        if let Some(awb) = hw_awb {
+            let r_g = awb[0].clamp(0.1, 5.0);
+            let b_g = awb[3].clamp(0.1, 5.0);
+            let alpha = self.smoothing_alpha;
+            self.avg_r += (r_g - self.avg_r) * alpha;
+            self.avg_b += (b_g - self.avg_b) * alpha;
+            self.awb_gains = [self.avg_r, 1.0, self.avg_b];
+        }
+        if let Some(ccm) = hw_ccm {
+            // Use Camera2 CCM directly (bypasses A·x + C model)
+            let mut ccm_copy = *ccm;
+            crate::ccm_engine::sanitize_ccm(
+                &mut ccm_copy,
+                self.estimated_cct.unwrap_or(5500),
+                "hw",
+                Some(&mut self.clamp_flags),
+                Some(&mut self.clamp_cct_ref),
+            );
+            self.ccm_matrix = ccm_copy;
+            self.smoothed_ccm = ccm_copy;
+        }
+        // hw_gamma is ignored — Camera2 tone map is linear in raw mode
+    }
+
+    /// Full ONNX update: stats + ONNX overrides.
+    pub fn update_from_onnx(
+        &mut self,
+        channel_means: Option<&[f32; 3]>,
+        tone_stats: Option<&[f32; 3]>,
+        histogram: Option<&[f32]>,
+        zone_stats: Option<&[f32]>,
+        ae_gain: Option<f32>,
+        cct: Option<f32>,
+        awb_gains: Option<&[f32; 3]>,
+        algo_gamma: Option<f32>,
+    ) {
+        if let Some(cm) = channel_means {
+            self.update_channel_stats(cm);
+        }
+        if let Some(ts) = tone_stats {
+            self.update_tone_stats(ts);
+        }
+        if let Some(h) = histogram {
+            self.update_histogram(h);
+        }
+        if let Some(zs) = zone_stats {
+            self.update_zone_stats(zs);
+        }
+        if let Some(gain) = ae_gain {
+            self.set_onnx_exposure_gain(gain, 0.3);
+        }
+        if let Some(cct_val) = cct {
+            self.set_onnx_cct(cct_val, 0.3);
+            // Recompute CCM with the overridden CCT
+            let ccm = select_ccm(self.estimated_cct.unwrap_or(5500));
+            if ccm.len() == 9 {
+                let mut arr = [0.0f32; 9];
+                arr.copy_from_slice(&ccm[..9]);
+                self.ccm_matrix = arr;
+            }
+        }
+        if let Some(awb) = awb_gains {
+            self.set_onnx_awb_gains(awb, 0.3);
+        }
+        if let Some(gamma) = algo_gamma {
+            self.set_onnx_gamma(gamma, 0.3);
+        }
+    }
+}
 
 
 #[cfg(test)]
