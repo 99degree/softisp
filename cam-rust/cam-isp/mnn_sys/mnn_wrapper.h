@@ -252,6 +252,19 @@ extern "C" int mnn_run_zero_copy(
 extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession session,
     int* out_code, int* out_bits);
 
+// ── True zero-copy inference ──────────────────────────────────────────────────
+extern "C" int mnn_run_true_zero_copy(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const void* buffer,
+    int buffer_type_code,
+    int buffer_type_bits,
+    const int* in_shape,
+    int in_ndim,
+    float* out_data,
+    int max_out
+);
+
 // ── Express Module API ──────────────────────────────────────────────────
 
 typedef void* MnnExpressModule;

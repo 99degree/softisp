@@ -118,6 +118,18 @@ pub fn mnn_get_model_input_type(
     out_bits: *mut c_int,
 ) -> c_int;
 
+pub fn mnn_run_true_zero_copy(
+    interpreter: *mut c_void,
+    session: *mut c_void,
+    buffer: *const c_void,
+    buffer_type_code: c_int,
+    buffer_type_bits: c_int,
+    in_shape: *const c_int,
+    in_ndim: c_int,
+    out_data: *mut c_float,
+    max_out: c_int,
+) -> c_int;
+
 pub fn mnn_run_host_tensors_u16(
     interpreter: *mut c_void,
     session: *mut c_void,
