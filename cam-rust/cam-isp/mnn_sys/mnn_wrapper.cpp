@@ -782,3 +782,113 @@ extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession s
     return 0;
 }
 
+
+// ── True zero-copy inference (direct host pointer) ──────────────────────
+/**
+ * True zero-copy inference: directly set input tensor's host pointer.
+ * No allocation, no copy. The input buffer is used directly.
+ * 
+ * REQUIREMENTS:
+ * - Buffer type must exactly match model input type (code + bits)
+ * - Buffer must remain valid for duration of runSession
+ * - Buffer size must match expected input size (shape)
+ * - Caller must ensure proper cache coherency if needed
+ * 
+ * @param interpreter Interpreter handle.
+ * @param session Session handle.
+ * @param buffer Pointer to existing buffer with input data.
+ * @param buffer_type_code Halide type code of buffer (0=int, 1=uint, 2=float).
+ * @param buffer_type_bits Bit width of buffer (8, 16, 32).
+ * @param in_shape Input shape array.
+ * @param in_ndim Number of dimensions.
+ * @param out_data Output buffer (float32).
+ * @param max_out Max number of output elements.
+ * @return Number of output elements written, or negative on error.
+ */
+extern "C" int mnn_run_true_zero_copy(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const void* buffer,
+    int buffer_type_code,
+    int buffer_type_bits,
+    const int* in_shape,
+    int in_ndim,
+    float* out_data,
+    int max_out
+) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !buffer || !out_data) return -1;
+
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+
+    halide_type_t buffer_type = { (halide_type_code_t)buffer_type_code, (uint8_t)buffer_type_bits, 1 };
+    auto model_type = in_tensor->getType();
+    
+    // Must match exactly for true zero-copy
+    if (model_type.code != buffer_type.code || model_type.bits != buffer_type.bits) {
+        return -2;  // Type mismatch
+    }
+
+    std::vector<int> shape(in_shape, in_shape + in_ndim);
+    int total = 1;
+    for (int i = 0; i < in_ndim; i++) total *= in_shape[i];
+
+    // Verify tensor size matches
+    size_t tensor_size = in_tensor->elementSize();
+    if (tensor_size != (size_t)total) {
+        // Try to resize session to match our shape
+        // Note: This may allocate new memory, breaking zero-copy
+        net->resizeSession(sess);
+        in_tensor = net->getSessionInput(sess, nullptr);
+        if (!in_tensor) return -3;
+        tensor_size = in_tensor->elementSize();
+        if (tensor_size != (size_t)total) {
+            return -4;  // Size mismatch even after resize
+        }
+    }
+
+    // TRUE ZERO-COPY: Directly set the host pointer
+    // This bypasses all allocation and copy
+    in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
+    in_tensor->buffer().device = 0;  // Host memory
+    // Note: type and dimensions are assumed to be already set correctly by MNN
+
+    // Run inference WITHOUT resizeSession (would overwrite our pointer)
+    auto run_ok = net->runSession(sess);
+    if (run_ok != 0) {
+        return static_cast<int>(run_ok);
+    }
+
+    // Get output
+    auto* out_tensor = net->getSessionOutput(sess, nullptr);
+    if (!out_tensor) return -1;
+
+    auto out_type = out_tensor->getType();
+    auto* host_out = new MNN::Tensor(out_tensor, MNN::Tensor::CAFFE);
+    out_tensor->copyToHostTensor(host_out);
+
+    auto out_shape = host_out->shape();
+    int out_total = 1;
+    for (auto d : out_shape) out_total *= d;
+    int n = out_total < max_out ? out_total : max_out;
+
+    if (out_type.code == halide_type_float && out_type.bits == 32) {
+        auto* ptr = host_out->host<float>();
+        if (ptr) memcpy(out_data, ptr, n * sizeof(float));
+    } else if (out_type.code == halide_type_int && out_type.bits == 16) {
+        auto* ptr = host_out->host<int16_t>();
+        if (ptr) for (int i = 0; i < n; i++) out_data[i] = (float)ptr[i];
+    } else if (out_type.code == halide_type_uint && out_type.bits == 16) {
+        auto* ptr = host_out->host<uint16_t>();
+        if (ptr) for (int i = 0; i < n; i++) out_data[i] = (float)ptr[i];
+    } else {
+        auto* ptr = host_out->host<float>();
+        if (ptr) memcpy(out_data, ptr, n * sizeof(float));
+    }
+
+    delete host_out;
+    return n;
+}
+
