@@ -124,7 +124,7 @@ impl IspEngine for CpuEngine {
                 buf.len(), expected);
             generate_simulated_raw(width, height, buf)
         };
-        let t_input = t0.elapsed();
+        let _t_input = t0.elapsed();
 
         // ── 2. Normalize: INT16 → FLOAT [0, 1] ──
         let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
@@ -187,7 +187,7 @@ impl IspEngine for CpuEngine {
             Err(_) => None
         };
         stage_time!("2f. EIS");
-        let t_pre = t0.elapsed();
+        let _t_pre = t0.elapsed();
 
         progress!();
 
@@ -294,7 +294,7 @@ impl IspEngine for CpuEngine {
         };
         stage_time!("8. Tone+FCS+LDCI+Warp");
         progress!();
-        let t_process = t0.elapsed();
+        let _t_process = t0.elapsed();
 
         // ── 9. Display ──
         let out_width = if target_width > 0 { target_width } else { width };
