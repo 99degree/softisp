@@ -531,18 +531,14 @@ impl IspEngine for MnnEngine {
             let max_out = (tw * h * 4) as i32;
             let mut out_data = vec![0.0f32; max_out as usize];
 
-            // Check if we can use zero-copy (model expects INT16/UINT16)
-            // Check if we can use true zero-copy (exact type match)
+            // Check which inference path to use based on model input type
             let use_true_zero_copy = self.model_input_type.map_or(false, |(code, bits)| {
                 // Model expects INT16 (code=0, bits=16) or UINT16 (code=1, bits=16)
                 // Our buffer is u16 (UINT16)
                 (code == 1 && bits == 16) || (code == 0 && bits == 16)
             });
-
-            let use_true_zero_copy = self.model_input_type.map_or(false, |(code, bits)| {
-                (code == 1 && bits == 16) || (code == 0 && bits == 16)
-            });
             let use_u16_conversion = self.model_input_type.map_or(false, |(code, bits)| {
+                // Model expects INT16/UINT16/INT32/UINT32, buffer is u16
                 (code == 0 || code == 1) && (bits == 16 || bits == 32)
             });
 
@@ -610,6 +606,7 @@ impl IspEngine for MnnEngine {
 
             let bgra = Self::to_bgra(&out_data[..nf], ch, oh, ow);
 
+            let total_duration_ns = t_start.elapsed().as_nanos() as u64;
             let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
             frame.data = bgra;
             frame.aux = Some(IspAuxOutput {
@@ -620,6 +617,10 @@ impl IspEngine for MnnEngine {
                 scene_category: None, af_phase: None,
                 vcm_position: None, eis_compensation: None,
             });
+            frame.timestamp_ns = 0;  // TODO: pass from HAL
+            frame.prep_duration_ns = t_infer.as_nanos() as u64;  // prep = norm + inference prep
+            frame.inference_duration_ns = t_infer.as_nanos() as u64;
+            frame.total_duration_ns = total_duration_ns;
             return Ok(frame);
         }
 
