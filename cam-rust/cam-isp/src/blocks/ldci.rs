@@ -31,9 +31,8 @@ impl IspBlock for LdciBlock {
                   Proto::attribute_ints("pads", &[4, 4, 4, 4]),
                   Proto::attribute_ints("strides", &[1, 1])]),
             Proto::node("Sub", &[&self.input_source, &format!("{}/local_mean", ns)], &[&format!("{}/diff", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/ldci_strength", ns), &format!("{}/inv_16", ns)], &[&format!("{}/strength_val", ns)], &[]),
             Proto::node("Mul", &[&format!("{}/diff", ns), &format!("{}/y_mask", ns)], &[&format!("{}/diff_y", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/diff_y", ns), &format!("{}/strength_val", ns)], &[&format!("{}/boost", ns)], &[]),
+            Proto::node("Mul", &[&format!("{}/diff_y", ns), &format!("{}/ldci_strength_scaled", ns)], &[&format!("{}/boost", ns)], &[]),
             Proto::node("Add", &[&self.input_source, &format!("{}/boost", ns)], &[&format!("{}/enhanced", ns)], &[]),
             Proto::node("Clip", &[&format!("{}/enhanced", ns), &format!("{}/min", ns), &format!("{}/max", ns)], &[&self.frame_tensor], &[]),
         ]
@@ -48,6 +47,6 @@ impl IspBlock for LdciBlock {
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(format!("{}/ldci_strength", self.tensor_ns()), 1, vec![1])]
+        vec![(format!("{}/ldci_strength_scaled", self.tensor_ns()), 1, vec![1])]
     }
 }
