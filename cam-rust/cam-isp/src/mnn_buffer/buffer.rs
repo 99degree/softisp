@@ -140,6 +140,7 @@ impl MNNBufferManager {
             let mut b = buffer.lock().unwrap();
             b.ref_count -= 1;
             if b.ref_count == 0 {
+                drop(b);
                 self.buffers.remove(&id);
                 return true;
             }
@@ -232,8 +233,10 @@ impl MNNBufferManager {
     /// Get memfd for buffer (if available)
     pub fn get_memfd(&self, id: BufferId) -> Option<RawFd> {
         self.buffers.get(&id)
-            .and_then(|b| b.lock().unwrap().memfd.as_ref())
-            .map(|f| f.as_raw_fd())
+            .and_then(|b| {
+                let guard = b.lock().unwrap();
+                guard.memfd.as_ref().map(|f| f.as_raw_fd())
+            })
     }
 }
 
@@ -308,14 +311,14 @@ pub unsafe fn set_mnn_tensor_host(
     
     // halide_buffer_t layout:
     // struct halide_buffer_t {
-    //     uint64_t device;
+    //     u64 device;
     //     uint8_t *host;
     //     int32_t extent[4];
     //     int32_t stride[4];
     //     ...
     // };
     
-    // host is at offset 8 (after device which is uint64_t = 8 bytes)
+    // host is at offset 8 (after device which is u64 = 8 bytes)
     const HOST_OFFSET: usize = 8;
     
     let tensor_ptr = tensor as *mut u8;
@@ -329,11 +332,11 @@ pub unsafe fn set_mnn_tensor_host(
 /// This is unsafe for the same reasons as set_mnn_tensor_host.
 pub unsafe fn set_mnn_tensor_device(
     tensor: *mut std::ffi::c_void,
-    device_ptr: uint64_t,
+    device_ptr: u64,
 ) {
     const DEVICE_OFFSET: usize = 0;
     let tensor_ptr = tensor as *mut u8;
-    let device_ptr_loc = tensor_ptr.add(DEVICE_OFFSET) as *mut uint64_t;
+    let device_ptr_loc = tensor_ptr.add(DEVICE_OFFSET) as *mut u64;
     *device_ptr_loc = device_ptr;
 }
 
@@ -389,40 +392,3 @@ mod tests {
     }
 }
 
-/// Example: Using buffer manager with MNN inference
-/// 
-/// ```ignore
-/// use mnn::buffer::{MNNBufferManager, BufferSpec, FrameBufferManager};
-/// 
-/// fn run_mnn_inference() {
-///     let mut frame_manager = FrameBufferManager::with_memfd();
-///     
-///     let spec = BufferSpec {
-///         dims: vec![1, 1, 48, 64],
-///         elem_size: 4,
-///         total_size: 48 * 64 * 4,
-///         name: "RawInputBlock/frame".to_string(),
-///     };
-///     
-///     // Get buffer for this frame
-///     let (ptr, size) = frame_manager.get_frame_buffer(&spec);
-///     
-///     // Fill buffer with frame data
-///     unsafe {
-///         let data = std::slice::from_raw_parts_mut(ptr, size);
-///         // Copy frame data into buffer...
-///     }
-///     
-///     // Set as MNN input tensor
-///     let in = interpreter.get_session_input(session);
-///     unsafe {
-///         set_mnn_tensor_host(in, ptr);
-///     }
-///     
-///     // Run inference
-///     interpreter.run_session(session);
-///     
-///     // Release when done
-///     frame_manager.release_frame_buffer();
-/// }
-/// ```

@@ -131,6 +131,7 @@ pub struct CMABufferManager {
 }
 
 /// Individual CMA buffer
+#[derive(Debug)]
 pub struct CMABuffer {
     /// Buffer ID
     id: u64,
@@ -155,7 +156,7 @@ impl CMABuffer {
         usage: Vec<BufferUsage>,
     ) -> io::Result<Self> {
         let info = CMABufferInfo::allocate(size, alignment, allocator, &usage)?;
-        
+
         Ok(Self {
             id,
             name,
@@ -164,59 +165,59 @@ impl CMABuffer {
             last_access: std::sync::Mutex::new(std::time::Instant::now()),
         })
     }
-    
+
     /// Get buffer ID
     pub fn id(&self) -> u64 {
         self.id
     }
-    
+
     /// Get buffer name
     pub fn name(&self) -> &str {
         &self.name
     }
-    
+
     /// Get raw pointer
     pub fn as_ptr(&self) -> *mut u8 {
         self.info.ptr
     }
-    
+
     /// Get size
     pub fn size(&self) -> usize {
         self.info.size
     }
-    
+
     /// Get file descriptor
     pub fn as_fd(&self) -> RawFd {
         self.info.fd
     }
-    
+
     /// Get DMA-BUF file descriptor
     pub fn as_dma_fd(&self) -> Option<RawFd> {
         self.info.dma_fd
     }
-    
+
     /// Increment reference count
     pub fn acquire(&self) {
         self.ref_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_access.lock().unwrap() = std::time::Instant::now();
     }
-    
+
     /// Decrement reference count
     pub fn release(&self) -> bool {
         let count = self.ref_count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         count == 1 // Was 1, now 0
     }
-    
+
     /// Get reference count
     pub fn ref_count(&self) -> usize {
         self.ref_count.load(std::sync::atomic::Ordering::SeqCst)
     }
-    
+
     /// Sync buffer for CPU access
     pub fn sync_for_cpu(&self) -> io::Result<()> {
         CMABufferInfo::sync_for_cpu(self.info.fd, self.info.ptr, self.info.size)
     }
-    
+
     /// Sync buffer for device access
     pub fn sync_for_device(&self) -> io::Result<()> {
         CMABufferInfo::sync_for_device(self.info.fd, self.info.ptr, self.info.size)
@@ -234,7 +235,7 @@ impl Drop for CMABuffer {
 }
 
 impl CMABufferInfo {
-    /// Allocate a CMA buffer
+    /// Allocate a CMA buffer info
     pub fn allocate(
         size: usize,
         alignment: BufferAlignment,
@@ -243,7 +244,7 @@ impl CMABufferInfo {
     ) -> io::Result<Self> {
         // Round up size to alignment
         let aligned_size = Self::align_up(size, alignment as usize);
-        
+
         match allocator {
             CMAAllocator::Ion => Self::allocate_ion(aligned_size, usage),
             CMAAllocator::CMA => Self::allocate_cma(aligned_size),
@@ -253,33 +254,33 @@ impl CMABufferInfo {
         }
     }
     
-    /// Deallocate a CMA buffer
+    /// Deallocate a CMA buffer info
     pub fn deallocate(info: &Self) -> io::Result<()> {
         match info.allocator {
-            CMAAllocator::Ion => Self::deallocate_ion(info),
-            CMAAllocator::CMA => Self::deallocate_cma(info),
-            CMAAllocator::DMABuf => Self::deallocate_dmabuf(info),
-            CMAAllocator::Shm => Self::deallocate_shm(info),
-            CMAAllocator::Malloc => Self::deallocate_malloc(info),
+            CMAAllocator::Ion => { Self::deallocate_ion(info); Ok(()) }
+            CMAAllocator::CMA => { Self::deallocate_cma(info); Ok(()) }
+            CMAAllocator::DMABuf => { Self::deallocate_dmabuf(info); Ok(()) }
+            CMAAllocator::Shm => { Self::deallocate_shm(info); Ok(()) }
+            CMAAllocator::Malloc => { Self::deallocate_malloc(info); Ok(()) }
         }
     }
-    
+
     /// Align size up to alignment
     fn align_up(size: usize, alignment: usize) -> usize {
         (size + alignment - 1) & !(alignment - 1)
     }
-    
+
     /// Allocate using Android ION
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn allocate_ion(size: usize, usage: &[BufferUsage]) -> io::Result<Self> {
         use std::ffi::CString;
-        
+
         // Open /dev/ion
         let ion_fd = OpenOptions::new()
             .read(true)
             .write(true)
             .open("/dev/ion")?;
-        
+
         // Calculate ION flags based on usage
         let mut ion_flags = 0;
         for u in usage {
@@ -290,36 +291,36 @@ impl CMABufferInfo {
                 BufferUsage::MNN => ion_flags |= 0x00000001, // CPU for MNN
             }
         }
-        
+
         // ION_IOC_ALLOC
         const ION_IOC_MAGIC: u8 = b'I' as u8;
         const ION_IOC_ALLOC: u8 = 0;
-        const ION_IOC_ALLOC_CMD: libc::c_uint = 
+        const ION_IOC_ALLOC_CMD: libc::c_uint =
             ((ION_IOC_MAGIC as u32) << 8) | (ION_IOC_ALLOC as u32);
-        
+
         // ion_allocation_data structure:
         // len, align, heap_mask, flags
-        let heap_mask = 0xFFFFFFFF; // All heaps
-        
+        let heap_mask = -1i32; // All heaps (0xFFFFFFFF as i32)
+
         let alloc_data = [
             size as u32,
             4096, // alignment (4KB minimum for ION)
             heap_mask as u32,
             ion_flags as u32,
         ];
-        
+
         let fd = unsafe {
             libc::ioctl(
                 ion_fd.as_raw_fd(),
-                ION_IOC_ALLOC_CMD as libc::c_ulong,
+                ION_IOC_ALLOC_CMD as i32,
                 &alloc_data as *const _ as *mut libc::c_void,
             ) as RawFd
         };
-        
+
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
-        
+
         // Map the ION buffer
         let ptr = unsafe {
             libc::mmap(
@@ -331,15 +332,15 @@ impl CMABufferInfo {
                 0,
             )
         };
-        
+
         if ptr == libc::MAP_FAILED {
             unsafe { libc::close(fd) };
             return Err(io::Error::last_os_error());
         }
-        
+
         // Create DMA-BUF from ION
         let dma_fd = Self::ion_to_dmabuf(fd)?;
-        
+
         Ok(Self {
             size,
             alignment: BufferAlignment::Page,
@@ -351,39 +352,39 @@ impl CMABufferInfo {
             dma_fd: Some(dma_fd),
         })
     }
-    
+
     /// Convert ION buffer to DMA-BUF
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn ion_to_dmabuf(ion_fd: RawFd) -> io::Result<RawFd> {
         const ION_IOC_MAGIC: u8 = b'I' as u8;
         const ION_IOC_SHARE: u8 = 4;
-        const ION_IOC_SHARE_CMD: libc::c_uint = 
+        const ION_IOC_SHARE_CMD: libc::c_uint =
             ((ION_IOC_MAGIC as u32) << 8) | (ION_IOC_SHARE as u32);
-        
+
         let share_fd = unsafe {
             libc::ioctl(
                 ion_fd,
-                ION_IOC_SHARE_CMD as libc::c_ulong,
+                ION_IOC_SHARE_CMD as i32,
                 &ion_fd as *const _ as *mut libc::c_void,
             ) as RawFd
         };
-        
+
         if share_fd < 0 {
             Err(io::Error::last_os_error())
         } else {
             Ok(share_fd)
         }
     }
-    
+
     /// Allocate using /dev/cma
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn allocate_cma(size: usize) -> io::Result<Self> {
         // Open /dev/cma
         let cma_fd = OpenOptions::new()
             .read(true)
             .write(true)
             .open("/dev/cma")?;
-        
+
         // Allocate from CMA
         let ptr = unsafe {
             libc::mmap(
@@ -395,11 +396,11 @@ impl CMABufferInfo {
                 0,
             )
         };
-        
+
         if ptr == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
-        
+
         Ok(Self {
             size,
             alignment: BufferAlignment::Page,
@@ -411,7 +412,12 @@ impl CMABufferInfo {
             dma_fd: None,
         })
     }
-    
+
+    /// Allocate using DMABuf (direct dma-buf import)
+    fn allocate_dmabuf(size: usize) -> io::Result<Self> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "DMABuf allocator not available on this platform"))
+    }
+
     /// Allocate using POSIX shared memory
     fn allocate_shm(size: usize) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
@@ -419,7 +425,7 @@ impl CMABufferInfo {
             // Create unique name
             let name = format!("/mnn_cma_{}", std::process::id());
             let name_c = std::ffi::CString::new(name.clone()).unwrap();
-            
+
             // shm_open
             let fd = unsafe {
                 libc::shm_open(
@@ -428,19 +434,18 @@ impl CMABufferInfo {
                     0o600,
                 )
             };
-            
+
             if fd < 0 {
                 return Err(io::Error::last_os_error());
             }
-            
+
             // ftruncate
             if unsafe { libc::ftruncate(fd, size as libc::off_t) } != 0 {
                 unsafe { libc::close(fd) };
-                // Clean up
                 unsafe { libc::shm_unlink(name_c.as_ptr()) };
                 return Err(io::Error::last_os_error());
             }
-            
+
             // mmap
             let ptr = unsafe {
                 libc::mmap(
@@ -452,13 +457,13 @@ impl CMABufferInfo {
                     0,
                 )
             };
-            
+
             if ptr == libc::MAP_FAILED {
                 unsafe { libc::close(fd) };
                 unsafe { libc::shm_unlink(name_c.as_ptr()) };
                 return Err(io::Error::last_os_error());
             }
-            
+
             Ok(Self {
                 size,
                 alignment: BufferAlignment::Page,
@@ -470,7 +475,7 @@ impl CMABufferInfo {
                 dma_fd: None,
             })
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             Err(io::Error::new(
@@ -479,22 +484,22 @@ impl CMABufferInfo {
             ))
         }
     }
-    
+
     /// Allocate using malloc with alignment
     fn allocate_malloc(size: usize, alignment: BufferAlignment) -> io::Result<Self> {
         let aligned_size = Self::align_up(size, alignment as usize);
-        
+
         let ptr = unsafe {
             libc::aligned_alloc(
                 alignment as usize,
                 aligned_size,
             ) as *mut u8
         };
-        
+
         if ptr.is_null() {
             return Err(io::Error::last_os_error());
         }
-        
+
         Ok(Self {
             size: aligned_size,
             alignment,
@@ -506,9 +511,9 @@ impl CMABufferInfo {
             dma_fd: None,
         })
     }
-    
+
     /// Deallocate ION buffer
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn deallocate_ion(info: &Self) {
         if !info.ptr.is_null() {
             unsafe { libc::munmap(info.ptr as *mut libc::c_void, info.size) };
@@ -522,9 +527,9 @@ impl CMABufferInfo {
             }
         }
     }
-    
+
     /// Deallocate CMA buffer
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn deallocate_cma(info: &Self) {
         if !info.ptr.is_null() {
             unsafe { libc::munmap(info.ptr as *mut libc::c_void, info.size) };
@@ -533,7 +538,14 @@ impl CMABufferInfo {
             unsafe { libc::close(info.fd) };
         }
     }
-    
+
+    /// Deallocate DMABuf buffer
+    fn deallocate_dmabuf(_info: &Self) {
+        // DMABuf handles deallocation via fd close on drop
+    }
+
+    /// Deallocate shm buffer
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     /// Deallocate shm buffer
     #[cfg(target_os = "linux")]
     fn deallocate_shm(info: &Self) {
@@ -548,78 +560,72 @@ impl CMABufferInfo {
             unsafe { libc::close(info.fd) };
         }
     }
-    
+
+    #[cfg(not(target_os = "linux"))]
+    fn deallocate_shm(info: &Self) {
+        if !info.ptr.is_null() {
+            unsafe { libc::munmap(info.ptr as *mut libc::c_void, info.size) };
+        }
+        if info.fd >= 0 {
+            unsafe { libc::close(info.fd) };
+        }
+    }
+
     /// Deallocate malloc buffer
     fn deallocate_malloc(info: &Self) {
         if !info.ptr.is_null() {
             unsafe { libc::free(info.ptr as *mut libc::c_void) };
         }
     }
-    
+
     /// Sync buffer for CPU access
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn sync_for_cpu(fd: RawFd, ptr: *mut u8, size: usize) -> io::Result<()> {
         if fd >= 0 {
-            // Invalidate CPU cache
+            // Use msync for cache invalidation (works on both Linux and Android)
             let result = unsafe {
-                libc::syscall(
-                    libc::SYS_cachectl,
+                libc::msync(
                     ptr as *mut libc::c_void,
                     size,
-                    libc::DCACHE_INVALIDATE,
-                ) as libc::c_long
+                    libc::MS_INVALIDATE,
+                )
             };
-            
+
             if result != 0 {
-                // Fallback: use msync
-                unsafe {
-                    libc::msync(
-                        ptr as *mut libc::c_void,
-                        size,
-                        libc::MS_INVALIDATE,
-                    );
-                }
+                return Err(io::Error::last_os_error());
             }
         }
         Ok(())
     }
-    
+
     /// Sync buffer for device access
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn sync_for_device(fd: RawFd, ptr: *mut u8, size: usize) -> io::Result<()> {
         if fd >= 0 {
-            // Flush CPU cache
+            // Use msync for cache flush (works on both Linux and Android)
             let result = unsafe {
-                libc::syscall(
-                    libc::SYS_cachectl,
+                libc::msync(
                     ptr as *mut libc::c_void,
                     size,
-                    libc::DCACHE_CLEAN,
-                ) as libc::c_long
+                    libc::MS_SYNC,
+                )
             };
-            
+
             if result != 0 {
-                // Fallback: use msync
-                unsafe {
-                    libc::msync(
-                        ptr as *mut libc::c_void,
-                        size,
-                        libc::MS_SYNC,
-                    );
-                }
+                return Err(io::Error::last_os_error());
             }
         }
         Ok(())
     }
-    
+
     /// Fallback for non-Linux
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub fn sync_for_cpu(_fd: RawFd, _ptr: *mut u8, _size: usize) -> io::Result<()> {
         Ok(())
     }
-    
+
     /// Fallback for non-Linux
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub fn sync_for_device(_fd: RawFd, _ptr: *mut u8, _size: usize) -> io::Result<()> {
         Ok(())
     }
@@ -635,7 +641,7 @@ impl CMABufferManager {
             next_id: std::sync::atomic::AtomicU64::new(1),
         }
     }
-    
+
     /// Create with custom settings
     pub fn with_settings(
         allocator: CMAAllocator,
@@ -648,7 +654,7 @@ impl CMABufferManager {
             next_id: std::sync::atomic::AtomicU64::new(1),
         }
     }
-    
+
     /// Allocate a new buffer
     pub fn allocate(
         &self,
@@ -657,7 +663,7 @@ impl CMABufferManager {
         usage: &[BufferUsage],
     ) -> io::Result<Arc<CMABuffer>> {
         let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        
+
         let buffer = CMABuffer::new(
             id,
             name.to_string(),
@@ -666,28 +672,28 @@ impl CMABufferManager {
             self.default_allocator,
             usage.to_vec(),
         )?;
-        
+
         let buffer = Arc::new(buffer);
         self.buffers.write().unwrap()
             .insert(name.to_string(), buffer.clone());
-        
+
         Ok(buffer)
     }
-    
+
     /// Get buffer by name
     pub fn get_buffer(&self, name: &str) -> Option<Arc<CMABuffer>> {
         self.buffers.read().unwrap()
             .get(name)
             .cloned()
     }
-    
+
     /// Acquire buffer (increment ref count)
     pub fn acquire(&self, name: &str) -> Option<Arc<CMABuffer>> {
         let buffer = self.get_buffer(name)?;
         buffer.acquire();
         Some(buffer)
     }
-    
+
     /// Release buffer (decrement ref count, remove if 0)
     pub fn release(&self, name: &str) -> bool {
         let mut buffers = self.buffers.write().unwrap();
@@ -705,7 +711,7 @@ impl CMABufferManager {
         }
         false
     }
-    
+
     /// Get buffer for MNN tensor
     ///
     /// Returns a buffer suitable for the given tensor spec
@@ -719,7 +725,7 @@ impl CMABufferManager {
         // Calculate size
         let elem_size = (elem_bits as usize + 7) / 8; // Round up to bytes
         let total_size = dims.iter().product::<i32>() as usize * elem_size;
-        
+
         // Determine alignment based on usage
         let alignment = if total_size >= 1024 * 1024 {
             // Large buffers: 64KB alignment for better DMA
@@ -731,16 +737,16 @@ impl CMABufferManager {
             // Small buffers: page alignment
             BufferAlignment::Page
         };
-        
+
         // Determine usage
         let usage = vec![
             BufferUsage::CPU,
             BufferUsage::MNN,
         ];
-        
+
         self.allocate(tensor_name, total_size, &usage)
     }
-    
+
     /// Setup buffer for MNN tensor
     ///
     /// This sets up the buffer and returns the pointer to assign to the tensor
@@ -754,7 +760,7 @@ impl CMABufferManager {
     ) -> io::Result<Arc<CMABuffer>> {
         // Get or create buffer
         let buffer = self.get_mnn_buffer(tensor_name, elem_type, elem_bits, dims)?;
-        
+
         // Set the host pointer on the MNN tensor
         unsafe {
             let buffer_ptr = tensor as *mut u8;
@@ -762,10 +768,10 @@ impl CMABufferManager {
             let host_ptr_loc = buffer_ptr.add(host_offset) as *mut *mut u8;
             *host_ptr_loc = buffer.as_ptr();
         }
-        
+
         Ok(buffer)
     }
-    
+
     /// Sync buffer for MNN inference
     ///
     /// Call this after filling the buffer and before runSession
@@ -775,7 +781,7 @@ impl CMABufferManager {
         buffer.sync_for_device()?;
         Ok(())
     }
-    
+
     /// Sync buffer after MNN inference
     ///
     /// Call this after runSession if you need to read the output
@@ -785,7 +791,7 @@ impl CMABufferManager {
         buffer.sync_for_cpu()?;
         Ok(())
     }
-    
+
     /// List all buffers
     pub fn list_buffers(&self) -> Vec<(String, Arc<CMABuffer>)> {
         self.buffers.read().unwrap()
@@ -793,7 +799,7 @@ impl CMABufferManager {
             .map(|(name, buffer)| (name.clone(), buffer.clone()))
             .collect()
     }
-    
+
     /// Clear all buffers
     pub fn clear(&mut self) {
         self.buffers.write().unwrap().clear();
@@ -830,11 +836,11 @@ pub extern "C" fn cma_buffer_manager_allocate(
     if manager.is_null() || name.is_null() {
         return std::ptr::null_mut();
     }
-    
+
     let name_str = unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() };
-    
+
     unsafe { (*manager).allocate(&name_str, size, &[BufferUsage::CPU, BufferUsage::MNN]) }
-        .map(|b| Box::into_raw(Box::new(b)))
+        .map(|b| Box::into_raw(Box::new(Arc::try_unwrap(b).unwrap())))
         .unwrap_or(std::ptr::null_mut())
 }
 
@@ -861,7 +867,7 @@ pub extern "C" fn cma_buffer_fd(buffer: *mut CMABuffer) -> i32 {
     if buffer.is_null() {
         -1
     } else {
-        unsafe { (*buffer).as_raw_fd() }
+        unsafe { (*buffer).info.fd }
     }
 }
 
@@ -888,79 +894,54 @@ pub extern "C" fn cma_buffer_free(buffer: *mut CMABuffer) {
     }
 }
 
-/// Example usage from C++:
-///
-/// ```cpp
-/// #include <MNN/Interpreter.hpp>
-/// 
-/// // Forward declarations from Rust
-/// extern "C" {
-///     void* cma_buffer_manager_new();
-///     void cma_buffer_manager_free(void* manager);
-///     void* cma_buffer_manager_allocate(void* manager, const char* name, size_t size);
-///     uint8_t* cma_buffer_ptr(void* buffer);
-///     size_t cma_buffer_size(void* buffer);
-///     int cma_buffer_fd(void* buffer);
-///     void cma_buffer_acquire(void* buffer);
-///     bool cma_buffer_release(void* buffer);
-///     void cma_buffer_free(void* buffer);
-/// }
-/// 
-/// void run_inference_with_cma() {
-///     // Create buffer manager
-///     void* manager = cma_buffer_manager_new();
-///     
-///     // Create MNN interpreter
-///     auto net = MNN::Interpreter::createFromFile("model.mnn");
-///     auto sess = net->createSession(cfg);
-///     auto* in = net->getSessionInput(sess, nullptr);
-///     
-///     // Allocate CMA buffer
-///     size_t size = 48 * 64 * sizeof(int32_t);
-///     void* buffer = cma_buffer_manager_allocate(manager, "input_buffer", size);
-///     uint8_t* ptr = cma_buffer_ptr(buffer);
-///     
-///     // Fill buffer with camera data
-///     std::vector<int32_t> frame_data(48*64);
-///     // ... fill from MIPI/ISP ...
-///     memcpy(ptr, frame_data.data(), size);
-///     
-///     // Set as MNN input
-///     in->buffer().host = ptr;
-///     
-///     // Run inference
-///     net->runSession(sess);
-///     
-///     // Clean up
-///     cma_buffer_release(buffer);
-///     cma_buffer_free(buffer);
-///     cma_buffer_manager_free(manager);
-/// }
-/// ```
-///
-/// # Integration with MIPI/ISP
-///
-/// For MIPI camera and ISP hardware:
-///
-/// ```cpp
-/// // After ISP processing, you have a buffer from the ISP
-/// // that's already in CMA memory. You can:
-///
-/// // Option 1: Use the ISP's buffer directly
-/// auto* isp_buffer = isp_device->get_output_buffer();
-/// auto* in = net->getSessionInput(sess, nullptr);
-/// in->buffer().host = isp_buffer->ptr();
-/// 
-/// // Option 2: Import ISP buffer into CMA manager
-/// auto* buffer = cma_buffer_manager_import(manager, "isp_output", 
-///     isp_buffer->fd(), isp_buffer->size());
-/// auto* in = net->getSessionInput(sess, nullptr);
-/// in->buffer().host = cma_buffer_ptr(buffer);
-/// 
-/// // Option 3: Let ISP write directly to CMA buffer
-/// auto* buffer = cma_buffer_manager_allocate(manager, "isp_input", size);
-/// isp_device->set_output_buffer(cma_buffer_fd(buffer));
-/// // ISP writes directly to CMA memory
-/// auto* in = net->getSessionInput(sess, nullptr);
-/// in->buffer().host = cma_buffer_ptr(buffer);
-/// ```
+// Example usage from C++:
+//
+// ```cpp
+// #include <MNN/Interpreter.hpp>
+//
+// // Forward declarations from Rust
+// extern "C" {
+//     void* cma_buffer_manager_new();
+//     void cma_buffer_manager_free(void* manager);
+//     void* cma_buffer_manager_allocate(void* manager, const char* name, size_t size);
+//     uint8_t* cma_buffer_ptr(void* buffer);
+//     size_t cma_buffer_size(void* buffer);
+//     int cma_buffer_fd(void* buffer);
+//     void cma_buffer_acquire(void* buffer);
+//     bool cma_buffer_release(void* buffer);
+//     void cma_buffer_free(void* buffer);
+// }
+//
+// void run_inference_with_cma() {
+//     // Create buffer manager
+//     void* manager = cma_buffer_manager_new();
+//
+//     // Create MNN interpreter
+//     auto net = MNN::Interpreter::createFromFile("model.mnn");
+//     auto sess = net->createSession(cfg);
+//     auto* in = net->getSessionInput(sess, nullptr);
+//
+//     // Allocate CMA buffer
+//     size_t size = 48 * 64 * sizeof(int32_t);
+//     void* buffer = cma_buffer_manager_allocate(manager, "input_buffer", size);
+//     uint8_t* ptr = cma_buffer_ptr(buffer);
+//
+//     // Fill buffer with camera data
+//     std::vector<int32_t> frame_data(48*64);
+//     // ... fill from MIPI/ISP ...
+//     memcpy(ptr, frame_data.data(), size);
+//
+//     // Set as MNN input
+//     in->buffer().host = ptr;
+//
+//     // Run inference
+//     net->runSession(sess);
+//
+//     // Clean up
+//     cma_buffer_release(buffer);
+//     cma_buffer_free(buffer);
+//     cma_buffer_manager_free(manager);
+// }
+//
+
+

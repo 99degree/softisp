@@ -52,6 +52,7 @@ impl Default for Alignment {
 // - Hardware-aligned allocation
 // - File descriptor for cross-process sharing
 // - Proper cleanup (munmap + close)
+#[derive(Debug)]
 pub struct MemfdBuffer {
     /// The memfd file descriptor
     fd: File,
@@ -571,7 +572,7 @@ pub extern "C" fn memfd_buffer_fd(buffer: *mut CMemfdBuffer) -> i32 {
     if buffer.is_null() {
         -1
     } else {
-        unsafe { (*buffer).as_raw_fd() }
+        unsafe { (*buffer).fd.as_raw_fd() }
     }
 }
 
@@ -630,7 +631,7 @@ pub extern "C" fn memfd_buffer_manager_get(
     let name_str = unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() };
     
     unsafe { (*manager).get_buffer(&name_str, size) }
-        .map(|b| Box::into_raw(Box::new(b)))
+        .map(|b| Box::into_raw(Box::new(Arc::try_unwrap(b).unwrap())))
         .unwrap_or(std::ptr::null_mut())
 }
 
@@ -657,7 +658,7 @@ pub extern "C" fn memfd_buffer_manager_setup_mnn(
     let elem_bits = 32;
     
     unsafe { (*manager).create_for_mnn(tensor, &name_str, elem_type_code, elem_bits, dims_slice) }
-        .map(|b| Box::into_raw(Box::new(b)))
+        .map(|b| Box::into_raw(Box::new(Arc::try_unwrap(b).unwrap())))
         .unwrap_or(std::ptr::null_mut())
 }
 
