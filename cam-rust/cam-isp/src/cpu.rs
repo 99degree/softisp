@@ -108,6 +108,9 @@ impl IspEngine for CpuEngine {
         let t0 = Instant::now();
 
         debug!("CpuEngine::process start {}x{} → target {}", width, height, target_width);
+        macro_rules! stage_time { ($name:expr) => { debug!("  stage {:>2}: {} = {:?}", line!(), $name, t0.elapsed()); } }
+        // Per-5-lines progress tracker for hang debugging
+        macro_rules! progress { () => { debug!("  prog >> line {} t={:?}", line!(), t0.elapsed()); } }
 
         // ── 1. RawInput: interpret as INT16 Bayer ──
         let expected = (width * height * 2) as usize;
@@ -127,13 +130,16 @@ impl IspEngine for CpuEngine {
         let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
         let mut float = vec![0.0f32; raw.len()];
         self.simd.normalize_u16_to_f32(&raw, &mut float, max_val);
+        stage_time!("2. Normalize");
 
         // ── 2b. DPC (defective pixel correction) ──
         let dpc_data = apply_dpc(&float, width as usize, height as usize,
             _lsc_gains.map(|g| g[0]).unwrap_or(0.15));
+        stage_time!("2b. DPC");
 
         // ── 2c. Gaussian denoise ──
         let denoised = apply_gaussian_denoise(&dpc_data, width as usize, height as usize, 0.3);
+        stage_time!("2c. Denoise");
 
         // ── 2d. Calibration stats ──
         let calibration_stats = {
@@ -144,10 +150,13 @@ impl IspEngine for CpuEngine {
             )
         };
 
+        stage_time!("2d. Calibration");
+
+        progress!();
+
         // ── 2e. AF engine ──
         let focus_metric = AfState::focus_metric_from_calibration(&calibration_stats.0);
-        {
-            let mut af = self.af_engine.lock().unwrap();
+        if let Ok(mut af) = self.af_engine.try_lock() {
             af.feed_metric(focus_metric);
             if af.scan_phase == crate::af::AfScanPhase::Idle {
                 af.start_scan();
@@ -156,28 +165,37 @@ impl IspEngine for CpuEngine {
         }
 
         // ── 2f. EIS ──
-        let eis_frame_count = self.controller.lock().unwrap().frame_count;
-        let eis_compensation = {
-            let mut eis = self.eis_engine.lock().unwrap();
-            if !eis.enabled { eis.enabled = true; }
-            let t_ns = eis_frame_count as i64 * 33_333_333;
-            let jitter = (eis_frame_count as f32 * 0.1).sin() * 0.02;
-            eis.push_sample(crate::eis::GyroSample {
-                timestamp_ns: t_ns, x: 0.01 + jitter,
-                y: 0.02 + jitter * 0.5, z: 0.005 + jitter * 0.3,
-            });
-            if _warp_grid.is_some() {
-                None
-            } else {
-                let fl = width as f32 * 1.2;
-                eis.update(t_ns + 33_333_333, fl, width, height)
+        let eis_frame_count = self.controller.try_lock()
+            .map(|g| g.frame_count)
+            .unwrap_or(0);
+        let eis_compensation = match self.eis_engine.try_lock() {
+            Ok(mut eis) => {
+                if !eis.enabled { eis.enabled = true; }
+                let t_ns = eis_frame_count as i64 * 33_333_333;
+                let jitter = (eis_frame_count as f32 * 0.1).sin() * 0.02;
+                eis.push_sample(crate::eis::GyroSample {
+                    timestamp_ns: t_ns, x: 0.01 + jitter,
+                    y: 0.02 + jitter * 0.5, z: 0.005 + jitter * 0.3,
+                });
+                if _warp_grid.is_some() {
+                    None
+                } else {
+                    let fl = width as f32 * 1.2;
+                    eis.update(t_ns + 33_333_333, fl, width, height)
+                }
             }
+            Err(_) => None
         };
+        stage_time!("2f. EIS");
         let t_pre = t0.elapsed();
+
+        progress!();
 
         // ── 3. AWB ──
         let awb_gains = if let Some(g) = awb_gains { *g } else {
-            self.controller.lock().unwrap().get_awb_gains()
+            self.controller.try_lock()
+                .map(|g| g.get_awb_gains())
+                .unwrap_or([1.0, 1.0, 1.0])
         };
         let default_bayer_gains = if bayer_gains.is_some() {
             *bayer_gains.unwrap()
@@ -194,34 +212,54 @@ impl IspEngine for CpuEngine {
 
         // ── 5. Demosaic → RGB ──
         let rgb = demosaic_malvar(&corrected, width as usize, height as usize, Some(&awb_gains));
+        stage_time!("5. Demosaic");
 
         // ── 5b. Stats → IspController ──
+        progress!();
         let channel_means = compute_channel_means(&rgb);
         let tone_stats = compute_tone_stats(&rgb);
         let histogram = compute_histogram(&rgb);
         let zone_stats = compute_zone_stats(&rgb, width as usize, height as usize, 6, 8);
-        let ctrl_ccm = {
-            let mut ctrl = self.controller.lock().unwrap();
-            if !ctrl.zone_stats_enabled { ctrl.init_zone_stats(6, 8); }
-            ctrl.update_channel_stats(&channel_means);
-            ctrl.update_tone_stats(&tone_stats);
-            ctrl.update_histogram(&histogram);
-            ctrl.update_zone_stats(&zone_stats);
-            let bias = ctrl.brightness_bias;
-            let _ = ctrl.compute_exposure(bias);
-            ctrl.get_ccm()
+        progress!();
+        let ctrl_ccm = match self.controller.try_lock() {
+            Ok(mut ctrl) => {
+                if !ctrl.zone_stats_enabled { ctrl.init_zone_stats(6, 8); }
+                ctrl.update_channel_stats(&channel_means);
+                ctrl.update_tone_stats(&tone_stats);
+                ctrl.update_histogram(&histogram);
+                ctrl.update_zone_stats(&zone_stats);
+                let bias = ctrl.brightness_bias;
+                let _ = ctrl.compute_exposure(bias);
+                ctrl.get_ccm()
+            }
+            Err(_) => {
+                warn!("CpuEngine: controller lock contention, using fallback CCM");
+                [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+            }
         };
+
+        stage_time!("5b. Stats → Ctrl");
+
+        progress!();
 
         // ── 6. AE ──
         let ae_gain = if _analog_gain <= 0.0 {
-            self.controller.lock().unwrap().get_effective_exposure_gain()
+            self.controller.try_lock()
+                .map(|g| g.get_effective_exposure_gain())
+                .unwrap_or(1.0)
         } else {
             calculate_ae_gain(&rgb)
         };
 
+        stage_time!("6. AE");
+
+        progress!();
+
         // ── 7. CCM ──
         let ccm: &[f32; 9] = ccm_matrix.unwrap_or(&ctrl_ccm);
         let ccm_applied = self.simd.apply_ccm(&rgb, ccm);
+
+        progress!();
 
         // ── 8. Tone + FCS + LDCI + Warp ──
         let adjusted = self.simd.apply_ae_gain(&ccm_applied, ae_gain);
@@ -254,18 +292,48 @@ impl IspEngine for CpuEngine {
                 toned
             }
         };
+        stage_time!("8. Tone+FCS+LDCI+Warp");
+        progress!();
         let t_process = t0.elapsed();
 
         // ── 9. Display ──
         let out_width = if target_width > 0 { target_width } else { width };
         let out_bytes = self.simd.display_output(&toned, width as usize, height as usize, out_width as usize);
+        stage_time!("9. Display");
         let t_total = t0.elapsed();
 
-        debug!("CpuEngine: {}x{} -> {}x{} (input={:?} pre={:?} process={:?} total={:?})",
-            width, height, out_width, height,
-            t_input, t_pre - t_input, t_process - t_pre, t_total);
-            
-        info!("CpuEngine: frame processed ({} bytes)", out_bytes.len());
+        progress!();
+
+        // Build aux output BEFORE the Ok expression to avoid lock-in-expression issues
+        // Use try_lock with fallback to avoid mysterious deadlock on Android
+        let scene_category = match self.controller.try_lock() {
+            Ok(guard) => Some(guard.scene_category.name().to_string()),
+            Err(_) => {
+                warn!("CpuEngine: controller lock contention in aux build");
+                None
+            }
+        };
+        let (af_phase, vcm_position) = match self.af_engine.try_lock() {
+            Ok(guard) => (Some(guard.display_string()), Some(guard.vcm_pos)),
+            Err(_) => (None, None),
+        };
+        let aux = Some(crate::pipeline::IspAuxOutput {
+            channel_means: Some(channel_means),
+            tone_stats: Some(tone_stats),
+            wb_gains: Some(awb_gains),
+            histogram: Some(histogram.to_vec()),
+            zone_stats: Some(zone_stats),
+            focus_metric: Some(focus_metric),
+            cct: None,
+            ae_gain: Some(ae_gain),
+            calibration_stats: Some(calibration_stats.0),
+            scene_category,
+            af_phase,
+            vcm_position,
+            eis_compensation: eis_compensation,
+        });
+
+        info!("CpuEngine: frame processed ({} bytes) total={:?}", out_bytes.len(), t_total);
 
         Ok(IspFrame {
             width: out_width,
@@ -273,21 +341,7 @@ impl IspEngine for CpuEngine {
             format: cam_types::FrameFormat::Rgba8888,
             data: out_bytes,
             float_data: None,
-            aux: Some(crate::pipeline::IspAuxOutput {
-                channel_means: Some(channel_means),
-                tone_stats: Some(tone_stats),
-                wb_gains: Some(awb_gains),
-                histogram: Some(histogram.to_vec()),
-                zone_stats: Some(zone_stats),
-                focus_metric: Some(focus_metric),
-                cct: None,
-                ae_gain: Some(ae_gain),
-                calibration_stats: Some(calibration_stats.0),
-                scene_category: Some(self.controller.lock().unwrap().scene_category.name().to_string()),
-                af_phase: Some(self.af_engine.lock().unwrap().display_string()),
-                vcm_position: Some(self.af_engine.lock().unwrap().vcm_pos),
-                eis_compensation: eis_compensation,
-            }),
+            aux,
         })
     }
 }
