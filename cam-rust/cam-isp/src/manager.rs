@@ -238,7 +238,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "extended — runs full ISP pipeline"]
     fn test_manager_build_and_process() {
         let mut mgr = PipelineManager::new();
         mgr.set_target_width(32);
