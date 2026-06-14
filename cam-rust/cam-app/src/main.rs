@@ -58,7 +58,7 @@ struct Args {
 }
 
 /// Build the ISP pipeline for the given profile and compose the ONNX model.
-fn build_pipeline(profile_name: &str, width: u32, elem_type: i32) -> Result<Vec<u8>, String> {
+fn build_pipeline(profile_name: &str, width: u32) -> Result<Vec<u8>, String> {
     let mut profile = match profile_name.to_lowercase().as_str() {
         "lite" => PipelineProfile::LITE,
         "med" => PipelineProfile::MED,
@@ -67,8 +67,6 @@ fn build_pipeline(profile_name: &str, width: u32, elem_type: i32) -> Result<Vec<
         "test" => PipelineProfile::TEST,
         _ => return Err(format!("Unknown profile: {}", profile_name)),
     };
-    profile.input_elem_type = elem_type;
-
     let mut blocks = profile.build_blocks(width, 2);
     GraphComposer::wire_blocks(&mut blocks);
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
@@ -153,7 +151,7 @@ fn main() {
 
     // Build pipeline and compose ONNX
     let onnx_path = "isp_pipeline.onnx";
-    let model_bytes = match build_pipeline(&args.profile, args.width, args.elem_type) {
+    let model_bytes = match build_pipeline(&args.profile, args.width) {
         Ok(bytes) => bytes,
         Err(e) => {
             error!("Pipeline composition failed: {}", e);
