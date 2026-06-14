@@ -6,8 +6,12 @@
 pub enum FrameFormat {
     Yuv420888,
     Rgba8888,
+    Rgb888,
     NchwFloat,
     RawSensor,
+    // Raw Bayer formats
+    Raw10,
+    Raw12,
 }
 
 /// Camera source type.
@@ -141,9 +145,12 @@ impl Frame {
     pub fn bytes_per_pixel(&self) -> u32 {
         match self.format {
             FrameFormat::Rgba8888 => 4,
+            FrameFormat::Rgb888 => 3,
             FrameFormat::Yuv420888 => 1,
             FrameFormat::NchwFloat => 4,
             FrameFormat::RawSensor => 2,
+            FrameFormat::Raw10 => 2,
+            FrameFormat::Raw12 => 2,
         }
     }
 

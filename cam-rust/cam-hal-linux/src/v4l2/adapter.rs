@@ -1,18 +1,21 @@
 //! V4L2 Camera Adapter implementing ICameraAdapter with callback streaming.
 
 use log::{info, warn, error};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
+use std::time::Duration;
 
-use cam_types::{CameraSourceType, FrameFormat};
-use cam_hal::camera::{ICameraAdapter, BaseCameraAdapter, ByteFrame, CameraState, StreamConfig, FrameCallback};
+use cam_types::FrameFormat;
+use cam_hal::camera::{ByteFrame, CameraState, FrameCallback, ICameraAdapter, StreamConfig};
 
 /// V4L2 Camera Adapter that streams frames via callback.
 pub struct V4l2CameraAdapter {
-    base: BaseCameraAdapter,
     device_path: String,
-    config: Mutex<Option<StreamConfig>>,
+    config: Option<StreamConfig>,
+    callback: Option<FrameCallback>,
     running: Arc<Mutex<bool>>,
+    state: Arc<Mutex<CameraState>>,
+    thread_handle: Option<thread::JoinHandle<()>>,
 }
 
 impl V4l2CameraAdapter {
@@ -24,15 +27,17 @@ impl V4l2CameraAdapter {
             let info = cam.query_capability()
                 .map_err(|e| format!("Failed to query capabilities: {}", e))?;
             info!("V4L2 device: driver={}, card={}",
-                String::from_utf8_lossy(&info.driver),
-                String::from_utf8_lossy(&info.card));
-            drop(cam); // close — we'll reopen on start_streaming
+                String::from_utf8_lossy(&info.driver).trim_end_matches('\0'),
+                String::from_utf8_lossy(&info.card).trim_end_matches('\0'));
+            drop(cam);
 
             Ok(Self {
-                base: BaseCameraAdapter::new(CameraSourceType::RawCamera2),
                 device_path: device_path.to_string(),
-                config: Mutex::new(None),
+                config: None,
+                callback: None,
                 running: Arc::new(Mutex::new(false)),
+                state: Arc::new(Mutex::new(CameraState::Closed)),
+                thread_handle: None,
             })
         }
         #[cfg(not(feature = "v4l2"))]
@@ -41,101 +46,70 @@ impl V4l2CameraAdapter {
 }
 
 impl ICameraAdapter for V4l2CameraAdapter {
-    fn source_type(&self) -> CameraSourceType { self.base.source_type }
+    fn source_type(&self) -> cam_types::CameraSourceType {
+        cam_types::CameraSourceType::V4l2
+    }
 
     fn open(&mut self, config: &StreamConfig) -> Result<(), String> {
-        *self.config.lock().unwrap() = Some(config.clone());
-        self.base.set_state(CameraState::Open);
-        info!("V4L2 adapter opened (path={}, {}x{})", self.device_path, config.width, config.height);
+        self.config = Some(config.clone());
+        *self.state.lock().unwrap() = CameraState::Open;
+        info!("V4L2 adapter opened (path={}, {}x{} @ {}fps)",
+            self.device_path, config.width, config.height, config.fps);
         Ok(())
     }
 
     fn close(&mut self) {
-        *self.running.lock().unwrap() = false;
-        self.base.set_state(CameraState::Closed);
+        self.stop_streaming();
+        *self.state.lock().unwrap() = CameraState::Closed;
         info!("V4L2 adapter closed");
     }
 
     fn set_frame_callback(&mut self, callback: FrameCallback) {
-        self.base.set_frame_callback(callback);
+        self.callback = Some(callback);
     }
 
     fn start_streaming(&mut self) -> Result<(), String> {
-        if !self.base.has_frame_callback() {
+        if self.callback.is_none() {
             return Err("No frame callback set".into());
         }
 
-        let config = self.config.lock().unwrap().clone()
+        let config = self.config.clone()
             .ok_or("Camera not opened (no StreamConfig)")?;
+
+        *self.running.lock().unwrap() = true;
+        *self.state.lock().unwrap() = CameraState::Streaming;
 
         let device_path = self.device_path.clone();
         let running = Arc::clone(&self.running);
-        // We need the callback in the streaming thread. Since BaseCameraAdapter uses Mutex<Option<FrameCallback>>,
-        // and the callback is Fn (not FnMut), we can share the BaseCameraAdapter via Arc.
-        // But we don't have Arc<Self>. Let's work around: spawn thread that opens its own camera,
-        // reads frames, and calls a shared callback.
-        // Easiest: move a clone of the callback into the thread.
-        // We take the callback out and wrap it in Arc for sharing.
-        // But FrameCallback is Box<dyn Fn>. We'll wrap it.
-        // Actually, we can use Arc<BaseCameraAdapter> but we don't have one.
-        // Simplest: take callback out, wrap in Arc, put back a wrapper that delegates to Arc.
+        let state = Arc::clone(&self.state);
 
-        // For now: use a simpler approach — we move a pointer to self.base into the thread.
-        // But self is &mut, not Arc. So let's create a simple channel-based approach instead.
-        // The streaming thread sends ByteFrames through a channel, and the main thread calls the callback.
-        // Actually, the simplest approach is to use Arc<Mutex<Option<FrameCallback>>> directly.
+        // Extract callback and wrap for thread safety
+        // We use an Arc<Mutex<Option<FrameCallback>>> for the thread
+        let cb = self.callback.take().unwrap();
+        let shared_cb: Arc<Mutex<Option<FrameCallback>>> = Arc::new(Mutex::new(Some(cb)));
+        let shared_cb_clone = Arc::clone(&shared_cb);
 
-        // Let's restructure: extract the callback, wrap in Arc<Mutex<>>, put a wrapper back.
-        // This is messy. Better: redesign BaseCameraAdapter to use Arc internally.
-        // For now, let's just use a crossbeam channel or std::sync::mpsc.
+        // Put the callback back via a wrapper that stores into shared_cb
+        let shared_cb2 = Arc::clone(&shared_cb);
+        self.callback = Some(Box::new(move |frame: ByteFrame| {
+            if let Some(ref cb) = *shared_cb2.lock().unwrap() {
+                cb(frame);
+            }
+        }));
 
-        // SIMPLEST: Just use a raw pointer to self.base which is 'static enough.
-        // Since V4l2CameraAdapter is heap-allocated and lives for the duration of streaming,
-        // and we control stop_streaming, this is safe in practice.
-        // But it's not safe in Rust's model. Let's use Arc instead.
-
-        // We'll create an Arc<Mutex<VecDeque<ByteFrame>>> as a frame queue,
-        // and a drain thread that calls the callback.
-        // This avoids moving the callback.
-
-        // Actually, the simplest correct approach: store the callback in an Arc<Mutex<Option<FrameCallback>>>
-        // directly in V4l2CameraAdapter instead of BaseCameraAdapter.
-        // But that defeats the purpose of BaseCameraAdapter.
-
-        // OK, pragmatic solution: just use a static-ish pattern.
-        // We'll use Arc<dyn Fn(ByteFrame) + Send + Sync> instead of Box.
-        // Wrap the callback when it's set.
-
-        // Let me just use a crossbeam channel approach:
-        // streaming thread -> channel -> main thread drains and calls callback.
-        // But that requires the main thread to poll.
-
-        // Easiest correct solution: store callback as Arc in a shared struct.
-        // I'll create a small SharedState struct for the thread.
-
-        *self.running.lock().unwrap() = true;
-
-        let running_clone = Arc::clone(&self.running);
         let width = config.width;
         let height = config.height;
         let format = config.format;
         let fps = config.fps;
 
-        // We need a way to invoke the callback from the streaming thread.
-        // Use a raw pointer to BaseCameraAdapter — safe because:
-        // 1. self (V4l2CameraAdapter) lives on the heap
-        // 2. We set running=false in close()/stop_streaming before self is dropped
-        // 3. The thread checks running before each frame
-        // This is the same pattern used in many FFI scenarios.
-        let base_ptr = &self.base as *const BaseCameraAdapter;
-
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             #[cfg(feature = "v4l2")]
             {
                 let mut cam = match rscam::Camera::new(&device_path) {
                     Ok(c) => c,
                     Err(e) => {
                         error!("V4L2 thread: open failed: {:?}", e);
+                        *state.lock().unwrap() = CameraState::Error;
                         return;
                     }
                 };
@@ -143,70 +117,87 @@ impl ICameraAdapter for V4l2CameraAdapter {
                 let fourcc = crate::v4l2::format::frame_format_to_fourcc(format);
                 if fourcc == 0 {
                     error!("V4L2 thread: unsupported format {:?}", format);
+                    *state.lock().unwrap() = CameraState::Error;
                     return;
                 }
 
                 let mut cfg = rscam::Config::new();
                 cfg.resolution(width, height)
-                  .format(fourcc)
-                  .frame_rate(fps, 1);
+                   .format(fourcc)
+                   .frame_rate(fps, 1);
 
                 if let Err(e) = cam.configure(&cfg) {
                     error!("V4L2 thread: configure failed: {:?}", e);
+                    *state.lock().unwrap() = CameraState::Error;
                     return;
                 }
 
                 if let Err(e) = cam.start_streaming(4) {
                     error!("V4L2 thread: start_streaming failed: {:?}", e);
+                    *state.lock().unwrap() = CameraState::Error;
                     return;
                 }
 
-                info!("V4L2 streaming thread started ({}x{} {:?} @ {}fps)", width, height, format, fps);
+                info!("V4L2 streaming: {}x{} {}fps", width, height, fps);
 
-                while *running_clone.lock().unwrap() {
+                while *running.lock().unwrap() {
                     match cam.read_frame() {
                         Ok(buf) => {
-                            let frame = crate::v4l2::buffer::buffer_to_byte_frame(
-                                &buf, width, height, format,
-                            );
-                            // SAFETY: base_ptr is valid as long as self is alive,
-                            // and the thread stops (running=false) before self is dropped.
-                            unsafe {
-                                let base = &*base_ptr;
-                                base.invoke_frame_callback(frame);
+                            let frame = ByteFrame {
+                                data: buf.data.to_vec(),
+                                width,
+                                height,
+                                format,
+                                timestamp: 0,
+                            };
+                            if let Some(ref cb) = *shared_cb_clone.lock().unwrap() {
+                                cb(frame);
                             }
                         }
                         Err(e) => {
-                            error!("V4L2 read frame error: {:?}", e);
+                            error!("V4L2 read error: {:?}", e);
                             break;
                         }
                     }
                 }
 
                 let _ = cam.stop_streaming();
-                info!("V4L2 streaming thread stopped");
+                info!("V4L2 streaming stopped");
             }
             #[cfg(not(feature = "v4l2"))]
             {
-                warn!("V4L2 feature not enabled, streaming thread exiting");
+                warn!("V4L2 feature not enabled");
             }
         });
 
-        self.base.set_state(CameraState::Streaming);
+        self.thread_handle = Some(handle);
         Ok(())
     }
 
     fn stop_streaming(&mut self) {
         *self.running.lock().unwrap() = false;
-        self.base.set_state(CameraState::Open);
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+        *self.state.lock().unwrap() = CameraState::Open;
         info!("V4L2 streaming stopped");
     }
 
     fn state(&self) -> CameraState {
-        self.base.get_state()
+        *self.state.lock().unwrap()
     }
 
     fn device_name(&self) -> &str {
         &self.device_path
+    }
+
+    fn send_frame(&self, _frame: ByteFrame) -> Result<(), String> {
+        Err("V4L2 adapter does not support send_frame".into())
+    }
+}
+
+impl Drop for V4l2CameraAdapter {
+    fn drop(&mut self) {
+        self.close();
     }
 }
