@@ -400,14 +400,24 @@ impl AndroidCameraAdapter {
         width: u32,
         height: u32,
     ) -> Result<ByteFrame, String> {
+        let lock_start = std::time::Instant::now();
         let data = lock_and_copy_buffer(buffer, format, width, height)
             .map_err(|e| format!("AHB lock failed: {}", e))?;
+        let lock_elapsed = lock_start.elapsed();
 
+        let proc_start = std::time::Instant::now();
         let processed = if let Some(ref proc) = self.processor {
             (proc)(&data, width, height, format)?
         } else {
             data
         };
+        let proc_elapsed = proc_start.elapsed();
+
+        log::trace!("lock_and_process: {}x{} lock={:.2}ms proc={:.2}ms total={:.2}ms",
+            width, height,
+            lock_elapsed.as_secs_f64() * 1000.0,
+            proc_elapsed.as_secs_f64() * 1000.0,
+            (lock_elapsed + proc_elapsed).as_secs_f64() * 1000.0);
 
         Ok(ByteFrame {
             data: processed,
@@ -426,6 +436,7 @@ impl AndroidCameraAdapter {
     pub unsafe fn lock_for_write(
         buffer: *mut ahardware_buffer::AHardwareBuffer,
     ) -> Result<(*mut u8, usize), String> {
+        let lock_start = std::time::Instant::now();
         if buffer.is_null() {
             return Err("Null buffer".to_string());
         }
@@ -440,16 +451,20 @@ impl AndroidCameraAdapter {
         if ret != 0 {
             return Err(format!("AHB lock write failed: {}", ret));
         }
-        // We don't know exact size here; caller must know or query via describe
         let mut desc: AHardwareBuffer_Desc = std::mem::zeroed();
         AHardwareBuffer_describe(buffer, &mut desc);
         let size = (desc.stride.max(desc.width) as usize) * (desc.height as usize) * 4;
+        let elapsed = lock_start.elapsed();
+        log::trace!("lock_for_write: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
         Ok((cpu_ptr as *mut u8, size))
     }
 
     /// Unlock a previously write-locked buffer.
     pub unsafe fn unlock_buffer(buffer: *mut ahardware_buffer::AHardwareBuffer) -> Result<(), String> {
+        let unlock_start = std::time::Instant::now();
         let ret = AHardwareBuffer_unlock(buffer, std::ptr::null_mut());
+        let elapsed = unlock_start.elapsed();
+        log::trace!("unlock_buffer: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
         if ret != 0 {
             return Err(format!("AHB unlock failed: {}", ret));
         }
