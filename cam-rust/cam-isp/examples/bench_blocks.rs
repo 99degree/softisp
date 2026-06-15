@@ -73,11 +73,23 @@ fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize, use_u
     blocks.push(Box::new(cam_isp::blocks::CcmBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 8: ToneBlock (gamma / contrast / saturation / FCS / LDCI / EE)
+    // 8: ToneBlock (gamma / contrast / saturation)
     blocks.push(Box::new(cam_isp::blocks::ToneBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 9: DisplayBlock (float → BGRA U8)
+    // 9: FcsBlock — false color suppression (on-demand aux block)
+    blocks.push(Box::new(cam_isp::blocks::FcsBlock::new()));
+    if blocks.len() >= count { return wire(blocks); }
+
+    // 10: LdciBlock — local contrast enhancement (on-demand aux block)
+    blocks.push(Box::new(cam_isp::blocks::LdciBlock::new()));
+    if blocks.len() >= count { return wire(blocks); }
+
+    // 11: EeBlock — edge enhancement / unsharp mask (on-demand aux block)
+    blocks.push(Box::new(cam_isp::blocks::EeBlock::new()));
+    if blocks.len() >= count { return wire(blocks); }
+
+    // 12: DisplayBlock (float → BGRA U8)
     blocks.push(Box::new(cam_isp::blocks::DisplayBlock::new(target_width)));
 
     wire(blocks)
@@ -186,7 +198,8 @@ fn main() {
     };
 
     let (w, h) = (640u32, 480u32);
-    let max_blocks = if use_legacy { 9 } else { 10 }; // packed has UnpackBlock + Display (10); legacy has 9
+    let max_blocks = if use_legacy { 12 } else { 13 }; // packed has +FCS+LDCI+EE aux blocks (13); legacy 12
+    // (aux blocks are always included in the incremental bench)
 
     let pipeline_desc = if use_legacy { "FLOAT input (legacy)" } else { "packed INT32 → Unpack" };
 
@@ -201,9 +214,9 @@ fn main() {
     let profile = cam_isp::profile::PipelineProfile::custom(
         "BENCH", cam_isp::profile::PipelineLevel::Lite,
         !use_legacy, // use_unpack
-        false, // use_fcs
-        false, // use_ldci
-        false, // use_ee
+        true,  // use_fcs
+        true,  // use_ldci
+        true,  // use_ee
         false, // use_bad_pixel
         cam_isp::profile::DemosaicQuality::Standard,
         false, // use_local_contrast
