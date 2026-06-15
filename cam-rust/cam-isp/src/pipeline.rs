@@ -156,6 +156,16 @@ pub trait IspBlock: Send {
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         vec![]
     }
+
+    /// Auxiliary blocks this block depends on.
+    ///
+    /// Returns ids of aux blocks (e.g. `"fcs"`, `"ldci"`, `"ee"`)
+    /// that must be inserted after this block in the pipeline.
+    /// `build_blocks()` collects signals from all main blocks and only
+    /// includes aux blocks that are both requested AND profile-allowed.
+    fn signals_aux(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Helper to build a chain of blocks as a Vec.
