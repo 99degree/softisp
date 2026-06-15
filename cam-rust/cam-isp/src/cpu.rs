@@ -65,6 +65,7 @@ impl IspEngine for CpuEngine {
     fn backend_name(&self) -> &'static str { "CPU" }
     fn priority(&self) -> i32 { 70 }
     fn is_loaded(&self) -> bool { self.loaded }
+    fn controller(&self) -> &Mutex<IspController> { &self.controller }
 
     fn build(
         &mut self,

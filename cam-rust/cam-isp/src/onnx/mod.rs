@@ -9,6 +9,8 @@ use log::info;
 use log::warn;
 use cam_types::{FrameFormat, ToneParams};
 
+use std::sync::Mutex;
+use crate::controller::IspController;
 use crate::engine::IspEngine;
 use crate::pipeline::{IspBlock, IspFrame, GraphComposer};
 
@@ -63,6 +65,8 @@ pub struct OnnxEngine {
     /// ORT session (feature-gated), wrapped in Mutex for interior mutability.
     #[cfg(feature = "ort")]
     session: std::sync::Mutex<Option<::ort::session::Session>>,
+    /// ISP controller for stats feedback (shared across engines).
+    pub controller: Mutex<IspController>,
 }
 
 impl OnnxEngine {
@@ -71,6 +75,7 @@ impl OnnxEngine {
             backend,
             initialized: false,
             model_bytes: None,
+            controller: Mutex::new(IspController::new()),
             #[cfg(feature = "ort")]
             session: std::sync::Mutex::new(None),
         }
@@ -88,6 +93,10 @@ impl IspEngine for OnnxEngine {
 
     fn is_loaded(&self) -> bool {
         self.initialized
+    }
+
+    fn controller(&self) -> &Mutex<IspController> {
+        &self.controller
     }
 
     fn build(
