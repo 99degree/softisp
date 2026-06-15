@@ -18,6 +18,7 @@ use log::{info, debug, warn, error};
 
 use cam_types::{FrameFormat, ToneParams};
 use crate::engine::IspEngine;
+use crate::controller::IspController;
 use crate::pipeline::{IspBlock, IspFrame, IspAuxOutput};
 
 #[cfg(feature = "mnn")]
@@ -59,6 +60,10 @@ pub struct MnnEngine {
     packed_input: bool,
     /// Expected input tensor element count from model (for validation).
     expected_input_elements: Option<u32>,
+    /// ISP controller for AWB/AE/CCM/tone parameter estimation.
+    /// After each inference, stats output tensors are read and fed
+    /// into the controller to update state for the next frame.
+    pub controller: Mutex<IspController>,
     /// MNN interpreter (owning the model). Must outlive session.
     #[cfg(feature = "mnn")]
     interp: Option<MnnInterpreterSafe>,
@@ -99,6 +104,7 @@ impl MnnEngine {
             model_input_type: None,
             packed_input: false,
             expected_input_elements: None,
+            controller: Mutex::new(IspController::new()),
             #[cfg(feature = "mnn")]
             interp: None,
             #[cfg(feature = "mnn")]
@@ -682,10 +688,89 @@ impl IspEngine for MnnEngine {
 
             let bgra = Self::to_bgra(&out_data[..nf], ch, oh, ow);
 
+            // ── Read stats output tensors from MNN session and feed to controller ──
+            // After inference, all output tensors are available in the session.
+            // Try reading known stats output names.  If a tensor doesn't exist
+            // in the graph (block not enabled in this profile), get_output returns None.
+            #[cfg(feature = "mnn")]
+            {
+                use crate::mnn_sys::MnnInterpreterSafe;
+                if let Ok(mut ctrl) = self.controller.lock() {
+                    // Try reading ChannelMeansBlock/frame → [1, 3] or [3]
+                    if let Some(t) = interp.get_output(&sess, "ChannelMeansBlock/frame") {
+                        if let Some(bytes) = t.as_bytes() {
+                            let floats: &[f32] = unsafe {
+                                std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            };
+                            if floats.len() >= 3 {
+                                ctrl.update_channel_stats(&[floats[0], floats[1], floats[2]]);
+                            }
+                        }
+                    }
+                    // Try reading ToneStatsBlock/frame → [6] (mean, min, max, clip, shadow, count)
+                    if let Some(t) = interp.get_output(&sess, "ToneStatsBlock/frame") {
+                        if let Some(bytes) = t.as_bytes() {
+                            let floats: &[f32] = unsafe {
+                                std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            };
+                            if floats.len() >= 3 {
+                                ctrl.update_tone_stats(&[floats[0], floats[1], floats[2]]);
+                            }
+                            if floats.len() >= 6 {
+                                ctrl.hist_constrained_gain = 1.0 - (floats[3] / floats[5].max(1.0));
+                            }
+                        }
+                    }
+                    // Try reading CoarseHistogramBlock/frame → [1, 16]
+                    if let Some(t) = interp.get_output(&sess, "CoarseHistogramBlock/frame") {
+                        if let Some(bytes) = t.as_bytes() {
+                            let floats: &[f32] = unsafe {
+                                std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            };
+                            if !floats.is_empty() {
+                                ctrl.update_histogram(floats);
+                            }
+                        }
+                    }
+                    // Try reading ZoneStatsBlock/frame → [1, 3, rows, cols]
+                    if let Some(t) = interp.get_output(&sess, "ZoneStatsBlock/frame") {
+                        if let Some(bytes) = t.as_bytes() {
+                            let floats: &[f32] = unsafe {
+                                std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            };
+                            let shape = t.shape();
+                            if shape.len() >= 4 {
+                                let c = shape[1] as usize;  // 3
+                                let rows = shape[2] as usize;
+                                let cols = shape[3] as usize;
+                                // Reshape flat float array into zone_rgb Vec<Vec<[f32;3]>>
+                                let mut zone_rgb = vec![vec![[0.0f32; 3]; cols]; rows];
+                                for r in 0..rows {
+                                    for c in 0..cols {
+                                        let idx = r * cols + c;
+                                        if idx * 3 + 2 < floats.len() {
+                                            zone_rgb[r][c][0] = floats[idx * 3];
+                                            zone_rgb[r][c][1] = floats[idx * 3 + 1];
+                                            zone_rgb[r][c][2] = floats[idx * 3 + 2];
+                                        }
+                                    }
+                                }
+                                if !ctrl.zone_stats_enabled {
+                                    ctrl.init_zone_stats(rows as i32, cols as i32);
+                                }
+                                ctrl.update_zone_stats(&zone_rgb);
+                            }
+                        }
+                    }
+                }
+            }
+
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
             let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
             frame.data = bgra;
-            frame.aux = Some(IspAuxOutput {
+            // Stats are fed into the controller above (not returned in IspAuxOutput).
+            // The controller modifies its internal state for the next frame.
+            frame.aux = None;
                 channel_means: Some([0.5, 0.5, 0.5]),
                 tone_stats: None, wb_gains: None, histogram: None,
                 zone_stats: None, focus_metric: None, cct: None,
