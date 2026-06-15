@@ -19,87 +19,80 @@ use cam_isp::pipeline::IspBlock;
 /// Mirrors `PipelineProfile::build_blocks()` — the default production path.
 /// Blocks: RawInput(INT32,w/2) → Unpack → Normalize → Cfa → Blc →
 ///         BayerWb → Demosaic → Ccm → Tone → Display
-fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize, use_unpack: bool) -> Vec<Box<dyn IspBlock>> {
+fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize, fused: bool, legacy: bool) -> Vec<Box<dyn IspBlock>> {
     let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
     let full_w = target_width as i64;
     let packed_w = (target_width / 2) as i64;
     let h = target_height as i64;
 
-    if use_unpack {
-        // 0: RawInputBlock — packed INT32 at half width (true zero-copy)
+    if fused {
+        // Fused: raw → UnpackCfaBlock (unpack+norm+CFA+BLC)
         blocks.push(Box::new(cam_isp::blocks::RawInputBlock::new()
-            .with_elem_type(6)  // INT32
+            .with_elem_type(6)
             .with_concrete_dims(h, packed_w)));
         if blocks.len() >= count { return wire(blocks); }
-
-        // 1: UnpackBlock — packed INT32 → interleaved INT32 at full width
+        blocks.push(Box::new(cam_isp::blocks::UnpackCfaBlock::new()
+            .with_concrete_dims(h, full_w)
+            .with_blc(true)));
+        if blocks.len() >= count { return wire(blocks); }
+        // blc_id: identity (BLC fused into unpack_cfa)
+        blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new("blc_id")));
+    } else if legacy {
+        // Legacy FLOAT: raw → norm → cfa
+        blocks.push(Box::new(cam_isp::blocks::RawInputBlock::new()
+            .with_elem_type(1)
+            .with_concrete_dims(h, full_w)));
+        if blocks.len() >= count { return wire(blocks); }
+        blocks.push(Box::new(cam_isp::blocks::NormalizeBlock::new()));
+        if blocks.len() >= count { return wire(blocks); }
+        blocks.push(Box::new(cam_isp::blocks::CfaBlock::new()
+            .with_concrete_dims(h, full_w)));
+    } else {
+        // Standard packed: raw → unpack → norm → cfa → blc
+        blocks.push(Box::new(cam_isp::blocks::RawInputBlock::new()
+            .with_elem_type(6)
+            .with_concrete_dims(h, packed_w)));
+        if blocks.len() >= count { return wire(blocks); }
         blocks.push(Box::new(cam_isp::blocks::UnpackBlock::new()
             .with_concrete_dims(h, full_w)));
         if blocks.len() >= count { return wire(blocks); }
-
-        // 2: NormalizeBlock — Cast INT32→FLOAT, Div by sensor_max
         blocks.push(Box::new(cam_isp::blocks::NormalizeBlock::new()));
-    } else {
-        // Legacy: RawInputBlock — FLOAT input (UINT16→FLOAT normalized in software)
-        blocks.push(Box::new(cam_isp::blocks::RawInputBlock::new()
-            .with_elem_type(1)  // FLOAT
+        if blocks.len() >= count { return wire(blocks); }
+        blocks.push(Box::new(cam_isp::blocks::CfaBlock::new()
             .with_concrete_dims(h, full_w)));
         if blocks.len() >= count { return wire(blocks); }
-
-        // NormalizeBlock — Cast FLOAT→FLOAT (no-op), Div by sensor_max
-        blocks.push(Box::new(cam_isp::blocks::NormalizeBlock::new()));
+        blocks.push(Box::new(cam_isp::blocks::BlcBlock::new()));
     }
     if blocks.len() >= count { return wire(blocks); }
 
-    // 3: CfaBlock — unpack Bayer CFA
-    blocks.push(Box::new(cam_isp::blocks::CfaBlock::new()
-        .with_concrete_dims(h, full_w)));
-    if blocks.len() >= count { return wire(blocks); }
-
-    // 4: AuxHook: source data (after CFA, for source-reference aux blocks)
+    // Source hook (after BLC)
     blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 5: BlcBlock (black level correction)
-    blocks.push(Box::new(cam_isp::blocks::BlcBlock::new()));
-    if blocks.len() >= count { return wire(blocks); }
-
-    // 6: BayerWbBlock (white balance)
+    // Main processing
     blocks.push(Box::new(cam_isp::blocks::BayerWbBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
-
-    // 7: DemosaicBlock
     blocks.push(Box::new(cam_isp::blocks::DemosaicBlock::new(0)
         .with_concrete_dims(h / 2, full_w / 2)));
     if blocks.len() >= count { return wire(blocks); }
-
-    // 8: CcmBlock (color correction matrix)
     blocks.push(Box::new(cam_isp::blocks::CcmBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
-
-    // 9: ToneBlock (gamma / contrast / saturation)
     blocks.push(Box::new(cam_isp::blocks::ToneBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 10: AuxHook: output data (after tone, for post-processing aux blocks)
+    // Output hook
     blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 11: FcsBlock — false color suppression (on-demand aux block)
+    // Aux blocks: FCS, LDCI, EE
     blocks.push(Box::new(cam_isp::blocks::FcsBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
-
-    // 12: LdciBlock — local contrast enhancement
     blocks.push(Box::new(cam_isp::blocks::LdciBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
-
-    // 13: EeBlock — edge enhancement / unsharp mask
     blocks.push(Box::new(cam_isp::blocks::EeBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 14: DisplayBlock (float -> BGRA U8)
     blocks.push(Box::new(cam_isp::blocks::DisplayBlock::new(target_width)));
-
     wire(blocks)
 }
 
@@ -211,7 +204,6 @@ fn main() {
         _ => { eprintln!("Unknown backend: '{}' (use cpu, vulkan, opencl, opengl)", backend_name); return; }
     };
 
-    let max_blocks = if use_legacy { 14 } else { 15 }; // packed: +2Hooks+FCS+LDCI+EE+Disp (15); legacy 14
     // (aux blocks are always included in the incremental bench)
 
     let pipeline_desc = if use_legacy { "FLOAT input (legacy)" } else { "packed INT32 → Unpack" };
@@ -220,10 +212,7 @@ fn main() {
     eprintln!("Backend: {}", backend_name);
     eprintln!("Pipeline: {}", pipeline_desc);
     eprintln!("Resolution: {}x{}", w, h);
-    eprintln!("Blocks: {} total", max_blocks);
-    eprintln!();
-
-    // Build blocks once to determine names
+    // Build blocks once to determine names and count
     let profile = cam_isp::profile::PipelineProfile::custom(
         "BENCH", cam_isp::profile::PipelineLevel::Lite,
         !use_legacy, // use_unpack
@@ -237,16 +226,21 @@ fn main() {
         false, // use_lsc
         false, // use_warp
         false, // use_hdr
+        true,  // use_fused_unpack (faster fused unpack+norm+CFA)
     );
     let all_blocks = profile.build_blocks(w, 0);
+    let max_blocks = all_blocks.len(); // use actual block count from profile
     let block_names: Vec<String> = all_blocks.iter().map(|b| format!("{}", b.id())).collect();
     drop(all_blocks);
+
+    eprintln!("Blocks: {} total", max_blocks);
+    eprintln!();
 
     let mut prev_total_ms = 0.0;
     let mut results: Vec<(usize, String, f64, f64, f64, f64)> = Vec::new();
 
     for n in 1..=max_blocks {
-        let blocks = build_blocks_up_to(w, h, n, !use_legacy);
+        let blocks = build_blocks_up_to(w, h, n, !use_legacy, use_legacy);
         assert_eq!(blocks.len(), n, "build_blocks_up_to({}) returned {} blocks", n, blocks.len());
 
         let label = &block_names[n - 1];
