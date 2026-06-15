@@ -56,40 +56,48 @@ fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize, use_u
         .with_concrete_dims(h, full_w)));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 4: BlcBlock (black level correction)
+    // 4: AuxHook: source data (after CFA, for source-reference aux blocks)
+    blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")));
+    if blocks.len() >= count { return wire(blocks); }
+
+    // 5: BlcBlock (black level correction)
     blocks.push(Box::new(cam_isp::blocks::BlcBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 5: BayerWbBlock (white balance)
+    // 6: BayerWbBlock (white balance)
     blocks.push(Box::new(cam_isp::blocks::BayerWbBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 6: DemosaicBlock
+    // 7: DemosaicBlock
     blocks.push(Box::new(cam_isp::blocks::DemosaicBlock::new(0)
         .with_concrete_dims(h / 2, full_w / 2)));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 7: CcmBlock (color correction matrix)
+    // 8: CcmBlock (color correction matrix)
     blocks.push(Box::new(cam_isp::blocks::CcmBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 8: ToneBlock (gamma / contrast / saturation)
+    // 9: ToneBlock (gamma / contrast / saturation)
     blocks.push(Box::new(cam_isp::blocks::ToneBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 9: FcsBlock — false color suppression (on-demand aux block)
+    // 10: AuxHook: output data (after tone, for post-processing aux blocks)
+    blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")));
+    if blocks.len() >= count { return wire(blocks); }
+
+    // 11: FcsBlock — false color suppression (on-demand aux block)
     blocks.push(Box::new(cam_isp::blocks::FcsBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 10: LdciBlock — local contrast enhancement (on-demand aux block)
+    // 12: LdciBlock — local contrast enhancement
     blocks.push(Box::new(cam_isp::blocks::LdciBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 11: EeBlock — edge enhancement / unsharp mask (on-demand aux block)
+    // 13: EeBlock — edge enhancement / unsharp mask
     blocks.push(Box::new(cam_isp::blocks::EeBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 12: DisplayBlock (float → BGRA U8)
+    // 14: DisplayBlock (float -> BGRA U8)
     blocks.push(Box::new(cam_isp::blocks::DisplayBlock::new(target_width)));
 
     wire(blocks)
@@ -198,7 +206,7 @@ fn main() {
     };
 
     let (w, h) = (640u32, 480u32);
-    let max_blocks = if use_legacy { 12 } else { 13 }; // packed has +FCS+LDCI+EE aux blocks (13); legacy 12
+    let max_blocks = if use_legacy { 14 } else { 15 }; // packed: +2Hooks+FCS+LDCI+EE+Disp (15); legacy 14
     // (aux blocks are always included in the incremental bench)
 
     let pipeline_desc = if use_legacy { "FLOAT input (legacy)" } else { "packed INT32 → Unpack" };
