@@ -189,12 +189,18 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut backend_name = "cpu";
     let mut use_legacy = false;
-    for arg in &args[1..] {
-        match arg.as_str() {
+    let mut w = 640u32;
+    let mut h = 480u32;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
             "--legacy" | "-l" => use_legacy = true,
-            _ if !arg.starts_with('-') => backend_name = arg,
+            "--width" | "-w" => { i += 1; if i < args.len() { w = args[i].parse().unwrap_or(640); } }
+            "--height" | "-H" => { i += 1; if i < args.len() { h = args[i].parse().unwrap_or(480); } }
+            _ if !args[i].starts_with('-') => backend_name = &args[i],
             _ => {}
         }
+        i += 1;
     }
 
     let backend = match backend_name {
@@ -205,7 +211,6 @@ fn main() {
         _ => { eprintln!("Unknown backend: '{}' (use cpu, vulkan, opencl, opengl)", backend_name); return; }
     };
 
-    let (w, h) = (640u32, 480u32);
     let max_blocks = if use_legacy { 14 } else { 15 }; // packed: +2Hooks+FCS+LDCI+EE+Disp (15); legacy 14
     // (aux blocks are always included in the incremental bench)
 
