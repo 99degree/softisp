@@ -38,7 +38,7 @@ pub use unpack_cfa::UnpackCfaBlock;
 pub use unpack::UnpackBlock;
 pub use demosaic_ccm::DemosaicCcmBlock;
 pub use resize::ResizeBlock;
-pub use stats::{ZoneStatsBlock, ChannelMeansBlock};
+pub use stats::{ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock};
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.

@@ -72,6 +72,14 @@ pub struct PipelineProfile {
     /// Run aux blocks (FCS, LDCI, EE) at half resolution.
     /// Inserts ResizeBlock down/up around the aux chain, 4× fewer pixels.
     pub use_aux_half_res: bool,
+    /// Enable per-zone RGB means (AveragePool) for multi-illuminant AWB.
+    pub use_zone_stats: bool,
+    /// Enable global channel means (ReduceMean) for grey-world AWB.
+    pub use_channel_means: bool,
+    /// Enable tone stats (luma mean/min/max, clipped/shadows) for AE.
+    pub use_tone_stats: bool,
+    /// Enable coarse luminance histogram (16 bins) for AE metering.
+    pub use_histogram: bool,
 }
 
 impl PipelineProfile {
@@ -93,6 +101,10 @@ impl PipelineProfile {
         use_fused_unpack: true,
         use_demosaic_ccm: true,
         use_aux_half_res: false,
+        use_zone_stats: true,      // zone RGB means for basic AWB
+        use_channel_means: true,   // channel means for grey-world AWB
+        use_tone_stats: false,     // skip AE tone stats (LITE)
+        use_histogram: false,      // skip histogram (LITE)
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -113,6 +125,10 @@ impl PipelineProfile {
         use_fused_unpack: true,
         use_demosaic_ccm: true,
         use_aux_half_res: false,
+        use_zone_stats: true,      // zone stats for multi-illuminant AWB
+        use_channel_means: true,   // channel means for grey-world AWB
+        use_tone_stats: true,      // tone stats for AE metering
+        use_histogram: false,      // skip histogram (MED)
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -133,6 +149,10 @@ impl PipelineProfile {
         use_fused_unpack: true,
         use_demosaic_ccm: true,
         use_aux_half_res: false,
+        use_zone_stats: true,
+        use_channel_means: true,
+        use_tone_stats: true,
+        use_histogram: true,
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -153,6 +173,10 @@ impl PipelineProfile {
         use_fused_unpack: true,
         use_demosaic_ccm: true,
         use_aux_half_res: false,
+        use_zone_stats: true,      // zone stats for multi-illuminant AWB
+        use_channel_means: true,   // channel means for grey-world AWB
+        use_tone_stats: true,      // tone stats for AE metering
+        use_histogram: true,       // 16-bin histogram (full AE stats)
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -174,6 +198,10 @@ impl PipelineProfile {
         use_fused_unpack: true,
         use_demosaic_ccm: true,
         use_aux_half_res: false,
+        use_zone_stats: true,      // zone stats for AWB (single block test)
+        use_channel_means: false,  // skip channel means
+        use_tone_stats: false,     // skip tone stats
+        use_histogram: false,      // skip histogram
     };
 
     /// All built-in profiles.
@@ -197,6 +225,10 @@ impl PipelineProfile {
         use_fused_unpack: bool,
         use_demosaic_ccm: bool,
         use_aux_half_res: bool,
+        use_zone_stats: bool,      // per-zone RGB means (AveragePool) for multi-illuminant AWB
+        use_channel_means: bool,   // global channel means (ReduceMean) for grey-world AWB
+        use_tone_stats: bool,      // luma mean/min/max + clipped/shadows for AE metering
+        use_histogram: bool,       // 16-bin luminance histogram for AE and clipping detection
     ) -> Self {
         Self {
             label,
@@ -215,6 +247,10 @@ impl PipelineProfile {
             use_fused_unpack,
             use_demosaic_ccm,
             use_aux_half_res,
+            use_zone_stats,      // per-zone RGB means (AWB multi-illuminant)
+            use_channel_means,   // global channel means (grey-world AWB)
+            use_tone_stats,      // luma stats for AE metering
+            use_histogram,       // 16-bin luminance histogram
         }
     }
 
@@ -328,6 +364,46 @@ impl PipelineProfile {
         blocks
     }
 
+    /// Build auxiliary ONNX blocks (stats blocks) that branch off from
+    /// the main pipeline.  These are passed as `aux_blocks` to
+    /// `GraphComposer::compose_from_vec` and produce separate graph outputs
+    /// that the engine reads after inference (zone stats, channel means,
+    /// tone stats, histogram, etc.).
+    ///
+    /// IMPORTANT: Each aux block must have its `input_source` set to the
+    /// name of the tensor it reads from (usually `aux_hook_src/out`).
+    /// The caller is responsible for setting this before passing to
+    /// `compose_from_vec`.
+    pub fn build_aux_blocks(&self, input_h: i64, input_w: i64) -> Vec<Box<dyn IspBlock>> {
+        let mut aux: Vec<Box<dyn IspBlock>> = Vec::new();
+
+        // All stats blocks read from aux_hook_src (BLC-corrected linear RGB)
+        let stats_input = "aux_hook_src/out";
+
+        if self.use_zone_stats {
+            let mut b = ZoneStatsBlock::new(6, 8).with_concrete_dims(input_h, input_w);
+            b.set_input_source(stats_input);
+            aux.push(Box::new(b));
+        }
+        if self.use_channel_means {
+            let mut b = ChannelMeansBlock::new();
+            b.set_input_source(stats_input);
+            aux.push(Box::new(b));
+        }
+        if self.use_tone_stats {
+            let mut b = ToneStatsBlock::new();
+            b.set_input_source(stats_input);
+            aux.push(Box::new(b));
+        }
+        if self.use_histogram {
+            let mut b = CoarseHistogramBlock::new(16);
+            b.set_input_source(stats_input);
+            aux.push(Box::new(b));
+        }
+
+        aux
+    }
+
     /// Number of blocks in this profile's chain.
     pub fn block_count(&self) -> usize {
         let mut count: usize = if self.use_fused_unpack && self.use_unpack {
@@ -354,6 +430,10 @@ impl PipelineProfile {
         if self.use_lsc { count += 1; }
         if self.use_warp { count += 1; }
         if self.use_hdr { count += 1; }
+        if self.use_zone_stats { count += 1; }
+        if self.use_channel_means { count += 1; }
+        if self.use_tone_stats { count += 1; }
+        if self.use_histogram { count += 1; }
         count
     }
 
@@ -416,10 +496,18 @@ mod tests {
             DemosaicQuality::Edge, true, true, true, true, false, false,
             true,  // use_demosaic_ccm
             false, // use_aux_half_res
+            true,  // use_zone_stats
+            false, // use_channel_means
+            true,  // use_tone_stats
+            false, // use_histogram
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
         assert!(!p.use_hdr);
+        assert!(p.use_zone_stats);
+        assert!(!p.use_channel_means);
+        assert!(p.use_tone_stats);
+        assert!(!p.use_histogram);
     }
 
     #[test]
@@ -430,6 +518,10 @@ mod tests {
             DemosaicQuality::Standard, false, false, false, false, false, false,
             false, // use_demosaic_ccm
             false, // use_aux_half_res
+            false, // use_zone_stats
+            false, // use_channel_means
+            false, // use_tone_stats
+            false, // use_histogram
         );
         let blocks = p.build_blocks(128, 0);
         assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks, got {}", blocks.len());
@@ -439,7 +531,30 @@ mod tests {
 
     #[test]
     fn test_block_count() {
-        assert_eq!(PipelineProfile::LITE.block_count(), 8);
-        assert_eq!(PipelineProfile::HEAVY.block_count(), 12);
+        assert_eq!(PipelineProfile::LITE.block_count(), 10, "LITE: 8 main + 2 stats");
+        assert_eq!(PipelineProfile::HEAVY.block_count(), 16, "HEAVY: 12 main + 4 stats");
+    }
+
+    #[test]
+    fn test_build_aux_blocks_lite() {
+        let aux = PipelineProfile::LITE.build_aux_blocks(1080, 1920);
+        // LITE: zone_stats + channel_means
+        assert_eq!(aux.len(), 2, "LITE stats: zone + channel means");
+        assert_eq!(aux[0].id(), "zone_stats");
+        assert_eq!(aux[1].id(), "channel_means");
+    }
+
+    #[test]
+    fn test_build_aux_blocks_pro() {
+        let aux = PipelineProfile::PRO.build_aux_blocks(1080, 1920);
+        // PRO: zone_stats + channel_means + tone_stats + histogram
+        assert_eq!(aux.len(), 4, "PRO stats: all 4 enabled");
+    }
+
+    #[test]
+    fn test_build_aux_blocks_test() {
+        let aux = PipelineProfile::TEST.build_aux_blocks(1080, 1920);
+        // TEST: only zone_stats
+        assert_eq!(aux.len(), 1, "TEST stats: zone_stats only");
     }
 }
