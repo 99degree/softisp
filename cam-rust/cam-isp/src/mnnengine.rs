@@ -463,6 +463,8 @@ impl IspEngine for MnnEngine {
             let mnn = match &self.model_path {
                 Some(p) => p.clone(),
                 None => {
+                    // Build ONNX graph: head + aux as pipeline, stats as aux_blocks
+                    // But we don't know which aux are stats — pass all as pipeline for now
                     let mut all: Vec<Box<dyn IspBlock>> = vec![head];
                     all.extend(aux);
                     let refs: Vec<&dyn IspBlock> = all.iter().map(|b| b.as_ref()).collect();

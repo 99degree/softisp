@@ -17,16 +17,15 @@ use crate::onnx::proto::Proto;
 // ZoneStatsBlock
 // ═══════════════════════════════════════════════════════════════════
 
-/// Zone statistics block — per-zone RGB averages via bilinear Resize.
+/// Zone statistics block — per-zone RGB averages via AveragePool.
 ///
-/// Graph: Resize(bilinear, sizes=[1,3,rows,cols]) → [1, 3, rows, cols]
+/// Graph: AveragePool(kernel=H/rows, stride=H/rows) → [1, 3, rows, cols]
 ///
-/// Resolution-independent: output size is fixed at [1,3,rows,cols]
-/// regardless of input H×W.  Resize with bilinear mode averages
-/// neighbouring pixels, equivalent to zone mean pooling for
-/// practical zone sizes (≥32 px per zone at FHD with 6×8 grid).
+/// Kernel sizes are computed from concrete dims set via `with_concrete_dims()`.
+/// The pipeline builder passes the target resolution at model-build time,
+/// so kernels adapt to landscape vs portrait orientation automatically.
 ///
-/// Used for multi-illuminant AWB.  48 zones (6×8) is typical.
+/// Used for multi-illuminant AWB.  48 zones (6×8) is typical for FHD.
 pub struct ZoneStatsBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -35,6 +34,8 @@ pub struct ZoneStatsBlock {
     pub input_source: String,
     pub zone_rows: i64,
     pub zone_cols: i64,
+    pub concrete_h: Option<i64>,
+    pub concrete_w: Option<i64>,
 }
 
 impl ZoneStatsBlock {
@@ -45,8 +46,18 @@ impl ZoneStatsBlock {
             frame_tensor: "ZoneStatsBlock/frame".into(),
             input_source: String::new(),
             zone_rows: rows, zone_cols: cols,
+            concrete_h: None, concrete_w: None,
         }
     }
+    pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
+        self.concrete_h = Some(h); self.concrete_w = Some(w); self
+    }
+    /// Kernel height = input_h / zone_rows  (e.g. 1080/6 = 180 @ FHD landscape)
+    fn kernel_h(&self) -> i64 { self.concrete_h.map_or(1, |h| ((h + self.zone_rows - 1) / self.zone_rows).max(1)) }
+    /// Kernel width  = ceil(input_w / zone_cols).
+    /// Uses ceil division so the full frame is covered even when resolution
+    /// doesn't divide evenly (e.g. 1900/8 → 238, not 237).
+    fn kernel_w(&self) -> i64 { self.concrete_w.map_or(1, |w| ((w + self.zone_cols - 1) / self.zone_cols).max(1)) }
 }
 
 impl IspBlock for ZoneStatsBlock {
@@ -76,20 +87,17 @@ impl IspBlock for ZoneStatsBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![Proto::node("Resize",
-            &[&self.input_source, "", "", &format!("{}/sizes", ns)],
-            &[&self.frame_tensor],
-            &[Proto::attribute_string("mode", "linear")])]
+        vec![Proto::node("AveragePool", &[&self.input_source], &[&self.frame_tensor],
+            &[Proto::attribute_ints("kernel_shape", &[self.kernel_h(), self.kernel_w()]),
+              Proto::attribute_ints("strides", &[self.kernel_h(), self.kernel_w()]),
+              Proto::attribute_int("ceil_mode", 1)])]
     }
-    fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            Proto::tensor_proto_int64(&format!("{}/sizes", ns),
-                &[1, 3, self.zone_rows, self.zone_cols]),
-        ]
-    }
+    fn initializers(&self) -> Vec<Vec<u8>> { vec![] }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -157,6 +165,10 @@ impl IspBlock for ChannelMeansBlock {
     }
     fn initializers(&self) -> Vec<Vec<u8>> { vec![] }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -284,6 +296,10 @@ impl IspBlock for ToneStatsBlock {
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -364,7 +380,7 @@ impl IspBlock for CoarseHistogramBlock {
         // Bin edges: [0, 1/num_bins, 2/num_bins, ..., 1]
         let bin_w = 1.0 / self.num_bins as f32;
         for i in 0..self.num_bins {
-            let lo = i as f32 * bin_w;
+            let _lo = i as f32 * bin_w;
             let _hi = (i + 1) as f32 * bin_w;
             let bin_name = format!("{}/b{}", ns, i);
 
@@ -435,6 +451,10 @@ impl IspBlock for CoarseHistogramBlock {
         inits
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 }
 
 #[cfg(test)]
@@ -445,10 +465,35 @@ mod tests {
 
     // ── ZoneStatsBlock ──
     #[test]
-    fn test_zone_stats_nodes() {
-        let b = ZoneStatsBlock::new(6, 8);
-        assert_eq!(b.nodes().len(), 1, "ZoneStatsBlock: 1 node (Resize)");
-        assert_eq!(b.initializers().len(), 1, "1 initializer (sizes)");
+    fn test_zone_kernels_exact() {
+        // 1920×1080, 6×8 zones → divides evenly
+        let b = ZoneStatsBlock::new(6, 8).with_concrete_dims(1080, 1920);
+        assert_eq!(b.kernel_h(), 180, "1080/6 = 180");
+        assert_eq!(b.kernel_w(), 240, "1920/8 = 240");
+    }
+
+    #[test]
+    fn test_zone_kernels_remainder() {
+        // 1900×1088, 6×8 zones → non-divisible, tests ceil
+        let b = ZoneStatsBlock::new(6, 8).with_concrete_dims(1088, 1900);
+        assert_eq!(b.kernel_h(), 182, "ceil(1088/6) = ceil(181.3) = 182");
+        assert_eq!(b.kernel_w(), 238, "ceil(1900/8) = ceil(237.5) = 238");
+    }
+
+    #[test]
+    fn test_zone_kernels_portrait() {
+        // Portrait 1080×1920, 6×8 zones
+        let b = ZoneStatsBlock::new(6, 8).with_concrete_dims(1920, 1080);
+        assert_eq!(b.kernel_h(), 320, "ceil(1920/6) = 320");
+        assert_eq!(b.kernel_w(), 135, "ceil(1080/8) = 135");
+    }
+
+    #[test]
+    fn test_zone_kernels_odd() {
+        // Unusual 1001×1001, 4×4 zones
+        let b = ZoneStatsBlock::new(4, 4).with_concrete_dims(1001, 1001);
+        assert_eq!(b.kernel_h(), 251, "ceil(1001/4) = 251");
+        assert_eq!(b.kernel_w(), 251, "ceil(1001/4) = 251");
     }
 
     #[test]
@@ -460,7 +505,7 @@ mod tests {
             Box::new(crate::blocks::BlcBlock::new()),
             Box::new(crate::blocks::BayerWbBlock::new()),
             Box::new(DemosaicCcmBlock::new(2).with_concrete_dims(24, 32)),
-            Box::new(ZoneStatsBlock::new(2, 2)),
+            Box::new(ZoneStatsBlock::new(2, 2).with_concrete_dims(24, 32)),
         ];
         GraphComposer::wire_blocks(&mut blocks);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
