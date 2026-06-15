@@ -1,15 +1,22 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
-/// Fused Demosaic + CCM block — replaces DemosaicBlock + CcmBlock.
+/// Fused Demosaic + CCM block — single Conv1×1 with runtime‑fused weights.
 ///
 /// Input:  [1, 4, H, W]   (CFA 4‑channel from UnpackCfaBlock or CfaBlock)
 /// Output: [1, 3, H, W]   (RGB after demosaic + color correction)
 ///
-/// Graph:  Conv1 (demosaic, static) → Conv2 (CCM, dynamic) → Clip(0,1)
+/// Graph:  Conv1×1 → Clip(0, 1)   — **2 nodes** (was 3 with 2 Convs)
 ///
-/// Two Convs instead of one because the CCM matrix is dynamic (per‑frame
-/// from AWB).  The session overhead is avoided by having both in one block.
+/// The Conv weight tensor `DemosaicCcm/w` [3, 4, 1, 1] is exposed as an
+/// extra input.  At build time it is initialised to the demosaic weights
+/// (identity CCM fused).  At runtime, the controller pre‑multiplies the
+/// CCM matrix with the demosaic weights and sets the fused result:
+///
+///   fused_w[i, j] = Σₖ ccm[i, k] · demosaic[k, j]    (3×3 @ 3×4 = 3×4)
+///
+/// 12 FMA ops per frame — negligible.  Saves one entire Conv execution
+/// compared to two sequential Conv1×1 ops.
 ///
 /// Bayer pattern → demosaic weight mapping (same as DemosaicBlock):
 ///   RGGB (0): R=TL, G=avg(TR,BL), B=BR
@@ -52,7 +59,7 @@ impl DemosaicCcmBlock {
     }
 
     /// Demosaic weights [3, 4, 1, 1] — same as DemosaicBlock.
-    fn demosaic_weights(&self) -> Vec<f32> {
+    pub fn demosaic_weights(&self) -> Vec<f32> {
         match self.bayer_pattern {
             0 => vec![ // RGGB
                 1.0, 0.0, 0.0, 0.0,
@@ -75,6 +82,28 @@ impl DemosaicCcmBlock {
                 1.0, 0.0, 0.0, 0.0,
             ],
         }
+    }
+
+    /// Compute fused weights = CCM × demosaic (3×3 @ 3×4 = 3×4).
+    /// Returns a 12‑element vector in CHW order [3, 4, 1, 1].
+    ///
+    /// Call this at runtime when the CCM matrix changes, then set the
+    /// result as the value of the `DemosaicCcm/w` extra input tensor.
+    pub fn fuse_weights(&self, ccm_matrix: &[f32; 9]) -> Vec<f32> {
+        let demo = self.demosaic_weights();     // [3, 4] row-major
+        // ccm_matrix is [3, 3] row-major
+        // fused[i, j] = Σₖ ccm[i, k] * demo[k, j]
+        let mut fused = vec![0.0f32; 12];
+        for i in 0..3 {
+            for j in 0..4 {
+                let mut sum = 0.0;
+                for k in 0..3 {
+                    sum += ccm_matrix[i * 3 + k] * demo[k * 4 + j];
+                }
+                fused[i * 4 + j] = sum;
+            }
+        }
+        fused
     }
 }
 
@@ -140,22 +169,11 @@ impl IspBlock for DemosaicCcmBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
-            // Conv1: demosaic (static) — 4ch CFA → 3ch RGB
+            // Single Conv1×1 with runtime-fused weights (demosaic × CCM)
             Proto::node(
                 "Conv",
-                &[&self.input_source, &format!("{}/demo_w", ns), &format!("{}/demo_b", ns)],
-                &[&format!("{}/demo_out", ns)],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[1, 1]),
-                    Proto::attribute_ints("strides", &[1, 1]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                ],
-            ),
-            // Conv2: CCM (dynamic via extra_inputs) — 3ch RGB → 3ch RGB
-            Proto::node(
-                "Conv",
-                &[&format!("{}/demo_out", ns), &format!("zzz_ccm/matrix"), &format!("zzz_ccm/bias")],
-                &[&format!("{}/ccm_out", ns)],
+                &[&self.input_source, &format!("{}/w", ns), &format!("{}/b", ns)],
+                &[&format!("{}/conv_out", ns)],
                 &[
                     Proto::attribute_ints("kernel_shape", &[1, 1]),
                     Proto::attribute_ints("strides", &[1, 1]),
@@ -165,7 +183,7 @@ impl IspBlock for DemosaicCcmBlock {
             // Clip to [0, 1]
             Proto::node(
                 "Clip",
-                &[&format!("{}/ccm_out", ns), &format!("{}/zero", ns), &format!("{}/one", ns)],
+                &[&format!("{}/conv_out", ns), &format!("{}/zero", ns), &format!("{}/one", ns)],
                 &[&self.frame_tensor],
                 &[],
             ),
@@ -175,45 +193,33 @@ impl IspBlock for DemosaicCcmBlock {
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
-            // Demosaic weights [3, 4, 1, 1]
+            // Fused weights = demosaic @ identity_ccm = raw demosaic weights [3, 4, 1, 1].
+            // At runtime, the controller pre-multiplies the CCM matrix and
+            // overrides this tensor via the extra_inputs mechanism.
             Proto::tensor_proto_float(
-                &format!("{}/demo_w", ns),
+                &format!("{}/w", ns),
                 &[3, 4, 1, 1],
                 &self.demosaic_weights(),
             ),
-            // Demosaic bias [3]
+            // Bias [3]
             Proto::tensor_proto_float(
-                &format!("{}/demo_b", ns),
+                &format!("{}/b", ns),
                 &[3],
                 &[0.0; 3],
             ),
             // Clip constants
             Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
             Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
-            // Default CCM matrix (identity) — overridden by extra_inputs at runtime
-            Proto::tensor_proto_float(
-                "zzz_ccm/matrix",
-                &[3, 3, 1, 1],
-                &[1.0, 0.0, 0.0,
-                  0.0, 1.0, 0.0,
-                  0.0, 0.0, 1.0],
-            ),
-            // Default CCM bias
-            Proto::tensor_proto_float(
-                "zzz_ccm/bias",
-                &[3],
-                &[0.0; 3],
-            ),
         ]
     }
 
-    /// Expose CCM matrix and bias as dynamic extra inputs.
+    /// Expose the fused weight tensor and bias as dynamic extra inputs.
     /// The `zzz_` prefix ensures these sort AFTER the main frame input
     /// in MNN's alphabetical input ordering.
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         vec![
-            ("zzz_ccm/matrix".into(), 1, vec![3, 3, 1, 1]),
-            ("zzz_ccm/bias".into(), 1, vec![3]),
+            (format!("{}/w", self.tensor_ns()), 1, vec![3, 4, 1, 1]),
+            (format!("{}/b", self.tensor_ns()), 1, vec![3]),
         ]
     }
 }
@@ -227,14 +233,14 @@ mod tests {
     fn test_demosaic_ccm_block_ops() {
         let block = DemosaicCcmBlock::new(2);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 3, "Should produce 3 nodes: Conv, Conv, Clip");
+        assert_eq!(nodes.len(), 2, "Should produce 2 nodes: Conv, Clip");
     }
 
     #[test]
     fn test_demosaic_ccm_initializers() {
         let block = DemosaicCcmBlock::new(0);
         let inits = block.initializers();
-        assert_eq!(inits.len(), 6, "Should have 6 initializers");
+        assert_eq!(inits.len(), 4, "Should have 4 initializers (w, b, zero, one)");
     }
 
     #[test]
@@ -242,8 +248,8 @@ mod tests {
         let block = DemosaicCcmBlock::new(2);
         let extra = block.extra_inputs();
         assert_eq!(extra.len(), 2, "Should expose 2 extra inputs");
-        assert_eq!(extra[0].0, "zzz_ccm/matrix");
-        assert_eq!(extra[1].0, "zzz_ccm/bias");
+        assert_eq!(extra[0].0, "DemosaicCcmBlock/w");
+        assert_eq!(extra[1].0, "DemosaicCcmBlock/b");
     }
 
     #[test]
@@ -255,6 +261,60 @@ mod tests {
             let sum: f32 = w.iter().sum();
             assert!((sum - 3.0).abs() < 0.01, "Pattern {}: sum={}", pattern, sum);
         }
+    }
+
+    #[test]
+    fn test_fuse_weights_identity() {
+        // Fusing with identity CCM should produce the raw demosaic weights
+        let block = DemosaicCcmBlock::new(0); // RGGB
+        let identity: [f32; 9] = [
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+        ];
+        let fused = block.fuse_weights(&identity);
+        let raw = block.demosaic_weights();
+        assert_eq!(fused.len(), raw.len());
+        for (f, r) in fused.iter().zip(raw.iter()) {
+            assert!((f - r).abs() < 1e-6, "Fused identity should match raw: {} vs {}", f, r);
+        }
+    }
+
+    #[test]
+    fn test_fuse_weights_diagonal() {
+        // Diagonal CCM with different gains per channel
+        let block = DemosaicCcmBlock::new(0);
+        let diag: [f32; 9] = [
+            2.0, 0.0, 0.0,
+            0.0, 1.5, 0.0,
+            0.0, 0.0, 0.8,
+        ];
+        let fused = block.fuse_weights(&diag);
+        // R-channel weights should be doubled
+        assert!((fused[0] - 2.0).abs() < 1e-6, "R ch0 fused: {}", fused[0]);
+        // G-channel weights (average of ch1, ch2) should be 1.5×
+        assert!((fused[5] - 0.75).abs() < 1e-6, "G ch1 fused: {}", fused[5]); // 1.5 * 0.5
+        assert!((fused[6] - 0.75).abs() < 1e-6, "G ch2 fused: {}", fused[6]);
+        // B-channel weight should be 0.8×
+        assert!((fused[11] - 0.8).abs() < 1e-6, "B ch3 fused: {}", fused[11]);
+    }
+
+    #[test]
+    fn test_fuse_weights_non_diagonal() {
+        // Non-diagonal CCM: RGB channels mix
+        let block = DemosaicCcmBlock::new(0);
+        let ccm: [f32; 9] = [
+            1.0, 0.1, 0.05,
+            0.2, 1.0, 0.1,
+            0.05, 0.1, 1.0,
+        ];
+        let fused = block.fuse_weights(&ccm);
+        // R output from R input: ch0 weight = ccm[0,0]*1.0 + ccm[0,1]*0.0 + ccm[0,2]*0.0 = 1.0
+        assert!((fused[0] - 1.0).abs() < 1e-6, "R from ch0: {}", fused[0]);
+        // R output from G input (ch1): ccm[0,1]*0.5 + ccm[0,2]*0.0 = 0.1*0.5 = 0.05
+        assert!((fused[1] - 0.05).abs() < 1e-6, "R from ch1: {}", fused[1]);
+        // R output from G input (ch2): ccm[0,1]*0.5 = 0.1*0.5 = 0.05
+        assert!((fused[2] - 0.05).abs() < 1e-6, "R from ch2: {}", fused[2]);
     }
 
     #[test]
@@ -273,11 +333,10 @@ mod tests {
     }
 
     #[test]
-    fn test_demosaic_ccm_replaces_separate_blocks() {
-        // Verify the fused block produces the same number of nodes
-        // as demosaic (1) + ccm (2) = 3 nodes
+    fn test_demosaic_ccm_nodes_count() {
+        // 1 Conv + 1 Clip = 2 nodes
         let fused = DemosaicCcmBlock::new(2);
-        assert_eq!(fused.nodes().len(), 3,
-            "Fused should have same op count as separate demosaic(1)+ccm(2)");
+        assert_eq!(fused.nodes().len(), 2,
+            "1-Conv approach should produce 2 nodes, got {}", fused.nodes().len());
     }
 }
