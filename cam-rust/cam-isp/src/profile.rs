@@ -225,6 +225,9 @@ impl PipelineProfile {
         // ── CFA unpack ──
         blocks.push(Box::new(CfaBlock::new()));
 
+        // ── AuxHook: source data (after CFA, before tone) ──
+        blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_src")));
+
         // ── Black level correction ──
         blocks.push(Box::new(BlcBlock::new()));
 
@@ -249,6 +252,9 @@ impl PipelineProfile {
 
         // ── Tone curve ──
         blocks.push(Box::new(ToneBlock::new()));
+
+        // ── AuxHook: output data (after tone, for post-processing aux blocks) ──
+        blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_out")));
 
         // ── Auxiliary blocks (on demand) ──
         // Collect signals from all pipeline blocks; only add aux blocks
@@ -284,7 +290,7 @@ impl PipelineProfile {
 
     /// Number of blocks in this profile's chain.
     pub fn block_count(&self) -> usize {
-        let mut count: usize = if self.use_unpack { 10 } else { 9 }; // base blocks (+1 for UnpackBlock if enabled)
+        let mut count: usize = if self.use_unpack { 12 } else { 11 }; // +2 for AuxHooks
         if self.use_fcs { count += 1; }
         if self.use_ldci { count += 1; }
         if self.use_ee { count += 1; }
@@ -335,14 +341,14 @@ mod tests {
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 0);
         // LITE: raw → unpack → norm → cfa → blc → bayer_wb → demo → ccm → tone → display = 10
-        assert_eq!(blocks.len(), 10, "LITE should have 10 blocks, got {}", blocks.len());
+        assert_eq!(blocks.len(), 12, "LITE should have 12 blocks (+2 hooks), got {}", blocks.len());
     }
 
     #[test]
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
         // HEAVY: base(10) + bad_pixel + fcs + ldci + ee + lsc = 15
-        assert_eq!(blocks.len(), 15, "HEAVY should have 15 blocks, got {}", blocks.len());
+        assert_eq!(blocks.len(), 17, "HEAVY should have 17 blocks (+2 hooks), got {}", blocks.len());
     }
 
     #[test]
@@ -364,16 +370,16 @@ mod tests {
             DemosaicQuality::Standard, false, false, false, false, false,
         );
         let blocks = p.build_blocks(128, 0);
-        assert_eq!(blocks.len(), 9, "Legacy should have 9 blocks (no UnpackBlock), got {}", blocks.len());
+        assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks (+2 hooks), got {}", blocks.len());
         assert_eq!(blocks[0].id(), "raw_input");
         assert_eq!(blocks[1].id(), "normalize", "Second block should be Normalize (no Unpack)");
     }
 
     #[test]
     fn test_block_count() {
-        // LITE: 10 base blocks, no extras
-        assert_eq!(PipelineProfile::LITE.block_count(), 10);
-        // HEAVY: 10 base + fcs + ldci + ee + bad_pixel + lsc = 15
-        assert_eq!(PipelineProfile::HEAVY.block_count(), 15);
+        // LITE: 12 base blocks (+2 hooks), no extras
+        assert_eq!(PipelineProfile::LITE.block_count(), 12);
+        // HEAVY: 12 base + fcs + ldci + ee + bad_pixel + lsc = 17
+        assert_eq!(PipelineProfile::HEAVY.block_count(), 17);
     }
 }

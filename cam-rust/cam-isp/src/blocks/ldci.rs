@@ -25,15 +25,21 @@ impl IspBlock for LdciBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        // Local contrast: diff from per-channel mean, boost Y channel
+        // Uses ReduceMean for global mean (no Conv, MNN-friendly)
         vec![
-            Proto::node("AveragePool", &[&self.input_source], &[&format!("{}/local_mean", ns)],
-                &[Proto::attribute_ints("kernel_shape", &[9, 9]),
-                  Proto::attribute_ints("pads", &[4, 4, 4, 4]),
-                  Proto::attribute_ints("strides", &[1, 1])]),
-            Proto::node("Sub", &[&self.input_source, &format!("{}/local_mean", ns)], &[&format!("{}/diff", ns)], &[]),
+            // Per-channel mean via ReduceMean over H,W
+            Proto::node("ReduceMean", &[&self.input_source], &[&format!("{}/ch_mean", ns)],
+                &[Proto::attribute_ints("axes", &[2, 3]), Proto::attribute_int("keepdims", 1)]),
+            // diff = input - mean (broadcast)
+            Proto::node("Sub", &[&self.input_source, &format!("{}/ch_mean", ns)], &[&format!("{}/diff", ns)], &[]),
+            // boost = diff * y_mask (keep only Y channel)
             Proto::node("Mul", &[&format!("{}/diff", ns), &format!("{}/y_mask", ns)], &[&format!("{}/diff_y", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/diff_y", ns), &format!("{}/ldci_strength_scaled", ns)], &[&format!("{}/boost", ns)], &[]),
+            // boost *= ldci_strength_scaled
+            Proto::node("Mul", &[&format!("{}/diff_y", ns), &format!("zzz_{}/ldci_strength_scaled", ns)], &[&format!("{}/boost", ns)], &[]),
+            // output = input + boost
             Proto::node("Add", &[&self.input_source, &format!("{}/boost", ns)], &[&format!("{}/enhanced", ns)], &[]),
+            // clamp to [0,1]
             Proto::node("Clip", &[&format!("{}/enhanced", ns), &format!("{}/min", ns), &format!("{}/max", ns)], &[&self.frame_tensor], &[]),
         ]
     }
@@ -47,6 +53,7 @@ impl IspBlock for LdciBlock {
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(format!("{}/ldci_strength_scaled", self.tensor_ns()), 1, vec![1])]
+        // zzz_ prefix ensures alphabetical sort is AFTER main input
+        vec![(format!("zzz_{}/ldci_strength_scaled", self.tensor_ns()), 1, vec![1])]
     }
 }

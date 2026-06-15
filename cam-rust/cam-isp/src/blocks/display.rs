@@ -22,18 +22,16 @@ impl IspBlock for DisplayBlock {
     fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
     fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
     fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone(), format!("{}/cast", self.tensor_ns())] }
+    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
     fn input_value_info(&self) -> Option<Vec<u8>> { Some(Proto::value_info(&self.input_source, &[Proto::tensor_dim_value(1),Proto::tensor_dim_param("C"),Proto::tensor_dim_param("H"),Proto::tensor_dim_param("W")], 1)) }
     fn output_value_info(&self) -> Option<Vec<u8>> { Some(Proto::value_info(&self.frame_tensor, &[Proto::tensor_dim_value(1),Proto::tensor_dim_param("C"),Proto::tensor_dim_param("H"),Proto::tensor_dim_param("W")], 1)) }
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let scale = format!("{}/scale", ns);
-        let cast_tensor = format!("{}/cast", ns);
-        // Cast input to FLOAT, then multiply by 255.0.
-        // For FLOAT inputs this is a no-op cast, but ensures type correctness.
+        // Multiply by 255.0 to scale [0,1] float -> [0,255] for uint8 output.
+        // Input is always FLOAT at this pipeline stage (after NormalizeBlock).
         vec![
-            Proto::node("Cast", &[&self.input_source], &[&cast_tensor], &[Proto::attribute_int("to", 1)]),
-            Proto::node("Mul", &[&cast_tensor, &scale], &[&self.frame_tensor], &[]),
+            Proto::node("Mul", &[&self.input_source, &scale], &[&self.frame_tensor], &[]),
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
