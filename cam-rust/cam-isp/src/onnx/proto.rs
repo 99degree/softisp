@@ -239,6 +239,15 @@ impl Proto {
         buf
     }
 
+    /// `onnx.TensorProto` for an int32 scalar (no dims = scalar).
+    pub fn tensor_proto_int32_scalar(name: &str, value: i32) -> Vec<u8> {
+        let raw = value.to_le_bytes();
+        let mut buf = Self::string(8, name);
+        buf.extend_from_slice(&Self::int32(2, 6)); // data_type = INT32(6)
+        buf.extend_from_slice(&Self::raw_bytes(9, &raw)); // raw_data (field 9)
+        buf
+    }
+
     /// `onnx.TensorProto` for an int64 1-D tensor.
     pub fn tensor_proto_int64(name: &str, values: &[i64]) -> Vec<u8> {
         let raw_size = values.len() * 8;
