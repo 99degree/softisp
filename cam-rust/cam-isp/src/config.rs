@@ -136,7 +136,7 @@ impl PipelineConfig {
 
     /// Number of blocks in this config.
     pub fn block_count(&self) -> usize {
-        let mut count: usize = if self.use_unpack { 10 } else { 9 };
+        let mut count: usize = if self.use_unpack { 12 } else { 11 }; // +2 hooks
         if self.use_fcs { count += 1; }
         if self.use_ldci { count += 1; }
         if self.use_ee { count += 1; }
@@ -227,7 +227,7 @@ mod tests {
     fn test_block_count() {
         let lite = PipelineConfig::from_profile(PipelineProfile::LITE);
         let heavy = PipelineConfig::from_profile(PipelineProfile::HEAVY);
-        assert_eq!(lite.block_count(), 10);
-        assert_eq!(heavy.block_count(), 15);
+        assert_eq!(lite.block_count(), 12);
+        assert_eq!(heavy.block_count(), 17);
     }
 }
