@@ -228,6 +228,7 @@ fn main() {
         false, // use_hdr
         true,  // use_fused_unpack (faster fused unpack+norm+CFA)
         true,  // use_demosaic_ccm (fused demosaic+CCM, saves 1 session)
+        false, // use_aux_half_res
     );
     let all_blocks = profile.build_blocks(w, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile
