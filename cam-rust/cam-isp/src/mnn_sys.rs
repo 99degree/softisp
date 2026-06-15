@@ -150,6 +150,8 @@ pub fn mnn_run_host_tensors_u16(
     fn mnn_express_var_resize(varp: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
     fn mnn_express_forward(module: *mut c_void, inputs: *mut *mut c_void, n_inputs: c_int, out_count: *mut c_int) -> *mut *mut c_void;
     fn mnn_varps_destroy(varps: *mut *mut c_void, count: c_int);
+    /// Get expected input tensor element count.
+    pub fn mnn_get_model_input_elements(interpreter: *mut c_void, session: *mut c_void) -> c_int;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

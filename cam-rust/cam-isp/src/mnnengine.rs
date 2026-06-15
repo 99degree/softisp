@@ -54,6 +54,11 @@ pub struct MnnEngine {
     initialized: bool,
     model_path: Option<String>,
     model_input_type: Option<(i32, i32)>,
+    /// True when model expects INT32 packed input (w/2 width, each element = 2 pixels).
+    /// Triggers true zero-copy: buffer reinterpreted as i32, host pointer set directly.
+    packed_input: bool,
+    /// Expected input tensor element count from model (for validation).
+    expected_input_elements: Option<u32>,
     /// MNN interpreter (owning the model). Must outlive session.
     #[cfg(feature = "mnn")]
     interp: Option<MnnInterpreterSafe>,
@@ -77,12 +82,23 @@ impl Drop for MnnEngine {
 }
 
 impl MnnEngine {
+    /// Get the model input type: (code, bits) or None if not yet built.
+    pub fn model_input_type(&self) -> Option<(i32, i32)> {
+        self.model_input_type
+    }
+    /// Get expected input tensor element count from the loaded model.
+    pub fn expected_input_elements(&self) -> Option<u32> {
+        self.expected_input_elements
+    }
+
     pub fn new(backend: MnnBackend) -> Self {
         Self {
             backend,
             initialized: false,
             model_path: None,
             model_input_type: None,
+            packed_input: false,
+            expected_input_elements: None,
             #[cfg(feature = "mnn")]
             interp: None,
             #[cfg(feature = "mnn")]
@@ -499,7 +515,16 @@ impl IspEngine for MnnEngine {
                 );
             }
             self.model_input_type = Some((input_code, input_bits));
-            info!("MNN model input type: code={}, bits={}", input_code, input_bits);
+            // INT32 (code=0, bits=32) → packed_input mode for true zero-copy.
+            // Model expects w/2 INT32 elements; buffer is reinterpreted u16 as i32.
+            let expected_elems = unsafe {
+                crate::mnn_sys::mnn_get_model_input_elements(interp.as_ptr(), sess.as_ptr())
+            };
+            self.expected_input_elements = if expected_elems > 0 { Some(expected_elems as u32) } else { None };
+            self.packed_input = (input_code == 0 && input_bits == 32)
+                && self.expected_input_elements.map_or(false, |e| e % 2 == 0);
+            info!("MNN model input type: code={}, bits={} packed={} expected_elems={}",
+                input_code, input_bits, self.packed_input, expected_elems);
             
             self.interp = Some(interp);
             self.sess = Some(Mutex::new(sess));
@@ -525,47 +550,86 @@ impl IspEngine for MnnEngine {
 
             let t_start = Instant::now();
 
-            let shape = [1, 1, h as i32, w as i32];
-
             // Allocate output buffer (enough for 4K HD RGBA floats)
             let max_out = (tw * h * 4) as i32;
             let mut out_data = vec![0.0f32; max_out as usize];
 
-            // Check which inference path to use based on model input type
-            let use_true_zero_copy = self.model_input_type.map_or(false, |(code, bits)| {
-                // Model expects INT16 (code=0, bits=16) or UINT16 (code=1, bits=16)
-                // Our buffer is u16 (UINT16)
+            // Determine inference path based on model input type
+            //   1) packed_input (INT32): true zero-copy — reinterpret u16 as i32, host ptr
+            //   2) true_zero_copy (INT16/UINT16): direct u16 buffer, blocked by MNN upcast
+            //   3) u16_conversion: copy u16→int32 via host tensor
+            //   4) float_fallback: normalize to f32 then host tensor
+            let path: &str;
+            let n: i32;
+            let t_prep_end: std::time::Instant;
+            let t_infer_start: std::time::Instant;
+
+            // Determine if packed: model expects INT32 with h*w/2 elements
+            let is_packed = self.packed_input && self.expected_input_elements
+                .map_or(false, |expected| expected == h * w / 2);
+
+            if is_packed {
+                // ── PACKED ZERO-COPY (TRUE ZERO-COPY) ──
+                // Model expects INT32[1,1,h,w/2]. Our buffer has u16[h*w] worth of data.
+                // Reinterpret as i32[h*w/2] — same memory, half as many elements.
+                // MNN uses the buffer's host pointer directly — no allocation, no copy.
+                path = "packed_zero_copy";
+                let packed_w = (w / 2).max(1) as i32;
+                let packed_shape = [1, 1, h as i32, packed_w];
+                let packed_buf: &[i32] = unsafe {
+                    std::slice::from_raw_parts(
+                        buf.as_ptr() as *const i32,
+                        buf.len() / 4  // u8 → i32: 4× fewer elements
+                    )
+                };
+                t_prep_end = Instant::now();  // prep = just the pointer cast
+                t_infer_start = Instant::now();
+                unsafe {
+                    n = crate::mnn_sys::mnn_run_true_zero_copy(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        packed_buf.as_ptr() as *const c_void,
+                        0,   // halide_type_int = 0
+                        32,  // bits = 32
+                        packed_shape.as_ptr(),
+                        packed_shape.len() as i32,
+                        out_data.as_mut_ptr(),
+                        max_out,
+                    );
+                }
+            } else if self.model_input_type.map_or(false, |(code, bits)| {
                 (code == 1 && bits == 16) || (code == 0 && bits == 16)
-            });
-            let use_u16_conversion = self.model_input_type.map_or(false, |(code, bits)| {
-                // Model expects INT16/UINT16/INT32/UINT32, buffer is u16
-                (code == 0 || code == 1) && (bits == 16 || bits == 32)
-            });
-
-            // Track prep vs inference timing
-            let n;
-            // Prep time: time for setup before MNN inference call
-            let t_prep_end = Instant::now();  // setup done, about to call MNN
-            let t_infer_start = Instant::now();  // reset for actual inference timing
-
-            if use_true_zero_copy {
-                // TRUE ZERO-COPY: pass raw u16 buffer directly, no allocation, no copy
-                // Buffer is u16 (UINT16 = code 1, bits 16)
+            }) {
+                // ── TRUE ZERO-COPY (INT16/UINT16) ──
+                // Pass raw u16 buffer directly. Works only if MNN converter preserves INT16.
+                // Currently blocked by MNN converter upcast to INT32.
+                path = "true_zero_copy";
+                let shape = [1, 1, h as i32, w as i32];
+                t_prep_end = Instant::now();
+                t_infer_start = Instant::now();
                 unsafe {
                     n = crate::mnn_sys::mnn_run_true_zero_copy(
                         interp.as_ptr(),
                         sess.as_ptr(),
                         buf.as_ptr() as *const c_void,
-                        1,  // halide_type_uint = 1
-                        16, // bits
+                        1,   // halide_type_uint = 1
+                        16,  // bits = 16
                         shape.as_ptr(),
                         shape.len() as i32,
                         out_data.as_mut_ptr(),
                         max_out,
                     );
                 }
-            } else if use_u16_conversion {
-                // u16 path: pass raw u16 buffer, MNN will convert to model type
+            } else if self.model_input_type.map_or(false, |(code, bits)| {
+                (code == 0 || code == 1) && (bits == 16 || bits == 32)
+            }) {
+                // ── U16 CONVERSION (FAST COPY) ──
+                // Pass u16 buffer, MNN host tensor wrapper converts to model type.
+                // Does a copy, but achieves ~0ms prep in practice.
+                path = "u16_conversion";
+                let shape = [1, 1, h as i32, w as i32];
+                t_prep_end = Instant::now();
+                t_infer_start = Instant::now();
                 unsafe {
                     n = crate::mnn_sys::mnn_run_host_tensors_u16(
                         interp.as_ptr(),
@@ -578,11 +642,13 @@ impl IspEngine for MnnEngine {
                     );
                 }
             } else {
-                // Fallback: normalize to float and use host_tensors
-                // Normalization is prep work
+                // ── FLOAT FALLBACK ──
+                // Normalize u16→f32, use host tensors. Slowest due to normalization.
+                path = "float_fallback";
+                let shape = [1, 1, h as i32, w as i32];
                 let f32d = Self::norm(buf, smax);
-                let t_prep_end = Instant::now();  // norm done, about to call MNN
-                let t_infer_start = Instant::now();  // MNN timing only
+                t_prep_end = Instant::now();  // norm done
+                t_infer_start = Instant::now();
                 unsafe {
                     n = crate::mnn_sys::mnn_run_host_tensors(
                         interp.as_ptr(),
@@ -600,12 +666,10 @@ impl IspEngine for MnnEngine {
             let t_infer_elapsed = t_infer_start.elapsed();
 
             if n <= 0 {
-                let path = if use_true_zero_copy { "true_zero_copy" } else if use_u16_conversion { "u16_conversion" } else { "float_fallback" };
                 error!("MNN inference failed: {} (input={}x{}, path={})", n, w, h, path);
                 return Err(format!("MNN inference failed: {}", n));
             }
 
-            let path = if use_true_zero_copy { "true_zero_copy" } else if use_u16_conversion { "u16_conversion" } else { "float_fallback" };
             debug!("MNN inference: path={} total={:?} ({}x{} -> {} flt)",
                 path, t_infer_elapsed, w, h, n);
 

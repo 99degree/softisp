@@ -782,6 +782,17 @@ extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession s
     return 0;
 }
 
+/// Get expected input tensor element count.
+/// Returns -1 on error, otherwise the number of elements.
+extern "C" int mnn_get_model_input_elements(MnnInterpreter interpreter, MnnSession session) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess) return -1;
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+    return (int)in_tensor->elementSize();
+}
+
 
 // ── True zero-copy inference (direct host pointer) ──────────────────────
 /**
