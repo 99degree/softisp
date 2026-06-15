@@ -277,6 +277,9 @@ int mnn_run_host_tensors(MnnInterpreter interpreter, MnnSession session,
 
     // Resize session to match host shape (handles symbolic dims)
     net->resizeSession(sess);
+    // Re-acquire input tensor after resizeSession — the old pointer may be invalidated
+    in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) { MNN::Tensor::destroy(host_in); return -1; }
     auto copy_ok = in_tensor->copyFromHostTensor(host_in);
     if (!copy_ok) { MNN::Tensor::destroy(host_in); return -12; }
     auto run_ok = net->runSession(sess);
@@ -370,6 +373,8 @@ extern "C" int mnn_run_host_tensors_u16(MnnInterpreter interpreter, MnnSession s
 
     // Resize session to match host shape (handles symbolic dims)
     net->resizeSession(sess);
+    in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) { MNN::Tensor::destroy(host_in); return -1; }
     auto copy_ok = in_tensor->copyFromHostTensor(host_in);
     if (!copy_ok) { MNN::Tensor::destroy(host_in); return -12; }
     auto run_ok = net->runSession(sess);
