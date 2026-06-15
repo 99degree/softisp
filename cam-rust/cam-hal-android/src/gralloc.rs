@@ -6,14 +6,12 @@
 //! - NDK AHardwareBuffer path (`AHardwareBuffer_fromHardwareBuffer`)
 //! - Raw fd path (extract fd → mmap, no NDK needed)
 
-use std::os::raw::{c_int, c_void};
+use std::os::raw::c_int;
 
 use cam_hal::buffer::{CameraBuffer};
 
 use crate::adapter::ahardware_buffer::{
-    AHardwareBuffer, AHardwareBuffer_Desc, AHardwareBuffer_describe,
-    AHardwareBuffer_lock, AHardwareBuffer_unlock,
-    AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
+    AHardwareBuffer, AHardwareBuffer_Desc,
 };
 
 // ── native_handle_t FFI ────────────────────────────────────────────────────
@@ -29,6 +27,7 @@ pub struct native_handle_t {
 }
 
 /// Android `buffer_handle_t` = `const native_handle_t*`.
+#[allow(non_camel_case_types)]
 pub type buffer_handle_t = *const native_handle_t;
 
 // ── AHardwareBuffer_fromHardwareBuffer (NDK API 26+) ─────────────────────
