@@ -3,11 +3,15 @@
 //! Input:  INT32[1,1,H,W/2]    (packed: pixel_even | (pixel_odd << 16))
 //! Output: FLOAT[1,4,H/2,W/2]  (4 Bayer channels: R, Gr, Gb, B)
 //!
-//! Fuses UnpackBlock + NormalizeBlock + CfaBlock into a single ONNX graph:
-//!   - Extract even (low 16 bits) and odd (high 16 bits) in INT32
-//!   - Cast to FLOAT, divide by sensor_max (normalize)
-//!   - Stack into [1,2,H,W/2], Conv(stride=(2,1), kernel=(2,1)) → 4 channels
-//!   - No full-resolution interleave! Saves the expensive Reshape+Concat+Reshape.
+//! UnpackCfaBlock — fused packed INT32 → CFA FLOAT quadrants (optionally + BLC).
+//!
+//! Input:  INT32[1,1,H,W/2]    (packed: pixel_even | (pixel_odd << 16))
+//! Output: FLOAT[1,4,H/2,W/2]  (4 Bayer channels: R, Gr, Gb, B)
+//!
+//! Fuses UnpackBlock + NormalizeBlock + CfaBlock (+ optionally BlcBlock)
+//! into a single ONNX graph / MNN session. Avoids full-resolution interleave.
+//!
+//! When use_blc=true: adds Sub(blc_vals) + Clip(0,1) after the CFA Conv.
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
@@ -19,8 +23,9 @@ pub struct UnpackCfaBlock {
     pub frame_tensor: String,
     pub input_source: String,
     pub concrete_h: Option<i64>,
-    pub concrete_w: Option<i64>,  // FULL width (original W), used for output dims
+    pub concrete_w: Option<i64>,  // FULL width (original W)
     pub sensor_max: f32,
+    pub use_blc: bool,            // fuse black level correction
 }
 
 impl Default for UnpackCfaBlock {
@@ -40,6 +45,7 @@ impl UnpackCfaBlock {
             concrete_h: None,
             concrete_w: None,
             sensor_max: 65535.0,
+            use_blc: false,
         }
     }
 
@@ -51,6 +57,17 @@ impl UnpackCfaBlock {
 
     pub fn with_sensor_max(mut self, sm: f32) -> Self {
         self.sensor_max = sm;
+        self
+    }
+
+    pub fn with_blc(mut self, enable: bool) -> Self {
+        self.use_blc = enable;
+        self
+    }
+
+    /// Set only the concrete width (height stays symbolic).
+    pub fn with_concrete_width(mut self, w: i64) -> Self {
+        self.concrete_w = Some(w);
         self
     }
 }
@@ -138,9 +155,14 @@ impl IspBlock for UnpackCfaBlock {
 
             // 9: Conv stride=(2,1) kernel=(2,1) → [1,4,H/2,W/2]
             { // separate filters for RGGB pattern
+                let cfa_out = if self.use_blc {
+                    format!("{}/cfa_out", ns)
+                } else {
+                    self.frame_tensor.clone()
+                };
                 Proto::node("Conv",
                     &[&format!("{}/stacked", ns), &format!("{}/cfa_w", ns), &format!("{}/cfa_b", ns)],
-                    &[&self.frame_tensor],
+                    &[&cfa_out],
                     &[
                         Proto::attribute_ints("kernel_shape", &[2, 1]),
                         Proto::attribute_ints("strides", &[2, 1]),
@@ -148,7 +170,23 @@ impl IspBlock for UnpackCfaBlock {
                         Proto::attribute_int("group", 1),
                     ])
             },
-        ]
+        ].into_iter().chain(
+            // Optional BLC: Sub(blc_vals) + Clip(0,1)
+            if self.use_blc {
+                vec![
+                    Proto::node("Sub",
+                        &[&format!("{}/cfa_out", ns), &format!("{}/blc_vals", ns)],
+                        &[&format!("{}/subbed", ns)],
+                        &[]),
+                    Proto::node("Clip",
+                        &[&format!("{}/subbed", ns), &format!("{}/zero", ns), &format!("{}/one", ns)],
+                        &[&self.frame_tensor],
+                        &[]),
+                ]
+            } else {
+                vec![]
+            }
+        ).collect()
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
@@ -175,19 +213,30 @@ impl IspBlock for UnpackCfaBlock {
             0f32, 1f32,  // in_ch=1 (odd):  picks bottom row
         ];
 
-        vec![
+        let mut inits = vec![
             Proto::tensor_proto_float_scalar(&format!("{}/max_val", ns), sm),
             Proto::tensor_proto_int32_scalar(&format!("{}/div_65536", ns), 65536),
             Proto::tensor_proto_float(&format!("{}/cfa_w", ns), &[4, 2, 2, 1], &w),
             Proto::tensor_proto_float(&format!("{}/cfa_b", ns), &[4], &[0f32; 4]),
-        ]
+        ];
+        if self.use_blc {
+            inits.push(Proto::tensor_proto_float(&format!("{}/blc_vals", ns), &[1, 4, 1, 1], &[0.0, 0.0, 0.0, 0.0]));
+            inits.push(Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0));
+            inits.push(Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0));
+        }
+        inits
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![
-            (format!("{}/max_val", self.tensor_ns()), 1, vec![]),
-            (format!("{}/div_65536", self.tensor_ns()), 6, vec![]),
-        ]
+        let ns = self.tensor_ns();
+        let mut extras = vec![
+            (format!("{}/max_val", ns), 1, vec![]),
+            (format!("{}/div_65536", ns), 6, vec![]),
+        ];
+        if self.use_blc {
+            extras.push((format!("{}/blc_vals", ns), 1, vec![1, 4, 1, 1]));
+        }
+        extras
     }
 }
 
@@ -200,10 +249,15 @@ mod tests {
     fn test_unpack_cfa_generates_nodes() {
         let block = UnpackCfaBlock::new().with_concrete_dims(48, 64);
         let nodes = block.nodes();
-        // 2 Cast + 1 Cast + 1 Div + 1 Div + 1 Cast + 1 Div + 1 Concat + 1 Conv = 9
-        assert_eq!(nodes.len(), 9, "UnpackCfaBlock should produce 9 nodes");
+        // 9 nodes without BLC, 11 nodes with BLC
+        assert_eq!(nodes.len(), 9, "UnpackCfaBlock (no BLC) should produce 9 nodes");
         let inits = block.initializers();
-        assert_eq!(inits.len(), 4, "UnpackCfaBlock should have 4 initializers");
+        assert_eq!(inits.len(), 4, "UnpackCfaBlock (no BLC) should have 4 initializers");
+
+        let block2 = UnpackCfaBlock::new().with_concrete_dims(48, 64).with_blc(true);
+        assert_eq!(block2.nodes().len(), 11, "UnpackCfaBlock + BLC should produce 11 nodes");
+        assert_eq!(block2.initializers().len(), 7, "UnpackCfaBlock + BLC should have 7 initializers");
+        assert_eq!(block2.extra_inputs().len(), 3, "UnpackCfaBlock + BLC should have 3 extra inputs");
     }
 
     #[test]
