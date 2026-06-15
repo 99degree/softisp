@@ -41,5 +41,10 @@ impl IspBlock for ToneBlock {
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+
+    /// Signals that ToneBlock can make use of FCS, LDCI, and EE aux blocks.
+    fn signals_aux(&self) -> Vec<String> {
+        vec!["fcs".into(), "ldci".into(), "ee".into()]
+    }
 }
 
