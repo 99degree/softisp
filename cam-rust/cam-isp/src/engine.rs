@@ -7,6 +7,7 @@ use log::info;
 use cam_types::ToneParams;
 
 use crate::pipeline::{IspBlock, IspFrame};
+use crate::controller::IspController;
 
 /// Default tone parameters for the ISP pipeline.
 pub fn default_tone_params() -> ToneParams {
@@ -50,6 +51,9 @@ pub trait IspEngine: Send + Sync {
         warp_block: Option<Box<dyn IspBlock>>,
         opset_version: i64,
     ) -> Result<(), String>;
+
+    /// Access the ISP controller for reading AWB/AE/tone state.
+    fn controller(&self) -> &Mutex<IspController>;
 
     /// Process a raw frame through the pipeline.
     #[allow(clippy::too_many_arguments)]
