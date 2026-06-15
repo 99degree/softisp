@@ -1,8 +1,9 @@
-//! Block-by-block performance profiler for ISP pipeline.
+//! Block-by-block performance profiler for the ISP pipeline.
 //!
 //! Builds the pipeline incrementally — one block at a time —
 //! and measures inference time for each configuration.
-//! The incremental cost reveals which blocks are computationally expensive.
+//! Uses the real packed INT32 pipeline (RawInput INT32 + UnpackBlock)
+//! matching `PipelineProfile::build_blocks()` — the default production path.
 //!
 //! Usage:
 //!   LD_LIBRARY_PATH=$PWD/lib/aarch64 \
@@ -14,56 +15,59 @@ use std::time::{Duration, Instant};
 use cam_isp::engine::IspEngine;
 use cam_isp::pipeline::IspBlock;
 
-/// Build prefix of standard (non-packed) pipeline blocks up to `count`.
-/// Uses standard UINT16→FLOAT pipeline (no packed INT32 zero-copy)
-/// so we can profile each block's computational cost reliably.
-/// Uses fully concrete dims (both H and W) to avoid symbolic dims that
-/// confuse MNN's resizeSession/copyFromHostTensor.
+/// Build prefix of the packed INT32 pipeline blocks up to `count`.
+/// Mirrors `PipelineProfile::build_blocks()` — the default production path.
+/// Blocks: RawInput(INT32,w/2) → Unpack → Normalize → Cfa → Blc →
+///         BayerWb → Demosaic → Ccm → Tone → Display
 fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize) -> Vec<Box<dyn IspBlock>> {
     let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
-    let w = target_width as i64;
+    let full_w = target_width as i64;
+    let packed_w = (target_width / 2) as i64;
     let h = target_height as i64;
 
-    // 0: RawInputBlock (FLOAT input — elem_type=1)
+    // 0: RawInputBlock — packed INT32 at half width (true zero-copy)
     blocks.push(Box::new(cam_isp::blocks::RawInputBlock::new()
-        .with_elem_type(1)  // FLOAT
-        .with_concrete_dims(h, w)));
+        .with_elem_type(6)  // INT32
+        .with_concrete_dims(h, packed_w)));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 1: NormalizeBlock — cast UINT16→FLOAT, divide by sensor_max
+    // 1: UnpackBlock — packed INT32 → interleaved INT32 at full width
+    blocks.push(Box::new(cam_isp::blocks::UnpackBlock::new()
+        .with_concrete_dims(h, full_w)));
+    if blocks.len() >= count { return wire(blocks); }
+
+    // 2: NormalizeBlock — Cast INT32→FLOAT, Div by sensor_max
     blocks.push(Box::new(cam_isp::blocks::NormalizeBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 2: CfaBlock — unpack Bayer CFA
-    blocks.push(Box::new(cam_isp::blocks::CfaBlock::new()));
+    // 3: CfaBlock — unpack Bayer CFA
+    blocks.push(Box::new(cam_isp::blocks::CfaBlock::new()
+        .with_concrete_dims(h, full_w)));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 3: BlcBlock (black level correction)
+    // 4: BlcBlock (black level correction)
     blocks.push(Box::new(cam_isp::blocks::BlcBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 4: BayerWbBlock (white balance)
+    // 5: BayerWbBlock (white balance)
     blocks.push(Box::new(cam_isp::blocks::BayerWbBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 5: DemosaicBlock
-    blocks.push(Box::new(cam_isp::blocks::DemosaicBlock::new(0)));
+    // 6: DemosaicBlock
+    blocks.push(Box::new(cam_isp::blocks::DemosaicBlock::new(0)
+        .with_concrete_dims(h / 2, full_w / 2)));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 6: CcmBlock (color correction matrix)
+    // 7: CcmBlock (color correction matrix)
     blocks.push(Box::new(cam_isp::blocks::CcmBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 7: ToneBlock (gamma / contrast / saturation)
+    // 8: ToneBlock (gamma / contrast / saturation / FCS / LDCI / EE)
     blocks.push(Box::new(cam_isp::blocks::ToneBlock::new()));
     if blocks.len() >= count { return wire(blocks); }
 
-    // 8: DisplayBlock (float → BGRA U8)
+    // 9: DisplayBlock (float → BGRA U8)
     blocks.push(Box::new(cam_isp::blocks::DisplayBlock::new(target_width)));
-    if blocks.len() >= count { return wire(blocks); }
-
-    // 9: FcsBlock (false color suppression) — after Tone, before Display
-    blocks.push(Box::new(cam_isp::blocks::FcsBlock::new()));
 
     wire(blocks)
 }
@@ -161,16 +165,18 @@ fn main() {
     };
 
     let (w, h) = (640u32, 480u32);
-    let max_blocks = 10; // raw → norm → cfa → blc → wb → demo → ccm → tone → display → fcs
+    // Full LITE pipeline: raw → unpack → norm → cfa → blc → wb → demo → ccm → tone → display
+    let max_blocks = 10;
 
     eprintln!("=== Block-by-block pipeline profiling ===");
     eprintln!("Backend: {}", backend_name);
     eprintln!("Resolution: {}x{}", w, h);
-    eprintln!("Blocks available: {}", max_blocks);
+    eprintln!("Pipeline: packed INT32 → Unpack → blocks ({} total)", max_blocks);
     eprintln!();
 
     let block_names = [
-        "RawInput",
+        "RawInput (INT32 packed)",
+        "Unpack",
         "Normalize",
         "Cfa (CFA unpack)",
         "Blc (black level)",
@@ -179,7 +185,6 @@ fn main() {
         "Ccm (color matrix)",
         "Tone (gamma/contrast)",
         "Display",
-        "Fcs (false color)",
     ];
 
     let mut prev_total_ms = 0.0;
@@ -190,25 +195,25 @@ fn main() {
         assert_eq!(blocks.len(), n, "build_blocks_up_to({}) returned {} blocks", n, blocks.len());
 
         let label = block_names[n - 1];
-        eprint!("  [{:2}/{}] {:25} ", n, max_blocks, label);
+        eprint!("  [{:2}/{}] {:26} ", n, max_blocks, label);
 
         let result = build_and_bench(blocks, backend, w, h, Duration::from_millis(2000));
 
         match result {
             Some((count, total_prep_ns, total_infer_ns, total_total_ns)) => {
-                let _avg_prep_ms = if count > 0 { total_prep_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
-                let avg_infer_ms = if count > 0 { total_infer_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
+                let avg_prep_ms = if count > 0 { total_prep_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
+                let _avg_infer_ms = if count > 0 { total_infer_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
                 let avg_total_ms = if count > 0 { total_total_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
                 let fps = if avg_total_ms > 0.0 { 1000.0 / avg_total_ms } else { 0.0 };
 
                 let inc_cost = if n > 1 { avg_total_ms - prev_total_ms } else { avg_total_ms };
 
                 eprintln!(
-                    "{:>5.1} fps | {:>5.1}ms total | +{:>5.1}ms",
-                    fps, avg_total_ms, inc_cost
+                    "{:>5.1} fps | {:>5.1}ms total | {:>+5.1}ms | prep={:.1}ms",
+                    fps, avg_total_ms, inc_cost, avg_prep_ms
                 );
 
-                results.push((n, label.to_string(), avg_total_ms, inc_cost, avg_infer_ms, fps));
+                results.push((n, label.to_string(), avg_total_ms, inc_cost, _avg_infer_ms, fps));
                 prev_total_ms = avg_total_ms;
             }
             None => {
@@ -239,9 +244,13 @@ fn main() {
         .filter(|(_, _, total, inc, _, _)| *inc >= 0.0 && *total >= 0.0)
         .collect();
     sorted.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+    let final_total = results.last()
+        .filter(|(_, _, t, _, _, _)| *t > 0.0)
+        .map(|(_, _, t, _, _, _)| *t)
+        .unwrap_or(1.0);
     for (i, (_, name, _, inc, _, _)) in sorted.iter().enumerate().take(5) {
         let bar = "#".repeat((*inc as usize).max(1).min(40));
-        let pct = if prev_total_ms > 0.0 { (*inc / prev_total_ms) * 100.0 } else { 0.0 };
+        let pct = (*inc / final_total) * 100.0;
         eprintln!("  #{:2}  +{:>6.2}ms ({:>4.1}%)  {}  {}", i + 1, inc, pct, bar, name);
     }
 }
