@@ -452,6 +452,89 @@ impl MnnEngine {
         out
     }
     fn c(v: f32) -> u8 { (v * 255.0).round().clamp(0.0, 255.0) as u8 }
+
+    /// Write extra input tensors (CCM, tone, gains) into the MNN session
+    /// BEFORE inference.  Must be called AFTER resizeSession so tensor
+    /// host buffers are valid for writing.
+    #[cfg(feature = "mnn")]
+    fn set_extra_inputs(
+        interp: &crate::mnn_sys::MnnInterpreterSafe,
+        sess: &crate::mnn_sys::MnnSessionSafe,
+        ccm: Option<&[f32; 9]>,
+        tone: &ToneParams,
+        bayer: Option<&[f32; 4]>,
+        _awb: Option<&[f32; 3]>,
+    ) {
+        use crate::mnn_sys::MnnInterpreterSafe as MI;
+
+        // DemosaicCcmBlock/w [3,4,1,1] — fused CCM × demosaic weights
+        // demosaic weights for RGGB (bayer_pattern=0):
+        //   R: [1,0,0,0], G: [0,0.5,0.5,0], B: [0,0,0,1]
+        // fused[i,j] = Σₖ ccm[i,k] * demo[k,j]
+        if let Some(ccm) = ccm {
+            const DEMO_RGGB: [f32; 12] = [
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 0.5, 0.5, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ];
+            let mut fused = [0.0f32; 12];
+            for i in 0..3 {
+                for j in 0..4 {
+                    let mut s = 0.0;
+                    for k in 0..3 {
+                        s += ccm[i * 3 + k] * DEMO_RGGB[k * 4 + j];
+                    }
+                    fused[i * 4 + j] = s;
+                }
+            }
+            if let Some(t) = interp.get_input(sess, "DemosaicCcmBlock/w") {
+                if let Some(mut bytes) = t.as_bytes_mut() {
+                    let src = unsafe {
+                        std::slice::from_raw_parts(fused.as_ptr() as *const u8, 48)
+                    };
+                    if bytes.len() >= 48 { bytes[..48].copy_from_slice(src); }
+                }
+            }
+        }
+        // DemosaicCcmBlock/b [3] — CCM bias (zero)
+        if let Some(t) = interp.get_input(sess, "DemosaicCcmBlock/b") {
+            if let Some(mut bytes) = t.as_bytes_mut() {
+                let bias = [0.0f32; 3];
+                let src = unsafe { std::slice::from_raw_parts(bias.as_ptr() as *const u8, 12) };
+                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+            }
+        }
+        // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains
+        if let Some(gains) = bayer {
+            if let Some(t) = interp.get_input(sess, "BayerWbBlock/gains") {
+                if let Some(mut bytes) = t.as_bytes_mut() {
+                    let src = unsafe { std::slice::from_raw_parts(gains.as_ptr() as *const u8, 16) };
+                    if bytes.len() >= 16 { bytes[..16].copy_from_slice(src); }
+                }
+            }
+        }
+        // ToneBlock/contrast [1]
+        if let Some(t) = interp.get_input(sess, "ToneBlock/contrast") {
+            if let Some(mut bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&tone.contrast as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+        // ToneBlock/brightness [1]
+        if let Some(t) = interp.get_input(sess, "ToneBlock/brightness") {
+            if let Some(mut bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&tone.brightness as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+        // ToneBlock/gamma_recip [1]
+        if let Some(t) = interp.get_input(sess, "ToneBlock/gamma_recip") {
+            if let Some(mut bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&tone.gamma_recip as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+    }
 }
 
 impl IspEngine for MnnEngine {
@@ -545,8 +628,8 @@ impl IspEngine for MnnEngine {
     }
 
     fn process(&self, w: u32, h: u32, _sw: u32, buf: &[u8], smax: f32, tw: u32,
-               _ccm: Option<&[f32; 9]>, _tone: &ToneParams,
-               _bayer: Option<&[f32; 4]>, _awb: Option<&[f32; 3]>,
+               ccm: Option<&[f32; 9]>, tone: &ToneParams,
+               bayer: Option<&[f32; 4]>, awb: Option<&[f32; 3]>,
                _ag: f32, _sc: f32, _lsc: Option<&[f32]>, _blc: Option<&[f32; 4]>, _wg: Option<&[f32]>) -> Result<IspFrame, String> {
         if !self.initialized { return Err("not init".into()); }
 
@@ -575,6 +658,25 @@ impl IspEngine for MnnEngine {
             // Determine if packed: model expects INT32 with h*w/2 elements
             let is_packed = self.packed_input && self.expected_input_elements
                 .map_or(false, |expected| expected == h * w / 2);
+
+            // ── Pre-inference: resize session and set extra inputs ──
+            // Resize BEFORE the convenience wrappers so that:
+            //   1. resizeSession allocates all internal buffers
+            //   2. Extra inputs (CCM, tone, gains) are written to valid host buffers
+            //   3. Convenience wrapper won't resize again (shapes already match)
+            {
+                let shape = if is_packed {
+                    vec![1, 1, h as i32, (w / 2).max(1) as i32]
+                } else {
+                    vec![1, 1, h as i32, w as i32]
+                };
+                if let Some(t) = interp.get_first_input(&sess) {
+                    let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
+                }
+                let _ = sess.resize();
+                // Extra inputs: write AFTER resize so host buffers are valid
+                Self::set_extra_inputs(&interp, &sess, ccm, tone, bayer, awb);
+            }
 
             if is_packed {
                 // ── PACKED ZERO-COPY (TRUE ZERO-COPY) ──

@@ -40,7 +40,14 @@ impl IspBlock for ToneBlock {
             Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
         ]
     }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/contrast", ns), 1, vec![1]),
+            (format!("{}/brightness", ns), 1, vec![1]),
+            (format!("{}/gamma_recip", ns), 1, vec![1]),
+        ]
+    }
 
     /// Signals that ToneBlock can make use of FCS, LDCI, and EE aux blocks.
     fn signals_aux(&self) -> Vec<String> {
