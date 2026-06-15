@@ -336,10 +336,12 @@ impl GraphComposer {
                 }
             }
 
-            // Extra runtime inputs — skip if already produced
+            // Extra runtime inputs — add to graph inputs even if also an initializer
+            // (ONNX allows a tensor in both field 5 initializers and field 11 inputs;
+            // the input value overrides the initializer at runtime.)
             for (name, elem_type, dims) in blk.extra_inputs() {
-                if extra_input_names.contains(&name) || produced_by.contains_key(&name) {
-                    continue;
+                if extra_input_names.contains(&name) {
+                    continue;  // Already registered (dedup across blocks)
                 }
                 extra_input_names.insert(name.clone());
                 let shape_dims: Vec<Vec<u8>> = dims.iter()
