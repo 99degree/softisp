@@ -3,7 +3,7 @@
 ## Status: ✅ ALL JAVA CODE PORTED — +SIMD Backend System
 
 All Java/Kotlin code ported with enhancements. New **SIMD backend system** auto-selects NEON, FP16, DOTPROD, or scalar at runtime.
-Workspace compiles with **0 warnings** and **140 unit tests pass** (2 extended tests ignored).
+Workspace compiles with **0 warnings** and **185 unit tests pass**.
 
 ## SIMD Backend Architecture (new)
 
@@ -68,6 +68,8 @@ RawInput(INT16) → Normalize(FLOAT) → DPC(median) → Gaussian Denoise
 | `UnsharpBlock.kt` / `EeBlock.kt` | `cpu.rs` (apply_unsharp) | — | ✅ Full |
 | `HistogramBlock.kt` | `controller.rs` | — | ✅ Full |
 | `ZoneStatsBlock.kt` | `controller.rs` | 3 | ✅ Full |
+| — **PipelineManager engine select** | `manager.rs` | — | ✅ MNN→CPU fallback |
+| — **Triple-buffered rolling stats** | `controller.rs` | — | ✅ 3-slot rotate |
 | — **SIMD backend system** | `simd/` (4 backends) | 7 | ✅ New |
 | — **Android logcat** | `cam-core/logger.rs` | — | ✅ New |
 
@@ -86,9 +88,8 @@ RawInput(INT16) → Normalize(FLOAT) → DPC(median) → Gaussian Denoise
 
 ```bash
 cd cam-rust
-cargo test --lib -p cam-isp          # 140 unit tests, <0.2s
-cargo test -- --include-ignored      # + 2 extended pipeline tests
-cargo build --workspace              # 0 warnings
+cargo test --lib -p cam-isp          # 185 unit tests, <0.08s
+cargo check --workspace              # 0 warnings
 RUST_LOG=info cargo run --example pipeline -p cam-isp   # Single frame PNG
 bash bench-tests.sh bench 50 64 48   # Performance benchmark
 ```
@@ -127,6 +128,29 @@ cam-rust/
 ├── cam-binder/     # Android AIDL-style binder HAL
 └── cam-app/        # ONNX model generator binary
 ```
+
+## Stats Integration — End-to-End Feedback Loop
+
+```
+PipelineManager::process_frame()
+  │ controller.get_ccm()/get_tone_params()/get_awb_gains()
+  │ engine.process(frame, ccm, tone, bayer, awb)
+  │   ├─ set_extra_inputs()     ← writes controller params to MNN tensors
+  │   ├─ inference              ← ONNX graph (display + stats outputs)
+  │   ├─ read stats tensors     ← channel means, tone, hist, zones
+  │   └─ write_stats()          ← writes to RollingStats write-slot
+  │ controller.rotate_stats()   ← write→process→ready rotate
+  │ controller.process_stats()  ← AWB, AE, tone updates from prev frame
+  └──────────────────────────────────────────→ ready for next frame
+```
+
+- **Triple-buffered RollingStats**: 3 slots (`write_idx`, `process_idx`, `ready_idx`)
+  - Engine writes frame N stats to `write_idx`
+  - Controller processes frame N-1 stats at `process_idx`
+  - Next frame reads params from `ready_idx`
+- **No lock contention**: Engine writes stats while controller processes previous
+- **Stats are ONNX blocks** (ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock) — outputs survive DCE via `graph_output_name()`
+- **Extra inputs are ONNX initializers**: CCM weights, tone params, WB gains — registered as graph inputs for runtime override (ONNX dual-registration)
 
 ## Key Design Decisions
 

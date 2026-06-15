@@ -541,6 +541,7 @@ impl IspEngine for MnnEngine {
     fn backend_name(&self) -> &'static str { self.backend.id() }
     fn priority(&self) -> i32 { self.backend.priority() }
     fn is_loaded(&self) -> bool { self.initialized }
+    fn controller(&self) -> &Mutex<IspController> { &self.controller }
 
     fn build(&mut self, head: Box<dyn IspBlock>, aux: Vec<Box<dyn IspBlock>>, _warp: Option<Box<dyn IspBlock>>, opset: i64) -> Result<(), String> {
         info!("MNN build backend={}", self.backend.id());
@@ -798,6 +799,9 @@ impl IspEngine for MnnEngine {
             {
                 use crate::mnn_sys::MnnInterpreterSafe;
                 if let Ok(mut ctrl) = self.controller.lock() {
+                    // Store stats in the write slot (triple-buffer)
+                    let stats = ctrl.write_stats();
+
                     // Try reading ChannelMeansBlock/frame → [1, 3] or [3]
                     if let Some(t) = interp.get_output(&sess, "ChannelMeansBlock/frame") {
                         if let Some(bytes) = t.as_bytes() {
@@ -805,20 +809,19 @@ impl IspEngine for MnnEngine {
                                 std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
                             };
                             if floats.len() >= 3 {
-                                ctrl.update_channel_stats(&[floats[0], floats[1], floats[2]]);
+                                stats.channel_means = [floats[0], floats[1], floats[2]];
                             }
                         }
                     }
-                    // Try reading ToneStatsBlock/frame → [6] (mean, min, max, clip, shadow, count)
+                    // Try reading ToneStatsBlock/frame → [6]
                     if let Some(t) = interp.get_output(&sess, "ToneStatsBlock/frame") {
                         if let Some(bytes) = t.as_bytes() {
                             let floats: &[f32] = unsafe {
                                 std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
                             };
-                            if floats.len() >= 3 {
-                                ctrl.update_tone_stats(&[floats[0], floats[1], floats[2]]);
-                            }
-                            if floats.len() >= 6 {
+                            let n = floats.len().min(6);
+                            stats.tone_stats[..n].copy_from_slice(&floats[..n]);
+                            if n >= 6 {
                                 ctrl.hist_constrained_gain = 1.0 - (floats[3] / floats[5].max(1.0));
                             }
                         }
@@ -829,9 +832,9 @@ impl IspEngine for MnnEngine {
                             let floats: &[f32] = unsafe {
                                 std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
                             };
-                            if !floats.is_empty() {
-                                ctrl.update_histogram(floats);
-                            }
+                            let n = floats.len().min(16);
+                            stats.histogram[..n].copy_from_slice(&floats[..n]);
+                            stats.histogram_valid = true;
                         }
                     }
                     // Try reading ZoneStatsBlock/frame → [1, 3, rows, cols]
@@ -842,10 +845,8 @@ impl IspEngine for MnnEngine {
                             };
                             let shape = t.shape();
                             if shape.len() >= 4 {
-                                let c = shape[1] as usize;  // 3
                                 let rows = shape[2] as usize;
                                 let cols = shape[3] as usize;
-                                // Reshape flat float array into zone_rgb Vec<Vec<[f32;3]>>
                                 let mut zone_rgb = vec![vec![[0.0f32; 3]; cols]; rows];
                                 for r in 0..rows {
                                     for c in 0..cols {
@@ -857,12 +858,28 @@ impl IspEngine for MnnEngine {
                                         }
                                     }
                                 }
-                                if !ctrl.zone_stats_enabled {
+                                if !ctrl.zone_stats_enabled && rows > 0 && cols > 0 {
                                     ctrl.init_zone_stats(rows as i32, cols as i32);
                                 }
-                                ctrl.update_zone_stats(&zone_rgb);
+                                stats.zone_stats = zone_rgb;
+                                stats.zone_stats_valid = true;
                             }
                         }
+                    }
+
+                    // Rotate triple-buffer: write → process → ready
+                    ctrl.rotate_stats();
+
+                    // Process the newly-rotated process slot
+                    let ps = ctrl.process_stats();
+                    if ps.channel_means[0] > 0.0 || ps.channel_means[1] > 0.0 || ps.channel_means[2] > 0.0 {
+                        ctrl.update_channel_stats(&ps.channel_means);
+                    }
+                    if ps.tone_stats[0] > 0.0 {
+                        ctrl.update_tone_stats(&[ps.tone_stats[0], ps.tone_stats[1], ps.tone_stats[2]]);
+                    }
+                    if ps.histogram_valid {
+                        ctrl.update_histogram(&ps.histogram[..ps.histogram.len().min(16)]);
                     }
                 }
             }

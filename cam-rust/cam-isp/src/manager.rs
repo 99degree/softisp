@@ -9,11 +9,10 @@ use std::time::Instant;
 use log::info;
 
 use crate::controller::IspController;
-use crate::cpu::CpuEngine;
 use crate::engine::IspEngine;
+use crate::cpu::CpuEngine;
 use crate::profile::PipelineProfile;
-use crate::pipeline::{IspBlock, GraphComposer};
-use crate::blocks;
+use crate::pipeline::IspBlock;
 
 /// Result of a single frame pipeline process.
 #[derive(Debug, Clone)]
@@ -70,7 +69,7 @@ pub struct PipelineManager {
     status: PipelineStatus,
 
     // Internal engine
-    engine: Mutex<Option<CpuEngine>>,
+    engine: Mutex<Option<Box<dyn IspEngine>>>,
     /// Last build timestamp.
     last_build: Option<Instant>,
 }
@@ -115,30 +114,48 @@ impl PipelineManager {
 
     /// Build or rebuild the pipeline.
     pub fn build(&mut self) -> Result<(), String> {
+        let profile = self.profile;
+        let target_w = self.target_width;
+        let h = target_w as i64 * 9 / 16;
+        let w = target_w as i64;
+
         info!("PipelineManager: building profile {} ({} blocks)",
-            self.profile.label, self.profile.block_count());
+            profile.label, profile.block_count());
 
-        // Create blocks from profile
-        let blocks = self.profile.build_blocks(self.target_width, self.bayer_pattern);
+        // 1. Build main chain blocks
+        let blocks = profile.build_blocks(target_w, self.bayer_pattern);
 
-        // Build the ONNX model via GraphComposer
-        let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-        let _model_bytes = GraphComposer::compose_from_vec(&block_refs, &[], 21)?;
+        // 2. Build aux blocks (stats — branched off from main pipeline)
+        let aux_blocks = profile.build_aux_blocks(h, w);
 
-        // Create CPU engine
-        let mut engine = CpuEngine::new();
-        let head = blocks::RawInputBlock::new();
-        engine.build(Box::new(head), vec![], None, 21)?;
+        // 3. Try best available engine (MNN → CPU)
+        #[allow(unused_mut)]
+        let mut engine: Box<dyn IspEngine> = match crate::engine::select_engine() {
+            Some(e) => {
+                info!("PipelineManager: selected engine: {}", e.backend_name());
+                e
+            }
+            None => {
+                info!("PipelineManager: no engine available, using CPU");
+                Box::new(CpuEngine::new())
+            }
+        };
 
-        // Copy controller into engine
-        *engine.controller.lock().unwrap() = self.controller.clone();
+        // 4. Build engine with blocks
+        let mut all_blocks: Vec<Box<dyn IspBlock>> = blocks;
+        if all_blocks.is_empty() {
+            return Err("No blocks built from profile".to_string());
+        }
+        let head = all_blocks.remove(0);
+        let mut combined: Vec<Box<dyn IspBlock>> = all_blocks;
+        combined.extend(aux_blocks);
+        engine.build(head, combined, None, 21)?;
 
         *self.engine.lock().unwrap() = Some(engine);
         self.status = PipelineStatus::Active;
         self.last_build = Some(Instant::now());
 
-        info!("PipelineManager: build complete ({} blocks, profile={})",
-            blocks.len(), self.profile.label);
+        info!("PipelineManager: build complete (profile={})", profile.label);
         Ok(())
     }
 
@@ -159,17 +176,23 @@ impl PipelineManager {
         let engine_guard = self.engine.lock().map_err(|e| format!("Engine lock: {}", e))?;
         let engine = engine_guard.as_ref().ok_or("Pipeline not built")?;
 
-        // Default tone params
-        let tone_params = crate::engine::default_tone_params();
+        // Read controller params for this frame's inference
+        // (Controller state comes from previous frame's stats feedback)
+        let ctrl = engine.controller().lock().map_err(|e| format!("Ctrl lock: {}", e))?;
+        let ccm: [f32; 9] = ctrl.get_ccm();
+        let tone = ctrl.get_tone_params();
+        let bayer_gains = [1.0f32; 4];  // TODO: read from controller
+        let awb_gains = ctrl.get_awb_gains();
+        drop(ctrl);  // Release lock before inference
 
         // Process
         let frame = engine.process(
             width, height, width, raw_data,
             sensor_max, self.target_width,
-            None,  // CCM — use controller
-            &tone_params,
-            None,  // bayer gains — use controller
-            None,  // awb gains — use controller
+            Some(&ccm),
+            &tone,
+            Some(&bayer_gains),
+            Some(&awb_gains),
             1.0,   // analog gain
             0.0,   // scene change
             None,  // lsc gains
@@ -179,8 +202,8 @@ impl PipelineManager {
 
         let latency = t0.elapsed();
 
-        // Read controller state
-        let ctrl = engine.controller.lock().map_err(|e| format!("Ctrl lock: {}", e))?;
+        // Read controller state (updated by engine during process() via stats feedback)
+        let ctrl = engine.controller().lock().map_err(|e| format!("Ctrl lock: {}", e))?;
         let awb_gains = ctrl.get_awb_gains();
         let estimated_cct = ctrl.estimated_cct;
         let exposure_gain = ctrl.get_effective_exposure_gain();
@@ -209,7 +232,7 @@ impl PipelineManager {
     }
 
     /// Get the underlying engine (for direct access).
-    pub fn engine(&self) -> &Mutex<Option<CpuEngine>> {
+    pub fn engine(&self) -> &Mutex<Option<Box<dyn IspEngine>>> {
         &self.engine
     }
 
