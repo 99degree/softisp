@@ -34,7 +34,7 @@ fn test_lite_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::LITE);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "LITE profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 10, "LITE (fused) should have 10 blocks");
+    assert_eq!(blocks.len(), 8, "LITE (fused+demosaic_ccm) should have 8 blocks");
     assert!(model.len() > 2000, "LITE model should be substantial");
 }
 
@@ -43,7 +43,7 @@ fn test_med_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::MED);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "MED profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 11, "MED (fused, +ee) should have 11 blocks");
+    assert_eq!(blocks.len(), 9, "MED (fused+demosaic_ccm, +ee) should have 9 blocks");
     assert!(model.len() > 2000, "MED model should be substantial");
 }
 
@@ -52,7 +52,7 @@ fn test_heavy_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::HEAVY);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "HEAVY profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 14, "HEAVY (fused, +fcs+ldci+ee+lsc) should have 14 blocks");
+    assert_eq!(blocks.len(), 12, "HEAVY (fused+demosaic_ccm, +fcs+ldci+ee+lsc) should have 12 blocks");
     assert!(model.len() > 3000, "HEAVY model should be substantial");
 }
 
@@ -61,7 +61,7 @@ fn test_pro_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::PRO);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "PRO profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 15, "PRO (fused, +fcs+ldci+ee+lsc+warp) should have 15 blocks");
+    assert_eq!(blocks.len(), 13, "PRO (fused+demosaic_ccm, +fcs+ldci+ee+lsc+warp) should have 13 blocks");
     assert!(model.len() > 3000, "PRO model should be substantial");
 }
 
@@ -71,41 +71,37 @@ fn test_pro_profile_onnx() {
 fn test_lite_pipeline_has_correct_block_order() {
     let blocks = PipelineProfile::LITE.build_blocks(8, 2);
     let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
+    // Fused: raw → unpack_cfa → hook_src → bayer_wb → demosaic_ccm → tone → hook_out → display
     assert_eq!(names[0], "raw_input");
-    // Fused: unpack_cfa replaces unpack + normalize + cfa
-    // Hook moved after BlcBlock for cleaner reference data
     assert_eq!(names[1], "unpack_cfa");
-    assert_eq!(names[2], "blc_id");  // identity (BLC fused into unpack_cfa)
-    assert_eq!(names[3], "aux_hook_src");
-    assert_eq!(names[4], "bayer_wb");
-    assert_eq!(names[5], "demosaic");
-    assert_eq!(names[6], "ccm");
-    assert_eq!(names[7], "tone");
-    assert_eq!(names[8], "aux_hook_out");
-    assert_eq!(names[9], "display");
-    assert_eq!(names.len(), 10, "LITE (fused) should have 10 blocks");
+    assert_eq!(names[2], "aux_hook_src");
+    assert_eq!(names[3], "bayer_wb");
+    assert_eq!(names[4], "demosaic_ccm");
+    assert_eq!(names[5], "tone");
+    assert_eq!(names[6], "aux_hook_out");
+    assert_eq!(names[7], "display");
+    assert_eq!(names.len(), 8, "LITE (fused+demosaic_ccm) should have 8 blocks");
 }
 
 #[test]
 fn test_heavy_pipeline_block_order() {
     let blocks = PipelineProfile::HEAVY.build_blocks(8, 2);
     let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
-    // HEAVY (fused): raw, unpack_cfa, blc_id, aux_hook_src, ccm(lsc), wb, demo, ccm, tone, aux_hook_out, fcs, ldci, ee, display
-    assert_eq!(names.len(), 14);
+    // HEAVY (fused+demosaic_ccm): raw, unpack_cfa, hook_src, ccm(lsc),
+    //   bayer_wb, demosaic_ccm, tone, hook_out, fcs, ldci, ee, display
+    assert_eq!(names.len(), 12);
     assert_eq!(names[0], "raw_input");
     assert_eq!(names[1], "unpack_cfa");
-    assert_eq!(names[2], "blc_id");     // identity (BLC fused into unpack_cfa)
-    assert_eq!(names[3], "aux_hook_src");
-    assert_eq!(names[4], "ccm");  // LSC uses CCM block
-    assert_eq!(names[5], "bayer_wb");
-    assert_eq!(names[6], "demosaic");
-    assert_eq!(names[7], "ccm");
-    assert_eq!(names[8], "tone");
-    assert_eq!(names[9], "aux_hook_out");
-    assert_eq!(names[10], "fcs");
-    assert_eq!(names[11], "ldci");
-    assert_eq!(names[12], "ee");
-    assert_eq!(names[13], "display");
+    assert_eq!(names[2], "aux_hook_src");
+    assert_eq!(names[3], "ccm");   // LSC
+    assert_eq!(names[4], "bayer_wb");
+    assert_eq!(names[5], "demosaic_ccm");
+    assert_eq!(names[6], "tone");
+    assert_eq!(names[7], "aux_hook_out");
+    assert_eq!(names[8], "fcs");
+    assert_eq!(names[9], "ldci");
+    assert_eq!(names[10], "ee");
+    assert_eq!(names[11], "display");
 }
 
 // ── Build blocks now internally wires ───────────────────────────
