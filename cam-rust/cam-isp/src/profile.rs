@@ -69,6 +69,9 @@ pub struct PipelineProfile {
     pub use_fused_unpack: bool,
     /// Fuse demosaic+CCM into a single block (saves 1 session).
     pub use_demosaic_ccm: bool,
+    /// Run aux blocks (FCS, LDCI, EE) at half resolution.
+    /// Inserts ResizeBlock down/up around the aux chain, 4× fewer pixels.
+    pub use_aux_half_res: bool,
 }
 
 impl PipelineProfile {
@@ -89,6 +92,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_aux_half_res: false,
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -108,6 +112,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_aux_half_res: false,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -127,6 +132,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_aux_half_res: false,
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -146,6 +152,7 @@ impl PipelineProfile {
         use_hdr: true,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_aux_half_res: false,
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -166,6 +173,7 @@ impl PipelineProfile {
         use_unsharp: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_aux_half_res: false,
     };
 
     /// All built-in profiles.
@@ -188,6 +196,7 @@ impl PipelineProfile {
         use_hdr: bool,
         use_fused_unpack: bool,
         use_demosaic_ccm: bool,
+        use_aux_half_res: bool,
     ) -> Self {
         Self {
             label,
@@ -205,6 +214,7 @@ impl PipelineProfile {
             use_hdr,
             use_fused_unpack,
             use_demosaic_ccm,
+            use_aux_half_res,
         }
     }
 
@@ -288,7 +298,13 @@ impl PipelineProfile {
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_out")));
 
         // ── Auxiliary blocks (atomic, individually controlled by profile) ──
-        // Each aux block is independently gated by its profile flag, no signaling required.
+        // Each aux block is independently gated by its profile flag.
+        // When use_aux_half_res is set, wrap the aux chain with Resize down/up
+        // to run FCS, LDCI, EE at 4× fewer pixels.
+        let any_aux = self.use_fcs || self.use_ldci || self.use_ee;
+        if any_aux && self.use_aux_half_res {
+            blocks.push(Box::new(crate::blocks::ResizeBlock::new(0.5)));
+        }
         if self.use_fcs {
             blocks.push(Box::new(FcsBlock::new()));
         }
@@ -297,6 +313,9 @@ impl PipelineProfile {
         }
         if self.use_ee {
             blocks.push(Box::new(EeBlock::new()));
+        }
+        if any_aux && self.use_aux_half_res {
+            blocks.push(Box::new(crate::blocks::ResizeBlock::new(2.0)));
         }
 
         // ── Display output ──
@@ -324,9 +343,12 @@ impl PipelineProfile {
         } else {
             11  // legacy: raw + norm + cfa + hooks + main + display
         };
+        let any_aux = self.use_fcs || self.use_ldci || self.use_ee;
         if self.use_fcs { count += 1; }
         if self.use_ldci { count += 1; }
         if self.use_ee { count += 1; }
+        // Half-res aux wraps in resize_down + resize_up (2 extra blocks)
+        if any_aux && self.use_aux_half_res { count += 2; }
         // bad_pixel (DPC) is handled by a separate BLC only in non-fused path
         if self.use_bad_pixel && !(self.use_fused_unpack && self.use_unpack) { count += 1; }
         if self.use_lsc { count += 1; }
@@ -393,6 +415,7 @@ mod tests {
             "CUSTOM", PipelineLevel::Pro, true, true, true, true, true,
             DemosaicQuality::Edge, true, true, true, true, false, false,
             true,  // use_demosaic_ccm
+            false, // use_aux_half_res
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -406,6 +429,7 @@ mod tests {
             "LEGACY", PipelineLevel::Lite, false, false, false, false, false,
             DemosaicQuality::Standard, false, false, false, false, false, false,
             false, // use_demosaic_ccm
+            false, // use_aux_half_res
         );
         let blocks = p.build_blocks(128, 0);
         assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks, got {}", blocks.len());

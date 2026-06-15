@@ -93,6 +93,21 @@ RUST_LOG=info cargo run --example pipeline -p cam-isp   # Single frame PNG
 bash bench-tests.sh bench 50 64 48   # Performance benchmark
 ```
 
+## FHD Benchmark (1920×1080) — Block-by-Block Incremental Cost
+
+```
+Block            CPU 9.0fps      Vulkan 12.3fps     Δ
+──────────────────────────────────────────────────────────
+unpack_cfa       37.7ms          42.4ms          +4.7ms
+demosaic_ccm     19.2ms (2Conv)  ~0ms (1Conv)    🏆 fused
+ldci             28.8ms           2.3ms           -26.5ms  ← Conv-heavy
+  ee             12.0ms           4.0ms           -8.0ms
+display          17.4ms          23.4ms           +6.0ms  ← mem xfer
+Total:~111ms                    Total:~81ms       -27%
+```
+
+Vulkan wins big on Conv-heavy blocks (ldci -92%, ee -67%) but adds overhead for small/elementwise ops (kernel launch latency) and display memory transfer.
+
 ## Architecture (10 crates, 25+ modules)
 
 ```

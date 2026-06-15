@@ -17,6 +17,8 @@ mod identity;
 mod unpack;
 mod demosaic_ccm;
 mod unpack_cfa;
+mod resize;
+mod stats;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -35,6 +37,8 @@ pub use identity::{IdentityBlock, FastDemosaicBlock};
 pub use unpack_cfa::UnpackCfaBlock;
 pub use unpack::UnpackBlock;
 pub use demosaic_ccm::DemosaicCcmBlock;
+pub use resize::ResizeBlock;
+pub use stats::{ZoneStatsBlock, ChannelMeansBlock};
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
