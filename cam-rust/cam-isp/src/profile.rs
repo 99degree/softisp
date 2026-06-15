@@ -250,18 +250,25 @@ impl PipelineProfile {
         // ── Tone curve ──
         blocks.push(Box::new(ToneBlock::new()));
 
-        // ── False color suppression (optional atomic block) ──
-        if self.use_fcs {
+        // ── Auxiliary blocks (on demand) ──
+        // Collect signals from all pipeline blocks; only add aux blocks
+        // that are BOTH requested by a block AND allowed by the profile.
+        let mut requested: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for b in &blocks {
+            for aux in b.signals_aux() {
+                requested.insert(aux);
+            }
+        }
+        // FCS: signaled by ToneBlock, gated by profile
+        if requested.contains("fcs") && self.use_fcs {
             blocks.push(Box::new(FcsBlock::new()));
         }
-
-        // ── Local contrast enhancement (optional atomic block) ──
-        if self.use_ldci {
+        // LDCI: signaled by ToneBlock, gated by profile
+        if requested.contains("ldci") && self.use_ldci {
             blocks.push(Box::new(LdciBlock::new()));
         }
-
-        // ── Edge enhancement / unsharp (optional atomic block) ──
-        if self.use_ee {
+        // EE: signaled by ToneBlock, gated by profile
+        if requested.contains("ee") && self.use_ee {
             blocks.push(Box::new(EeBlock::new()));
         }
 
