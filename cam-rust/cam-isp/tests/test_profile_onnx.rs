@@ -52,7 +52,7 @@ fn test_heavy_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::HEAVY);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "HEAVY profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 14, "HEAVY profile should have 14 blocks");
+    assert_eq!(blocks.len(), 15, "HEAVY profile should have 15 blocks");
     assert!(model.len() > 3000, "HEAVY model should be substantial");
 }
 
@@ -61,7 +61,7 @@ fn test_pro_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::PRO);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "PRO profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 15, "PRO profile should have 15 blocks");
+    assert_eq!(blocks.len(), 16, "PRO profile should have 16 blocks (warp enabled, HDR not yet implemented)");
     assert!(model.len() > 3000, "PRO model should be substantial");
 }
 
@@ -88,7 +88,7 @@ fn test_heavy_pipeline_block_order() {
     let blocks = PipelineProfile::HEAVY.build_blocks(8, 2);
     let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
     // HEAVY: raw, unpack, norm, blc(dpc), cfa, blc, ccm(lsc), wb, demo, ccm, tone, ccm(ldci), ccm(unsharp), display
-    assert_eq!(names.len(), 14);
+    assert_eq!(names.len(), 15);
     assert_eq!(names[0], "raw_input");
     assert_eq!(names[1], "unpack");
     assert_eq!(names[2], "normalize");
@@ -100,9 +100,10 @@ fn test_heavy_pipeline_block_order() {
     assert_eq!(names[8], "demosaic");
     assert_eq!(names[9], "ccm");
     assert_eq!(names[10], "tone");
-    assert_eq!(names[11], "ccm");  // local contrast
-    assert_eq!(names[12], "ccm");  // unsharp
-    assert_eq!(names[13], "display");
+    assert_eq!(names[11], "fcs");  // false color suppression
+    assert_eq!(names[12], "ldci"); // local contrast
+    assert_eq!(names[13], "ee");   // edge enhancement
+    assert_eq!(names[14], "display");
 }
 
 // ── Build blocks now internally wires ───────────────────────────

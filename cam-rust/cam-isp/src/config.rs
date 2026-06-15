@@ -14,6 +14,14 @@ use crate::profile::{DemosaicQuality, PipelineProfile};
 pub struct PipelineConfig {
     /// Base profile.
     pub profile: PipelineProfile,
+    /// Enable packed INT32 input with UnpackBlock.
+    pub use_unpack: bool,
+    /// Enable false color suppression (FCS).
+    pub use_fcs: bool,
+    /// Enable local contrast enhancement (LDCI).
+    pub use_ldci: bool,
+    /// Enable edge enhancement / unsharp mask (EE).
+    pub use_ee: bool,
     /// Enable defective pixel correction.
     pub use_bad_pixel: bool,
     /// Demosaic quality level.
@@ -36,6 +44,10 @@ impl PipelineConfig {
     /// Predefined LITE config.
     pub const LITE: Self = Self {
         profile: PipelineProfile::LITE,
+        use_unpack: true,
+        use_fcs: false,
+        use_ldci: false,
+        use_ee: false,
         use_bad_pixel: false,
         demosaic_quality: DemosaicQuality::HqLinear,
         use_local_contrast: false,
@@ -50,6 +62,10 @@ impl PipelineConfig {
     pub fn from_profile(profile: PipelineProfile) -> Self {
         Self {
             profile,
+            use_unpack: profile.use_unpack,
+            use_fcs: profile.use_fcs,
+            use_ldci: profile.use_ldci,
+            use_ee: profile.use_ee,
             use_bad_pixel: profile.use_bad_pixel,
             demosaic_quality: profile.demosaic_quality,
             use_local_contrast: profile.use_local_contrast,
@@ -63,7 +79,11 @@ impl PipelineConfig {
 
     /// Whether this config differs from its base profile (custom variant).
     pub fn is_custom(&self) -> bool {
-        self.use_bad_pixel != self.profile.use_bad_pixel
+        self.use_unpack != self.profile.use_unpack
+            || self.use_fcs != self.profile.use_fcs
+            || self.use_ldci != self.profile.use_ldci
+            || self.use_ee != self.profile.use_ee
+            || self.use_bad_pixel != self.profile.use_bad_pixel
             || self.demosaic_quality != self.profile.demosaic_quality
             || self.use_local_contrast != self.profile.use_local_contrast
             || self.use_unsharp != self.profile.use_unsharp
@@ -101,11 +121,14 @@ impl PipelineConfig {
         }
         b.push("CCM");
         b.push("Tone");
-        if self.use_local_contrast {
-            b.push("LocalC");
+        if self.use_fcs {
+            b.push("FCS");
         }
-        if self.use_unsharp {
-            b.push("Unsharp");
+        if self.use_ldci {
+            b.push("LDCI");
+        }
+        if self.use_ee {
+            b.push("EE");
         }
         b.push("Display");
         b.join(" → ")
@@ -113,11 +136,12 @@ impl PipelineConfig {
 
     /// Number of blocks in this config.
     pub fn block_count(&self) -> usize {
-        let mut count: usize = 9; // base blocks
+        let mut count: usize = if self.use_unpack { 10 } else { 9 };
+        if self.use_fcs { count += 1; }
+        if self.use_ldci { count += 1; }
+        if self.use_ee { count += 1; }
         if self.use_bad_pixel { count += 1; }
         if self.use_lsc { count += 1; }
-        if self.use_local_contrast { count += 1; }
-        if self.use_unsharp { count += 1; }
         if self.use_warp { count += 1; }
         if self.use_hdr { count += 1; }
         count
@@ -125,6 +149,10 @@ impl PipelineConfig {
 
     // ── Builder methods ──
 
+    pub fn with_unpack(mut self, v: bool) -> Self { self.use_unpack = v; self }
+    pub fn with_fcs(mut self, v: bool) -> Self { self.use_fcs = v; self }
+    pub fn with_ldci(mut self, v: bool) -> Self { self.use_ldci = v; self }
+    pub fn with_ee(mut self, v: bool) -> Self { self.use_ee = v; self }
     pub fn with_bad_pixel(mut self, v: bool) -> Self { self.use_bad_pixel = v; self }
     pub fn with_demosaic_quality(mut self, v: DemosaicQuality) -> Self { self.demosaic_quality = v; self }
     pub fn with_local_contrast(mut self, v: bool) -> Self { self.use_local_contrast = v; self }
@@ -155,8 +183,10 @@ mod tests {
     #[test]
     fn test_from_profile() {
         let cfg = PipelineConfig::from_profile(PipelineProfile::HEAVY);
+        assert!(cfg.use_fcs);
+        assert!(cfg.use_ldci);
+        assert!(cfg.use_ee);
         assert!(cfg.use_bad_pixel);
-        assert!(cfg.use_unsharp);
         assert!(cfg.use_lsc);
         assert!(!cfg.is_custom(), "Should match profile defaults");
     }
@@ -164,11 +194,11 @@ mod tests {
     #[test]
     fn test_custom_override() {
         let cfg = PipelineConfig::from_profile(PipelineProfile::LITE)
-            .with_unsharp(true)
-            .with_bad_pixel(true);
+            .with_fcs(true)
+            .with_ee(true);
         assert!(cfg.is_custom());
-        assert!(cfg.use_unsharp);
-        assert!(cfg.use_bad_pixel);
+        assert!(cfg.use_fcs);
+        assert!(cfg.use_ee);
         assert_eq!(cfg.auto_label(), "LITE (custom)");
     }
 
@@ -178,17 +208,18 @@ mod tests {
         let preview = cfg.block_chain_preview();
         assert!(preview.contains("Raw"));
         assert!(preview.contains("Display"));
-        assert!(!preview.contains("DPC"));
-        assert!(!preview.contains("LSC"));
+        assert!(!preview.contains("FCS"));
+        assert!(!preview.contains("LDCI"));
+        assert!(!preview.contains("EE"));
     }
 
     #[test]
     fn test_block_chain_preview_heavy() {
         let cfg = PipelineConfig::from_profile(PipelineProfile::HEAVY);
         let preview = cfg.block_chain_preview();
-        assert!(preview.contains("DPC"));
-        assert!(preview.contains("LSC"));
-        assert!(preview.contains("Unsharp"));
+        assert!(preview.contains("FCS"));
+        assert!(preview.contains("LDCI"));
+        assert!(preview.contains("EE"));
         assert!(preview.contains("EdgeDemosaic"));
     }
 
@@ -196,7 +227,7 @@ mod tests {
     fn test_block_count() {
         let lite = PipelineConfig::from_profile(PipelineProfile::LITE);
         let heavy = PipelineConfig::from_profile(PipelineProfile::HEAVY);
-        assert_eq!(lite.block_count(), 9);
-        assert!(heavy.block_count() > lite.block_count());
+        assert_eq!(lite.block_count(), 10);
+        assert_eq!(heavy.block_count(), 15);
     }
 }
