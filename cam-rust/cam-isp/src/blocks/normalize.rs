@@ -1,4 +1,4 @@
-//! NormalizeBlock — Cast INT16→FLOAT, Div by sensor_max.
+//! NormalizeBlock — Cast INT32→FLOAT, Div by sensor_max.
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
