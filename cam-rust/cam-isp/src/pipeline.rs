@@ -262,6 +262,14 @@ impl GraphComposer {
             v
         };
 
+        // Collect all graph output names up front so we can skip their value_infos
+        let mut graph_output_names: HashSet<String> = HashSet::new();
+        for blk in &all_blocks {
+            if let Some(name) = blk.graph_output_name() {
+                graph_output_names.insert(name.to_string());
+            }
+        }
+
         let mut all_nodes = Vec::new();
         let mut all_initializers = Vec::new();
         let mut graph_inputs = Vec::new();
@@ -282,7 +290,7 @@ impl GraphComposer {
                 // Add value_info for all output tensors (except graph input/output)
                 for tname in blk.output_tensors() {
                     let is_input = pipeline_head.graph_input_name().map_or(false, |n| n == tname);
-                    let is_output = pipeline_tail.graph_output_name().map_or(false, |n| n == tname);
+                    let is_output = graph_output_names.contains(&tname);
                     if !is_input && !is_output {
                         value_infos.push(Proto::value_info(&tname, &[
                             Proto::tensor_dim_param("N"),
@@ -318,13 +326,13 @@ impl GraphComposer {
                 }
             }
 
-            // Graph output: tail block (→ field 12)
-            if std::ptr::eq(*blk as *const _, pipeline_tail as *const _) {
-                if let Some(name) = blk.graph_output_name() {
-                    if let Some(vi) = blk.output_value_info() {
-                        all_outputs.push(vi);
-                        info!("{}: graph output: {} → {}", Self::TAG, blk.id(), name);
-                    }
+            // Graph output: any block can declare graph outputs (→ field 12)
+            // Stats blocks, aux hook blocks, and the pipeline tail all register
+            // their outputs so the runtime doesn't DCE them and can read them.
+            if let Some(name) = blk.graph_output_name() {
+                if let Some(vi) = blk.output_value_info() {
+                    all_outputs.push(vi);
+                    info!("{}: graph output: {} → {}", Self::TAG, blk.id(), name);
                 }
             }
 
