@@ -59,7 +59,7 @@ struct Args {
 
 /// Build the ISP pipeline for the given profile and compose the ONNX model.
 fn build_pipeline(profile_name: &str, width: u32) -> Result<Vec<u8>, String> {
-    let mut profile = match profile_name.to_lowercase().as_str() {
+    let profile = match profile_name.to_lowercase().as_str() {
         "lite" => PipelineProfile::LITE,
         "med" => PipelineProfile::MED,
         "heavy" => PipelineProfile::HEAVY,

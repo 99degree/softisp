@@ -33,6 +33,11 @@ impl RawInputBlock {
         self.concrete_w = Some(w);
         self
     }
+    /// Set only the concrete width (height stays symbolic).
+    pub fn with_concrete_width(mut self, w: i64) -> Self {
+        self.concrete_w = Some(w);
+        self
+    }
     
     /// Set element type: 1=FLOAT, 6=INT32 (default).
     pub fn with_elem_type(mut self, t: i32) -> Self {
@@ -59,16 +64,19 @@ impl IspBlock for RawInputBlock {
     fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        let dims: Vec<Vec<u8>> = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
-            vec![
+        let dims: Vec<Vec<u8>> = match (self.concrete_h, self.concrete_w) {
+            (Some(h), Some(w)) => vec![
                 Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
-            ]
-        } else {
-            vec![
+            ],
+            (None, Some(w)) => vec![
                 Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
-                Proto::tensor_dim_param("height"), Proto::tensor_dim_param("width"),
-            ]
+                Proto::tensor_dim_param("H"), Proto::tensor_dim_value(w),
+            ],
+            _ => vec![
+                Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
+                Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W"),
+            ],
         };
         Some(Proto::value_info(&self.frame_tensor, &dims, self.elem_type))
     }

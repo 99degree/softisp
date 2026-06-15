@@ -40,7 +40,7 @@ impl IspBlock for NormalizeBlock {
         Some(Proto::value_info(&self.input_source, &[
             Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
             Proto::tensor_dim_param("height"), Proto::tensor_dim_param("width"),
-        ], 5))
+        ], 6))  // INT32 (accepts packed UnpackBlock output)
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(&self.frame_tensor, &[

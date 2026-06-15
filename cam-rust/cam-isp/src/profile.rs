@@ -157,9 +157,17 @@ impl PipelineProfile {
     /// and `blocks` is the full ordered list for `GraphComposer::compose_from_vec()`.
     pub fn build_blocks(&self, target_width: u32, bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
+        let full_w = target_width as i64;
+        let packed_w = (target_width / 2) as i64;
 
-        // ── Raw input ──
-        blocks.push(Box::new(RawInputBlock::new()));
+        // ── Packed INT32 input (true zero-copy: u16 buffer reinterpreted as i32) ──
+        blocks.push(Box::new(RawInputBlock::new()
+            .with_elem_type(6)  // INT32
+            .with_concrete_width(packed_w)));
+
+        // ── Unpack block (packed INT32 → interleaved INT32 at full width) ──
+        blocks.push(Box::new(UnpackBlock::new()
+            .with_concrete_width(full_w)));
 
         // ── Normalize ──
         blocks.push(Box::new(NormalizeBlock::new()));
@@ -210,12 +218,16 @@ impl PipelineProfile {
         // ── Display output ──
         blocks.push(Box::new(DisplayBlock::new(target_width)));
 
+        // Wire blocks so each block's input_source points to the previous block's frame_tensor.
+        // This is required before passing to GraphComposer::compose_from_vec.
+        crate::pipeline::GraphComposer::wire_blocks(&mut blocks);
+
         blocks
     }
 
     /// Number of blocks in this profile's chain.
     pub fn block_count(&self) -> usize {
-        let mut count: usize = 9; // base blocks
+        let mut count: usize = 10; // base blocks (+1 for UnpackBlock)
         if self.use_bad_pixel { count += 1; }
         if self.use_lsc { count += 1; }
         if self.use_local_contrast { count += 1; }
@@ -261,14 +273,14 @@ mod tests {
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 0);
         // LITE: RawInput + Normalize + Cfa + Blc + BayerWb + Demosaic + Ccm + Tone + Display = 9
-        assert_eq!(blocks.len(), 9, "LITE should have 9 blocks, got {}", blocks.len());
+        assert_eq!(blocks.len(), 10, "LITE should have 10 blocks (+1 for UnpackBlock), got {}", blocks.len());
     }
 
     #[test]
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
         // HEAVY: +bad pixel +LSC +local contrast +unsharp = 4 extra
-        assert_eq!(blocks.len(), 13, "HEAVY should have 13 blocks, got {}", blocks.len());
+        assert_eq!(blocks.len(), 14, "HEAVY should have 14 blocks (+1 for UnpackBlock), got {}", blocks.len());
     }
 
     #[test]
@@ -284,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_block_count() {
-        assert_eq!(PipelineProfile::LITE.block_count(), 9);
-        assert!(PipelineProfile::HEAVY.block_count() > 9);
+        assert_eq!(PipelineProfile::LITE.block_count(), 10);
+        assert!(PipelineProfile::HEAVY.block_count() > 10);
     }
 }

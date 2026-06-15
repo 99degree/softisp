@@ -244,5 +244,8 @@ fn test_profile_test_build() {
     cam_isp::init();
     let blocks = PipelineProfile::TEST.build_blocks(8, 2);
     let pipeline = FusedPipeline::build(blocks, 8);
-    assert!(pipeline.is_ok());
+    if let Err(ref e) = pipeline {
+        eprintln!("FusedPipeline::build error: {}", e);
+    }
+    assert!(pipeline.is_ok(), "FusedPipeline::build failed");
 }

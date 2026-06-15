@@ -466,6 +466,105 @@ fn test_mnn_backend_compare() {
     }
 }
 
+/// Test packed INT32 pipeline end-to-end: RawInput(INT32,W/2) → UnpackBlock → rest
+#[cfg(feature = "mnn")]
+#[test]
+fn test_mnn_packed_pipeline() {
+    use std::path::Path;
+    use cam_isp::engine::IspEngine;
+    use cam_isp::mnnengine::{MnnEngine, MnnBackend};
+    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::mnn_converter::convert_onnx_to_mnn;
+    use cam_isp::blocks::{RawInputBlock, NormalizeBlock, ToneBlock, DisplayBlock, UnpackBlock};
+
+    let h = 48i64;
+    let w = 64i64;       // full width
+    let pw = w / 2;       // packed width
+
+    // Build packed pipeline: RawInput(INT32, pw) → UnpackBlock → Normalize → Tone → Display
+    let b1: Box<dyn IspBlock> = Box::new(RawInputBlock::new()
+        .with_elem_type(6)        // INT32 input
+        .with_concrete_dims(h, pw));  // packed width
+    let b2: Box<dyn IspBlock> = Box::new(UnpackBlock::new().with_concrete_dims(h, w));
+    let b3: Box<dyn IspBlock> = Box::new(NormalizeBlock::new());
+    let b4: Box<dyn IspBlock> = Box::new(ToneBlock::new());
+    let b5: Box<dyn IspBlock> = Box::new(DisplayBlock::new(w as u32));
+
+    let mut blocks: Vec<Box<dyn IspBlock>> = vec![b1, b2, b3, b4, b5];
+    GraphComposer::wire_blocks(&mut blocks);
+    let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+    let model = GraphComposer::compose_from_vec(&refs, &[], 16)
+        .expect("packed compose");
+
+    let onnx_path = ".mnn_test_packed.onnx";
+    let mnn_path = ".mnn_test_packed.mnn";
+    std::fs::write(onnx_path, &model).expect("write .onnx");
+    let _ = convert_onnx_to_mnn(onnx_path, mnn_path, None)
+        .expect("convert to MNN");
+
+    // Clean up ONNX file
+    if Path::new(onnx_path).exists() {
+        let _ = std::fs::remove_file(onnx_path);
+    }
+
+    // Build engine with packed model
+    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    engine.set_model_path(mnn_path);
+    // Re-create head with packed shape for engine.build()
+    let head: Box<dyn IspBlock> = Box::new(RawInputBlock::new()
+        .with_elem_type(6)
+        .with_concrete_dims(h, pw));
+    engine.build(head, vec![], None, 16).expect("engine build");
+
+    eprintln!("Packed pipeline: engine built OK (model={})", mnn_path);
+    eprintln!("  Model input type: code={}, bits={}, expected_elems={}",
+        engine.model_input_type().map(|(c,b)| c.to_string()).unwrap_or("?".into()),
+        engine.model_input_type().map(|(c,b)| b.to_string()).unwrap_or("?".into()),
+        engine.expected_input_elements().map(|e| e.to_string()).unwrap_or("?".into()));
+
+    // Create packed input: each u32 = pixel_even | (pixel_odd << 16)
+    let packed_elems = (h * pw) as usize;
+    let mut packed = vec![0u32; packed_elems];
+    let pw_u32 = pw as u32;
+    let h_u32 = h as u32;
+    for y in 0..h_u32 {
+        for x in 0..pw_u32 {
+            let even: u16 = ((x * 7 + y * 13) & 0xFFF) as u16;
+            let odd: u16  = ((x * 11 + y * 5) & 0xFFF) as u16;
+            packed[(y * pw_u32 + x) as usize] = (even as u32) | ((odd as u32) << 16);
+        }
+    }
+    // Reinterpret as bytes (same memory) for engine.process()
+    let buf: &[u8] = unsafe {
+        std::slice::from_raw_parts(packed.as_ptr() as *const u8, packed.len() * 4)
+    };
+
+    // Run packed inference through engine
+    let params = cam_isp::engine::default_tone_params();
+    let result = engine.process(
+        w as u32, h as u32, w as u32, buf, 65536.0, w as u32,
+        None, &params, None, None, 1.0, 0.0, None, None, None,
+    );
+
+    match &result {
+        Ok(frame) => {
+            eprintln!("Packed inference OK: {}×{} fmt={:?} size={}",
+                frame.width, frame.height, frame.format, frame.data.len());
+            assert!(frame.data.len() >= (w as usize * h as usize * 3),
+                "frame too small: {} < {}", frame.data.len(), w as usize * h as usize * 3);
+            eprintln!("PASSED: packed zero-copy inference");
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(mnn_path);
+            panic!("Packed inference failed: {}", e);
+        }
+    }
+
+    // Clean up
+    let _ = std::fs::remove_file(mnn_path);
+    eprintln!("PASSED: packed INT32 pipeline end-to-end");
+}
+
 /// Uninitialized engine should return error.
 #[test]
 fn test_mnn_engine_uninitialized() {

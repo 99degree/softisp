@@ -34,7 +34,7 @@ fn test_lite_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::LITE);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "LITE profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 9, "LITE profile should have 9 blocks");
+    assert_eq!(blocks.len(), 10, "LITE profile should have 10 blocks");
     assert!(model.len() > 2000, "LITE model should be substantial");
 }
 
@@ -43,7 +43,7 @@ fn test_med_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::MED);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "MED profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 11, "MED profile should have 11 blocks");
+    assert_eq!(blocks.len(), 12, "MED profile should have 12 blocks");
     assert!(model.len() > 2000, "MED model should be substantial");
 }
 
@@ -52,7 +52,7 @@ fn test_heavy_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::HEAVY);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "HEAVY profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 13, "HEAVY profile should have 13 blocks");
+    assert_eq!(blocks.len(), 14, "HEAVY profile should have 14 blocks");
     assert!(model.len() > 3000, "HEAVY model should be substantial");
 }
 
@@ -61,7 +61,7 @@ fn test_pro_profile_onnx() {
     let blocks = wired_blocks(PipelineProfile::PRO);
     let model = compose_wired(&blocks);
     assert!(!model.is_empty(), "PRO profile ONNX should not be empty");
-    assert_eq!(blocks.len(), 14, "PRO profile should have 14 blocks");
+    assert_eq!(blocks.len(), 15, "PRO profile should have 15 blocks");
     assert!(model.len() > 3000, "PRO model should be substantial");
 }
 
@@ -72,29 +72,37 @@ fn test_lite_pipeline_has_correct_block_order() {
     let blocks = PipelineProfile::LITE.build_blocks(8, 2);
     let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
     assert_eq!(names[0], "raw_input");
-    assert_eq!(names[1], "normalize");
-    assert_eq!(names[2], "cfa");
-    assert_eq!(names[3], "blc");
-    assert_eq!(names[4], "bayer_wb");
-    assert_eq!(names[5], "demosaic");
-    assert_eq!(names[6], "ccm");
-    assert_eq!(names[7], "tone");
-    assert_eq!(names[8], "display");
+    assert_eq!(names[1], "unpack");
+    assert_eq!(names[2], "normalize");
+    assert_eq!(names[3], "cfa");
+    assert_eq!(names[4], "blc");
+    assert_eq!(names[5], "bayer_wb");
+    assert_eq!(names[6], "demosaic");
+    assert_eq!(names[7], "ccm");
+    assert_eq!(names[8], "tone");
+    assert_eq!(names[9], "display");
 }
 
 #[test]
 fn test_heavy_pipeline_block_order() {
     let blocks = PipelineProfile::HEAVY.build_blocks(8, 2);
     let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
-    // HEAVY: raw, norm, blc(dpc), cfa, blc, ccm(lsc), wb, demo, ccm, tone, ccm(ldci), ccm(unsharp), display
-    assert_eq!(names.len(), 13);
+    // HEAVY: raw, unpack, norm, blc(dpc), cfa, blc, ccm(lsc), wb, demo, ccm, tone, ccm(ldci), ccm(unsharp), display
+    assert_eq!(names.len(), 14);
     assert_eq!(names[0], "raw_input");
-    assert_eq!(names[1], "normalize");
-    assert_eq!(names[2], "blc_dpc");  // first BLC acts as DPC
-    assert_eq!(names[3], "cfa");
-    assert_eq!(names[4], "blc");      // second BLC (for black level)
-    assert_eq!(names[5], "ccm_lsc");
-    assert_eq!(names[12], "display");
+    assert_eq!(names[1], "unpack");
+    assert_eq!(names[2], "normalize");
+    assert_eq!(names[3], "blc");  // first BLC acts as DPC
+    assert_eq!(names[4], "cfa");
+    assert_eq!(names[5], "blc");      // second BLC (for black level)
+    assert_eq!(names[6], "ccm");  // LSC uses CCM block
+    assert_eq!(names[7], "bayer_wb");
+    assert_eq!(names[8], "demosaic");
+    assert_eq!(names[9], "ccm");
+    assert_eq!(names[10], "tone");
+    assert_eq!(names[11], "ccm");  // local contrast
+    assert_eq!(names[12], "ccm");  // unsharp
+    assert_eq!(names[13], "display");
 }
 
 // ── Build blocks now internally wires ───────────────────────────

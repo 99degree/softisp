@@ -14,6 +14,7 @@ mod fcs;
 mod ldci;
 mod warp;
 mod identity;
+mod unpack;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -29,6 +30,7 @@ pub use fcs::FcsBlock;
 pub use ldci::LdciBlock;
 pub use warp::WarpBlock;
 pub use identity::{IdentityBlock, FastDemosaicBlock};
+pub use unpack::UnpackBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
