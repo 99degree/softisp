@@ -15,6 +15,7 @@ mod ldci;
 mod warp;
 mod identity;
 mod unpack;
+mod unpack_cfa;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -30,6 +31,7 @@ pub use fcs::FcsBlock;
 pub use ldci::LdciBlock;
 pub use warp::WarpBlock;
 pub use identity::{IdentityBlock, FastDemosaicBlock};
+pub use unpack_cfa::UnpackCfaBlock;
 pub use unpack::UnpackBlock;
 
 /// Register all built-in blocks with the engine registry.
