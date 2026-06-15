@@ -67,6 +67,8 @@ pub struct PipelineProfile {
     pub use_hdr: bool,
     /// Fuse unpack+norm+CFA into a single block (faster, fewer sessions).
     pub use_fused_unpack: bool,
+    /// Fuse demosaic+CCM into a single block (saves 1 session).
+    pub use_demosaic_ccm: bool,
 }
 
 impl PipelineProfile {
@@ -86,6 +88,7 @@ impl PipelineProfile {
         use_warp: false,
         use_hdr: false,
         use_fused_unpack: true,
+        use_demosaic_ccm: true,
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -104,6 +107,7 @@ impl PipelineProfile {
         use_warp: false,
         use_hdr: false,
         use_fused_unpack: true,
+        use_demosaic_ccm: true,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -122,6 +126,7 @@ impl PipelineProfile {
         use_warp: false,
         use_hdr: false,
         use_fused_unpack: true,
+        use_demosaic_ccm: true,
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -140,6 +145,7 @@ impl PipelineProfile {
         use_warp: true,
         use_hdr: true,
         use_fused_unpack: true,
+        use_demosaic_ccm: true,
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -159,6 +165,7 @@ impl PipelineProfile {
         use_local_contrast: false,
         use_unsharp: false,
         use_fused_unpack: true,
+        use_demosaic_ccm: true,
     };
 
     /// All built-in profiles.
@@ -180,6 +187,7 @@ impl PipelineProfile {
         use_warp: bool,
         use_hdr: bool,
         use_fused_unpack: bool,
+        use_demosaic_ccm: bool,
     ) -> Self {
         Self {
             label,
@@ -196,6 +204,7 @@ impl PipelineProfile {
             use_warp,
             use_hdr,
             use_fused_unpack,
+            use_demosaic_ccm,
         }
     }
 
@@ -241,10 +250,8 @@ impl PipelineProfile {
             blocks.push(Box::new(CfaBlock::new()));
         }
 
-        // ── Black level correction (identity if fused into UnpackCfaBlock) ──
-        if self.use_fused_unpack {
-            blocks.push(Box::new(crate::blocks::IdentityBlock::new("blc_id")));
-        } else {
+        // ── Black level correction (skipped if fused into UnpackCfaBlock) ──
+        if !self.use_fused_unpack {
             blocks.push(Box::new(BlcBlock::new()));
         }
 
@@ -259,16 +266,20 @@ impl PipelineProfile {
         // ── Bayer white balance ──
         blocks.push(Box::new(BayerWbBlock::new()));
 
-        // ── Demosaic ──
-        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
+        // ── Demosaic + CCM ──
+        if self.use_demosaic_ccm {
+            // Fused: demosaic+CCM in one block (no separate CCM block)
+            blocks.push(Box::new(DemosaicCcmBlock::new(bayer_pattern)));
+        } else {
+            blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
+            // ── Color correction matrix (standalone) ──
+            blocks.push(Box::new(CcmBlock::new()));
+        }
 
         // ── Warp (optional, EIS/deshake) ──
         if self.use_warp {
             blocks.push(Box::new(CcmBlock::new())); // placeholder
         }
-
-        // ── Color correction matrix ──
-        blocks.push(Box::new(CcmBlock::new()));
 
         // ── Tone curve ──
         blocks.push(Box::new(ToneBlock::new()));
@@ -301,9 +312,13 @@ impl PipelineProfile {
     /// Number of blocks in this profile's chain.
     pub fn block_count(&self) -> usize {
         let mut count: usize = if self.use_fused_unpack && self.use_unpack {
-            // Fused: raw_input + unpack_cfa = 2, + hooks + main pipeline + display
-            // Saves 2 blocks vs standard packed (unpack + norm + cfa → unpack_cfa)
-            10  // raw + fused + aux_hook_src + blc + bayer_wb + demosaic + ccm + tone + aux_hook_out + display
+            if self.use_demosaic_ccm {
+                // Fused, demosaic_ccm: raw + unpack_cfa + hook + bayer_wb + demosaic_ccm + tone + hook_out + display
+                8
+            } else {
+                // Fused, separate demosaic+ccm: same + 1 extra
+                9
+            }
         } else if self.use_unpack {
             12  // standard packed: raw + unpack + norm + cfa + hooks + main + display
         } else {
@@ -360,7 +375,7 @@ mod tests {
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 0);
         // LITE: raw → unpack → norm → cfa → blc → bayer_wb → demo → ccm → tone → display = 10
-        assert_eq!(blocks.len(), 10, "LITE (fused) should have 10 blocks, got {}", blocks.len());
+        assert_eq!(blocks.len(), 8, "LITE (fused, demosaic_ccm) should have 8 blocks, got {}", blocks.len());
     }
 
     #[test]
@@ -368,7 +383,8 @@ mod tests {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
         // HEAVY: base(10) + bad_pixel + fcs + ldci + ee + lsc = 15
         // Fused: 10 base + fcs + ldci + ee + lsc = 14
-        assert_eq!(blocks.len(), 14, "HEAVY (fused) should have 14 blocks, got {}", blocks.len());
+        // HEAVY: 8 base + fcs + ldci + ee + lsc = 12
+        assert_eq!(blocks.len(), 12, "HEAVY (fused, demosaic_ccm) should have 12 blocks, got {}", blocks.len());
     }
 
     #[test]
@@ -376,6 +392,7 @@ mod tests {
         let p = PipelineProfile::custom(
             "CUSTOM", PipelineLevel::Pro, true, true, true, true, true,
             DemosaicQuality::Edge, true, true, true, true, false, false,
+            true,  // use_demosaic_ccm
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -388,18 +405,17 @@ mod tests {
         let p = PipelineProfile::custom(
             "LEGACY", PipelineLevel::Lite, false, false, false, false, false,
             DemosaicQuality::Standard, false, false, false, false, false, false,
+            false, // use_demosaic_ccm
         );
         let blocks = p.build_blocks(128, 0);
-        assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks (+2 hooks), got {}", blocks.len());
+        assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks, got {}", blocks.len());
         assert_eq!(blocks[0].id(), "raw_input");
         assert_eq!(blocks[1].id(), "normalize", "Second block should be Normalize (no Unpack)");
     }
 
     #[test]
     fn test_block_count() {
-        // LITE: 12 base blocks (+2 hooks), no extras
-        assert_eq!(PipelineProfile::LITE.block_count(), 10);
-        // HEAVY (fused): 10 base + fcs + ldci + ee + lsc = 14
-        assert_eq!(PipelineProfile::HEAVY.block_count(), 14);
+        assert_eq!(PipelineProfile::LITE.block_count(), 8);
+        assert_eq!(PipelineProfile::HEAVY.block_count(), 12);
     }
 }

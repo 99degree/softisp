@@ -15,6 +15,7 @@ mod ldci;
 mod warp;
 mod identity;
 mod unpack;
+mod demosaic_ccm;
 mod unpack_cfa;
 
 pub use raw_input::RawInputBlock;
@@ -33,6 +34,7 @@ pub use warp::WarpBlock;
 pub use identity::{IdentityBlock, FastDemosaicBlock};
 pub use unpack_cfa::UnpackCfaBlock;
 pub use unpack::UnpackBlock;
+pub use demosaic_ccm::DemosaicCcmBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
