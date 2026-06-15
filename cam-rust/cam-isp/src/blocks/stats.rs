@@ -17,12 +17,16 @@ use crate::onnx::proto::Proto;
 // ZoneStatsBlock
 // ═══════════════════════════════════════════════════════════════════
 
-/// Zone statistics block — per-zone RGB averages via AveragePool.
+/// Zone statistics block — per-zone RGB averages via bilinear Resize.
 ///
-/// Graph: AveragePool(kernel, stride) → [1, 3, rows, cols]
+/// Graph: Resize(bilinear, sizes=[1,3,rows,cols]) → [1, 3, rows, cols]
 ///
-/// Used for multi-illuminant AWB.  Each zone value is the mean R/G/B
-/// of its tile.  48 zones (6×8) is typical for FHD.
+/// Resolution-independent: output size is fixed at [1,3,rows,cols]
+/// regardless of input H×W.  Resize with bilinear mode averages
+/// neighbouring pixels, equivalent to zone mean pooling for
+/// practical zone sizes (≥32 px per zone at FHD with 6×8 grid).
+///
+/// Used for multi-illuminant AWB.  48 zones (6×8) is typical.
 pub struct ZoneStatsBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -31,8 +35,6 @@ pub struct ZoneStatsBlock {
     pub input_source: String,
     pub zone_rows: i64,
     pub zone_cols: i64,
-    pub concrete_h: Option<i64>,
-    pub concrete_w: Option<i64>,
 }
 
 impl ZoneStatsBlock {
@@ -43,16 +45,8 @@ impl ZoneStatsBlock {
             frame_tensor: "ZoneStatsBlock/frame".into(),
             input_source: String::new(),
             zone_rows: rows, zone_cols: cols,
-            concrete_h: None, concrete_w: None,
         }
     }
-    pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
-        self.concrete_h = Some(h); self.concrete_w = Some(w); self
-    }
-    fn kernel_h(&self) -> i64 { self.concrete_h.map_or(1, |h| (h / self.zone_rows).max(1)) }
-    fn kernel_w(&self) -> i64 { self.concrete_w.map_or(1, |w| (w / self.zone_cols).max(1)) }
-    fn stride_h(&self) -> i64 { self.kernel_h() }
-    fn stride_w(&self) -> i64 { self.kernel_w() }
 }
 
 impl IspBlock for ZoneStatsBlock {
@@ -69,13 +63,8 @@ impl IspBlock for ZoneStatsBlock {
     fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
-            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                 Proto::tensor_dim_value(h), Proto::tensor_dim_value(w)]
-        } else {
-            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                 Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")]
-        };
+        let dims = vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
+                        Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")];
         Some(Proto::value_info(&self.input_source, &dims, 1))
     }
 
@@ -87,12 +76,19 @@ impl IspBlock for ZoneStatsBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        vec![Proto::node("AveragePool", &[&self.input_source], &[&self.frame_tensor],
-            &[Proto::attribute_ints("kernel_shape", &[self.kernel_h(), self.kernel_w()]),
-              Proto::attribute_ints("strides", &[self.stride_h(), self.stride_w()]),
-              Proto::attribute_int("ceil_mode", 1)])]
+        let ns = self.tensor_ns();
+        vec![Proto::node("Resize",
+            &[&self.input_source, "", "", &format!("{}/sizes", ns)],
+            &[&self.frame_tensor],
+            &[Proto::attribute_string("mode", "linear")])]
     }
-    fn initializers(&self) -> Vec<Vec<u8>> { vec![] }
+    fn initializers(&self) -> Vec<Vec<u8>> {
+        let ns = self.tensor_ns();
+        vec![
+            Proto::tensor_proto_int64(&format!("{}/sizes", ns),
+                &[1, 3, self.zone_rows, self.zone_cols]),
+        ]
+    }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
 }
 
@@ -450,10 +446,9 @@ mod tests {
     // ── ZoneStatsBlock ──
     #[test]
     fn test_zone_stats_nodes() {
-        let b = ZoneStatsBlock::new(6, 8).with_concrete_dims(1080, 1920);
-        assert_eq!(b.nodes().len(), 1);
-        assert_eq!(b.kernel_h(), 180);  // 1080/6
-        assert_eq!(b.kernel_w(), 240);  // 1920/8
+        let b = ZoneStatsBlock::new(6, 8);
+        assert_eq!(b.nodes().len(), 1, "ZoneStatsBlock: 1 node (Resize)");
+        assert_eq!(b.initializers().len(), 1, "1 initializer (sizes)");
     }
 
     #[test]
@@ -465,7 +460,7 @@ mod tests {
             Box::new(crate::blocks::BlcBlock::new()),
             Box::new(crate::blocks::BayerWbBlock::new()),
             Box::new(DemosaicCcmBlock::new(2).with_concrete_dims(24, 32)),
-            Box::new(ZoneStatsBlock::new(2, 2).with_concrete_dims(24, 32)),
+            Box::new(ZoneStatsBlock::new(2, 2)),
         ];
         GraphComposer::wire_blocks(&mut blocks);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
