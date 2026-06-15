@@ -256,25 +256,15 @@ impl PipelineProfile {
         // ── AuxHook: output data (after tone, for post-processing aux blocks) ──
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_out")));
 
-        // ── Auxiliary blocks (on demand) ──
-        // Collect signals from all pipeline blocks; only add aux blocks
-        // that are BOTH requested by a block AND allowed by the profile.
-        let mut requested: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for b in &blocks {
-            for aux in b.signals_aux() {
-                requested.insert(aux);
-            }
-        }
-        // FCS: signaled by ToneBlock, gated by profile
-        if requested.contains("fcs") && self.use_fcs {
+        // ── Auxiliary blocks (atomic, individually controlled by profile) ──
+        // Each aux block is independently gated by its profile flag, no signaling required.
+        if self.use_fcs {
             blocks.push(Box::new(FcsBlock::new()));
         }
-        // LDCI: signaled by ToneBlock, gated by profile
-        if requested.contains("ldci") && self.use_ldci {
+        if self.use_ldci {
             blocks.push(Box::new(LdciBlock::new()));
         }
-        // EE: signaled by ToneBlock, gated by profile
-        if requested.contains("ee") && self.use_ee {
+        if self.use_ee {
             blocks.push(Box::new(EeBlock::new()));
         }
 
