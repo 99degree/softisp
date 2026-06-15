@@ -1,4 +1,4 @@
-//! RawInputBlock — pipeline head, declares INT16 input tensor.
+//! RawInputBlock — pipeline head, declares INT32 input tensor (no UINT16 in pipeline).
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
@@ -23,7 +23,7 @@ impl RawInputBlock {
             input_source: String::new(),
             concrete_h: None,
             concrete_w: None,
-            elem_type: 5, // INT16 default
+            elem_type: 6, // INT32 default — no UINT16 in pipeline
         }
     }
     
@@ -34,7 +34,7 @@ impl RawInputBlock {
         self
     }
     
-    /// Set element type: 1=FLOAT, 4=UINT16, 5=INT16.
+    /// Set element type: 1=FLOAT, 6=INT32 (default).
     pub fn with_elem_type(mut self, t: i32) -> Self {
         self.elem_type = t;
         self
