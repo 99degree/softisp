@@ -399,8 +399,7 @@ impl PipelineProfile {
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_out")));
 
         // ── Auxiliary blocks (atomic, individually controlled by profile) ──
-        // Each aux block is independently gated by its profile flag.
-        let any_aux = self.use_fcs || self.use_ldci || self.use_ee;
+        // Aux blocks independently gated by their profile flag.
         if self.use_fcs {
             blocks.push(Box::new(FcsBlock::new()));
         }
@@ -531,7 +530,6 @@ impl PipelineProfile {
         } else {
             11  // legacy: raw + norm + cfa + hooks + main + display
         };
-        let any_aux = self.use_fcs || self.use_ldci || self.use_ee;
         if self.use_fcs { count += 1; }
         if self.use_ldci { count += 1; }
         if self.use_ee { count += 1; }

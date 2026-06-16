@@ -269,7 +269,7 @@ impl IspBlock for AdaptiveDownscaleBlock {
         // Build the op chain dynamically based on what's needed.
         // Always produces at least one output tensor.
         let input_name = &self.input_source;
-        let after_aspect = format!("{}/aspect_adjusted", ns);
+        let _after_aspect = format!("{}/aspect_adjusted", ns);
         let after_resize = format!("{}/resized", ns);
         let final_output = &self.frame_tensor;
 
@@ -290,10 +290,10 @@ impl IspBlock for AdaptiveDownscaleBlock {
             if self.aspect_mode.as_str() == "pad" {
                 let pads_t = format!("{}/aspect_pads", ns);
                 let cval = format!("{}/aspect_cval", ns);
-                let p_top = if sy < 0 { -sy } else { 0 };
-                let p_bot = if sah > (self.in_h.unwrap_or(0) + sy) { sah - self.in_h.unwrap_or(0) - sy } else { 0 };
-                let p_left = if sx < 0 { -sx } else { 0 };
-                let p_right = if saw > (self.in_w.unwrap_or(0) + sx) { saw - self.in_w.unwrap_or(0) - sx } else { 0 };
+                let _p_top = if sy < 0 { -sy } else { 0 };
+                let _p_bot = if sah > (self.in_h.unwrap_or(0) + sy) { sah - self.in_h.unwrap_or(0) - sy } else { 0 };
+                let _p_left = if sx < 0 { -sx } else { 0 };
+                let _p_right = if saw > (self.in_w.unwrap_or(0) + sx) { saw - self.in_w.unwrap_or(0) - sx } else { 0 };
                 nodes.push(Proto::node("Pad",
                     &[prev_tensor, &pads_t, &cval], &[&aspect_out],
                     &[Proto::attribute_string("mode", &self.filler_mode)]));
