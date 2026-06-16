@@ -152,7 +152,7 @@ fn build_and_bench(
         while Instant::now() < deadline {
             let result = engine.process(
                 w, h, w, &buf, 1023.0, w, None, &params,
-                None, None, 1.0, 0.0, None, None, None,
+                None, None, 0, 1.0, 0.0, None, None, None,
             );
             match result {
                 Ok(frame) => {
@@ -233,6 +233,7 @@ fn main() {
         false, // use_histogram
         0,     // stats_downscale_max
         0,     // pipeline_downscale_target
+        0.0,   // eis_margin
     );
     let all_blocks = profile.build_blocks(w, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile

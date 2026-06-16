@@ -104,6 +104,9 @@ pub struct PipelineProfile {
     /// Set to 0 to always process at full resolution.
     /// Example: 4K sensor (3840) → set to 1920 for FHD-equivalent processing.
     pub pipeline_downscale_target: u32,
+    /// EIS margin fraction (0.05 = 5%). Passed to AdaptiveDownscaleBlock for
+    /// reserving edge pixels for EIS/deshake warp shifts.
+    pub eis_margin: f64,
 }
 
 impl PipelineProfile {
@@ -131,6 +134,7 @@ impl PipelineProfile {
         use_histogram: false,      // skip histogram (LITE)
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
+        eis_margin: 0.0,
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -157,6 +161,7 @@ impl PipelineProfile {
         use_histogram: false,      // skip histogram (MED)
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
+        eis_margin: 0.0,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -183,6 +188,7 @@ impl PipelineProfile {
         use_histogram: true,
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
+        eis_margin: 0.0,
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -209,6 +215,7 @@ impl PipelineProfile {
         use_histogram: true,       // 16-bin histogram (full AE stats)
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
+        eis_margin: 0.0,
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -236,6 +243,7 @@ impl PipelineProfile {
         use_histogram: false,      // skip histogram
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
+        eis_margin: 0.0,
     };
 
     /// All built-in profiles.
@@ -265,6 +273,7 @@ impl PipelineProfile {
         use_histogram: bool,       // 16-bin luminance histogram for AE and clipping detection
         stats_downscale_max: u32,  // max pixel dimension for stats (0 = full res)
         pipeline_downscale_target: u32, // max pixel dimension for main pipeline (0 = full res)
+        eis_margin: f64,         // EIS margin fraction (0.05 = 5%), default 0.0
     ) -> Self {
         Self {
             label,
@@ -289,6 +298,7 @@ impl PipelineProfile {
             use_histogram,       // 16-bin luminance histogram
             stats_downscale_max, // adaptive stats downscale
             pipeline_downscale_target, // main pipeline downscale target
+            eis_margin,          // EIS margin fraction
         }
     }
 
@@ -364,7 +374,8 @@ impl PipelineProfile {
             let down_w = (target_width as f64 * factor as f64).round() as i64;
             let down_h = (target_width as f64 * factor as f64 / 1.5).round() as i64; // approx
             blocks.push(Box::new(AdaptiveDownscaleBlock::new(
-                down_w.max(1), down_h.max(1), 0, "constant", "fit")));
+                down_w.max(1), down_h.max(1), 0, "constant", "fit")
+                .with_margin(self.eis_margin)));
             // ── AuxHook after downscale: AWB/CCT/stats read from downscaled data ──
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_ds")));
         }
@@ -612,6 +623,7 @@ mod tests {
             false, // use_histogram
             0,     // stats_downscale_max
             0,     // pipeline_downscale_target
+            0.0,   // eis_margin
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -636,6 +648,7 @@ mod tests {
             false, // use_histogram
             0,     // stats_downscale_max
             0,     // pipeline_downscale_target
+            0.0,   // eis_margin
         );
         let blocks = p.build_blocks(128, 0);
         assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks, got {}", blocks.len());
