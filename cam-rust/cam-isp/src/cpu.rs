@@ -96,6 +96,7 @@ impl IspEngine for CpuEngine {
         _tone_params: &ToneParams,
         bayer_gains: Option<&[f32; 4]>,
         awb_gains: Option<&[f32; 3]>,
+        _bayer_pattern: i32,
         _analog_gain: f32,
         _scene_change: f32,
         _lsc_gains: Option<&[f32]>,
@@ -392,7 +393,7 @@ mod tests {
         let params = cam_types::ToneParams::default();
         let result = engine.process(
             w, h, w, &raw_buf, 65535.0, w,
-            None, &params, None, None, 1.0, 0.0, None, None, None,
+            None, &params, None, None, 0, 1.0, 0.0, None, None, None,
         );
         assert!(result.is_ok(), "process failed: {:?}", result.err());
         let frame = result.unwrap();
