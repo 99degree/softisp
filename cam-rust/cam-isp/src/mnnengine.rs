@@ -656,8 +656,8 @@ impl IspEngine for MnnEngine {
                 crate::mnn_sys::mnn_get_model_input_elements(interp.as_ptr(), sess.as_ptr())
             };
             self.expected_input_elements = if expected_elems > 0 { Some(expected_elems as u32) } else { None };
-            self.packed_input = (input_code == 0 && input_bits == 32)
-                && self.expected_input_elements.map_or(false, |e| e % 2 == 0);
+            // Packed if INT32 (code=0, bits=32) — all pipeline models use packed input
+            self.packed_input = input_code == 0 && input_bits == 32;
             info!("MNN model input type: code={}, bits={} packed={} expected_elems={}",
                 input_code, input_bits, self.packed_input, expected_elems);
             
@@ -703,13 +703,23 @@ impl IspEngine for MnnEngine {
             //   3) u16_conversion: copy u16→int32 via host tensor
             //   4) float_fallback: normalize to f32 then host tensor
             let path: &str;
-            let n: i32;
+            let mut n: i32;
             let t_prep_end: std::time::Instant;
             let t_infer_start: std::time::Instant;
 
-            // Determine if packed: model expects INT32 with h*w/2 elements
-            let is_packed = self.packed_input && self.expected_input_elements
-                .map_or(false, |expected| expected == h * w / 2);
+            // Determine if packed: model expects INT32 packed input
+            // When expected_elems is Some, verify element count matches h*w/2.
+            // When None (unknown height), trust the packed_input flag.
+            let is_packed = if self.packed_input {
+                if let Some(expected) = self.expected_input_elements {
+                    expected == h * w / 2
+                } else {
+                    // Unknown height — model is still packed, trust the flag
+                    true
+                }
+            } else {
+                false
+            };
 
             // ── Pre-inference: resize session and set extra inputs ──
             // Resize BEFORE the convenience wrappers so that:
@@ -729,6 +739,9 @@ impl IspEngine for MnnEngine {
                 // Extra inputs: write AFTER resize so host buffers are valid
                 Self::set_extra_inputs(&interp, &sess, ccm, tone, bayer, awb, bayer_pattern);
             }
+
+            debug!("MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
+                w, h, (w / 2).max(1), is_packed, self.expected_input_elements);
 
             if is_packed {
                 // ── PACKED ZERO-COPY (TRUE ZERO-COPY) ──
@@ -836,11 +849,56 @@ impl IspEngine for MnnEngine {
                 path, t_infer_elapsed, w, h, n);
 
             let nf = n as usize;
-            let oh = h as usize;
+            let oh = p.target_height as usize;
             let ow = tw as usize;
-            let ch = nf / (oh * ow);
+            let ch = if oh > 0 { nf / (oh * ow) } else { 0 };
 
-            let bgra = Self::to_bgra(&out_data[..nf], ch, oh, ow);
+            // Detect INT32 single-channel output (DisplayBlock.pack_rgba with Conv 1×1)
+            // Each INT32 element = packed 24-bit RGB: R*65536 + G*256 + B.
+            // Just shift+mask to extract bytes + channel swap + add alpha.
+            let bgra = {
+                let mut is_packed_int32 = false;
+                #[cfg(feature = "mnn")]
+                {
+                    // First output is now DisplayBlock/frame (reordered in GraphComposer)
+                    if let Some(t) = interp.get_first_output(&sess) {
+                        let shape = t.shape();
+                        // INT32 output: either [1,3,H,W] RGB or [1,1,H,W] packed
+                        is_packed_int32 = t.data_type() == 5  // 5 = int32
+                            && shape.len() >= 4
+                            && shape[1] >= 1; // 1 or 3 channels
+                    }
+                }
+                if is_packed_int32 {
+                    // INT32 [1,1,H,W] or [1,3,H,W]: extract BGRA
+                    let ints: &[i32] = unsafe {
+                        std::slice::from_raw_parts(out_data.as_ptr() as *const i32, nf)
+                    };
+                    let n_pixels = oh * ow;
+                    let mut out = Vec::with_capacity(n_pixels * 4);
+                    if ch >= 3 {
+                        // 3-channel INT32: [1,3,H,W], values are 0-255
+                        for i in 0..n_pixels {
+                            let r = ints[i * 3] as u8;
+                            let g = ints[i * 3 + 1] as u8;
+                            let b = ints[i * 3 + 2] as u8;
+                            out.extend_from_slice(&[b, g, r, 255]);
+                        }
+                    } else {
+                        // Single-channel packed: [1,1,H,W], each int32 = packed 24-bit
+                        for i in 0..n_pixels {
+                            let p = ints[i];
+                            let b = (p & 0xFF) as u8;
+                            let g = ((p >> 8) & 0xFF) as u8;
+                            let r = ((p >> 16) & 0xFF) as u8;
+                            out.extend_from_slice(&[b, g, r, 255]);
+                        }
+                    }
+                    out
+                } else {
+                    Self::to_bgra(&out_data[..nf], ch, oh, ow)
+                }
+            };
 
             // ── Read stats output tensors from MNN session and feed to controller ──
             // After inference, all output tensors are available in the session.
@@ -984,7 +1042,7 @@ impl IspEngine for MnnEngine {
             }
 
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
-            let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
+            let mut frame = IspFrame::new(tw, oh as u32, FrameFormat::Rgba8888);
             frame.data = bgra;
             // Stats are fed into the controller above (not returned in IspAuxOutput).
             // The controller modifies its internal state for the next frame.
