@@ -159,6 +159,7 @@ fn main() {
             &tone_params,
             None,     // bayer gains — use controller AWB
             None,     // awb gains
+            0,        // bayer_pattern (0=RGGB)
             0.0,      // analog gain (<=0 means use controller AE)
             0.0,
             None,
