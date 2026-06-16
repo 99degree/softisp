@@ -86,9 +86,11 @@ fn main() {
         Box::new(LdciBlock::new()),
         Box::new(EeBlock::new()),
 
-        // 12. Display output at FHD (float [0,1] RGB, to_bgra in Rust)
+        // 12. Display output at FHD (bg4a: Conv 1×1 BGRA float [0,255])
+        //     Does channel swap + mul(255) + alpha in ONNX.
         Box::new(DisplayBlock::new(pipe_w)
             .with_pack_rgba(false)
+            .with_bg4a(true)
             .with_concrete_dims(ds_h, ds_w)),
     ];
 
@@ -134,6 +136,7 @@ fn main() {
         params.target_width = pipe_w;  // output at FHD, not 4K
         params.target_height = pipe_h;  // output at FHD, not 4K
         params.sensor_max = 1023.0;   // 10-bit Bayer test data
+        params.output_channels = 4;   // bg4a: 4-channel BGRA [0,255] float
         
         let result = engine.process(&params);
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
