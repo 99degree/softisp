@@ -22,7 +22,11 @@ pub struct DisplayBlock {
     /// Concrete input dims (set via with_concrete_dims) for Slice initializers.
     pub in_h: Option<i64>,
     pub in_w: Option<i64>,
+    /// INT32 packed RGBA (Mul+ReduceSum+Cast). Unreliable on OpenCL.
     pub pack_rgba: bool,
+    /// BGRA float [0,255] via Conv(1×1): does channel swap + mul(255) + alpha
+    /// in one ONNX op. Rust to_bgra becomes trivial f32→u8 truncation.
+    pub bg4a: bool,
 }
 
 impl DisplayBlock {
@@ -38,6 +42,7 @@ impl DisplayBlock {
             in_h: None,
             in_w: None,
             pack_rgba: false,
+            bg4a: false,
         }
     }
 
@@ -57,6 +62,13 @@ impl DisplayBlock {
     /// Output is [1,1,H,W] INT32 where each value = R*65536 + G*256 + B.
     pub fn with_pack_rgba(mut self, enable: bool) -> Self {
         self.pack_rgba = enable;
+        self
+    }
+    /// Enable BGRA float [0,255] output via Conv(1×1).
+    /// Does channel swap (RGB→BGR), multiply by 255, and adds alpha=255.
+    /// Output: [1,4,H,W] FLOAT [0,255] — Rust only needs f32→u8 truncation.
+    pub fn with_bg4a(mut self, enable: bool) -> Self {
+        self.bg4a = enable;
         self
     }
 
@@ -106,15 +118,16 @@ impl IspBlock for DisplayBlock {
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
+        let ch = if self.bg4a { 4 } else { 3 };
         match (self.in_h, self.in_w) {
             (Some(h), Some(w)) => {
                 let (oh, ow) = if self.swaps_dims() { (w, h) } else { (h, w) };
                 Some(Proto::value_info(&self.frame_tensor,
-                    &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
+                    &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(ch),
                       Proto::tensor_dim_value(oh), Proto::tensor_dim_value(ow)], 1))
             }
             _ => Some(Proto::value_info(&self.frame_tensor,
-                &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
+                &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(ch),
                   Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1)),
         }
     }
@@ -178,13 +191,29 @@ impl IspBlock for DisplayBlock {
             prev = tensor_pool.last().unwrap().as_str();
         }
 
-        // Final: scale, optionally pack RGB into single INT32 channel
-        if !self.pack_rgba {
-            // Float [0,1] output
-            if prev != final_output {
-                nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
+        // Final: scale, optionally pack via bg4a (Conv 1×1) or pack_rgba (INT32)
+        if self.bg4a {
+            // BGRA float [0,255] output via Conv(1×1):
+            //   - Channel swap RGB→BGR
+            //   - Multiply by 255
+            //   - Alpha = 255
+            // Weight [4,3,1,1]:  [[0,0,255], [0,255,0], [255,0,0], [0,0,0]]
+            // Bias [4]:         [0, 0, 0, 255]
+            let conv_w = format!("{}/bg4a_w", ns);
+            let conv_b = format!("{}/bg4a_b", ns);
+            let conv_out = format!("{}/bg4a_out", ns);
+            // Only add Conv if we need to actually transform (not identity)
+            if prev != final_output || true {
+                nodes.push(Proto::node("Conv", &[prev, &conv_w, &conv_b], &[&conv_out],
+                    &[Proto::attribute_ints("kernel_shape", &[1, 1]),
+                      Proto::attribute_int("group", 1)]));
+                tensor_pool.push(conv_out);
+                prev = tensor_pool.last().unwrap().as_str();
             }
-        } else {
+            if prev != final_output {
+                nodes.push(Proto::node("Identity", &[prev], &[final_output], &[]));
+            }
+        } else if self.pack_rgba {
             // pack_rgba: Mul(255) -> Mul(weights [65536,256,1]) -> ReduceSum -> Cast(INT32)
             // Output: [1,1,H,W] INT32, each value = R*65536+G*256+B
             let scale_255 = format!("{}/scale_255", ns);
@@ -205,6 +234,11 @@ impl IspBlock for DisplayBlock {
             if &cast_out != final_output {
                 nodes.push(Proto::node("Identity", &[&cast_out], &[final_output], &[]));
             }
+        } else {
+            // Float [0,1] output
+            if prev != final_output {
+                nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
+            }
         }
 
         nodes
@@ -220,6 +254,25 @@ impl IspBlock for DisplayBlock {
         // Pack weights: [65536, 256, 1] for R*65536+G*256+B
         Proto::tensor_proto_float(&format!("{}/pack_w", ns), &[3], &[65536.0, 256.0, 1.0]),
         ];
+
+        if self.bg4a {
+            // Conv(1×1) weight [4,3,1,1]:  B=0*R+0*G+255*B,  G=0*R+255*G+0*B,
+            // R=255*R+0*G+0*B,  A=(bias)
+            // Layout: [oc, ic, kh, kw] = [4, 3, 1, 1]
+            // Order: oc0[B](ic0,ic1,ic2), oc1[G](ic0,ic1,ic2), oc2[R], oc3[A]
+            inits.push(Proto::tensor_proto_float(
+                &format!("{}/bg4a_w", ns),
+                &[12],
+                &[0.0, 0.0, 255.0,   // B = 255*B_in
+                  0.0, 255.0, 0.0,   // G = 255*G_in
+                  255.0, 0.0, 0.0,   // R = 255*R_in
+                  0.0, 0.0, 0.0]));  // A = 0
+            // Bias [4]: B=0, G=0, R=0, A=255
+            inits.push(Proto::tensor_proto_float(
+                &format!("{}/bg4a_b", ns),
+                &[4],
+                &[0.0, 0.0, 0.0, 255.0]));
+        }
 
         if self.is_identity() { return inits; }
 

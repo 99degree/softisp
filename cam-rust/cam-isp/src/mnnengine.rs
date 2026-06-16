@@ -70,6 +70,9 @@ pub struct MnnEngine {
     /// MNN session (references interpreter). Dropped before interp.
     #[cfg(feature = "mnn")]
     sess: Option<Mutex<MnnSessionSafe>>,
+    /// Reusable output buffer — pre-allocated once, avoids 66MB per-frame zero-fill.
+    #[cfg(feature = "mnn")]
+    output_buf: Mutex<Vec<f32>>,
 }
 
 #[cfg(feature = "mnn")]
@@ -105,6 +108,8 @@ impl MnnEngine {
             packed_input: false,
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
+            #[cfg(feature = "mnn")]
+            output_buf: Mutex::new(Vec::new()),
             #[cfg(feature = "mnn")]
             interp: None,
             #[cfg(feature = "mnn")]
@@ -436,13 +441,27 @@ impl MnnEngine {
 
     fn to_bgra(data: &[f32], ch: usize, h: usize, w: usize) -> Vec<u8> {
         let mut out = Vec::with_capacity(h * w * 4);
-        for y in 0..h {
-            for x in 0..w {
-                let i = (y * w + x) * ch;
-                let r = Self::c(data.get(i).copied().unwrap_or(0.0));
-                let g = Self::c(data.get(i + 1).copied().unwrap_or(0.0));
-                let b = Self::c(data.get(i + 2).copied().unwrap_or(0.0));
-                let a = if ch >= 4 { Self::c(data.get(i + 3).copied().unwrap_or(1.0)) } else { 255u8 };
+        if ch >= 4 {
+            // bg4a path: model outputs [1,4,H,W] FLOAT [0,255] BGRA.
+            // Values are exact integers (Conv(1×1) + bias + round = whole numbers).
+            // Just truncate f32→u8, no multiply or clamp needed.
+            for i in 0..h * w {
+                let base = i * 4;
+                out.extend_from_slice(&[
+                    data[base] as u8,       // B
+                    data[base + 1] as u8,   // G
+                    data[base + 2] as u8,   // R
+                    255,                    // A
+                ]);
+            }
+        } else {
+            // Standard float [0,1] RGB path: multiply by 255, round, swap
+            for i in 0..h * w {
+                let base = i * ch;
+                let r = Self::c(data.get(base).copied().unwrap_or(0.0));
+                let g = Self::c(data.get(base + 1).copied().unwrap_or(0.0));
+                let b = Self::c(data.get(base + 2).copied().unwrap_or(0.0));
+                let a = if ch >= 4 { Self::c(data.get(base + 3).copied().unwrap_or(1.0)) } else { 255u8 };
                 out.extend_from_slice(&[b, g, r, a]);
             }
         }
@@ -695,7 +714,13 @@ impl IspEngine for MnnEngine {
 
             // Allocate output buffer (enough for 4K HD RGBA floats)
             let max_out = (tw * h * 4) as i32;
-            let mut out_data = vec![0.0f32; max_out as usize];
+            // Use reusable buffer from engine — avoids 66MB per-frame zero-fill.
+            // First call: allocate + zero-fill. Subsequent calls: no allocation.
+            let mut out_data_guard = self.output_buf.lock().unwrap();
+            if out_data_guard.len() < max_out as usize {
+                out_data_guard.resize(max_out as usize, 0.0f32);
+            }
+            let out_data = &mut *out_data_guard;
 
             // Determine inference path based on model input type
             //   1) packed_input (INT32): true zero-copy — reinterpret u16 as i32, host ptr
@@ -854,7 +879,8 @@ impl IspEngine for MnnEngine {
             // computed from pipeline dimensions.
             let oh = p.target_height as usize;
             let ow = tw as usize;
-            let ch = 3; // Always 3-channel float output with pack_rgba=false
+            // Determine output channels: 3=RGB[0,1], 4=BGRA[0,255](bg4a)
+            let ch = p.output_channels.max(3) as usize;
             let expected_n = oh * ow * ch;
             let nf = if n <= 0 || n < (expected_n as i32) / 10 {
                 // Use expected — MNN writes correct data despite broken shape
@@ -863,33 +889,22 @@ impl IspEngine for MnnEngine {
                 n as usize
             };
 
-            // Detect INT32 single-channel output — only when pack_rgba=true
             let bgra = {
-                let mut is_packed_int32 = false;
-                if is_packed_int32 {
-                    // INT32 [1,1,H,W] or [1,3,H,W]: extract BGRA
-                    let ints: &[i32] = unsafe {
-                        std::slice::from_raw_parts(out_data.as_ptr() as *const i32, nf)
-                    };
+                let is_bg4a = ch == 4;
+                if is_bg4a {
+                    // bg4a path: 4-channel float [0,255] BGRA from Conv(1×1)
+                    // Just truncate f32→u8 (values are exact integers after Conv).
+                    let data = &out_data[..nf];
                     let n_pixels = oh * ow;
                     let mut out = Vec::with_capacity(n_pixels * 4);
-                    if ch >= 3 {
-                        // 3-channel INT32: [1,3,H,W], values are 0-255
-                        for i in 0..n_pixels {
-                            let r = ints[i * 3] as u8;
-                            let g = ints[i * 3 + 1] as u8;
-                            let b = ints[i * 3 + 2] as u8;
-                            out.extend_from_slice(&[b, g, r, 255]);
-                        }
-                    } else {
-                        // Single-channel packed: [1,1,H,W], each int32 = packed 24-bit
-                        for i in 0..n_pixels {
-                            let p = ints[i];
-                            let b = (p & 0xFF) as u8;
-                            let g = ((p >> 8) & 0xFF) as u8;
-                            let r = ((p >> 16) & 0xFF) as u8;
-                            out.extend_from_slice(&[b, g, r, 255]);
-                        }
+                    for i in 0..n_pixels {
+                        let base = i * 4;
+                        out.extend_from_slice(&[
+                            data[base] as u8,
+                            data[base + 1] as u8,
+                            data[base + 2] as u8,
+                            255,
+                        ]);
                     }
                     out
                 } else {

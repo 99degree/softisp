@@ -43,6 +43,8 @@ pub struct ProcessParams<'a> {
     pub lsc_gains: Option<&'a [f32]>,
     pub blc_values: Option<[f32; 4]>,
     pub warp_grid: Option<&'a [f32]>,
+    /// Output channels: 3=RGB float [0,1], 4=BGRA float [0,255] (bg4a mode).
+    pub output_channels: u32,
 }
 
 impl<'a> ProcessParams<'a> {
@@ -63,6 +65,7 @@ impl<'a> ProcessParams<'a> {
             bayer_pattern: 0,
             analog_gain: 1.0,
             scene_change: 0.0,
+            output_channels: 3,
             lsc_gains: None,
             blc_values: None,
             warp_grid: None,
