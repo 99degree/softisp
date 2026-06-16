@@ -329,9 +329,15 @@ impl GraphComposer {
             // Graph output: any block can declare graph outputs (→ field 12)
             // Stats blocks, aux hook blocks, and the pipeline tail all register
             // their outputs so the runtime doesn't DCE them and can read them.
+            // TAIL output is inserted FIRST so getSessionOutput(nullptr) returns it.
             if let Some(name) = blk.graph_output_name() {
                 if let Some(vi) = blk.output_value_info() {
-                    all_outputs.push(vi);
+                    if blk.is_tail() && !blk.is_head() {
+                        // Tail first = display result (for getSessionOutput nullptr)
+                        all_outputs.insert(0, vi);
+                    } else {
+                        all_outputs.push(vi);
+                    }
                     info!("{}: graph output: {} → {}", Self::TAG, blk.id(), name);
                 }
             }
