@@ -20,6 +20,60 @@ pub fn default_tone_params() -> ToneParams {
     }
 }
 
+/// Unified parameter bundle for ISP pipeline processing.
+/// Instead of passing 15 positional args to process(), construct this once.
+#[derive(Clone)]
+pub struct ProcessParams<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub stride_width: u32,
+    pub buf: &'a [u8],
+    pub sensor_max: f32,
+    pub target_width: u32,
+    pub ccm_matrix: Option<[f32; 9]>,
+    pub tone_params: ToneParams,
+    pub bayer_gains: Option<[f32; 4]>,
+    pub awb_gains: Option<[f32; 3]>,
+    pub bayer_pattern: i32,
+    pub analog_gain: f32,
+    pub scene_change: f32,
+    pub lsc_gains: Option<&'a [f32]>,
+    pub blc_values: Option<[f32; 4]>,
+    pub warp_grid: Option<&'a [f32]>,
+}
+
+impl<'a> ProcessParams<'a> {
+    /// Create params with minimal required fields; rest get defaults.
+    pub fn new(width: u32, height: u32, buf: &'a [u8]) -> Self {
+        Self {
+            width,
+            height,
+            stride_width: width,
+            buf,
+            sensor_max: 1023.0,
+            target_width: width,
+            ccm_matrix: None,
+            tone_params: default_tone_params(),
+            bayer_gains: None,
+            awb_gains: None,
+            bayer_pattern: 0,
+            analog_gain: 1.0,
+            scene_change: 0.0,
+            lsc_gains: None,
+            blc_values: None,
+            warp_grid: None,
+        }
+    }
+
+    /// Fill ccm/bayer/awb from a controller reference.
+    pub fn with_controller(mut self, ctrl: &IspController) -> Self {
+        self.ccm_matrix = Some(ctrl.get_ccm());
+        self.awb_gains = Some(ctrl.get_awb_gains());
+        self.tone_params = ctrl.get_tone_params();
+        self
+    }
+}
+
 /// Factory for creating an IspEngine instance.
 pub struct EngineFactory {
     pub name: &'static str,
@@ -56,26 +110,7 @@ pub trait IspEngine: Send + Sync {
     fn controller(&self) -> &Mutex<IspController>;
 
     /// Process a raw frame through the pipeline.
-    #[allow(clippy::too_many_arguments)]
-    fn process(
-        &self,
-        width: u32,
-        height: u32,
-        stride_width: u32,
-        buf: &[u8],
-        sensor_max: f32,
-        target_width: u32,
-        ccm_matrix: Option<&[f32; 9]>,
-        _tone_params: &ToneParams,
-        bayer_gains: Option<&[f32; 4]>,
-        awb_gains: Option<&[f32; 3]>,
-        bayer_pattern: i32,
-        analog_gain: f32,
-        scene_change: f32,
-        lsc_gains: Option<&[f32]>,
-        blc_values: Option<&[f32; 4]>,
-        warp_grid: Option<&[f32]>,
-    ) -> Result<IspFrame, String>;
+    fn process(&self, params: &ProcessParams) -> Result<IspFrame, String>;
 }
 
 /// Global registry of engine factories.
