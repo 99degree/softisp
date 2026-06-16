@@ -53,7 +53,7 @@ impl DisplayBlock {
         self.in_w = Some(w);
         self
     }
-    /// Enable packed RGBA output: Mul(255) + Mul(weights) + ReduceSum + Cast(INT32).
+    /// Enable packed RGBA output: Mul(fused [16711680,65280,255]) + ReduceSum + Cast(INT32).
     /// Output is [1,1,H,W] INT32 where each value = R*65536 + G*256 + B.
     pub fn with_pack_rgba(mut self, enable: bool) -> Self {
         self.pack_rgba = enable;
@@ -185,23 +185,20 @@ impl IspBlock for DisplayBlock {
                 nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
             }
         } else {
-            // pack_rgba: Mul(255) -> Mul(weights [65536,256,1]) -> ReduceSum -> Cast(INT32)
-            // Output: [1,1,H,W] INT32, each value = R*65536+G*256+B
-            let scale_255 = format!("{}/scale_255", ns);
-            let scaled = format!("{}/scaled", ns);
+            // pack_rgba: Mul(fused [255*65536,255*256,255]) -> ReduceSum -> Cast(INT32)
+            // Output: [1,1,H,W] INT32, each value = R*65536*255 + G*256*255 + B*255
+            // Fused = [16711680, 65280, 255] — combines scale 255 into weights
             let pack_w = format!("{}/pack_w", ns);
             let wweighted = format!("{}/wweighted", ns);
             let rsum = format!("{}/rsum", ns);
             let cast_out = format!("{}/cast", ns);
-            // 1. Mul by 255
-            nodes.push(Proto::node("Mul", &[prev, &scale_255], &[&scaled], &[]));
-            // 2. Mul with weights [65536, 256, 1] — broadcast across H,W
-            nodes.push(Proto::node("Mul", &[&scaled, &pack_w], &[&wweighted], &[]));
-            // 3. ReduceSum along channel axis → [1,1,H,W]
+            // 1. Mul with fused weights [16711680, 65280, 255] — includes scale 255
+            nodes.push(Proto::node("Mul", &[prev, &pack_w], &[&wweighted], &[]));
+            // 2. ReduceSum along channel axis → [1,1,H,W]
             nodes.push(Proto::node("ReduceSum", &[&wweighted], &[&rsum],
                 &[Proto::attribute_ints("axes", &[1]), Proto::attribute_int("keepdims", 1)]));
-            // 4. Cast to INT32
-            nodes.push(Proto::node("Cast", &[&rsum], &[&cast_out], &[Proto::attribute_int("to", 6)])); // INT32
+            // 3. Cast to INT32
+            nodes.push(Proto::node("Cast", &[&rsum], &[&cast_out], &[Proto::attribute_int("to", 6)]));
             if &cast_out != final_output {
                 nodes.push(Proto::node("Identity", &[&cast_out], &[final_output], &[]));
             }
@@ -216,9 +213,8 @@ impl IspBlock for DisplayBlock {
         // Output is float [0,1] directly. Consumer (display) multiplies by 255.
         let mut inits = vec![
             Proto::tensor_proto_float_scalar(&format!("{}/scale", ns), 1.0),
-        Proto::tensor_proto_float_scalar(&format!("{}/scale_255", ns), 255.0),
-        // Pack weights: [65536, 256, 1] for R*65536+G*256+B
-        Proto::tensor_proto_float(&format!("{}/pack_w", ns), &[3], &[65536.0, 256.0, 1.0]),
+        // Pack weights: [65536*255, 256*255, 255] = [16711680, 65280, 255]
+        Proto::tensor_proto_float(&format!("{}/pack_w", ns), &[3], &[16711680.0, 65280.0, 255.0]),
         ];
 
         if self.is_identity() { return inits; }
@@ -257,22 +253,5 @@ impl IspBlock for DisplayBlock {
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
-}
 
-/// pack_rgba implementation
-/// 
-/// ONNX graph: Mul(255) → Mul(weights [65536, 256, 1]) → ReduceSum(axes=[1]) → Cast(INT32)
-/// Output: [1,1,H,W] INT32 where each value = R*65536 + G*256 + B
-/// 
-/// Verified by test_conv_pack.rs and test_cast_bytes.rs regression tests
-/// Animation:
-///   Input := [R,G,B] = [25, 51, 76] (float values)
-///   After Mul(255) := [25*255, 51*255, 76*255] ≈ [6375, 13005, 19380]
-///   After Mul(weights) := [6375*65536, 13005*256, 19380*1] ≈ [417,913,600, 3,329,280, 19,380]
-///   After ReduceSum := 417,913,600 + 3,329,280 + 19,380 = 421,262,260
-///   But with exact math: 25*65536 + 51*256 + 76 = 1,638,400 + 13,056 + 76 = 1,651,532
-///   Extract bytes: b=p&0xFF, g=(p>>8)&0xFF, r=(p>>16)&0xFF → [76, 51, 25]
-///
-/// test_conv_pack.rs verified Conv(1x1) for packing also works.
-/// Current approach uses Mul+ReduceSum instead of Conv to avoid Conv node
-/// overhead for broadcasting.
+}
