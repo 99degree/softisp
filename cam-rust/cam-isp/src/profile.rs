@@ -349,7 +349,13 @@ impl PipelineProfile {
         if let Some(factor) = pipeline_factor {
             info!("Pipeline downscale: width={} → {} (factor={:.3})",
                 target_width, (target_width as f32 * factor) as u32, factor);
-            blocks.push(Box::new(ResizeBlock::new(factor)));
+            // Use AdaptiveDownscaleBlock in "fit" mode: preserves aspect,
+            // scales to target width, pads with black bars if needed.
+            // No concrete dims needed — ONNX graph resolves at runtime.
+            let down_w = (target_width as f64 * factor as f64).round() as i64;
+            let down_h = (target_width as f64 * factor as f64 / 1.5).round() as i64; // approx
+            blocks.push(Box::new(AdaptiveDownscaleBlock::new(
+                down_w.max(1), down_h.max(1), 0, "constant", "fit")));
         }
 
         // ── Lens shading correction (optional) ──
