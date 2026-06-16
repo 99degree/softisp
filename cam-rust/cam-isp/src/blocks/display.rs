@@ -22,6 +22,7 @@ pub struct DisplayBlock {
     /// Concrete input dims (set via with_concrete_dims) for Slice initializers.
     pub in_h: Option<i64>,
     pub in_w: Option<i64>,
+    pub pack_rgba: bool,
 }
 
 impl DisplayBlock {
@@ -36,6 +37,7 @@ impl DisplayBlock {
             rotate_mode: 0,
             in_h: None,
             in_w: None,
+            pack_rgba: false,
         }
     }
 
@@ -49,6 +51,12 @@ impl DisplayBlock {
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
         self.in_h = Some(h);
         self.in_w = Some(w);
+        self
+    }
+    /// Enable packed RGBA output: Mul(255) + Mul(weights) + ReduceSum + Cast(INT32).
+    /// Output is [1,1,H,W] INT32 where each value = R*65536 + G*256 + B.
+    pub fn with_pack_rgba(mut self, enable: bool) -> Self {
+        self.pack_rgba = enable;
         self
     }
 
@@ -170,9 +178,33 @@ impl IspBlock for DisplayBlock {
             prev = tensor_pool.last().unwrap().as_str();
         }
 
-        // Final: scale by 1.0 (identity mul, all backends)
-        if prev != final_output {
-            nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
+        // Final: scale, optionally pack RGB into single INT32 channel
+        if !self.pack_rgba {
+            // Float [0,1] output
+            if prev != final_output {
+                nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
+            }
+        } else {
+            // pack_rgba: Mul(255) -> Mul(weights [65536,256,1]) -> ReduceSum -> Cast(INT32)
+            // Output: [1,1,H,W] INT32, each value = R*65536+G*256+B
+            let scale_255 = format!("{}/scale_255", ns);
+            let scaled = format!("{}/scaled", ns);
+            let pack_w = format!("{}/pack_w", ns);
+            let wweighted = format!("{}/wweighted", ns);
+            let rsum = format!("{}/rsum", ns);
+            let cast_out = format!("{}/cast", ns);
+            // 1. Mul by 255
+            nodes.push(Proto::node("Mul", &[prev, &scale_255], &[&scaled], &[]));
+            // 2. Mul with weights [65536, 256, 1] — broadcast across H,W
+            nodes.push(Proto::node("Mul", &[&scaled, &pack_w], &[&wweighted], &[]));
+            // 3. ReduceSum along channel axis → [1,1,H,W]
+            nodes.push(Proto::node("ReduceSum", &[&wweighted], &[&rsum],
+                &[Proto::attribute_ints("axes", &[1]), Proto::attribute_int("keepdims", 1)]));
+            // 4. Cast to INT32
+            nodes.push(Proto::node("Cast", &[&rsum], &[&cast_out], &[Proto::attribute_int("to", 6)])); // INT32
+            if &cast_out != final_output {
+                nodes.push(Proto::node("Identity", &[&cast_out], &[final_output], &[]));
+            }
         }
 
         nodes
@@ -184,6 +216,9 @@ impl IspBlock for DisplayBlock {
         // Output is float [0,1] directly. Consumer (display) multiplies by 255.
         let mut inits = vec![
             Proto::tensor_proto_float_scalar(&format!("{}/scale", ns), 1.0),
+        Proto::tensor_proto_float_scalar(&format!("{}/scale_255", ns), 255.0),
+        // Pack weights: [65536, 256, 1] for R*65536+G*256+B
+        Proto::tensor_proto_float(&format!("{}/pack_w", ns), &[3], &[65536.0, 256.0, 1.0]),
         ];
 
         if self.is_identity() { return inits; }
