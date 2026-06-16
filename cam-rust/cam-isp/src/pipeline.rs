@@ -262,6 +262,14 @@ impl GraphComposer {
             v
         };
 
+        // Collect all graph output names up front so we can skip their value_infos
+        let mut graph_output_names: HashSet<String> = HashSet::new();
+        for blk in &all_blocks {
+            if let Some(name) = blk.graph_output_name() {
+                graph_output_names.insert(name.to_string());
+            }
+        }
+
         let mut all_nodes = Vec::new();
         let mut all_initializers = Vec::new();
         let mut graph_inputs = Vec::new();
@@ -282,7 +290,7 @@ impl GraphComposer {
                 // Add value_info for all output tensors (except graph input/output)
                 for tname in blk.output_tensors() {
                     let is_input = pipeline_head.graph_input_name().map_or(false, |n| n == tname);
-                    let is_output = pipeline_tail.graph_output_name().map_or(false, |n| n == tname);
+                    let is_output = graph_output_names.contains(&tname);
                     if !is_input && !is_output {
                         value_infos.push(Proto::value_info(&tname, &[
                             Proto::tensor_dim_param("N"),
@@ -318,20 +326,28 @@ impl GraphComposer {
                 }
             }
 
-            // Graph output: tail block (→ field 12)
-            if std::ptr::eq(*blk as *const _, pipeline_tail as *const _) {
-                if let Some(name) = blk.graph_output_name() {
-                    if let Some(vi) = blk.output_value_info() {
+            // Graph output: any block can declare graph outputs (→ field 12)
+            // Stats blocks, aux hook blocks, and the pipeline tail all register
+            // their outputs so the runtime doesn't DCE them and can read them.
+            // TAIL output is inserted FIRST so getSessionOutput(nullptr) returns it.
+            if let Some(name) = blk.graph_output_name() {
+                if let Some(vi) = blk.output_value_info() {
+                    if blk.is_tail() && !blk.is_head() {
+                        // Tail first = display result (for getSessionOutput nullptr)
+                        all_outputs.insert(0, vi);
+                    } else {
                         all_outputs.push(vi);
-                        info!("{}: graph output: {} → {}", Self::TAG, blk.id(), name);
                     }
+                    info!("{}: graph output: {} → {}", Self::TAG, blk.id(), name);
                 }
             }
 
-            // Extra runtime inputs — skip if already produced
+            // Extra runtime inputs — add to graph inputs even if also an initializer
+            // (ONNX allows a tensor in both field 5 initializers and field 11 inputs;
+            // the input value overrides the initializer at runtime.)
             for (name, elem_type, dims) in blk.extra_inputs() {
-                if extra_input_names.contains(&name) || produced_by.contains_key(&name) {
-                    continue;
+                if extra_input_names.contains(&name) {
+                    continue;  // Already registered (dedup across blocks)
                 }
                 extra_input_names.insert(name.clone());
                 let shape_dims: Vec<Vec<u8>> = dims.iter()

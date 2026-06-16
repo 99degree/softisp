@@ -871,14 +871,92 @@ extern "C" int mnn_run_true_zero_copy(
     in_tensor->buffer().device = 0;  // Host memory
     // Note: type and dimensions are assumed to be already set correctly by MNN
 
-    // Run inference WITHOUT resizeSession (would overwrite our pointer)
+    // ZERO-COPY OUTPUT: set host pointer on output tensor BEFORE runSession.
+    // This eliminates the copyToHostTensor + memcpy overhead on every frame.
+    auto* out_tensor = net->getSessionOutput(sess, nullptr);
+    if (!out_tensor) return -1;
+
+    // Set output host buffer directly — zero-copy
+    out_tensor->buffer().host = reinterpret_cast<uint8_t*>(out_data);
+    out_tensor->buffer().device = 0;
+
+    // Run inference — output is written directly to out_data
     auto run_ok = net->runSession(sess);
     if (run_ok != 0) {
         return static_cast<int>(run_ok);
     }
 
-    // Get output
-    auto* out_tensor = net->getSessionOutput(sess, nullptr);
+    // Get element count from resolved output tensor (shape is now valid)
+    auto out_shape = out_tensor->shape();
+    int out_total = 1;
+    for (auto d : out_shape) out_total *= d;
+    int n = out_total < max_out ? out_total : max_out;
+    if (n <= 0) return -5;
+
+    return n;
+}
+
+
+
+/**
+ * Run inference and copy a SPECIFIC named output tensor to out_data.
+ * Same as mnn_run_true_zero_copy but uses an output tensor name instead
+ * of getSessionOutput(nullptr).  Pass nullptr for output_name to get
+ * first output (same as mnn_run_true_zero_copy).
+ */
+extern "C" int mnn_run_with_output(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const void* buffer,
+    int buffer_type_code,
+    int buffer_type_bits,
+    const int* in_shape,
+    int in_ndim,
+    const char* output_name,
+    float* out_data,
+    int max_out
+) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !buffer || !out_data) return -1;
+
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+
+    halide_type_t buffer_type = { (halide_type_code_t)buffer_type_code, (uint8_t)buffer_type_bits, 1 };
+    auto model_type = in_tensor->getType();
+    
+    if (model_type.code != buffer_type.code || model_type.bits != buffer_type.bits) {
+        return -2;
+    }
+
+    std::vector<int> shape(in_shape, in_shape + in_ndim);
+    int total = 1;
+    for (int i = 0; i < in_ndim; i++) total *= in_shape[i];
+
+    size_t tensor_size = in_tensor->elementSize();
+    if (tensor_size != (size_t)total) {
+        net->resizeSession(sess);
+        in_tensor = net->getSessionInput(sess, nullptr);
+        if (!in_tensor) return -3;
+        tensor_size = in_tensor->elementSize();
+        if (tensor_size != (size_t)total) {
+            return -4;
+        }
+    }
+
+    in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
+    in_tensor->buffer().device = 0;
+
+    auto run_ok = net->runSession(sess);
+    if (run_ok != 0) {
+        return static_cast<int>(run_ok);
+    }
+
+    // Get the SPECIFIED output tensor
+    auto* out_tensor = (output_name != nullptr)
+        ? net->getSessionOutput(sess, output_name)
+        : net->getSessionOutput(sess, nullptr);
     if (!out_tensor) return -1;
 
     auto out_type = out_tensor->getType();
@@ -899,6 +977,9 @@ extern "C" int mnn_run_true_zero_copy(
     } else if (out_type.code == halide_type_uint && out_type.bits == 16) {
         auto* ptr = host_out->host<uint16_t>();
         if (ptr) for (int i = 0; i < n; i++) out_data[i] = (float)ptr[i];
+    } else if (out_type.code == halide_type_int && out_type.bits == 32) {
+        auto* ptr = host_out->host<int32_t>();
+        if (ptr) memcpy(out_data, ptr, n * sizeof(int32_t));
     } else {
         auto* ptr = host_out->host<float>();
         if (ptr) memcpy(out_data, ptr, n * sizeof(float));
@@ -907,4 +988,3 @@ extern "C" int mnn_run_true_zero_copy(
     delete host_out;
     return n;
 }
-

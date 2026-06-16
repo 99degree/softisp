@@ -60,7 +60,6 @@ fn main() {
                     return;
                 }
 
-                let params = cam_isp::engine::default_tone_params();
                 let frame_size = w as usize * h as usize * 2;
                 let mut buf = vec![0u8; frame_size];
                 for y in 0..h {
@@ -77,8 +76,7 @@ fn main() {
                 let mut total_infer_ns = 0u64;
                 let mut total_total_ns = 0u64;
                 while Instant::now() < deadline {
-                    let frame = engine.process(w, h, w, &buf, 1024.0, w, None, &params,
-                        None, None, 1.0, 0.0, None, None, None);
+                    let frame = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &buf));
                     if frame.is_ok() {
                         let f = frame.unwrap();
                         total_prep_ns += f.prep_duration_ns;

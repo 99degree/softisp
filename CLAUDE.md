@@ -1,9 +1,10 @@
 # CLAUDE.md — Rust Camera ISP Pipeline
 
-## Status: ✅ ALL JAVA CODE PORTED — +SIMD Backend System
+## Status: ✅ ALL JAVA CODE PORTED — +SIMD Backend System +AdaptiveDownscaleBlock
 
 All Java/Kotlin code ported with enhancements. New **SIMD backend system** auto-selects NEON, FP16, DOTPROD, or scalar at runtime.
-Workspace compiles with **0 warnings** and **140 unit tests pass** (2 extended tests ignored).
+New **AdaptiveDownscaleBlock** replaces simple ResizeBlock for distortion-free pipeline downscale with 3 modes (fit/crop/pad).
+Workspace compiles with **0 warnings** and **195 unit tests pass**.
 
 ## SIMD Backend Architecture (new)
 
@@ -68,8 +69,9 @@ RawInput(INT16) → Normalize(FLOAT) → DPC(median) → Gaussian Denoise
 | `UnsharpBlock.kt` / `EeBlock.kt` | `cpu.rs` (apply_unsharp) | — | ✅ Full |
 | `HistogramBlock.kt` | `controller.rs` | — | ✅ Full |
 | `ZoneStatsBlock.kt` | `controller.rs` | 3 | ✅ Full |
-| — **SIMD backend system** | `simd/` (4 backends) | 7 | ✅ New |
-| — **Android logcat** | `cam-core/logger.rs` | — | ✅ New |
+| — **PipelineManager engine select** | `manager.rs` | — | ✅ MNN→CPU fallback |
+| — **Triple-buffered rolling stats** | `controller.rs` | — | ✅ 3-slot rotate |
+| — **AdaptiveDownscaleBlock** | `blocks/adaptive_downscale.rs` | 10 | ✅ New |
 
 ## What's NOT ported (blocked by external deps or impractical)
 
@@ -86,12 +88,26 @@ RawInput(INT16) → Normalize(FLOAT) → DPC(median) → Gaussian Denoise
 
 ```bash
 cd cam-rust
-cargo test --lib -p cam-isp          # 140 unit tests, <0.2s
-cargo test -- --include-ignored      # + 2 extended pipeline tests
-cargo build --workspace              # 0 warnings
+cargo test --lib -p cam-isp          # 195 unit tests, <0.08s
+cargo check --workspace              # 0 warnings
 RUST_LOG=info cargo run --example pipeline -p cam-isp   # Single frame PNG
 bash bench-tests.sh bench 50 64 48   # Performance benchmark
 ```
+
+## FHD Benchmark (1920×1080) — Block-by-Block Incremental Cost
+
+```
+Block            CPU 9.0fps      Vulkan 12.3fps     Δ
+──────────────────────────────────────────────────────────
+unpack_cfa       37.7ms          42.4ms          +4.7ms
+demosaic_ccm     19.2ms (2Conv)  ~0ms (1Conv)    🏆 fused
+ldci             28.8ms           2.3ms           -26.5ms  ← Conv-heavy
+  ee             12.0ms           4.0ms           -8.0ms
+display          17.4ms          23.4ms           +6.0ms  ← mem xfer
+Total:~111ms                    Total:~81ms       -27%
+```
+
+Vulkan wins big on Conv-heavy blocks (ldci -92%, ee -67%) but adds overhead for small/elementwise ops (kernel launch latency) and display memory transfer.
 
 ## Architecture (10 crates, 25+ modules)
 
@@ -113,6 +129,29 @@ cam-rust/
 └── cam-app/        # ONNX model generator binary
 ```
 
+## Stats Integration — End-to-End Feedback Loop
+
+```
+PipelineManager::process_frame()
+  │ controller.get_ccm()/get_tone_params()/get_awb_gains()
+  │ engine.process(frame, ccm, tone, bayer, awb)
+  │   ├─ set_extra_inputs()     ← writes controller params to MNN tensors
+  │   ├─ inference              ← ONNX graph (display + stats outputs)
+  │   ├─ read stats tensors     ← channel means, tone, hist, zones
+  │   └─ write_stats()          ← writes to RollingStats write-slot
+  │ controller.rotate_stats()   ← write→process→ready rotate
+  │ controller.process_stats()  ← AWB, AE, tone updates from prev frame
+  └──────────────────────────────────────────→ ready for next frame
+```
+
+- **Triple-buffered RollingStats**: 3 slots (`write_idx`, `process_idx`, `ready_idx`)
+  - Engine writes frame N stats to `write_idx`
+  - Controller processes frame N-1 stats at `process_idx`
+  - Next frame reads params from `ready_idx`
+- **No lock contention**: Engine writes stats while controller processes previous
+- **Stats are ONNX blocks** (ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock) — outputs survive DCE via `graph_output_name()`
+- **Extra inputs are ONNX initializers**: CCM weights, tone params, WB gains — registered as graph inputs for runtime override (ONNX dual-registration)
+
 ## Key Design Decisions
 
 | Decision | Rationale |
@@ -122,3 +161,63 @@ cam-rust/
 | `&'static dyn SimdEngine` | `OnceLock<Box<dyn SimdEngine>>` ensures zero-cost dispatch after init |
 | Per-frame logs at `debug!` level | `info!` reserved for lifecycle; `debug!` for timing breakdowns |
 | `mnn_buffer` behind feature flag | Isolates pre-existing compilation errors |
+| Triple-buffered RollingStats | 3-slot rotate: engine writes → controller processes → next frame reads. No lock contention. |
+| ONNX dual-registration | Extra inputs registered as BOTH initializer AND graph input, enabling runtime override of CCM/tone/WB params |
+| Bayer pattern in CCM fusion | `set_extra_inputs(bayer_pattern)` selects RGGB/BGGR/GRBG/GBRG demosaic weights before fusing with CCM matrix |
+| Adaptive stats downscale | `stats_downscale_max` auto-inserts ResizeBlock before stats blocks for 4K+ sensors (e.g., 4K→540×960 = 16× fewer pixels) |
+
+## 📋 Progress
+
+### ✅ Done
+- All Java/Kotlin code ported (48+ modules)
+- SIMD backend system (NeonDotprod / NeonFp16 / Neon / Scalar)
+- AdaptiveDownscaleBlock (fit/crop/pad modes, EIS margin)
+- Triple-buffered RollingStats for lock-free stats feedback
+- Two-stage adaptive downscale (pipeline + stats)
+- Fused orientation in DisplayBlock (rot90/180/270/hflip/vflip)
+- Tone fused into DemosaicCcmBlock Conv
+- ProcessParams unified API — `IspEngine::process(&ProcessParams)`
+- IdentityBlock placeholders — same 12-block structure across all profiles
+- Pipeline tests unignored — all 202 tests pass
+- MNNConvert static C FFI — **no subprocess**, links `mnn_convert_api.cpp` directly into binary as `.a` via `cc::Build`
+
+### ⏳ In Progress
+- [ ] Verify numeric agreement between ONNX stats and software stats at FHD
+- [ ] Benchmark complete pipeline with stats enabled at target resolution
+- [ ] Investigate 30fps at FHD — current HEAVY Vulkan ~101ms (9.9fps)
+
+### 🚧 Blocked
+- [ ] GPU zero-copy: OpenCL/Vulkan backends require device memory
+- [ ] V4L2 on Android: `rscam` crate compile-time platform check
+- [ ] Full 256-bin histogram ONNX block: OneHot creates 2GB+ intermediates at FHD
+- [ ] Content-aware inpainting / GAN padding: external ML models needed
+
+## MNNConvert — Static C FFI (No Subprocess)
+
+Previously `mnn_converter.rs` spawned an `MNNConvert` subprocess for every ONNX→MNN conversion, requiring a pre-built MNNConvert binary on the system.
+
+**New approach**: `mnn_sys/mnn_convert_api.cpp` provides a `extern "C"` function `mnn_convert_onnx_to_mnn()` that calls `MNN::Cli::convertModel()` directly. This file is compiled as a static library (`.a`) by `build.rs` via `cc::Build` and linked directly into the Rust binary via `libmnnconvert.a`.
+
+```
+┌──────────────────────────────────────────┐
+│  mnn_converter.rs (Rust FFI wrapper)     │
+│  → calls mnn_convert_onnx_to_mnn()       │
+└──────┬───────────────────────────────────┘
+       │ FFI (no serialization, no subprocess)
+┌──────▼───────────────────────────────────┐
+│  mnn_convert_api.cpp (static .a)          │
+│  → calls MNN::Cli::convertModel()        │
+└──────┬───────────────────────────────────┘
+       │ linked via libMNNConvertDeps.so
+┌──────▼───────────────────────────────────┐
+│  libMNNConvertDeps.so (shared)           │
+│  → MNN converter graph optimizations     │
+└──────────────────────────────────────────┘
+```
+
+**Benefits**:
+- No subprocess overhead (no fork/exec per conversion)
+- No `MNNConvert` binary dependency on device
+- Faster model building for dynamic pipeline configurations
+- Single `.so` dependency (`libMNNConvertDeps.so`) vs needing CLI binary
+- Conversion options passed directly as C function args, not CLI flags

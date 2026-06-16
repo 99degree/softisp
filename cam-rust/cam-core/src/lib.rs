@@ -7,10 +7,9 @@ pub mod hal_bridge;
 
 use std::sync::{Arc, Mutex};
 use log::{info, error};
-use cam_isp::engine::{IspEngine, select_engine};
+use cam_isp::engine::{IspEngine, ProcessParams, select_engine};
 use cam_isp::pipeline::IspFrame;
 use cam_hal::ICameraAdapter;
-use cam_types::{ToneParams};
 
 /// Central application holder.
 pub struct ApplicationHolder {
@@ -66,11 +65,11 @@ impl ApplicationHolder {
         let pipeline = self.isp_pipeline.lock().unwrap();
         match pipeline.as_ref() {
             Some(engine) => {
-                let tone_params = ToneParams::default();
-                engine.process(
-                    width, height, stride, buf, sensor_max, target_width,
-                    None, &tone_params, None, None, 1.0, 0.0, None, None, None,
-                ).ok()
+                let mut params = ProcessParams::new(width, height, buf);
+                params.stride_width = stride;
+                params.sensor_max = sensor_max;
+                params.target_width = target_width;
+                engine.process(&params).ok()
             }
             None => {
                 error!("ISP pipeline not initialized");

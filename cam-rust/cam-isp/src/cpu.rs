@@ -12,9 +12,8 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use log::{info, debug, warn, error};
-use cam_types::ToneParams;
 
-use crate::engine::{IspEngine, EngineFactory, register_engine};
+use crate::engine::{IspEngine, EngineFactory, ProcessParams, register_engine};
 use crate::pipeline::{IspBlock, IspFrame};
 use crate::controller::IspController;
 use crate::af::AfState;
@@ -65,6 +64,7 @@ impl IspEngine for CpuEngine {
     fn backend_name(&self) -> &'static str { "CPU" }
     fn priority(&self) -> i32 { 70 }
     fn is_loaded(&self) -> bool { self.loaded }
+    fn controller(&self) -> &Mutex<IspController> { &self.controller }
 
     fn build(
         &mut self,
@@ -83,24 +83,16 @@ impl IspEngine for CpuEngine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn process(
-        &self,
-        width: u32,
-        height: u32,
-        _stride_width: u32,
-        buf: &[u8],
-        _sensor_max: f32,
-        target_width: u32,
-        ccm_matrix: Option<&[f32; 9]>,
-        _tone_params: &ToneParams,
-        bayer_gains: Option<&[f32; 4]>,
-        awb_gains: Option<&[f32; 3]>,
-        _analog_gain: f32,
-        _scene_change: f32,
-        _lsc_gains: Option<&[f32]>,
-        blc_values: Option<&[f32; 4]>,
-        _warp_grid: Option<&[f32]>,
-    ) -> Result<IspFrame, String> {
+    fn process(&self, p: &ProcessParams) -> Result<IspFrame, String> {
+        let width = p.width;
+        let height = p.height;
+        let buf = p.buf;
+        let target_width = p.target_width;
+        let ccm_matrix = p.ccm_matrix.as_ref();
+        let bayer_gains = p.bayer_gains.as_ref();
+        let awb_gains = p.awb_gains.as_ref();
+        let blc_values = p.blc_values.as_ref();
+
         if !self.loaded {
             error!("CpuEngine::process called before build()");
             return Err("Engine not initialized".to_string());
@@ -127,14 +119,14 @@ impl IspEngine for CpuEngine {
         let _t_input = t0.elapsed();
 
         // ── 2. Normalize: INT16 → FLOAT [0, 1] ──
-        let max_val = if _sensor_max > 0.0 { _sensor_max } else { 65535.0 };
+        let max_val = if p.sensor_max > 0.0 { p.sensor_max } else { 65535.0 };
         let mut float = vec![0.0f32; raw.len()];
         self.simd.normalize_u16_to_f32(&raw, &mut float, max_val);
         stage_time!("2. Normalize");
 
         // ── 2b. DPC (defective pixel correction) ──
         let dpc_data = apply_dpc(&float, width as usize, height as usize,
-            _lsc_gains.map(|g| g[0]).unwrap_or(0.15));
+            p.lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15));
         stage_time!("2b. DPC");
 
         // ── 2c. Gaussian denoise ──
@@ -177,7 +169,7 @@ impl IspEngine for CpuEngine {
                     timestamp_ns: t_ns, x: 0.01 + jitter,
                     y: 0.02 + jitter * 0.5, z: 0.005 + jitter * 0.3,
                 });
-                if _warp_grid.is_some() {
+                if p.warp_grid.is_some() {
                     None
                 } else {
                     let fl = width as f32 * 1.2;
@@ -207,7 +199,7 @@ impl IspEngine for CpuEngine {
         // ── 4. BLC + WB + LSC ──
         let blc = *blc_values.unwrap_or(&[0.0, 0.0, 0.0, 0.0]);
         let blc_wb = apply_blc_wb_raw(&denoised, width as usize, height as usize, &blc, wb_gains);
-        let lsc_k = _lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15);
+        let lsc_k = p.lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15);
         let corrected = apply_lsc(&blc_wb, width as usize, height as usize, lsc_k);
 
         // ── 5. Demosaic → RGB ──
@@ -243,7 +235,7 @@ impl IspEngine for CpuEngine {
         progress!();
 
         // ── 6. AE ──
-        let ae_gain = if _analog_gain <= 0.0 {
+        let ae_gain = if p.analog_gain <= 0.0 {
             self.controller.try_lock()
                 .map(|g| g.get_effective_exposure_gain())
                 .unwrap_or(1.0)
@@ -263,7 +255,7 @@ impl IspEngine for CpuEngine {
 
         // ── 8. Tone + FCS + LDCI + Warp ──
         let adjusted = self.simd.apply_ae_gain(&ccm_applied, ae_gain);
-        let mut toned = apply_tone(&adjusted, _tone_params, width as usize, height as usize);
+        let mut toned = apply_tone(&adjusted, &p.tone_params, width as usize, height as usize);
         apply_fcs(&mut toned, width as usize, height as usize, 0.4);
         toned = apply_ldci(&toned, width as usize, height as usize, 0.3);
 
@@ -286,7 +278,7 @@ impl IspEngine for CpuEngine {
                     warp[idx + 1] = (rx * wf - comp[0]) / wf;
                 }
                 warp_image(&toned, &warp, height as usize, width as usize)
-            } else if let Some(grid) = _warp_grid {
+            } else if let Some(grid) = p.warp_grid {
                 warp_image(&toned, grid, height as usize, width as usize)
             } else {
                 toned
@@ -388,11 +380,7 @@ mod tests {
             }
         }
 
-        let params = cam_types::ToneParams::default();
-        let result = engine.process(
-            w, h, w, &raw_buf, 65535.0, w,
-            None, &params, None, None, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&crate::engine::ProcessParams::new(w, h, &raw_buf));
         assert!(result.is_ok(), "process failed: {:?}", result.err());
         let frame = result.unwrap();
         assert_eq!(frame.width, w);

@@ -59,7 +59,6 @@ fn color_raw(width: u32, height: u32, r: u16, g: u16, b: u16) -> Vec<u8> {
 
 /// Test that CpuEngine processes a single 4×4 gray frame without error.
 #[test]
-#[ignore = "extended — runs full ISP pipeline"]
 fn test_controller_gray_4x4() {
     cam_isp::init();
     let w = 4u32;
@@ -69,11 +68,7 @@ fn test_controller_gray_4x4() {
     let mut engine = CpuEngine::new();
     engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
 
-    let tone = cam_isp::engine::default_tone_params();
-    let result = engine.process(
-        w, h, w, &raw, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
-    ).expect("Process failed");
+    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw)).expect("Process failed");
 
     assert_eq!(result.width, w);
     assert_eq!(result.height, h);
@@ -82,7 +77,6 @@ fn test_controller_gray_4x4() {
 
 /// Test AWB convergence across 10 frames with warm light input (4×4).
 #[test]
-#[ignore = "extended — runs full ISP pipeline"]
 fn test_controller_convergence() {
     cam_isp::init();
     let w = 4u32;
@@ -92,13 +86,8 @@ fn test_controller_convergence() {
     let mut engine = CpuEngine::new();
     engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
 
-    let tone = cam_isp::engine::default_tone_params();
-
     for _ in 0..10 {
-        let _result = engine.process(
-            w, h, w, &warm_raw, 65535.0, w,
-            None, &tone, None, None, 1.0, 0.0, None, None, None,
-        ).expect("Process failed");
+        let _result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &warm_raw)).expect("Process failed");
     }
 
     let ctrl = engine.controller.lock().unwrap();
@@ -114,7 +103,6 @@ fn test_controller_convergence() {
 
 /// Test that a flat gray input produces balanced RGB output.
 #[test]
-#[ignore = "extended — runs full ISP pipeline"]
 fn test_pipeline_gray_balance() {
     cam_isp::init();
     let w = 8u32;
@@ -124,11 +112,7 @@ fn test_pipeline_gray_balance() {
     let mut engine = CpuEngine::new();
     engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
 
-    let tone = cam_isp::engine::default_tone_params();
-    let result = engine.process(
-        w, h, w, &raw, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
-    ).expect("Process failed");
+    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw)).expect("Process failed");
 
     assert_eq!(result.width, w);
     assert_eq!(result.height, h);
@@ -159,7 +143,6 @@ fn test_pipeline_gray_balance() {
 
 /// Test that a gradient produces brighter right side than left.
 #[test]
-#[ignore = "extended — runs full ISP pipeline"]
 fn test_pipeline_gradient() {
     cam_isp::init();
     let w = 8u32;
@@ -169,11 +152,7 @@ fn test_pipeline_gradient() {
     let mut engine = CpuEngine::new();
     engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
 
-    let tone = cam_isp::engine::default_tone_params();
-    let result = engine.process(
-        w, h, w, &raw, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
-    ).expect("Process failed");
+    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw)).expect("Process failed");
 
     let left_end = (w / 4) as usize;
     let right_start = (w * 3 / 4) as usize;
@@ -197,7 +176,6 @@ fn test_pipeline_gradient() {
 
 /// Test pipeline handles edge cases (black/white frames) on tiny input.
 #[test]
-#[ignore = "extended — runs full ISP pipeline"]
 fn test_pipeline_edge_cases() {
     cam_isp::init();
     let w = 4u32;
@@ -205,22 +183,15 @@ fn test_pipeline_edge_cases() {
 
     let mut engine = CpuEngine::new();
     engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
-    let tone = cam_isp::engine::default_tone_params();
 
     // Black frame
     let black = gray_raw(w, h, 0.0);
-    let result = engine.process(
-        w, h, w, &black, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
-    ).expect("Black frame failed");
+    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &black)).expect("Black frame failed");
     assert!(!result.data.is_empty());
 
     // White frame
     let white = gray_raw(w, h, 0.95);
-    let result = engine.process(
-        w, h, w, &white, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
-    ).expect("White frame failed");
+    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &white)).expect("White frame failed");
     assert!(!result.data.is_empty());
     let max_val = result.data.iter().take((w * h * 4) as usize).max().copied().unwrap_or(0);
     assert!(max_val > 100, "White frame max pixel should be bright, got {}", max_val);
@@ -230,7 +201,6 @@ fn test_pipeline_edge_cases() {
 
 /// Test FusedPipeline builds with LITE profile.
 #[test]
-#[ignore = "extended — runs full ISP pipeline"]
 fn test_profile_pipeline_integration() {
     cam_isp::init();
     let blocks = PipelineProfile::LITE.build_blocks(32, 0);
