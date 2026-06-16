@@ -203,6 +203,7 @@ impl PipelineManager {
             blc_values: None,
             warp_grid: None,
             target_height: height,
+            output_channels: 3,
         };
 
         // Process
