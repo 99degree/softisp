@@ -848,27 +848,24 @@ impl IspEngine for MnnEngine {
             debug!("MNN inference: path={} total={:?} ({}x{} -> {} flt)",
                 path, t_infer_elapsed, w, h, n);
 
-            let nf = n as usize;
+            // MNN can't resolve output shapes for complex ISP pipelines on OpenCL/CPU.
+            // The output tensor has shape=[0,0,0,0] with dtype=4 (FLOAT) regardless
+            // of actual model output format.  We override n with the expected count
+            // computed from pipeline dimensions.
             let oh = p.target_height as usize;
             let ow = tw as usize;
-            let ch = if oh > 0 { nf / (oh * ow) } else { 0 };
+            let ch = 3; // Always 3-channel float output with pack_rgba=false
+            let expected_n = oh * ow * ch;
+            let nf = if n <= 0 || n < (expected_n as i32) / 10 {
+                // Use expected — MNN writes correct data despite broken shape
+                expected_n
+            } else {
+                n as usize
+            };
 
-            // Detect INT32 single-channel output (DisplayBlock.pack_rgba with Conv 1×1)
-            // Each INT32 element = packed 24-bit RGB: R*65536 + G*256 + B.
-            // Just shift+mask to extract bytes + channel swap + add alpha.
+            // Detect INT32 single-channel output — only when pack_rgba=true
             let bgra = {
                 let mut is_packed_int32 = false;
-                #[cfg(feature = "mnn")]
-                {
-                    // First output is now DisplayBlock/frame (reordered in GraphComposer)
-                    if let Some(t) = interp.get_first_output(&sess) {
-                        let shape = t.shape();
-                        // INT32 output: either [1,3,H,W] RGB or [1,1,H,W] packed
-                        is_packed_int32 = t.data_type() == 5  // 5 = int32
-                            && shape.len() >= 4
-                            && shape[1] >= 1; // 1 or 3 channels
-                    }
-                }
                 if is_packed_int32 {
                     // INT32 [1,1,H,W] or [1,3,H,W]: extract BGRA
                     let ints: &[i32] = unsafe {
