@@ -226,6 +226,7 @@ fn main() {
         false, // use_hdr
         true,  // use_fused_unpack (faster fused unpack+norm+CFA)
         true,  // use_demosaic_ccm (fused demosaic+CCM, saves 1 session)
+        true,  // use_fused_tone
         0,     // rotate_mode: none
         false, // use_zone_stats
         false, // use_channel_means
