@@ -356,6 +356,8 @@ impl PipelineProfile {
             let down_h = (target_width as f64 * factor as f64 / 1.5).round() as i64; // approx
             blocks.push(Box::new(AdaptiveDownscaleBlock::new(
                 down_w.max(1), down_h.max(1), 0, "constant", "fit")));
+            // ── AuxHook after downscale: AWB/CCT/stats read from downscaled data ──
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_ds")));
         }
 
         // ── Lens shading correction (optional) ──
@@ -425,16 +427,21 @@ impl PipelineProfile {
     /// tone stats, histogram, etc.).
     ///
     /// IMPORTANT: Each aux block must have its `input_source` set to the
-    /// name of the tensor it reads from (usually `aux_hook_src/out`).
-    /// The caller is responsible for setting this before passing to
-    /// `compose_from_vec`.
+    /// name of the tensor it reads from.  When pipeline_downscale_target is
+    /// active, stats read from `aux_hook_ds/out` (downscaled Bayer);
+    /// otherwise from `aux_hook_src/out` (full-res Bayer).
     pub fn build_aux_blocks(&self, input_h: i64, input_w: i64) -> Vec<Box<dyn IspBlock>> {
         let mut aux: Vec<Box<dyn IspBlock>> = Vec::new();
 
-        // All stats blocks read from aux_hook_src (BLC-corrected linear RGB)
-        // by default.  If stats_downscale_max > 0 and the input exceeds it,
-        // a ResizeBlock is inserted first so stats process downscaled pixels.
-        let mut stats_input_owned = String::from("aux_hook_src/out");
+        // Stats blocks read from aux_hook_ds (downscaled Bayer) when pipeline
+        // downscale is active, otherwise fall back to aux_hook_src (full-res).
+        // Full-resolution aux_hook_src is always available for AF on CPU.
+        let stats_input_base = if self.pipeline_downscale_target > 0 {
+            "aux_hook_ds/out"
+        } else {
+            "aux_hook_src/out"
+        };
+        let mut stats_input_owned = String::from(stats_input_base);
 
         // Adaptive downscale: compute factor so the longer side ≤ stats_downscale_max
         let downscale = if self.stats_downscale_max > 0 {
@@ -518,8 +525,8 @@ impl PipelineProfile {
         if self.use_channel_means { count += 1; }
         if self.use_tone_stats { count += 1; }
         if self.use_histogram { count += 1; }
-        // Pipeline downscale (1 block if target > 0)
-        if self.pipeline_downscale_target > 0 { count += 1; }
+        // Pipeline downscale (1 block + aux_hook_ds = 2 blocks if target > 0)
+        if self.pipeline_downscale_target > 0 { count += 2; }
         count
     }
 
