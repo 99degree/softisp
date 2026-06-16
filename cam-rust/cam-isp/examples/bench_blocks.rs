@@ -142,18 +142,13 @@ fn build_and_bench(
             }
         }
 
-        let params = cam_isp::engine::default_tone_params();
-
         let mut count = 0u32;
         let mut total_prep_ns = 0u64;
         let mut total_infer_ns = 0u64;
         let mut total_total_ns = 0u64;
 
         while Instant::now() < deadline {
-            let result = engine.process(
-                w, h, w, &buf, 1023.0, w, None, &params,
-                None, None, 0, 1.0, 0.0, None, None, None,
-            );
+            let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &buf));
             match result {
                 Ok(frame) => {
                     total_prep_ns += frame.prep_duration_ns;

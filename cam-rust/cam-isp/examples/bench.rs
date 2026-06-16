@@ -34,14 +34,9 @@ fn run_bench(frames: u32, width: u32, height: u32) {
     let head = RawInputBlock::new();
     engine.build(Box::new(head), vec![], None, 21).unwrap();
 
-    let tone = cam_isp::engine::default_tone_params();
-
     // Warmup: 3 frames
     for _ in 0..3 {
-        let _ = engine.process(
-            width, height, width, &raw, 65535.0, width,
-            None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
-        );
+        let _ = engine.process(&cam_isp::engine::ProcessParams::new(width, height, &raw));
     }
 
     // Timed run
@@ -51,10 +46,7 @@ fn run_bench(frames: u32, width: u32, height: u32) {
 
     for i in 0..frames {
         let start = Instant::now();
-        let result = engine.process(
-            width, height, width, &raw, 65535.0, width,
-            None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams::new(width, height, &raw));
         let elapsed = start.elapsed();
         total += elapsed;
         if elapsed < min { min = elapsed; }
@@ -113,20 +105,17 @@ fn main() {
         let mut engine = CpuEngine::new();
         let head = RawInputBlock::new();
         engine.build(Box::new(head), vec![], None, 21).unwrap();
-        let tone = cam_isp::engine::default_tone_params();
 
         // Warmup
         for _ in 0..2 {
-            let _ = engine.process(w, h, w, &raw, 65535.0, w,
-                None, &tone, None, None, 0, 1.0, 0.0, None, None, None);
+            let _ = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw));
         }
 
         let start = Instant::now();
         let n = 20 / (w * h).max(1);
         let n = n.max(5).min(50);
         for _ in 0..n {
-            let _ = engine.process(w, h, w, &raw, 65535.0, w,
-                None, &tone, None, None, 0, 1.0, 0.0, None, None, None);
+            let _ = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw));
         }
         let elapsed = start.elapsed();
         let avg = elapsed / n;
