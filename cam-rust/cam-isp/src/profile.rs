@@ -5,6 +5,7 @@
 
 use crate::blocks::*;
 use crate::pipeline::IspBlock;
+use log::info;
 
 /// Demosaic quality selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,14 @@ pub struct PipelineProfile {
     pub use_tone_stats: bool,
     /// Enable coarse luminance histogram (16 bins) for AE metering.
     pub use_histogram: bool,
+    /// Maximum pixel dimension for stats processing.
+    /// If the input resolution exceeds this, the stats blocks are preceded
+    /// by a ResizeBlock that downsamples to ≤ this dimension (preserving
+    /// aspect ratio).  Set to 0 to always process at full resolution.
+    ///
+    /// Example: for 4K input (2160×3840), setting this to 1080 downsamples
+    /// stats to 540×960 — 16× fewer pixels, 16× faster stats.
+    pub stats_downscale_max: u32,
 }
 
 impl PipelineProfile {
@@ -105,6 +114,7 @@ impl PipelineProfile {
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: false,     // skip AE tone stats (LITE)
         use_histogram: false,      // skip histogram (LITE)
+        stats_downscale_max: 0,    // full resolution
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -129,6 +139,7 @@ impl PipelineProfile {
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: true,      // tone stats for AE metering
         use_histogram: false,      // skip histogram (MED)
+        stats_downscale_max: 0,    // full resolution
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -153,6 +164,7 @@ impl PipelineProfile {
         use_channel_means: true,
         use_tone_stats: true,
         use_histogram: true,
+        stats_downscale_max: 0,    // full resolution
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -177,6 +189,7 @@ impl PipelineProfile {
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: true,      // tone stats for AE metering
         use_histogram: true,       // 16-bin histogram (full AE stats)
+        stats_downscale_max: 0,    // full resolution
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -202,6 +215,7 @@ impl PipelineProfile {
         use_channel_means: false,  // skip channel means
         use_tone_stats: false,     // skip tone stats
         use_histogram: false,      // skip histogram
+        stats_downscale_max: 0,    // full resolution
     };
 
     /// All built-in profiles.
@@ -229,6 +243,7 @@ impl PipelineProfile {
         use_channel_means: bool,   // global channel means (ReduceMean) for grey-world AWB
         use_tone_stats: bool,      // luma mean/min/max + clipped/shadows for AE metering
         use_histogram: bool,       // 16-bin luminance histogram for AE and clipping detection
+        stats_downscale_max: u32,  // max pixel dimension for stats (0 = full res)
     ) -> Self {
         Self {
             label,
@@ -251,6 +266,7 @@ impl PipelineProfile {
             use_channel_means,   // global channel means (grey-world AWB)
             use_tone_stats,      // luma stats for AE metering
             use_histogram,       // 16-bin luminance histogram
+            stats_downscale_max, // adaptive stats downscale
         }
     }
 
@@ -378,10 +394,40 @@ impl PipelineProfile {
         let mut aux: Vec<Box<dyn IspBlock>> = Vec::new();
 
         // All stats blocks read from aux_hook_src (BLC-corrected linear RGB)
-        let stats_input = "aux_hook_src/out";
+        // by default.  If stats_downscale_max > 0 and the input exceeds it,
+        // a ResizeBlock is inserted first so stats process downscaled pixels.
+        let mut stats_input_owned = String::from("aux_hook_src/out");
+
+        // Adaptive downscale: compute factor so the longer side ≤ stats_downscale_max
+        let downscale = if self.stats_downscale_max > 0 {
+            let max_dim = input_h.max(input_w) as f32;
+            let target = self.stats_downscale_max as f32;
+            if max_dim > target {
+                Some(target / max_dim)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(factor) = downscale {
+            let out_h = (input_h as f32 * factor).ceil() as i64;
+            let out_w = (input_w as f32 * factor).ceil() as i64;
+            let mut resize = ResizeBlock::new(factor)
+                .with_concrete_dims(out_h, out_w);
+            resize.set_input_source(&stats_input_owned);
+            info!("Stats downscale: {}×{} → {}×{} (factor={:.3})",
+                input_h, input_w, out_h, out_w, factor);
+            stats_input_owned = resize.frame_tensor.clone();
+            aux.push(Box::new(resize));
+        }
+
+        let stats_input: &str = &stats_input_owned;
 
         if self.use_zone_stats {
-            let mut b = ZoneStatsBlock::new(6, 8).with_concrete_dims(input_h, input_w);
+            let mut b = ZoneStatsBlock::new(6, 8)
+                .with_concrete_dims(input_h, input_w);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }
@@ -500,6 +546,7 @@ mod tests {
             false, // use_channel_means
             true,  // use_tone_stats
             false, // use_histogram
+            0,     // stats_downscale_max
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -522,6 +569,7 @@ mod tests {
             false, // use_channel_means
             false, // use_tone_stats
             false, // use_histogram
+            0,     // stats_downscale_max
         );
         let blocks = p.build_blocks(128, 0);
         assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks, got {}", blocks.len());

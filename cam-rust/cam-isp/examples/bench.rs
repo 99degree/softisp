@@ -40,7 +40,7 @@ fn run_bench(frames: u32, width: u32, height: u32) {
     for _ in 0..3 {
         let _ = engine.process(
             width, height, width, &raw, 65535.0, width,
-            None, &tone, None, None, 1.0, 0.0, None, None, None,
+            None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
         );
     }
 
@@ -53,7 +53,7 @@ fn run_bench(frames: u32, width: u32, height: u32) {
         let start = Instant::now();
         let result = engine.process(
             width, height, width, &raw, 65535.0, width,
-            None, &tone, None, None, 1.0, 0.0, None, None, None,
+            None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
         );
         let elapsed = start.elapsed();
         total += elapsed;
@@ -118,7 +118,7 @@ fn main() {
         // Warmup
         for _ in 0..2 {
             let _ = engine.process(w, h, w, &raw, 65535.0, w,
-                None, &tone, None, None, 1.0, 0.0, None, None, None);
+                None, &tone, None, None, 0, 1.0, 0.0, None, None, None);
         }
 
         let start = Instant::now();
@@ -126,7 +126,7 @@ fn main() {
         let n = n.max(5).min(50);
         for _ in 0..n {
             let _ = engine.process(w, h, w, &raw, 65535.0, w,
-                None, &tone, None, None, 1.0, 0.0, None, None, None);
+                None, &tone, None, None, 0, 1.0, 0.0, None, None, None);
         }
         let elapsed = start.elapsed();
         let avg = elapsed / n;

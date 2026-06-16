@@ -233,6 +233,7 @@ fn main() {
         false, // use_channel_means
         false, // use_tone_stats
         false, // use_histogram
+        0,     // stats_downscale_max
     );
     let all_blocks = profile.build_blocks(w, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile
