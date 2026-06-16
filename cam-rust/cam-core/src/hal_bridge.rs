@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use log::info;
 use cam_isp::engine::select_engine;
-use cam_types::ToneParams;
 
 /// Frame processing function type (matches AndroidCameraAdapter expectation).
 pub type FrameProcessor =
@@ -63,23 +62,10 @@ pub fn create_isp_processor(
         let proc_start = std::time::Instant::now();
         let mut guard = engine.lock().map_err(|e| format!("Lock failed: {}", e))?;
         let eng = guard.as_mut().ok_or("Engine taken")?;
-        let tone = ToneParams::default();
-        let result = eng.process(
-            w, h, w,               // width, height, stride (no padding)
-            data,                  // raw bayer bytes
-            65535.0,               // sensor_max (16-bit)
-            target_width,          // target output width
-            None,                  // ccm_matrix
-            &tone,                 // tone params
-            None,                  // bayer_gains
-            None,                  // awb_gains
-            0,                     // bayer_pattern (0=RGGB)
-            1.0,                   // analog_gain
-            0.0,                   // scene_change
-            None,                  // lsc_gains
-            None,                  // blc_values
-            None,                  // warp_grid
-        )?;
+        let mut params = cam_isp::engine::ProcessParams::new(w, h, data);
+        params.target_width = target_width;
+        params.sensor_max = 65535.0;
+        let result = eng.process(&params)?;
         let proc_elapsed = proc_start.elapsed();
         log::trace!("ISP process: {}x{} -> {} bytes in {:.2}ms",
             w, h, result.data.len(), proc_elapsed.as_secs_f64() * 1000.0);
