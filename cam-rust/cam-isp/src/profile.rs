@@ -7,6 +7,14 @@ use crate::blocks::*;
 use crate::pipeline::IspBlock;
 use log::info;
 
+/// Orientation transform constants (32-bit integer for fast comparison).
+pub const ROTATE_NONE:  i32 = 0; // No transform
+pub const ROTATE_ROT90: i32 = 1; // 90° clockwise
+pub const ROTATE_ROT180: i32 = 2; // 180°
+pub const ROTATE_ROT270: i32 = 3; // 90° counter-clockwise
+pub const ROTATE_HFLIP: i32 = 4; // Horizontal mirror
+pub const ROTATE_VFLIP: i32 = 5; // Vertical mirror
+
 /// Demosaic quality selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DemosaicQuality {
@@ -70,6 +78,8 @@ pub struct PipelineProfile {
     pub use_fused_unpack: bool,
     /// Fuse demosaic+CCM into a single block (saves 1 session).
     pub use_demosaic_ccm: bool,
+    /// Orientation transform: 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip.
+    pub rotate_mode: i32,
     /// Enable per-zone RGB means (AveragePool) for multi-illuminant AWB.
     pub use_zone_stats: bool,
     /// Enable global channel means (ReduceMean) for grey-world AWB.
@@ -114,6 +124,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        rotate_mode: 0,
         use_zone_stats: true,      // zone RGB means for basic AWB
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: false,     // skip AE tone stats (LITE)
@@ -139,6 +150,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        rotate_mode: 0,
         use_zone_stats: true,      // zone stats for multi-illuminant AWB
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: true,      // tone stats for AE metering
@@ -164,6 +176,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        rotate_mode: 0,
         use_zone_stats: true,
         use_channel_means: true,
         use_tone_stats: true,
@@ -189,6 +202,7 @@ impl PipelineProfile {
         use_hdr: true,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        rotate_mode: 0,
         use_zone_stats: true,      // zone stats for multi-illuminant AWB
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: true,      // tone stats for AE metering
@@ -215,6 +229,7 @@ impl PipelineProfile {
         use_unsharp: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        rotate_mode: 0,
         use_zone_stats: true,      // zone stats for AWB (single block test)
         use_channel_means: false,  // skip channel means
         use_tone_stats: false,     // skip tone stats
@@ -243,6 +258,7 @@ impl PipelineProfile {
         use_hdr: bool,
         use_fused_unpack: bool,
         use_demosaic_ccm: bool,
+        rotate_mode: i32,         // 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip
         use_zone_stats: bool,      // per-zone RGB means (AveragePool) for multi-illuminant AWB
         use_channel_means: bool,   // global channel means (ReduceMean) for grey-world AWB
         use_tone_stats: bool,      // luma mean/min/max + clipped/shadows for AE metering
@@ -266,6 +282,7 @@ impl PipelineProfile {
             use_hdr,
             use_fused_unpack,
             use_demosaic_ccm,
+            rotate_mode,
             use_zone_stats,      // per-zone RGB means (AWB multi-illuminant)
             use_channel_means,   // global channel means (grey-world AWB)
             use_tone_stats,      // luma stats for AE metering
@@ -394,8 +411,11 @@ impl PipelineProfile {
             blocks.push(Box::new(EeBlock::new()));
         }
 
-        // ── Display output ──
-        blocks.push(Box::new(DisplayBlock::new(target_width)));
+        // ── Display output + orientation transform (fused) ──
+        let display_h = (target_width as f64 / 1.5).round() as i64; // 16:9 approx
+        blocks.push(Box::new(DisplayBlock::new(target_width)
+            .with_rotate(self.rotate_mode)
+            .with_concrete_dims(display_h, target_width as i64)));
 
         // Wire blocks so each block's input_source points to the previous block's frame_tensor.
         // This is required before passing to GraphComposer::compose_from_vec.
@@ -587,6 +607,7 @@ mod tests {
             "CUSTOM", PipelineLevel::Pro, true, true, true, true, true,
             DemosaicQuality::Edge, true, true, true, true, false, false,
             true,  // use_demosaic_ccm
+            0,     // rotate_mode: none
             true,  // use_zone_stats
             false, // use_channel_means
             true,  // use_tone_stats
@@ -610,6 +631,7 @@ mod tests {
             "LEGACY", PipelineLevel::Lite, false, false, false, false, false,
             DemosaicQuality::Standard, false, false, false, false, false, false,
             false, // use_demosaic_ccm
+            0,     // rotate_mode: none
             false, // use_zone_stats
             false, // use_channel_means
             false, // use_tone_stats
