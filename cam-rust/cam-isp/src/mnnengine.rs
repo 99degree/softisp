@@ -410,7 +410,7 @@ impl MnnEngine {
                         break;
                     }
                     engine.process(w, h, w, &buf, 1024.0, w, None, &params,
-                                  None, None, 1.0, 0.0, None, None, None)?;
+                                  None, None, 0, 1.0, 0.0, None, None, None)?;
                     count += 1;
                 }
 
@@ -457,6 +457,17 @@ impl MnnEngine {
     /// BEFORE inference.  Must be called AFTER resizeSession so tensor
     /// host buffers are valid for writing.
     #[cfg(feature = "mnn")]
+    /// Set runtime-overridable extra inputs for the MNN session.
+    ///
+    /// Called AFTER `resizeSession()` but BEFORE inference.
+    /// Writes controller-computed params (CCM, tone, WB gains) directly
+    /// into MNN host tensors for zero-copy override of initializer values.
+    ///
+    /// # Bayer pattern codes
+    /// - 0 = RGGB (default)
+    /// - 1 = BGGR
+    /// - 2 = GRBG
+    /// - 3 = GBRG
     fn set_extra_inputs(
         interp: &crate::mnn_sys::MnnInterpreterSafe,
         sess: &crate::mnn_sys::MnnSessionSafe,
@@ -464,25 +475,58 @@ impl MnnEngine {
         tone: &ToneParams,
         bayer: Option<&[f32; 4]>,
         _awb: Option<&[f32; 3]>,
+        bayer_pattern: i32,
     ) {
         use crate::mnn_sys::MnnInterpreterSafe as MI;
 
         // DemosaicCcmBlock/w [3,4,1,1] — fused CCM × demosaic weights
-        // demosaic weights for RGGB (bayer_pattern=0):
-        //   R: [1,0,0,0], G: [0,0.5,0.5,0], B: [0,0,0,1]
-        // fused[i,j] = Σₖ ccm[i,k] * demo[k,j]
+        //
+        // The demosaic operation extracts 2×2 Bayer quadrants into 3 RGB
+        // output channels.  The weights depend on the sensor's Bayer pattern:
+        //
+        //   Pattern 0 (RGGB):  R=[1,0,0,0]  G=[0,½,½,0]  B=[0,0,0,1]
+        //   Pattern 1 (BGGR):  R=[0,0,0,1]  G=[0,½,½,0]  B=[1,0,0,0]
+        //   Pattern 2 (GRBG):  R=[0,1,0,0]  G=[½,0,0,½]  B=[0,0,1,0]
+        //   Pattern 3 (GBRG):  R=[0,0,1,0]  G=[½,0,0,½]  B=[0,1,0,0]
+        //
+        // fused[i,j] = Σₖ ccm[i,k] * demo[k,j]   (i=RGB, j=quadrant)
+        const DEMO_RGGB: [f32; 12] = [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 0.5, 0.5, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        const DEMO_BGGR: [f32; 12] = [
+            0.0, 0.0, 0.0, 1.0,
+            0.0, 0.5, 0.5, 0.0,
+            1.0, 0.0, 0.0, 0.0,
+        ];
+        const DEMO_GRBG: [f32; 12] = [
+            0.0, 1.0, 0.0, 0.0,
+            0.5, 0.0, 0.0, 0.5,
+            0.0, 0.0, 1.0, 0.0,
+        ];
+        const DEMO_GBRG: [f32; 12] = [
+            0.0, 0.0, 1.0, 0.0,
+            0.5, 0.0, 0.0, 0.5,
+            0.0, 1.0, 0.0, 0.0,
+        ];
+
+        // Select demosaic weights by pattern
+        let demo: &[f32; 12] = match bayer_pattern & 3 {
+            1 => &DEMO_BGGR,
+            2 => &DEMO_GRBG,
+            3 => &DEMO_GBRG,
+            _ => &DEMO_RGGB,
+        };
+
+        // Fused CCM weights: w[i,j] = Σₖ ccm[i,k] * demo[k,j]
         if let Some(ccm) = ccm {
-            const DEMO_RGGB: [f32; 12] = [
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 0.5, 0.5, 0.0,
-                0.0, 0.0, 0.0, 1.0,
-            ];
             let mut fused = [0.0f32; 12];
             for i in 0..3 {
                 for j in 0..4 {
                     let mut s = 0.0;
                     for k in 0..3 {
-                        s += ccm[i * 3 + k] * DEMO_RGGB[k * 4 + j];
+                        s += ccm[i * 3 + k] * demo[k * 4 + j];
                     }
                     fused[i * 4 + j] = s;
                 }
@@ -631,6 +675,7 @@ impl IspEngine for MnnEngine {
     fn process(&self, w: u32, h: u32, _sw: u32, buf: &[u8], smax: f32, tw: u32,
                ccm: Option<&[f32; 9]>, tone: &ToneParams,
                bayer: Option<&[f32; 4]>, awb: Option<&[f32; 3]>,
+               bayer_pattern: i32,
                _ag: f32, _sc: f32, _lsc: Option<&[f32]>, _blc: Option<&[f32; 4]>, _wg: Option<&[f32]>) -> Result<IspFrame, String> {
         if !self.initialized { return Err("not init".into()); }
 
@@ -676,7 +721,7 @@ impl IspEngine for MnnEngine {
                 }
                 let _ = sess.resize();
                 // Extra inputs: write AFTER resize so host buffers are valid
-                Self::set_extra_inputs(&interp, &sess, ccm, tone, bayer, awb);
+                Self::set_extra_inputs(&interp, &sess, ccm, tone, bayer, awb, bayer_pattern);
             }
 
             if is_packed {

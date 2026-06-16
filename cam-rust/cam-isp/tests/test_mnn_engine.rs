@@ -78,7 +78,7 @@ fn test_mnn_engine_streaming() {
         let result = engine.process(
             w, h, w, &buf, smax, 64,
             None, &cam_isp::engine::default_tone_params(),
-            None, None, 1.0, 0.0, None, None, None,
+            None, None, 0, 1.0, 0.0, None, None, None,
         );
 
         match &result {
@@ -122,13 +122,13 @@ fn test_mnn_engine_frame_difference() {
     // Frame 0: all zeros
     let buf0 = vec![0u8; 48 * 64 * 2];
     let f0 = engine.process(48, 64, 48, &buf0, 1024.0, 64, None, &params,
-        None, None, 1.0, 0.0, None, None, None).expect("frame 0");
+        None, None, 0, 1.0, 0.0, None, None, None).expect("frame 0");
     outputs.push(f0.data);
 
     // Frame 1: all 0xFF
     let buf1 = vec![0xFFu8; 48 * 64 * 2];
     let f1 = engine.process(48, 64, 48, &buf1, 1024.0, 64, None, &params,
-        None, None, 1.0, 0.0, None, None, None).expect("frame 1");
+        None, None, 0, 1.0, 0.0, None, None, None).expect("frame 1");
     outputs.push(f1.data);
 
     // Frame 2: ramp pattern
@@ -139,7 +139,7 @@ fn test_mnn_engine_frame_difference() {
         chunk[1] = (v >> 8) as u8;
     }
     let f2 = engine.process(48, 64, 48, &buf2, 1024.0, 64, None, &params,
-        None, None, 1.0, 0.0, None, None, None).expect("frame 2");
+        None, None, 0, 1.0, 0.0, None, None, None).expect("frame 2");
     outputs.push(f2.data);
 
     // Verify all 3 outputs are different from each other
@@ -204,7 +204,7 @@ fn test_mnn_engine_lite_profile() {
         let result = engine.process(
             w, h, w, &buf, smax, 64,
             None, &cam_isp::engine::default_tone_params(),
-            None, None, 1.0, 0.0, None, None, None,
+            None, None, 0, 1.0, 0.0, None, None, None,
         );
         match &result {
             Ok(frame) => {
@@ -267,7 +267,7 @@ fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
     let result = engine.process(
         w, h, w, &buf, 1024.0, 64,
         None, &cam_isp::engine::default_tone_params(),
-        None, None, 1.0, 0.0, None, None, None,
+        None, None, 0, 1.0, 0.0, None, None, None,
     );
     match &result {
         Ok(frame) => {
@@ -326,7 +326,7 @@ fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
         let t_start = Instant::now();
         let result = engine.process(
             w, h, w, &buf, 1024.0, w,
-            None, &params, None, None, 1.0, 0.0, None, None, None,
+            None, &params, None, None, 0, 1.0, 0.0, None, None, None,
         );
         let elapsed = t_start.elapsed();
         total_duration += elapsed;
@@ -427,7 +427,7 @@ fn stream_mnn_backend(w: u32, h: u32, n_frames: u32, backend: &str) -> Result<f6
         let t_start = Instant::now();
         let result = engine.process(
             w, h, w, &buf, 1024.0, w,
-            None, &params, None, None, 1.0, 0.0, None, None, None,
+            None, &params, None, None, 0, 1.0, 0.0, None, None, None,
         );
         let elapsed = t_start.elapsed();
         total_duration += elapsed;
@@ -543,7 +543,7 @@ fn test_mnn_packed_pipeline() {
     let params = cam_isp::engine::default_tone_params();
     let result = engine.process(
         w as u32, h as u32, w as u32, buf, 65536.0, w as u32,
-        None, &params, None, None, 1.0, 0.0, None, None, None,
+        None, &params, None, None, 0, 1.0, 0.0, None, None, None,
     );
 
     match &result {
@@ -575,7 +575,7 @@ fn test_mnn_engine_uninitialized() {
         let result = engine.process(
             48, 64, 48, &[0u8; 48*64*2], 1024.0, 64,
             None, &cam_isp::engine::default_tone_params(),
-            None, None, 1.0, 0.0, None, None, None,
+            None, None, 0, 1.0, 0.0, None, None, None,
         );
         assert!(result.is_err(), "uninitialized should fail");
         eprintln!("Uninitialized check OK: {:?}", result.err().unwrap());

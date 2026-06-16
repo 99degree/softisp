@@ -193,6 +193,7 @@ impl PipelineManager {
             &tone,
             Some(&bayer_gains),
             Some(&awb_gains),
+            0,   // bayer_pattern (0=RGGB)
             1.0,   // analog gain
             0.0,   // scene change
             None,  // lsc gains

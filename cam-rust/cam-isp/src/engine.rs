@@ -69,6 +69,7 @@ pub trait IspEngine: Send + Sync {
         _tone_params: &ToneParams,
         bayer_gains: Option<&[f32; 4]>,
         awb_gains: Option<&[f32; 3]>,
+        bayer_pattern: i32,
         analog_gain: f32,
         scene_change: f32,
         lsc_gains: Option<&[f32]>,
