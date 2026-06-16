@@ -17,7 +17,7 @@ use std::time::Instant;
 use log::{info, debug, warn, error};
 
 use cam_types::{FrameFormat, ToneParams};
-use crate::engine::IspEngine;
+use crate::engine::{IspEngine, ProcessParams};
 use crate::controller::IspController;
 use crate::pipeline::{IspBlock, IspFrame, IspAuxOutput};
 
@@ -374,7 +374,6 @@ impl MnnEngine {
     #[cfg(feature = "mnn")]
     fn bench_one(backend: &MnnBackend, mnn_path: &str, w: u32, h: u32) -> Result<f64, String> {
         use crate::blocks::RawInputBlock;
-        use crate::engine::default_tone_params;
 
         let be = *backend;
         let mnn_owned = mnn_path.to_owned();
@@ -388,7 +387,6 @@ impl MnnEngine {
                 engine.build(head, vec![], None, 16)
                     .map_err(|e| format!("build: {}", e))?;
 
-                let params = default_tone_params();
                 let frame_size = (w * h * 2) as usize;
                 let mut buf = vec![0u8; frame_size];
                 for y in 0..h {
@@ -409,8 +407,7 @@ impl MnnEngine {
                     if remaining < std::time::Duration::from_millis(10) {
                         break;
                     }
-                    engine.process(w, h, w, &buf, 1024.0, w, None, &params,
-                                  None, None, 0, 1.0, 0.0, None, None, None)?;
+                    engine.process(&crate::engine::ProcessParams::new(w, h, &buf))?;
                     count += 1;
                 }
 
@@ -528,7 +525,8 @@ impl MnnEngine {
                     for k in 0..3 {
                         s += ccm[i * 3 + k] * demo[k * 4 + j];
                     }
-                    fused[i * 4 + j] = s;
+                    // When tone is fused in, absorb contrast into weights
+                    fused[i * 4 + j] = s * tone.contrast;
                 }
             }
             if let Some(t) = interp.get_input(sess, "DemosaicCcmBlock/w") {
@@ -540,10 +538,11 @@ impl MnnEngine {
                 }
             }
         }
-        // DemosaicCcmBlock/b [3] — CCM bias (zero)
+        // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
         if let Some(t) = interp.get_input(sess, "DemosaicCcmBlock/b") {
             if let Some(mut bytes) = t.as_bytes_mut() {
-                let bias = [0.0f32; 3];
+                // When tone is fused in, absorb brightness into bias
+                let bias = [tone.brightness; 3];
                 let src = unsafe { std::slice::from_raw_parts(bias.as_ptr() as *const u8, 12) };
                 if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
             }
@@ -672,11 +671,18 @@ impl IspEngine for MnnEngine {
         Ok(())
     }
 
-    fn process(&self, w: u32, h: u32, _sw: u32, buf: &[u8], smax: f32, tw: u32,
-               ccm: Option<&[f32; 9]>, tone: &ToneParams,
-               bayer: Option<&[f32; 4]>, awb: Option<&[f32; 3]>,
-               bayer_pattern: i32,
-               _ag: f32, _sc: f32, _lsc: Option<&[f32]>, _blc: Option<&[f32; 4]>, _wg: Option<&[f32]>) -> Result<IspFrame, String> {
+    fn process(&self, p: &ProcessParams) -> Result<IspFrame, String> {
+        let w = p.width;
+        let h = p.height;
+        let buf = p.buf;
+        let smax = p.sensor_max;
+        let tw = p.target_width;
+        let ccm = p.ccm_matrix.as_ref();
+        let tone = &p.tone_params;
+        let bayer = p.bayer_gains.as_ref();
+        let awb = p.awb_gains.as_ref();
+        let bayer_pattern = p.bayer_pattern;
+
         if !self.initialized { return Err("not init".into()); }
 
         #[cfg(feature = "mnn")]

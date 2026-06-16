@@ -7,11 +7,11 @@ pub mod proto;
 use log::info;
 #[cfg(feature = "ort")]
 use log::warn;
-use cam_types::{FrameFormat, ToneParams};
+use cam_types::FrameFormat;
 
 use std::sync::Mutex;
 use crate::controller::IspController;
-use crate::engine::IspEngine;
+use crate::engine::{IspEngine, ProcessParams};
 use crate::pipeline::{IspBlock, IspFrame, GraphComposer};
 
 // ---------------------------------------------------------------------------
@@ -139,25 +139,12 @@ impl IspEngine for OnnxEngine {
         Ok(())
     }
 
-    fn process(
-        &self,
-        width: u32,
-        height: u32,
-        _stride_width: u32,
-        _buf: &[u8],
-        _sensor_max: f32,
-        target_width: u32,
-        _ccm_matrix: Option<&[f32; 9]>,
-        _tone_params: &ToneParams,
-        _bayer_gains: Option<&[f32; 4]>,
-        _awb_gains: Option<&[f32; 3]>,
-        _bayer_pattern: i32,
-        _analog_gain: f32,
-        _scene_change: f32,
-        _lsc_gains: Option<&[f32]>,
-        _blc_values: Option<&[f32; 4]>,
-        _warp_grid: Option<&[f32]>,
-    ) -> Result<IspFrame, String> {
+    fn process(&self, p: &ProcessParams) -> Result<IspFrame, String> {
+        let width = p.width;
+        let height = p.height;
+        let target_width = p.target_width;
+        let _buf = p.buf;
+
         if !self.initialized {
             return Err("Engine not initialized".to_string());
         }
