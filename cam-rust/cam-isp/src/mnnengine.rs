@@ -798,88 +798,136 @@ impl IspEngine for MnnEngine {
             #[cfg(feature = "mnn")]
             {
                 use crate::mnn_sys::MnnInterpreterSafe;
-                if let Ok(mut ctrl) = self.controller.lock() {
-                    // Store stats in the write slot (triple-buffer)
-                    let stats = ctrl.write_stats();
 
-                    // Try reading ChannelMeansBlock/frame → [1, 3] or [3]
-                    if let Some(t) = interp.get_output(&sess, "ChannelMeansBlock/frame") {
-                        if let Some(bytes) = t.as_bytes() {
-                            let floats: &[f32] = unsafe {
-                                std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
-                            };
-                            if floats.len() >= 3 {
-                                stats.channel_means = [floats[0], floats[1], floats[2]];
-                            }
+                // ── Phase 1: Read raw stats tensors into local variables ──
+                // (Avoid borrow conflicts with ctrl write_stats() above)
+                let mut cm_vals: Option<[f32; 3]> = None;
+                let mut ts_vals: Option<[f32; 6]> = None;
+                let mut hist_vals: Option<[f32; 16]> = None;
+                let mut zone_data: Option<(usize, usize, Vec<Vec<[f32; 3]>>)> = None;
+
+                // ChannelMeansBlock/frame → [1, 3] or [3]
+                if let Some(t) = interp.get_output(&sess, "ChannelMeansBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        if floats.len() >= 3 {
+                            cm_vals = Some([floats[0], floats[1], floats[2]]);
                         }
                     }
-                    // Try reading ToneStatsBlock/frame → [6]
-                    if let Some(t) = interp.get_output(&sess, "ToneStatsBlock/frame") {
-                        if let Some(bytes) = t.as_bytes() {
-                            let floats: &[f32] = unsafe {
-                                std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
-                            };
-                            let n = floats.len().min(6);
-                            stats.tone_stats[..n].copy_from_slice(&floats[..n]);
-                            if n >= 6 {
-                                ctrl.hist_constrained_gain = 1.0 - (floats[3] / floats[5].max(1.0));
-                            }
-                        }
+                }
+                // ToneStatsBlock/frame → [6]
+                if let Some(t) = interp.get_output(&sess, "ToneStatsBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        let mut ts = [0.0f32; 6];
+                        let n = floats.len().min(6);
+                        ts[..n].copy_from_slice(&floats[..n]);
+                        ts_vals = Some(ts);
                     }
-                    // Try reading CoarseHistogramBlock/frame → [1, 16]
-                    if let Some(t) = interp.get_output(&sess, "CoarseHistogramBlock/frame") {
-                        if let Some(bytes) = t.as_bytes() {
-                            let floats: &[f32] = unsafe {
-                                std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
-                            };
-                            let n = floats.len().min(16);
-                            stats.histogram[..n].copy_from_slice(&floats[..n]);
-                            stats.histogram_valid = true;
-                        }
+                }
+                // CoarseHistogramBlock/frame → [1, 16]
+                if let Some(t) = interp.get_output(&sess, "CoarseHistogramBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        let mut hist = [0.0f32; 16];
+                        let n = floats.len().min(16);
+                        hist[..n].copy_from_slice(&floats[..n]);
+                        hist_vals = Some(hist);
                     }
-                    // Try reading ZoneStatsBlock/frame → [1, 3, rows, cols]
-                    if let Some(t) = interp.get_output(&sess, "ZoneStatsBlock/frame") {
-                        if let Some(bytes) = t.as_bytes() {
-                            let floats: &[f32] = unsafe {
-                                std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
-                            };
-                            let shape = t.shape();
-                            if shape.len() >= 4 {
-                                let rows = shape[2] as usize;
-                                let cols = shape[3] as usize;
-                                let mut zone_rgb = vec![vec![[0.0f32; 3]; cols]; rows];
-                                for r in 0..rows {
-                                    for c in 0..cols {
-                                        let idx = r * cols + c;
-                                        if idx * 3 + 2 < floats.len() {
-                                            zone_rgb[r][c][0] = floats[idx * 3];
-                                            zone_rgb[r][c][1] = floats[idx * 3 + 1];
-                                            zone_rgb[r][c][2] = floats[idx * 3 + 2];
-                                        }
+                }
+                // ZoneStatsBlock/frame → [1, 3, rows, cols]
+                if let Some(t) = interp.get_output(&sess, "ZoneStatsBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        let shape = t.shape();
+                        if shape.len() >= 4 {
+                            let rows = shape[2] as usize;
+                            let cols = shape[3] as usize;
+                            let mut zone_rgb = vec![vec![[0.0f32; 3]; cols]; rows];
+                            for r in 0..rows {
+                                for c in 0..cols {
+                                    let idx = r * cols + c;
+                                    if idx * 3 + 2 < floats.len() {
+                                        zone_rgb[r][c][0] = floats[idx * 3];
+                                        zone_rgb[r][c][1] = floats[idx * 3 + 1];
+                                        zone_rgb[r][c][2] = floats[idx * 3 + 2];
                                     }
                                 }
-                                if !ctrl.zone_stats_enabled && rows > 0 && cols > 0 {
-                                    ctrl.init_zone_stats(rows as i32, cols as i32);
-                                }
-                                stats.zone_stats = zone_rgb;
-                                stats.zone_stats_valid = true;
                             }
+                            zone_data = Some((rows, cols, zone_rgb));
+                        }
+                    }
+                }
+
+                // ── Phase 2: Lock controller, write to stats slot, apply state ──
+                if let Ok(mut ctrl) = self.controller.lock() {
+                    // Check zone state before taking stats borrow
+                    let zone_init_needed = zone_data.is_some()
+                        && !ctrl.zone_stats_enabled
+                        && zone_data.as_ref().map(|(r, c, _)| *r > 0 && *c > 0).unwrap_or(false);
+
+                    if zone_init_needed {
+                        if let Some((rows, cols, _)) = zone_data.as_ref() {
+                            ctrl.init_zone_stats(*rows, *cols);
                         }
                     }
 
-                    // Rotate triple-buffer: write → process → ready
+                    // Write raw stats to the write slot
+                    let stats = ctrl.write_stats();
+                    if let Some(cm) = cm_vals {
+                        stats.channel_means = cm;
+                    }
+                    if let Some(ts) = ts_vals {
+                        let n = ts.len().min(6);
+                        stats.tone_stats[..n].copy_from_slice(&ts[..n]);
+                    }
+                    if let Some(hist) = hist_vals {
+                        let n = hist.len().min(16);
+                        stats.histogram[..n].copy_from_slice(&hist[..n]);
+                        stats.histogram_valid = true;
+                    }
+                    if let Some((_rows, _cols, zone_rgb)) = zone_data {
+                        stats.zone_stats = zone_rgb;
+                        stats.zone_stats_valid = true;
+                    }
+                    drop(stats);
+
+                    // Apply AE clipping gain from tone stats
+                    if let Some(ts) = ts_vals {
+                        if ts[3] > 0.0 && ts[5] > 1.0 {
+                            ctrl.hist_constrained_gain = 1.0 - (ts[3] / ts[5]);
+                        }
+                    }
+
+                    // ── Phase 3: Rotate triple-buffer ──
                     ctrl.rotate_stats();
 
-                    // Process the newly-rotated process slot
+                    // ── Phase 4: Process the newly-rotated process slot ──
+                    // Read values into locals to avoid borrow conflicts
                     let ps = ctrl.process_stats();
-                    if ps.channel_means[0] > 0.0 || ps.channel_means[1] > 0.0 || ps.channel_means[2] > 0.0 {
-                        ctrl.update_channel_stats(&ps.channel_means);
+                    let p_cm = ps.channel_means;
+                    let p_ts = [ps.tone_stats[0], ps.tone_stats[1], ps.tone_stats[2]];
+                    let p_hist = ps.histogram;
+                    let p_hist_ok = ps.histogram_valid;
+                    drop(ps);
+
+                    if p_cm[0] > 0.0 || p_cm[1] > 0.0 || p_cm[2] > 0.0 {
+                        ctrl.update_channel_stats(&p_cm);
                     }
-                    if ps.tone_stats[0] > 0.0 {
-                        ctrl.update_tone_stats(&[ps.tone_stats[0], ps.tone_stats[1], ps.tone_stats[2]]);
+                    if p_ts[0] > 0.0 {
+                        ctrl.update_tone_stats(&p_ts);
                     }
-                    if ps.histogram_valid {
-                        ctrl.update_histogram(&ps.histogram[..ps.histogram.len().min(16)]);
+                    if p_hist_ok {
+                        let n = p_hist.len().min(16);
+                        ctrl.update_histogram(&p_hist[..n]);
                     }
                 }
             }
@@ -890,13 +938,6 @@ impl IspEngine for MnnEngine {
             // Stats are fed into the controller above (not returned in IspAuxOutput).
             // The controller modifies its internal state for the next frame.
             frame.aux = None;
-                channel_means: Some([0.5, 0.5, 0.5]),
-                tone_stats: None, wb_gains: None, histogram: None,
-                zone_stats: None, focus_metric: None, cct: None,
-                ae_gain: None, calibration_stats: None,
-                scene_category: None, af_phase: None,
-                vcm_position: None, eis_compensation: None,
-            });
             frame.timestamp_ns = 0;  // TODO: pass from HAL
             // prep = time before inference starts (setup + norm for float path)
             // infer = time for MNN inference only
