@@ -108,21 +108,27 @@ impl IspBlock for DisplayBlock {
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        let (oh, ow) = self.out_dims();
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
-              Proto::tensor_dim_value(oh.max(1)), Proto::tensor_dim_value(ow.max(1))], 1))
+        match (self.in_h, self.in_w) {
+            (Some(h), Some(w)) => {
+                let (oh, ow) = if self.swaps_dims() { (w, h) } else { (h, w) };
+                Some(Proto::value_info(&self.frame_tensor,
+                    &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
+                      Proto::tensor_dim_value(oh), Proto::tensor_dim_value(ow)], 1))
+            }
+            _ => Some(Proto::value_info(&self.frame_tensor,
+                &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
+                  Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1)),
+        }
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        let scale = format!("{}/scale", ns);
         let final_output = &self.frame_tensor;
 
-        // Fast path: no rotation → single Mul
+        // Fast path: no rotation → identity (rename tensor, zero cost)
         if self.is_identity() {
             return vec![
-                Proto::node("Mul", &[&self.input_source, &scale], &[final_output], &[]),
+                Proto::node("Identity", &[&self.input_source], &[final_output], &[]),
             ];
         }
 
@@ -173,12 +179,9 @@ impl IspBlock for DisplayBlock {
             prev = tensor_pool.last().unwrap().as_str();
         }
 
-        // Final Mul by 255.0 for UINT8 range
+        // Final: identity rename to output tensor
         if prev != final_output {
-            nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
-        } else {
-            // Shouldn't reach here (identity handled above), but just in case
-            nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
+            nodes.push(Proto::node("Identity", &[prev], &[final_output], &[]));
         }
 
         nodes
@@ -186,9 +189,9 @@ impl IspBlock for DisplayBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        let mut inits = vec![
-            Proto::tensor_proto_float_scalar(&format!("{}/scale", ns), 255.0),
-        ];
+        // No scale Mul needed — output is float [0,1] directly.
+        // Consumer (display driver or engine readback) multiplies by 255.
+        let mut inits: Vec<Vec<u8>> = Vec::new();
 
         if self.is_identity() { return inits; }
 
