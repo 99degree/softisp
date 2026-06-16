@@ -1,7 +1,11 @@
-//! MNN ONNX-to-MNN converter via CLI tool (MNNConvert)
+//! MNN ONNX-to-MNN conversion via static C FFI (no subprocess).
+//!
+//! Calls mnn_convert_onnx_to_mnn() from mnn_convert_api.cpp, which is
+//! statically linked into the final binary via build.rs + cc::Build.
+//! No MNNConvert subprocess needed.
 
-use std::path::Path;
-use std::process::Command;
+use std::ffi::CString;
+use crate::mnn_sys::{MnnConvertResult, mnn_convert_onnx_to_mnn};
 
 /// Conversion options for MNN converter
 #[derive(Debug, Clone)]
@@ -37,80 +41,50 @@ impl Default for MnnConvertOptions {
     }
 }
 
-/// Convert ONNX model to MNN format using the MNNConvert CLI tool
+/// Convert ONNX model to MNN format via static C FFI.
+///
+/// No subprocess, no temp files — calls MNN::Cli::convertModel directly
+/// through the statically linked mnn_convert_api.cpp wrapper.
 pub fn convert_onnx_to_mnn(
     onnx_path: &str,
     mnn_path: &str,
     options: Option<&MnnConvertOptions>,
 ) -> Result<String, String> {
     let opts = options.cloned().unwrap_or_default();
-    
-    // Find MNNConvert binary
-    let mnn_convert = find_mnn_convert()?;
-    
-    let mut cmd = Command::new(&mnn_convert);
-    cmd.arg("-f").arg("ONNX")
-       .arg("--modelFile").arg(onnx_path)
-       .arg("--MNNModel").arg(mnn_path)
-       .arg("--bizCode").arg(&opts.biz_code)
-       .arg("--optimizeLevel").arg(opts.optimize_level.to_string());
-    
-    if opts.fp16 {
-        cmd.arg("--fp16");
-    }
-    if opts.weight_quant_bits > 0 {
-        cmd.arg("--weightQuantBits").arg(opts.weight_quant_bits.to_string());
-        cmd.arg("--weightQuantBlock").arg(opts.weight_quant_block.to_string());
-    }
-    if opts.save_static_model {
-        cmd.arg("--saveStaticModel");
-    }
-    if opts.target_version > 0.0 {
-        cmd.arg("--targetVersion").arg(opts.target_version.to_string());
-    }
-    if opts.transformer_fuse {
-        cmd.arg("--transformerFuse");
-    }
-    if opts.allow_custom_op {
-        cmd.arg("--allowCustomOp");
-    }
-    if !opts.use_gelu_approximation {
-        cmd.arg("--useGeluApproximation").arg("0");
-    }
-    if let Some(config) = &opts.input_config_file {
-        cmd.arg("--inputConfigFile").arg(config);
+
+    let c_onnx = CString::new(onnx_path).map_err(|_| "NUL in onnx_path")?;
+    let c_mnn  = CString::new(mnn_path).map_err(|_| "NUL in mnn_path")?;
+    let c_biz  = CString::new(opts.biz_code.as_str()).map_err(|_| "NUL in biz_code")?;
+
+    let mut result = MnnConvertResult {
+        success: 0,
+        error_msg: [0; 1024],
+    };
+
+    unsafe {
+        mnn_convert_onnx_to_mnn(
+            c_onnx.as_ptr(),
+            c_mnn.as_ptr(),
+            c_biz.as_ptr(),
+            opts.optimize_level as i32,
+            opts.weight_quant_bits as i32,
+            if opts.fp16 { 1 } else { 0 },
+            &mut result,
+        );
     }
 
-    let output = cmd.output()
-        .map_err(|e| format!("Failed to execute MNNConvert: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}\n{}", stdout, stderr);
-
-    if output.status.success() {
-        Ok(combined.trim().to_string())
+    if result.success == 0 {
+        Ok(format!("OK: {} -> {}", onnx_path, mnn_path))
     } else {
-        Err(format!("MNNConvert failed: {}", combined))
+        // Extract error message from C string (null-terminated)
+        let msg = unsafe {
+            let ptr = result.error_msg.as_ptr() as *const u8;
+            let mut len = 0usize;
+            while len < 1024 && *ptr.add(len) != 0 { len += 1; }
+            String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).to_string()
+        };
+        Err(format!("MNN conversion failed: {}", msg))
     }
-}
-
-/// Find the MNNConvert binary
-fn find_mnn_convert() -> Result<String, String> {
-    let paths = [
-        "/data/data/com.termux/files/home/MNN/build/MNNConvert",
-        "/data/data/com.termux/files/home/MNN/build2/MNNConvert",
-        "/data/data/com.termux/files/usr/bin/MNNConvert",
-        "MNNConvert", // in PATH
-    ];
-
-    for path in &paths {
-        if Path::new(path).exists() {
-            return Ok(path.to_string());
-        }
-    }
-
-    Err("MNNConvert not found. Please build MNN with converter enabled.".to_string())
 }
 
 #[cfg(test)]
