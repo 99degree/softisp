@@ -30,6 +30,9 @@ pub struct ProcessParams<'a> {
     pub buf: &'a [u8],
     pub sensor_max: f32,
     pub target_width: u32,
+    /// Output frame height (default: same as height). For pipelines with
+    /// fused downscale, this is the actual output height (e.g., H/2 for stride=2).
+    pub target_height: u32,
     pub ccm_matrix: Option<[f32; 9]>,
     pub tone_params: ToneParams,
     pub bayer_gains: Option<[f32; 4]>,
@@ -52,6 +55,7 @@ impl<'a> ProcessParams<'a> {
             buf,
             sensor_max: 1023.0,
             target_width: width,
+            target_height: height,
             ccm_matrix: None,
             tone_params: default_tone_params(),
             bayer_gains: None,

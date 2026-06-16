@@ -202,6 +202,7 @@ impl PipelineManager {
             lsc_gains: None,
             blc_values: None,
             warp_grid: None,
+            target_height: height,
         };
 
         // Process
