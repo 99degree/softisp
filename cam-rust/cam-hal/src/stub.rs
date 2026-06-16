@@ -40,7 +40,7 @@ pub struct StubAdapter {
     /// Frame counter (for changing patterns).
     frame_count: u64,
     /// Simulated FPS interval.
-    fps: u32,
+    _fps: u32,
     /// Whether to add random noise to raw frames.
     add_noise: bool,
 }
@@ -55,7 +55,7 @@ impl StubAdapter {
             name: name.to_string(),
             pattern: StubPattern::ColorBars,
             frame_count: 0,
-            fps: 30,
+            _fps: 30,
             add_noise: false,
         }
     }
@@ -94,7 +94,16 @@ impl StubAdapter {
 
         match format {
             FrameFormat::Rgba8888 => self.render_rgba(w, h),
+            FrameFormat::Rgb888 => {
+                let rgba = self.render_rgba(w, h);
+                let mut rgb = vec![0u8; w * h * 3];
+                for i in 0..(w * h) {
+                    rgb[i * 3..i * 3 + 3].copy_from_slice(&rgba[i * 4..i * 4 + 3]);
+                }
+                rgb
+            },
             FrameFormat::RawSensor => self.render_raw16(w, h),
+            FrameFormat::Raw10 | FrameFormat::Raw12 => self.render_raw16(w, h),
             FrameFormat::Yuv420888 => self.render_nv21(w, h),
             FrameFormat::NchwFloat => vec![0u8; w * h * 4], // float placeholder
         }
