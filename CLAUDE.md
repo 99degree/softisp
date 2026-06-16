@@ -165,3 +165,59 @@ PipelineManager::process_frame()
 | ONNX dual-registration | Extra inputs registered as BOTH initializer AND graph input, enabling runtime override of CCM/tone/WB params |
 | Bayer pattern in CCM fusion | `set_extra_inputs(bayer_pattern)` selects RGGB/BGGR/GRBG/GBRG demosaic weights before fusing with CCM matrix |
 | Adaptive stats downscale | `stats_downscale_max` auto-inserts ResizeBlock before stats blocks for 4K+ sensors (e.g., 4K→540×960 = 16× fewer pixels) |
+
+## 📋 Progress
+
+### ✅ Done
+- All Java/Kotlin code ported (48+ modules)
+- SIMD backend system (NeonDotprod / NeonFp16 / Neon / Scalar)
+- AdaptiveDownscaleBlock (fit/crop/pad modes, EIS margin)
+- Triple-buffered RollingStats for lock-free stats feedback
+- Two-stage adaptive downscale (pipeline + stats)
+- Fused orientation in DisplayBlock (rot90/180/270/hflip/vflip)
+- Tone fused into DemosaicCcmBlock Conv
+- ProcessParams unified API — `IspEngine::process(&ProcessParams)`
+- IdentityBlock placeholders — same 12-block structure across all profiles
+- Pipeline tests unignored — all 202 tests pass
+- MNNConvert static C FFI — **no subprocess**, links `mnn_convert_api.cpp` directly into binary as `.a` via `cc::Build`
+
+### ⏳ In Progress
+- [ ] Verify numeric agreement between ONNX stats and software stats at FHD
+- [ ] Benchmark complete pipeline with stats enabled at target resolution
+- [ ] Investigate 30fps at FHD — current HEAVY Vulkan ~101ms (9.9fps)
+
+### 🚧 Blocked
+- [ ] GPU zero-copy: OpenCL/Vulkan backends require device memory
+- [ ] V4L2 on Android: `rscam` crate compile-time platform check
+- [ ] Full 256-bin histogram ONNX block: OneHot creates 2GB+ intermediates at FHD
+- [ ] Content-aware inpainting / GAN padding: external ML models needed
+
+## MNNConvert — Static C FFI (No Subprocess)
+
+Previously `mnn_converter.rs` spawned an `MNNConvert` subprocess for every ONNX→MNN conversion, requiring a pre-built MNNConvert binary on the system.
+
+**New approach**: `mnn_sys/mnn_convert_api.cpp` provides a `extern "C"` function `mnn_convert_onnx_to_mnn()` that calls `MNN::Cli::convertModel()` directly. This file is compiled as a static library (`.a`) by `build.rs` via `cc::Build` and linked directly into the Rust binary via `libmnnconvert.a`.
+
+```
+┌──────────────────────────────────────────┐
+│  mnn_converter.rs (Rust FFI wrapper)     │
+│  → calls mnn_convert_onnx_to_mnn()       │
+└──────┬───────────────────────────────────┘
+       │ FFI (no serialization, no subprocess)
+┌──────▼───────────────────────────────────┐
+│  mnn_convert_api.cpp (static .a)          │
+│  → calls MNN::Cli::convertModel()        │
+└──────┬───────────────────────────────────┘
+       │ linked via libMNNConvertDeps.so
+┌──────▼───────────────────────────────────┐
+│  libMNNConvertDeps.so (shared)           │
+│  → MNN converter graph optimizations     │
+└──────────────────────────────────────────┘
+```
+
+**Benefits**:
+- No subprocess overhead (no fork/exec per conversion)
+- No `MNNConvert` binary dependency on device
+- Faster model building for dynamic pipeline configurations
+- Single `.so` dependency (`libMNNConvertDeps.so`) vs needing CLI binary
+- Conversion options passed directly as C function args, not CLI flags
