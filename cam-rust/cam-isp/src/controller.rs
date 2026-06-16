@@ -21,6 +21,42 @@ pub enum SmoothingMode {
 
 // CCM clamp feedback flags — imported from ccm_engine module
 
+/// Rolling statistics from a single inference pass.
+/// Double-buffered in `IspController` (A/B slots) so the engine
+/// can write frame N's stats while the controller reads frame N-1's.
+#[derive(Debug, Clone)]
+pub struct RollingStats {
+    /// RGB channel means [R, G, B]
+    pub channel_means: [f32; 3],
+    /// Tone stats: [mean_lum, min_lum, max_lum, clip_frac, shadow_frac, total_px]
+    pub tone_stats: [f32; 6],
+    /// Coarse histogram bins [16]
+    pub histogram: [f32; 16],
+    /// Whether histogram has valid data
+    pub histogram_valid: bool,
+    /// Zone RGB means (flattened: rows × cols × 3)
+    pub zone_stats: Vec<Vec<[f32; 3]>>,
+    /// Whether zone stats are initialized
+    pub zone_stats_valid: bool,
+}
+
+impl RollingStats {
+    pub fn new() -> Self {
+        Self {
+            channel_means: [0.5, 0.5, 0.5],
+            tone_stats: [0.0; 6],
+            histogram: [0.0; 16],
+            histogram_valid: false,
+            zone_stats: Vec::new(),
+            zone_stats_valid: false,
+        }
+    }
+}
+
+impl Default for RollingStats {
+    fn default() -> Self { Self::new() }
+}
+
 /// ISP Controller — state container + orchestrator for ISP parameters.
 ///
 /// # Flow
@@ -115,6 +151,20 @@ pub struct IspController {
     // ── User brightness control ──
     /// Normalized brightness bias (0..1, 0.5 = default).
     pub brightness_bias: f32,
+
+    // ── Rolling stats tensors (triple-buffered) ──
+    /// Three slots for lock-free rolling:
+    ///   write_idx: engine writes frame N's stats here after inference
+    ///   process_idx: controller reads stats from here for parameter update
+    ///   ready_idx: engine reads params from here for next inference
+    /// After each frame, indices rotate: write → process → ready → write
+    pub stats_slots: [RollingStats; 3],
+    /// Index of the slot the engine writes to (stats output from inference).
+    pub write_idx: usize,
+    /// Index of the slot the controller reads for processing.
+    pub process_idx: usize,
+    /// Index of the slot with ready-to-use params for the next inference.
+    pub ready_idx: usize,
     /// Last applied brightness value.
     pub last_applied_brightness: f32,
 
@@ -220,6 +270,10 @@ impl IspController {
             zone_stats_enabled: false,
             scene_category: SceneCategory::Unknown,
             last_cct_for_scene: 5500,
+            stats_slots: [RollingStats::new(), RollingStats::new(), RollingStats::new()],
+            write_idx: 0,
+            process_idx: 1,
+            ready_idx: 2,
         }
     }
 
@@ -567,6 +621,30 @@ impl IspController {
     // ── Getters ──
 
     /// Get smoothed AWB gains as [R, G, B].
+    /// Rotate the triple-buffered stats slots after inference.
+    /// Called by the engine after writing frame N's stats to `write_idx`.
+    /// Rotates: write → process → ready → write.
+    pub fn rotate_stats(&mut self) {
+        self.write_idx = (self.write_idx + 1) % 3;
+        self.process_idx = (self.process_idx + 1) % 3;
+        self.ready_idx = (self.ready_idx + 1) % 3;
+    }
+
+    /// Get a mutable reference to the write slot (engine writes stats here).
+    pub fn write_stats(&mut self) -> &mut RollingStats {
+        &mut self.stats_slots[self.write_idx]
+    }
+
+    /// Get a reference to the process slot (controller reads for param update).
+    pub fn process_stats(&self) -> &RollingStats {
+        &self.stats_slots[self.process_idx]
+    }
+
+    /// Get a reference to the ready slot (engine reads params from here).
+    pub fn ready_stats(&self) -> &RollingStats {
+        &self.stats_slots[self.ready_idx]
+    }
+
     pub fn get_awb_gains(&self) -> [f32; 3] {
         self.awb_gains
     }

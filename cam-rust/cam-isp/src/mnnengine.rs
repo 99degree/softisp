@@ -17,7 +17,8 @@ use std::time::Instant;
 use log::{info, debug, warn, error};
 
 use cam_types::{FrameFormat, ToneParams};
-use crate::engine::IspEngine;
+use crate::engine::{IspEngine, ProcessParams};
+use crate::controller::IspController;
 use crate::pipeline::{IspBlock, IspFrame, IspAuxOutput};
 
 #[cfg(feature = "mnn")]
@@ -59,6 +60,10 @@ pub struct MnnEngine {
     packed_input: bool,
     /// Expected input tensor element count from model (for validation).
     expected_input_elements: Option<u32>,
+    /// ISP controller for AWB/AE/CCM/tone parameter estimation.
+    /// After each inference, stats output tensors are read and fed
+    /// into the controller to update state for the next frame.
+    pub controller: Mutex<IspController>,
     /// MNN interpreter (owning the model). Must outlive session.
     #[cfg(feature = "mnn")]
     interp: Option<MnnInterpreterSafe>,
@@ -99,6 +104,7 @@ impl MnnEngine {
             model_input_type: None,
             packed_input: false,
             expected_input_elements: None,
+            controller: Mutex::new(IspController::new()),
             #[cfg(feature = "mnn")]
             interp: None,
             #[cfg(feature = "mnn")]
@@ -368,7 +374,6 @@ impl MnnEngine {
     #[cfg(feature = "mnn")]
     fn bench_one(backend: &MnnBackend, mnn_path: &str, w: u32, h: u32) -> Result<f64, String> {
         use crate::blocks::RawInputBlock;
-        use crate::engine::default_tone_params;
 
         let be = *backend;
         let mnn_owned = mnn_path.to_owned();
@@ -382,7 +387,6 @@ impl MnnEngine {
                 engine.build(head, vec![], None, 16)
                     .map_err(|e| format!("build: {}", e))?;
 
-                let params = default_tone_params();
                 let frame_size = (w * h * 2) as usize;
                 let mut buf = vec![0u8; frame_size];
                 for y in 0..h {
@@ -403,8 +407,7 @@ impl MnnEngine {
                     if remaining < std::time::Duration::from_millis(10) {
                         break;
                     }
-                    engine.process(w, h, w, &buf, 1024.0, w, None, &params,
-                                  None, None, 1.0, 0.0, None, None, None)?;
+                    engine.process(&crate::engine::ProcessParams::new(w, h, &buf))?;
                     count += 1;
                 }
 
@@ -446,12 +449,142 @@ impl MnnEngine {
         out
     }
     fn c(v: f32) -> u8 { (v * 255.0).round().clamp(0.0, 255.0) as u8 }
+
+    /// Write extra input tensors (CCM, tone, gains) into the MNN session
+    /// BEFORE inference.  Must be called AFTER resizeSession so tensor
+    /// host buffers are valid for writing.
+    #[cfg(feature = "mnn")]
+    /// Set runtime-overridable extra inputs for the MNN session.
+    ///
+    /// Called AFTER `resizeSession()` but BEFORE inference.
+    /// Writes controller-computed params (CCM, tone, WB gains) directly
+    /// into MNN host tensors for zero-copy override of initializer values.
+    ///
+    /// # Bayer pattern codes
+    /// - 0 = RGGB (default)
+    /// - 1 = BGGR
+    /// - 2 = GRBG
+    /// - 3 = GBRG
+    fn set_extra_inputs(
+        interp: &crate::mnn_sys::MnnInterpreterSafe,
+        sess: &crate::mnn_sys::MnnSessionSafe,
+        ccm: Option<&[f32; 9]>,
+        tone: &ToneParams,
+        bayer: Option<&[f32; 4]>,
+        _awb: Option<&[f32; 3]>,
+        bayer_pattern: i32,
+    ) {
+        use crate::mnn_sys::MnnInterpreterSafe as MI;
+
+        // DemosaicCcmBlock/w [3,4,1,1] — fused CCM × demosaic weights
+        //
+        // The demosaic operation extracts 2×2 Bayer quadrants into 3 RGB
+        // output channels.  The weights depend on the sensor's Bayer pattern:
+        //
+        //   Pattern 0 (RGGB):  R=[1,0,0,0]  G=[0,½,½,0]  B=[0,0,0,1]
+        //   Pattern 1 (BGGR):  R=[0,0,0,1]  G=[0,½,½,0]  B=[1,0,0,0]
+        //   Pattern 2 (GRBG):  R=[0,1,0,0]  G=[½,0,0,½]  B=[0,0,1,0]
+        //   Pattern 3 (GBRG):  R=[0,0,1,0]  G=[½,0,0,½]  B=[0,1,0,0]
+        //
+        // fused[i,j] = Σₖ ccm[i,k] * demo[k,j]   (i=RGB, j=quadrant)
+        const DEMO_RGGB: [f32; 12] = [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 0.5, 0.5, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        const DEMO_BGGR: [f32; 12] = [
+            0.0, 0.0, 0.0, 1.0,
+            0.0, 0.5, 0.5, 0.0,
+            1.0, 0.0, 0.0, 0.0,
+        ];
+        const DEMO_GRBG: [f32; 12] = [
+            0.0, 1.0, 0.0, 0.0,
+            0.5, 0.0, 0.0, 0.5,
+            0.0, 0.0, 1.0, 0.0,
+        ];
+        const DEMO_GBRG: [f32; 12] = [
+            0.0, 0.0, 1.0, 0.0,
+            0.5, 0.0, 0.0, 0.5,
+            0.0, 1.0, 0.0, 0.0,
+        ];
+
+        // Select demosaic weights by pattern
+        let demo: &[f32; 12] = match bayer_pattern & 3 {
+            1 => &DEMO_BGGR,
+            2 => &DEMO_GRBG,
+            3 => &DEMO_GBRG,
+            _ => &DEMO_RGGB,
+        };
+
+        // Fused CCM weights: w[i,j] = Σₖ ccm[i,k] * demo[k,j]
+        if let Some(ccm) = ccm {
+            let mut fused = [0.0f32; 12];
+            for i in 0..3 {
+                for j in 0..4 {
+                    let mut s = 0.0;
+                    for k in 0..3 {
+                        s += ccm[i * 3 + k] * demo[k * 4 + j];
+                    }
+                    // When tone is fused in, absorb contrast into weights
+                    fused[i * 4 + j] = s * tone.contrast;
+                }
+            }
+            if let Some(t) = interp.get_input(sess, "DemosaicCcmBlock/w") {
+                if let Some(mut bytes) = t.as_bytes_mut() {
+                    let src = unsafe {
+                        std::slice::from_raw_parts(fused.as_ptr() as *const u8, 48)
+                    };
+                    if bytes.len() >= 48 { bytes[..48].copy_from_slice(src); }
+                }
+            }
+        }
+        // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
+        if let Some(t) = interp.get_input(sess, "DemosaicCcmBlock/b") {
+            if let Some(mut bytes) = t.as_bytes_mut() {
+                // When tone is fused in, absorb brightness into bias
+                let bias = [tone.brightness; 3];
+                let src = unsafe { std::slice::from_raw_parts(bias.as_ptr() as *const u8, 12) };
+                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+            }
+        }
+        // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains
+        if let Some(gains) = bayer {
+            if let Some(t) = interp.get_input(sess, "BayerWbBlock/gains") {
+                if let Some(mut bytes) = t.as_bytes_mut() {
+                    let src = unsafe { std::slice::from_raw_parts(gains.as_ptr() as *const u8, 16) };
+                    if bytes.len() >= 16 { bytes[..16].copy_from_slice(src); }
+                }
+            }
+        }
+        // ToneBlock/contrast [1]
+        if let Some(t) = interp.get_input(sess, "ToneBlock/contrast") {
+            if let Some(mut bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&tone.contrast as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+        // ToneBlock/brightness [1]
+        if let Some(t) = interp.get_input(sess, "ToneBlock/brightness") {
+            if let Some(mut bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&tone.brightness as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+        // ToneBlock/gamma_recip [1]
+        if let Some(t) = interp.get_input(sess, "ToneBlock/gamma_recip") {
+            if let Some(mut bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&tone.gamma_recip as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+    }
 }
 
 impl IspEngine for MnnEngine {
     fn backend_name(&self) -> &'static str { self.backend.id() }
     fn priority(&self) -> i32 { self.backend.priority() }
     fn is_loaded(&self) -> bool { self.initialized }
+    fn controller(&self) -> &Mutex<IspController> { &self.controller }
 
     fn build(&mut self, head: Box<dyn IspBlock>, aux: Vec<Box<dyn IspBlock>>, _warp: Option<Box<dyn IspBlock>>, opset: i64) -> Result<(), String> {
         info!("MNN build backend={}", self.backend.id());
@@ -463,6 +596,8 @@ impl IspEngine for MnnEngine {
             let mnn = match &self.model_path {
                 Some(p) => p.clone(),
                 None => {
+                    // Build ONNX graph: head + aux as pipeline, stats as aux_blocks
+                    // But we don't know which aux are stats — pass all as pipeline for now
                     let mut all: Vec<Box<dyn IspBlock>> = vec![head];
                     all.extend(aux);
                     let refs: Vec<&dyn IspBlock> = all.iter().map(|b| b.as_ref()).collect();
@@ -521,8 +656,8 @@ impl IspEngine for MnnEngine {
                 crate::mnn_sys::mnn_get_model_input_elements(interp.as_ptr(), sess.as_ptr())
             };
             self.expected_input_elements = if expected_elems > 0 { Some(expected_elems as u32) } else { None };
-            self.packed_input = (input_code == 0 && input_bits == 32)
-                && self.expected_input_elements.map_or(false, |e| e % 2 == 0);
+            // Packed if INT32 (code=0, bits=32) — all pipeline models use packed input
+            self.packed_input = input_code == 0 && input_bits == 32;
             info!("MNN model input type: code={}, bits={} packed={} expected_elems={}",
                 input_code, input_bits, self.packed_input, expected_elems);
             
@@ -536,10 +671,18 @@ impl IspEngine for MnnEngine {
         Ok(())
     }
 
-    fn process(&self, w: u32, h: u32, _sw: u32, buf: &[u8], smax: f32, tw: u32,
-               _ccm: Option<&[f32; 9]>, _tone: &ToneParams,
-               _bayer: Option<&[f32; 4]>, _awb: Option<&[f32; 3]>,
-               _ag: f32, _sc: f32, _lsc: Option<&[f32]>, _blc: Option<&[f32; 4]>, _wg: Option<&[f32]>) -> Result<IspFrame, String> {
+    fn process(&self, p: &ProcessParams) -> Result<IspFrame, String> {
+        let w = p.width;
+        let h = p.height;
+        let buf = p.buf;
+        let smax = p.sensor_max;
+        let tw = p.target_width;
+        let ccm = p.ccm_matrix.as_ref();
+        let tone = &p.tone_params;
+        let bayer = p.bayer_gains.as_ref();
+        let awb = p.awb_gains.as_ref();
+        let bayer_pattern = p.bayer_pattern;
+
         if !self.initialized { return Err("not init".into()); }
 
         #[cfg(feature = "mnn")]
@@ -560,13 +703,45 @@ impl IspEngine for MnnEngine {
             //   3) u16_conversion: copy u16→int32 via host tensor
             //   4) float_fallback: normalize to f32 then host tensor
             let path: &str;
-            let n: i32;
+            let mut n: i32;
             let t_prep_end: std::time::Instant;
             let t_infer_start: std::time::Instant;
 
-            // Determine if packed: model expects INT32 with h*w/2 elements
-            let is_packed = self.packed_input && self.expected_input_elements
-                .map_or(false, |expected| expected == h * w / 2);
+            // Determine if packed: model expects INT32 packed input
+            // When expected_elems is Some, verify element count matches h*w/2.
+            // When None (unknown height), trust the packed_input flag.
+            let is_packed = if self.packed_input {
+                if let Some(expected) = self.expected_input_elements {
+                    expected == h * w / 2
+                } else {
+                    // Unknown height — model is still packed, trust the flag
+                    true
+                }
+            } else {
+                false
+            };
+
+            // ── Pre-inference: resize session and set extra inputs ──
+            // Resize BEFORE the convenience wrappers so that:
+            //   1. resizeSession allocates all internal buffers
+            //   2. Extra inputs (CCM, tone, gains) are written to valid host buffers
+            //   3. Convenience wrapper won't resize again (shapes already match)
+            {
+                let shape = if is_packed {
+                    vec![1, 1, h as i32, (w / 2).max(1) as i32]
+                } else {
+                    vec![1, 1, h as i32, w as i32]
+                };
+                if let Some(t) = interp.get_first_input(&sess) {
+                    let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
+                }
+                let _ = sess.resize();
+                // Extra inputs: write AFTER resize so host buffers are valid
+                Self::set_extra_inputs(&interp, &sess, ccm, tone, bayer, awb, bayer_pattern);
+            }
+
+            debug!("MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
+                w, h, (w / 2).max(1), is_packed, self.expected_input_elements);
 
             if is_packed {
                 // ── PACKED ZERO-COPY (TRUE ZERO-COPY) ──
@@ -674,23 +849,204 @@ impl IspEngine for MnnEngine {
                 path, t_infer_elapsed, w, h, n);
 
             let nf = n as usize;
-            let oh = h as usize;
+            let oh = p.target_height as usize;
             let ow = tw as usize;
-            let ch = nf / (oh * ow);
+            let ch = if oh > 0 { nf / (oh * ow) } else { 0 };
 
-            let bgra = Self::to_bgra(&out_data[..nf], ch, oh, ow);
+            // Detect INT32 single-channel output (DisplayBlock.pack_rgba with Conv 1×1)
+            // Each INT32 element = packed 24-bit RGB: R*65536 + G*256 + B.
+            // Just shift+mask to extract bytes + channel swap + add alpha.
+            let bgra = {
+                let mut is_packed_int32 = false;
+                #[cfg(feature = "mnn")]
+                {
+                    // First output is now DisplayBlock/frame (reordered in GraphComposer)
+                    if let Some(t) = interp.get_first_output(&sess) {
+                        let shape = t.shape();
+                        // INT32 output: either [1,3,H,W] RGB or [1,1,H,W] packed
+                        is_packed_int32 = t.data_type() == 5  // 5 = int32
+                            && shape.len() >= 4
+                            && shape[1] >= 1; // 1 or 3 channels
+                    }
+                }
+                if is_packed_int32 {
+                    // INT32 [1,1,H,W] or [1,3,H,W]: extract BGRA
+                    let ints: &[i32] = unsafe {
+                        std::slice::from_raw_parts(out_data.as_ptr() as *const i32, nf)
+                    };
+                    let n_pixels = oh * ow;
+                    let mut out = Vec::with_capacity(n_pixels * 4);
+                    if ch >= 3 {
+                        // 3-channel INT32: [1,3,H,W], values are 0-255
+                        for i in 0..n_pixels {
+                            let r = ints[i * 3] as u8;
+                            let g = ints[i * 3 + 1] as u8;
+                            let b = ints[i * 3 + 2] as u8;
+                            out.extend_from_slice(&[b, g, r, 255]);
+                        }
+                    } else {
+                        // Single-channel packed: [1,1,H,W], each int32 = packed 24-bit
+                        for i in 0..n_pixels {
+                            let p = ints[i];
+                            let b = (p & 0xFF) as u8;
+                            let g = ((p >> 8) & 0xFF) as u8;
+                            let r = ((p >> 16) & 0xFF) as u8;
+                            out.extend_from_slice(&[b, g, r, 255]);
+                        }
+                    }
+                    out
+                } else {
+                    Self::to_bgra(&out_data[..nf], ch, oh, ow)
+                }
+            };
+
+            // ── Read stats output tensors from MNN session and feed to controller ──
+            // After inference, all output tensors are available in the session.
+            // Try reading known stats output names.  If a tensor doesn't exist
+            // in the graph (block not enabled in this profile), get_output returns None.
+            #[cfg(feature = "mnn")]
+            {
+                use crate::mnn_sys::MnnInterpreterSafe;
+
+                // ── Phase 1: Read raw stats tensors into local variables ──
+                // (Avoid borrow conflicts with ctrl write_stats() above)
+                let mut cm_vals: Option<[f32; 3]> = None;
+                let mut ts_vals: Option<[f32; 6]> = None;
+                let mut hist_vals: Option<[f32; 16]> = None;
+                let mut zone_data: Option<(usize, usize, Vec<Vec<[f32; 3]>>)> = None;
+
+                // ChannelMeansBlock/frame → [1, 3] or [3]
+                if let Some(t) = interp.get_output(&sess, "ChannelMeansBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        if floats.len() >= 3 {
+                            cm_vals = Some([floats[0], floats[1], floats[2]]);
+                        }
+                    }
+                }
+                // ToneStatsBlock/frame → [6]
+                if let Some(t) = interp.get_output(&sess, "ToneStatsBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        let mut ts = [0.0f32; 6];
+                        let n = floats.len().min(6);
+                        ts[..n].copy_from_slice(&floats[..n]);
+                        ts_vals = Some(ts);
+                    }
+                }
+                // CoarseHistogramBlock/frame → [1, 16]
+                if let Some(t) = interp.get_output(&sess, "CoarseHistogramBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        let mut hist = [0.0f32; 16];
+                        let n = floats.len().min(16);
+                        hist[..n].copy_from_slice(&floats[..n]);
+                        hist_vals = Some(hist);
+                    }
+                }
+                // ZoneStatsBlock/frame → [1, 3, rows, cols]
+                if let Some(t) = interp.get_output(&sess, "ZoneStatsBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        let shape = t.shape();
+                        if shape.len() >= 4 {
+                            let rows = shape[2] as usize;
+                            let cols = shape[3] as usize;
+                            let mut zone_rgb = vec![vec![[0.0f32; 3]; cols]; rows];
+                            for r in 0..rows {
+                                for c in 0..cols {
+                                    let idx = r * cols + c;
+                                    if idx * 3 + 2 < floats.len() {
+                                        zone_rgb[r][c][0] = floats[idx * 3];
+                                        zone_rgb[r][c][1] = floats[idx * 3 + 1];
+                                        zone_rgb[r][c][2] = floats[idx * 3 + 2];
+                                    }
+                                }
+                            }
+                            zone_data = Some((rows, cols, zone_rgb));
+                        }
+                    }
+                }
+
+                // ── Phase 2: Lock controller, write to stats slot, apply state ──
+                if let Ok(mut ctrl) = self.controller.lock() {
+                    // Check zone state before taking stats borrow
+                    let zone_init_needed = zone_data.is_some()
+                        && !ctrl.zone_stats_enabled
+                        && zone_data.as_ref().map(|(r, c, _)| *r > 0 && *c > 0).unwrap_or(false);
+
+                    if zone_init_needed {
+                        if let Some((rows, cols, _)) = zone_data.as_ref() {
+                            ctrl.init_zone_stats(*rows, *cols);
+                        }
+                    }
+
+                    // Write raw stats to the write slot
+                    let stats = ctrl.write_stats();
+                    if let Some(cm) = cm_vals {
+                        stats.channel_means = cm;
+                    }
+                    if let Some(ts) = ts_vals {
+                        let n = ts.len().min(6);
+                        stats.tone_stats[..n].copy_from_slice(&ts[..n]);
+                    }
+                    if let Some(hist) = hist_vals {
+                        let n = hist.len().min(16);
+                        stats.histogram[..n].copy_from_slice(&hist[..n]);
+                        stats.histogram_valid = true;
+                    }
+                    if let Some((_rows, _cols, zone_rgb)) = zone_data {
+                        stats.zone_stats = zone_rgb;
+                        stats.zone_stats_valid = true;
+                    }
+                    drop(stats);
+
+                    // Apply AE clipping gain from tone stats
+                    if let Some(ts) = ts_vals {
+                        if ts[3] > 0.0 && ts[5] > 1.0 {
+                            ctrl.hist_constrained_gain = 1.0 - (ts[3] / ts[5]);
+                        }
+                    }
+
+                    // ── Phase 3: Rotate triple-buffer ──
+                    ctrl.rotate_stats();
+
+                    // ── Phase 4: Process the newly-rotated process slot ──
+                    // Read values into locals to avoid borrow conflicts
+                    let ps = ctrl.process_stats();
+                    let p_cm = ps.channel_means;
+                    let p_ts = [ps.tone_stats[0], ps.tone_stats[1], ps.tone_stats[2]];
+                    let p_hist = ps.histogram;
+                    let p_hist_ok = ps.histogram_valid;
+                    drop(ps);
+
+                    if p_cm[0] > 0.0 || p_cm[1] > 0.0 || p_cm[2] > 0.0 {
+                        ctrl.update_channel_stats(&p_cm);
+                    }
+                    if p_ts[0] > 0.0 {
+                        ctrl.update_tone_stats(&p_ts);
+                    }
+                    if p_hist_ok {
+                        let n = p_hist.len().min(16);
+                        ctrl.update_histogram(&p_hist[..n]);
+                    }
+                }
+            }
 
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
-            let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
+            let mut frame = IspFrame::new(tw, oh as u32, FrameFormat::Rgba8888);
             frame.data = bgra;
-            frame.aux = Some(IspAuxOutput {
-                channel_means: Some([0.5, 0.5, 0.5]),
-                tone_stats: None, wb_gains: None, histogram: None,
-                zone_stats: None, focus_metric: None, cct: None,
-                ae_gain: None, calibration_stats: None,
-                scene_category: None, af_phase: None,
-                vcm_position: None, eis_compensation: None,
-            });
+            // Stats are fed into the controller above (not returned in IspAuxOutput).
+            // The controller modifies its internal state for the next frame.
+            frame.aux = None;
             frame.timestamp_ns = 0;  // TODO: pass from HAL
             // prep = time before inference starts (setup + norm for float path)
             // infer = time for MNN inference only

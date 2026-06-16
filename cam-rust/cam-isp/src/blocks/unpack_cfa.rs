@@ -26,6 +26,7 @@ pub struct UnpackCfaBlock {
     pub concrete_w: Option<i64>,  // FULL width (original W)
     pub sensor_max: f32,
     pub use_blc: bool,            // fuse black level correction
+    pub stride_w: i64,            // 1=no downscale, 2=2× stride in width
 }
 
 impl Default for UnpackCfaBlock {
@@ -46,6 +47,7 @@ impl UnpackCfaBlock {
             concrete_w: None,
             sensor_max: 65535.0,
             use_blc: false,
+            stride_w: 1,
         }
     }
 
@@ -68,6 +70,16 @@ impl UnpackCfaBlock {
     /// Set only the concrete width (height stays symbolic).
     pub fn with_concrete_width(mut self, w: i64) -> Self {
         self.concrete_w = Some(w);
+        self
+    }
+
+    /// Enable 2× width downscale fused into the CFA Conv.
+    /// stride_w=2: Conv stride=(2,2) kernel=(2,2), averages each Bayer
+    /// channel over 2 adjacent packed columns (= 4 actual pixels).
+    /// Output width = W/4 in packed coordinates = W/2 actual pixels.
+    /// This removes the need for a separate AdaptiveDownscaleBlock in width.
+    pub fn with_downscale(mut self, factor: i64) -> Self {
+        self.stride_w = factor.max(1);
         self
     }
 }
@@ -108,10 +120,11 @@ impl IspBlock for UnpackCfaBlock {
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
+        let sw = self.stride_w;
         let dims = match (self.concrete_h, self.concrete_w) {
             (Some(h), Some(w)) => vec![
                 Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
-                Proto::tensor_dim_value(h / 2), Proto::tensor_dim_value(w / 2),
+                Proto::tensor_dim_value(h / 2), Proto::tensor_dim_value(w / 2 / sw),
             ],
             _ => vec![
                 Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
@@ -153,7 +166,7 @@ impl IspBlock for UnpackCfaBlock {
                 &[&format!("{}/stacked", ns)],
                 &[Proto::attribute_int("axis", 1)]),
 
-            // 9: Conv stride=(2,1) kernel=(2,1) → [1,4,H/2,W/2]
+            // 9: Conv stride=(2, stride_w) kernel=(2, stride_w) → [1,4,H/2,W/2/stride_w]
             { // separate filters for RGGB pattern
                 let cfa_out = if self.use_blc {
                     format!("{}/cfa_out", ns)
@@ -164,8 +177,8 @@ impl IspBlock for UnpackCfaBlock {
                     &[&format!("{}/stacked", ns), &format!("{}/cfa_w", ns), &format!("{}/cfa_b", ns)],
                     &[&cfa_out],
                     &[
-                        Proto::attribute_ints("kernel_shape", &[2, 1]),
-                        Proto::attribute_ints("strides", &[2, 1]),
+                        Proto::attribute_ints("kernel_shape", &[2, self.stride_w]),
+                        Proto::attribute_ints("strides", &[2, self.stride_w]),
                         Proto::attribute_ints("pads", &[0, 0, 0, 0]),
                         Proto::attribute_int("group", 1),
                     ])
@@ -192,31 +205,75 @@ impl IspBlock for UnpackCfaBlock {
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let sm = self.sensor_max;
+        let sw = self.stride_w;
 
-        // Conv weights [4, 2, 2, 1] — 4 filters, 2 in channels, kernel 2×1
-        // Filter 0 (R):  in_ch=0 (even), picks top row → [[1],[0]]
-        // Filter 1 (Gr): in_ch=1 (odd),  picks top row → [[1],[0]]
-        // Filter 2 (Gb): in_ch=0 (even), picks bottom row → [[0],[1]]
-        // Filter 3 (B):  in_ch=1 (odd),  picks bottom row → [[0],[1]]
-        let w = vec![
-            // out_ch=0 (R)
-            1f32, 0f32,  // in_ch=0 (even): picks top row
-            0f32, 0f32,  // in_ch=1 (odd):  none
-            // out_ch=1 (Gr)
-            0f32, 0f32,  // in_ch=0 (even): none
-            1f32, 0f32,  // in_ch=1 (odd):  picks top row
-            // out_ch=2 (Gb)
-            0f32, 1f32,  // in_ch=0 (even): picks bottom row
-            0f32, 0f32,  // in_ch=1 (odd):  none
-            // out_ch=3 (B)
-            0f32, 0f32,  // in_ch=0 (even): none
-            0f32, 1f32,  // in_ch=1 (odd):  picks bottom row
-        ];
+        // Conv weights [4, 2, 2, sw] — 4 filters, 2 in channels, kernel 2×sw
+        // sw=1 (default): kernel=(2,1), each out_ch picks one Bayer position from 1 packed col
+        // sw=2 (downscale): kernel=(2,2), each out_ch averages 2 adjacent packed cols
+        //
+        // Filter 0 (R):  in_ch=0 (even), picks top row
+        // Filter 1 (Gr): in_ch=1 (odd),  picks top row
+        // Filter 2 (Gb): in_ch=0 (even), picks bottom row
+        // Filter 3 (B):  in_ch=1 (odd),  picks bottom row
+        //
+        // For stride_w=1 (kernel=(2,1)):  flat order: [oc,ic,kh,0]
+        //   oc=0,ic=0: [1, 0]
+        //   oc=1,ic=1: [1, 0]
+        //   oc=2,ic=0: [0, 1]
+        //   oc=3,ic=1: [0, 1]
+        //
+        // For stride_w=2 (kernel=(2,2)):  flat order: [oc,ic,kh,kw]
+        //   oc=0,ic=0: [0.5, 0.5, 0, 0]  ← avg R over 2 packed cols
+        //   oc=1,ic=1: [0.5, 0.5, 0, 0]  ← avg Gr over 2 packed cols
+        //   oc=2,ic=0: [0, 0, 0.5, 0.5]  ← avg Gb over 2 packed cols
+        //   oc=3,ic=1: [0, 0, 0.5, 0.5]  ← avg B over 2 packed cols
+        let w: Vec<f32> = if sw == 1 {
+            vec![
+                // out_ch=0 (R)
+                1f32, 0f32,  // in_ch=0 (even): picks top row
+                0f32, 0f32,  // in_ch=1 (odd):  none
+                // out_ch=1 (Gr)
+                0f32, 0f32,  // in_ch=0 (even): none
+                1f32, 0f32,  // in_ch=1 (odd):  picks top row
+                // out_ch=2 (Gb)
+                0f32, 1f32,  // in_ch=0 (even): picks bottom row
+                0f32, 0f32,  // in_ch=1 (odd):  none
+                // out_ch=3 (B)
+                0f32, 0f32,  // in_ch=0 (even): none
+                0f32, 1f32,  // in_ch=1 (odd):  picks bottom row
+            ]
+        } else {
+            // stride_w=2: kernel=(2,2), average over 2 packed cols
+            vec![
+                // oc=0 (R), ic=0 (even): avg over cols 0,1 top row
+                0.5, 0.5, 0.0, 0.0,
+                // oc=0 (R), ic=1 (odd): none
+                0.0, 0.0, 0.0, 0.0,
+                // oc=1 (Gr), ic=0 (even): none
+                0.0, 0.0, 0.0, 0.0,
+                // oc=1 (Gr), ic=1 (odd): avg over cols 0,1 top row
+                0.5, 0.5, 0.0, 0.0,
+                // oc=2 (Gb), ic=0 (even): avg over cols 0,1 bottom row
+                0.0, 0.0, 0.5, 0.5,
+                // oc=2 (Gb), ic=1 (odd): none
+                0.0, 0.0, 0.0, 0.0,
+                // oc=3 (B), ic=0 (even): none
+                0.0, 0.0, 0.0, 0.0,
+                // oc=3 (B), ic=1 (odd): avg over cols 0,1 bottom row
+                0.0, 0.0, 0.5, 0.5,
+            ]
+        };
+
+        let w_shape = if sw == 1 {
+            vec![4i64, 2, 2, 1]
+        } else {
+            vec![4i64, 2, 2, 2]
+        };
 
         let mut inits = vec![
             Proto::tensor_proto_float_scalar(&format!("{}/max_val", ns), sm),
             Proto::tensor_proto_int32_scalar(&format!("{}/div_65536", ns), 65536),
-            Proto::tensor_proto_float(&format!("{}/cfa_w", ns), &[4, 2, 2, 1], &w),
+            Proto::tensor_proto_float(&format!("{}/cfa_w", ns), &w_shape, &w),
             Proto::tensor_proto_float(&format!("{}/cfa_b", ns), &[4], &[0f32; 4]),
         ];
         if self.use_blc {

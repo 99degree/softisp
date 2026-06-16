@@ -4,7 +4,7 @@
 //! Provides a simpler API for PipelineManager: accepts blocks, builds
 //! the best available engine, and processes frames with named parameters.
 
-use crate::engine::{IspEngine, select_engine, default_tone_params};
+use crate::engine::{IspEngine, ProcessParams, select_engine};
 use crate::pipeline::{IspBlock, IspFrame};
 
 /// A fused ISP pipeline wrapping a backend engine.
@@ -77,40 +77,11 @@ impl FusedPipeline {
     ///
     /// Named parameters for convenience — delegates to the backend engine.
     #[allow(clippy::too_many_arguments)]
-    pub fn process(
-        &self,
-        width: u32,
-        height: u32,
-        stride_width: u32,
-        buf: &[u8],
-        sensor_max: f32,
-        target_width: u32,
-        ccm_matrix: Option<&[f32; 9]>,
-        bayer_gains: Option<&[f32; 4]>,
-        awb_gains: Option<&[f32; 3]>,
-        analog_gain: f32,
-        scene_change: f32,
-        lsc_gains: Option<&[f32]>,
-        blc_values: Option<&[f32; 4]>,
-        warp_grid: Option<&[f32]>,
-    ) -> Result<IspFrame, String> {
+    pub fn process(&self, params: &ProcessParams) -> Result<IspFrame, String> {
         if !self.loaded {
             return Err("Pipeline not loaded — call build() first".to_string());
         }
-        let tone = default_tone_params();
-        self.engine.process(
-            width, height, stride_width, buf,
-            sensor_max, target_width,
-            ccm_matrix,
-            &tone,
-            bayer_gains,
-            awb_gains,
-            analog_gain,
-            scene_change,
-            lsc_gains,
-            blc_values,
-            warp_grid,
-        )
+        self.engine.process(params)
     }
 
     /// The backend engine.

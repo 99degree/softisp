@@ -17,8 +17,6 @@ use cam_isp::pipeline::IspBlock;
 
 /// Build prefix of the packed INT32 pipeline blocks up to `count`.
 /// Mirrors `PipelineProfile::build_blocks()` — the default production path.
-/// Blocks: RawInput(INT32,w/2) → Unpack → Normalize → Cfa → Blc →
-///         BayerWb → Demosaic → Ccm → Tone → Display
 fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize, fused: bool, legacy: bool) -> Vec<Box<dyn IspBlock>> {
     let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
     let full_w = target_width as i64;
@@ -144,18 +142,13 @@ fn build_and_bench(
             }
         }
 
-        let params = cam_isp::engine::default_tone_params();
-
         let mut count = 0u32;
         let mut total_prep_ns = 0u64;
         let mut total_infer_ns = 0u64;
         let mut total_total_ns = 0u64;
 
         while Instant::now() < deadline {
-            let result = engine.process(
-                w, h, w, &buf, 1023.0, w, None, &params,
-                None, None, 1.0, 0.0, None, None, None,
-            );
+            let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &buf));
             match result {
                 Ok(frame) => {
                     total_prep_ns += frame.prep_duration_ns;
@@ -227,6 +220,16 @@ fn main() {
         false, // use_warp
         false, // use_hdr
         true,  // use_fused_unpack (faster fused unpack+norm+CFA)
+        true,  // use_demosaic_ccm (fused demosaic+CCM, saves 1 session)
+        true,  // use_fused_tone
+        0,     // rotate_mode: none
+        false, // use_zone_stats
+        false, // use_channel_means
+        false, // use_tone_stats
+        false, // use_histogram
+        0,     // stats_downscale_max
+        0,     // pipeline_downscale_target
+        0.0,   // eis_margin
     );
     let all_blocks = profile.build_blocks(w, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile

@@ -152,19 +152,7 @@ fn main() {
         };
 
         let start = std::time::Instant::now();
-        let result = engine.process(
-            args.width, args.height, args.width, &frame_raw,
-            args.sensor_max, args.width,
-            None,     // CCM — use controller
-            &tone_params,
-            None,     // bayer gains — use controller AWB
-            None,     // awb gains
-            0.0,      // analog gain (<=0 means use controller AE)
-            0.0,
-            None,
-            Some(&blc_values),
-            None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams::new(args.width, args.height, &frame_raw));
         let elapsed = start.elapsed();
         total_elapsed += elapsed;
 
