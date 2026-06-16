@@ -349,13 +349,14 @@ impl PipelineProfile {
         if let Some(factor) = pipeline_factor {
             info!("Pipeline downscale: width={} → {} (factor={:.3})",
                 target_width, (target_width as f32 * factor) as u32, factor);
-            // Use AdaptiveDownscaleBlock in "fit" mode: preserves aspect,
-            // scales to target width, pads with black bars if needed.
-            // No concrete dims needed — ONNX graph resolves at runtime.
+            // Use AdaptiveDownscaleBlock in "crop" mode: crops edges to match
+            // target aspect ratio, then scales.  No black pillarbox/letterbox
+            // bars — essential because AWB/CCT stats read from aux_hook_ds and
+            // black bars would corrupt zone averages and channel means.
             let down_w = (target_width as f64 * factor as f64).round() as i64;
             let down_h = (target_width as f64 * factor as f64 / 1.5).round() as i64; // approx
             blocks.push(Box::new(AdaptiveDownscaleBlock::new(
-                down_w.max(1), down_h.max(1), 0, "constant", "fit")));
+                down_w.max(1), down_h.max(1), 0, "constant", "crop")));
             // ── AuxHook after downscale: AWB/CCT/stats read from downscaled data ──
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_ds")));
         }
@@ -443,29 +444,46 @@ impl PipelineProfile {
         };
         let mut stats_input_owned = String::from(stats_input_base);
 
-        // Adaptive downscale: compute factor so the longer side ≤ stats_downscale_max
-        let downscale = if self.stats_downscale_max > 0 {
+        // Stats downscale: AdaptiveDownscaleBlock in "crop" mode.
+        // This handles removing any pillarbox/letterbox from the pipeline
+        // downscale, then further reducing resolution for cheap stats.
+        // The target is computed from stats_downscale_max to limit the
+        // longer side, preserving aspect ratio.
+        let stats_max = self.stats_downscale_max;
+        if stats_max > 0 {
             let max_dim = input_h.max(input_w) as f32;
-            let target = self.stats_downscale_max as f32;
+            let target = stats_max as f32;
             if max_dim > target {
-                Some(target / max_dim)
-            } else {
-                None
+                let factor = target / max_dim;
+                // Compute the actual dims after pipeline downscale (if any)
+                let pipe_factor = if self.pipeline_downscale_target > 0 {
+                    let pw = input_w as f32;
+                    let pt = self.pipeline_downscale_target as f32;
+                    if pw > pt { Some(pt / pw) } else { None }
+                } else {
+                    None
+                };
+                // Effective dims feeding into this stats downscale
+                let (src_h, src_w) = match pipe_factor {
+                    Some(pf) => {
+                        let ph = (input_h as f32 * pf).round() as i64;
+                        let pw = (input_w as f32 * pf).round() as i64;
+                        (ph.max(1), pw.max(1))
+                    }
+                    None => (input_h, input_w),
+                };
+                // Target dims from stats_max constraint (crop mode keeps aspect)
+                let tgt_h = (src_h as f32 * factor).ceil() as i64;
+                let tgt_w = (src_w as f32 * factor).ceil() as i64;
+                let mut ds = AdaptiveDownscaleBlock::new(
+                    tgt_w.max(1), tgt_h.max(1), 0, "constant", "crop")
+                    .with_concrete_dims(src_h, src_w);
+                ds.set_input_source(&stats_input_owned);
+                info!("Stats downscale: {}×{} → {}×{} (factor={:.3}, crop mode)",
+                    src_h, src_w, tgt_h.max(1), tgt_w.max(1), factor);
+                stats_input_owned = ds.frame_tensor.clone();
+                aux.push(Box::new(ds));
             }
-        } else {
-            None
-        };
-
-        if let Some(factor) = downscale {
-            let out_h = (input_h as f32 * factor).ceil() as i64;
-            let out_w = (input_w as f32 * factor).ceil() as i64;
-            let mut resize = ResizeBlock::new(factor)
-                .with_concrete_dims(out_h, out_w);
-            resize.set_input_source(&stats_input_owned);
-            info!("Stats downscale: {}×{} → {}×{} (factor={:.3})",
-                input_h, input_w, out_h, out_w, factor);
-            stats_input_owned = resize.frame_tensor.clone();
-            aux.push(Box::new(resize));
         }
 
         let stats_input: &str = &stats_input_owned;
