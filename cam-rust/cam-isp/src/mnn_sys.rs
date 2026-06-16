@@ -130,6 +130,19 @@ pub fn mnn_run_true_zero_copy(
     max_out: c_int,
 ) -> c_int;
 
+pub fn mnn_run_with_output(
+    interpreter: *mut c_void,
+    session: *mut c_void,
+    buffer: *const c_void,
+    buffer_type_code: c_int,
+    buffer_type_bits: c_int,
+    in_shape: *const c_int,
+    in_ndim: c_int,
+    output_name: *const c_char,
+    out_data: *mut c_float,
+    max_out: c_int,
+) -> c_int;
+
 pub fn mnn_run_host_tensors_u16(
     interpreter: *mut c_void,
     session: *mut c_void,
@@ -441,6 +454,11 @@ impl MnnTensorSafe {
         dims[..n as usize].to_vec()
     }
 
+    /// Get the data type code: 4=float32, 5=int32, 6=uint32, 0=unknown.
+    pub fn data_type(&self) -> i32 {
+        unsafe { mnn_tensor_get_type(self.inner) }
+    }
+
     /// Get a reference to the tensor's host data (any type) as bytes.
     /// This is zero-copy - the slice points to MNN's internal buffer.
     pub fn as_bytes(&self) -> Option<&[u8]> {
@@ -567,4 +585,27 @@ extern "C" {
     ) -> MnnConvert_Result;
 
     pub fn MnnConvert_FreeResult(result: *mut MnnConvert_Result);
+}
+
+// ── Simpler C FFI (mnn_convert_api.cpp, statically linked) ──────────
+
+/// Conversion result from the simple C FFI.
+#[repr(C)]
+pub struct MnnConvertResult {
+    pub success: i32,
+    pub error_msg: [c_char; 1024usize],
+}
+
+extern "C" {
+    /// Convert ONNX model to MNN format (statically linked from mnn_convert_api.cpp).
+    /// Returns result via MnnConvertResult struct. No heap allocation, no free needed.
+    pub fn mnn_convert_onnx_to_mnn(
+        onnx_path: *const c_char,
+        mnn_path: *const c_char,
+        biz_code: *const c_char,
+        optimize_level: i32,
+        weight_quant_bits: i32,
+        fp16: i32,
+        result: *mut MnnConvertResult,
+    );
 }
