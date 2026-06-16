@@ -97,6 +97,7 @@ fn link_mnnconvert() {
         .cpp(true)
         .std("c++17")
         .file(src_dir.join("mnnconvert_shared.cpp"))
+        .file("mnn_sys/mnn_convert_api.cpp")  // C FFI wrapper, statically linked
         .include(&mnn_include)
         .include(mnnconvert_include).include("vendor/mnn/mnnconvert/include/converter")
         .define("MNN_CONVERT_API_EXPORTS", None)
