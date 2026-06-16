@@ -63,7 +63,7 @@ pub struct AdaptiveDownscaleBlock {
     /// EIS margin fraction (e.g. 0.05 for 5%). When set, the block scales to
     /// (1 + margin) × target then center-crops to target, reserving edge pixels
     /// for EIS/deshake warp shifts without revealing black borders.
-    /// TODO: Wire into scale_out_dims() logic. Default 0.0 = disabled.
+    pub margin: f64,
     /// Concrete input dimensions (set via with_concrete_dims).
     pub in_h: Option<i64>,
     pub in_w: Option<i64>,
@@ -89,6 +89,7 @@ impl AdaptiveDownscaleBlock {
             codec_align: codec_align.max(0),
             filler_mode: filler_mode.to_string(),
             aspect_mode: aspect_mode.to_string(),
+            margin: 0.0,
             in_h: None,
             in_w: None,
         }
@@ -98,6 +99,14 @@ impl AdaptiveDownscaleBlock {
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
         self.in_h = Some(h);
         self.in_w = Some(w);
+        self
+    }
+
+    /// Set EIS margin fraction (0.05 = 5%). The block scales to
+    /// (1 + margin) × target then center-crops to target, reserving edge
+    /// pixels for EIS warp shifts without revealing black borders.
+    pub fn with_margin(mut self, margin: f64) -> Self {
+        self.margin = margin.max(0.0);
         self
     }
 
@@ -168,56 +177,61 @@ impl AdaptiveDownscaleBlock {
             return (1.0, 1.0, self.target_h, self.target_w);
         }
         let src_aspect = aw as f64 / ah as f64;
-        let tgt_aspect = self.target_w as f64 / self.target_h as f64;
+        // Effective target includes EIS margin (scale larger, crop back later)
+        let eff_w = (self.target_w as f64 * (1.0 + self.margin)).round() as i64;
+        let eff_h = (self.target_h as f64 * (1.0 + self.margin)).round() as i64;
+        let eff_w = eff_w.max(1);
+        let eff_h = eff_h.max(1);
+        let tgt_aspect = eff_w as f64 / eff_h as f64;
 
         let (scale_h, scale_w, out_h, out_w) = match self.aspect_mode.as_str() {
             "crop" => {
-                // Scale to fill target (may crop further via resize)
-                let scale = (self.target_w as f64 / aw as f64)
-                    .max(self.target_h as f64 / ah as f64);
-                (scale, scale, self.target_h, self.target_w)
+                // Scale to fill effective target (may crop further via resize)
+                let scale = (eff_w as f64 / aw as f64)
+                    .max(eff_h as f64 / ah as f64);
+                (scale, scale, eff_h, eff_w)
             }
             "pad" => {
-                // Scale to fill target (padding already done above)
-                let scale = (self.target_w as f64 / aw as f64)
-                    .max(self.target_h as f64 / ah as f64);
-                (scale, scale, self.target_h, self.target_w)
+                // Scale to fill effective target (padding already done above)
+                let scale = (eff_w as f64 / aw as f64)
+                    .max(eff_h as f64 / ah as f64);
+                (scale, scale, eff_h, eff_w)
             }
             _ /* "fit" */ => {
-                // Scale to fit within target (letterbox/pillarbox)
+                // Scale to fit within effective target (letterbox/pillarbox)
                 if src_aspect > tgt_aspect {
                     // Wider → fit width, pillarbox top/bottom
-                    let scale = self.target_w as f64 / aw as f64;
+                    let scale = eff_w as f64 / aw as f64;
                     let oh = (ah as f64 * scale).round() as i64;
-                    (scale, scale, oh, self.target_w)
+                    (scale, scale, oh, eff_w)
                 } else {
                     // Taller → fit height, letterbox left/right
-                    let scale = self.target_h as f64 / ah as f64;
+                    let scale = eff_h as f64 / ah as f64;
                     let ow = (aw as f64 * scale).round() as i64;
-                    (scale, scale, self.target_h, ow)
+                    (scale, scale, eff_h, ow)
                 }
             }
         };
         (scale_h, scale_w, out_h.max(1), out_w.max(1))
     }
 
-    /// Output dimensions after aspect adjust + resize + codec-align pad.
+    /// Output dimensions after EIS margin center-crop + align pad.
     pub fn out_dims(&self) -> (i64, i64) {
-        let (_, _, oh, ow) = self.scale_out_dims();
+        // Final output is the nominal target (margin is cropped off after scale)
         let a = self.codec_align;
-        if a <= 0 { return (oh, ow); }
-        let pb = (a - (oh % a)) % a;
-        let pr = (a - (ow % a)) % a;
-        (oh + pb, ow + pr)
+        if a <= 0 { return (self.target_h, self.target_w); }
+        let pb = (a - (self.target_h % a)) % a;
+        let pr = (a - (self.target_w % a)) % a;
+        (self.target_h + pb, self.target_w + pr)
     }
 
     /// Compute padding amounts for the codec-align pad at the end.
     fn align_pad(&self) -> (i64, i64, i64, i64) {
         let a = self.codec_align;
         if a <= 0 { return (0, 0, 0, 0); }
-        let (_, _, oh, ow) = self.scale_out_dims();
-        let pb = (a - (oh % a)) % a;
-        let pr = (a - (ow % a)) % a;
+        // Align to nominal target dims (margin already cropped)
+        let pb = (a - (self.target_h % a)) % a;
+        let pr = (a - (self.target_w % a)) % a;
         (0, pb, 0, pr)
     }
 }
@@ -265,8 +279,7 @@ impl IspBlock for AdaptiveDownscaleBlock {
         let needs_align = _apb > 0 || _apr > 0;
         let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
         let needs_resize = (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001;
-
-        // Build the op chain dynamically based on what's needed.
+        let needs_margin_crop = self.margin > 0.001;
         // Always produces at least one output tensor.
         let input_name = &self.input_source;
         let _after_aspect = format!("{}/aspect_adjusted", ns);
@@ -313,12 +326,34 @@ impl IspBlock for AdaptiveDownscaleBlock {
         // Stage 2: Resize if needed
         if needs_resize {
             let scales = format!("{}/scales", ns);
-            let resize_out = if needs_align { &after_resize } else { final_output };
+            // If margin > 0, resize goes to intermediate for crop
+            let needs_intermediate = needs_align || needs_margin_crop;
+            let resize_out = if needs_intermediate { &after_resize } else { final_output };
             nodes.push(Proto::node("Resize",
                 &[prev_tensor, "", "", &scales], &[resize_out],
                 &[Proto::attribute_string("mode", "nearest"),
                   Proto::attribute_int("coordinate_transformation_mode", 0)]));
             prev_tensor = resize_out;
+        }
+
+        // Stage 2b: EIS margin center-crop (if margin > 0)
+        // Scales to (1+margin)×target, then crops back to target
+        let needs_margin_crop = self.margin > 0.001;
+        if needs_margin_crop {
+            let margin_crop_out = if needs_align {
+                format!("{}/margin_cropped", ns)
+            } else {
+                self.frame_tensor.clone()
+            };
+            let starts = format!("{}/margin_starts", ns);
+            let ends = format!("{}/margin_ends", ns);
+            let axes = format!("{}/margin_axes", ns);
+            let steps = format!("{}/margin_steps", ns);
+            nodes.push(Proto::node("Slice",
+                &[prev_tensor, &starts, &ends, &axes, &steps],
+                &[&margin_crop_out], &[]));
+            tensor_pool.push(margin_crop_out);
+            prev_tensor = tensor_pool.last().unwrap().as_str();
         }
 
         // Stage 3: Codec-alignment pad if needed
@@ -370,11 +405,29 @@ impl IspBlock for AdaptiveDownscaleBlock {
         }
 
         // Resize scale factors
-        let (scale_h, scale_w, _, _) = self.scale_out_dims();
+        let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
         if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
             inits.push(Proto::tensor_proto_float(
                 &format!("{}/scales", ns), &[4],
                 &[1.0f32, 1.0f32, scale_h as f32, scale_w as f32]));
+        }
+
+        // EIS margin center-crop (from enlarged resize output back to target)
+        if self.margin > 0.001 && _oh > self.target_h && _ow > self.target_w {
+            let crop_h = (_oh - self.target_h) / 2;
+            let crop_w = (_ow - self.target_w) / 2;
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/margin_starts", ns),
+                &[0, 0, crop_h.max(0), crop_w.max(0)]));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/margin_ends", ns),
+                &[std::i64::MAX, std::i64::MAX,
+                  (crop_h + self.target_h).min(_oh),
+                  (crop_w + self.target_w).min(_ow)]));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/margin_axes", ns), &[0, 1, 2, 3]));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/margin_steps", ns), &[1, 1, 1, 1]));
         }
 
         // Codec-align pad
@@ -391,8 +444,10 @@ impl IspBlock for AdaptiveDownscaleBlock {
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        // Future: override crop/pad tolerance from IspController
-        vec![]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/margin", ns), 1, vec![1]), // float scalar: EIS margin (0.05 = 5%)
+        ]
     }
 }
 

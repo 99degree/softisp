@@ -78,7 +78,7 @@ fn main() {
                 let mut total_total_ns = 0u64;
                 while Instant::now() < deadline {
                     let frame = engine.process(w, h, w, &buf, 1024.0, w, None, &params,
-                        None, None, 1.0, 0.0, None, None, None);
+                        None, None, 0, 1.0, 0.0, None, None, None);
                     if frame.is_ok() {
                         let f = frame.unwrap();
                         total_prep_ns += f.prep_duration_ns;
