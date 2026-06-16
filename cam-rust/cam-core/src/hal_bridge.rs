@@ -73,6 +73,7 @@ pub fn create_isp_processor(
             &tone,                 // tone params
             None,                  // bayer_gains
             None,                  // awb_gains
+            0,                     // bayer_pattern (0=RGGB)
             1.0,                   // analog_gain
             0.0,                   // scene_change
             None,                  // lsc_gains
