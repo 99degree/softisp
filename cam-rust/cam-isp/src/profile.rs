@@ -349,14 +349,15 @@ impl PipelineProfile {
         if let Some(factor) = pipeline_factor {
             info!("Pipeline downscale: width={} → {} (factor={:.3})",
                 target_width, (target_width as f32 * factor) as u32, factor);
-            // Use AdaptiveDownscaleBlock in "crop" mode: crops edges to match
-            // target aspect ratio, then scales.  No black pillarbox/letterbox
-            // bars — essential because AWB/CCT stats read from aux_hook_ds and
-            // black bars would corrupt zone averages and channel means.
+            // Use AdaptiveDownscaleBlock in "fit" mode: scales to fit within
+            // target bounds, black pillarbox/letterbox bars for remainder.
+            // Preserves ALL content — no edge cropping, no distortion.
+            // The stats downscale (2nd AdaptiveDownscaleBlock, "crop" mode)
+            // will crop out these black bars before AWB/CCT computation.
             let down_w = (target_width as f64 * factor as f64).round() as i64;
             let down_h = (target_width as f64 * factor as f64 / 1.5).round() as i64; // approx
             blocks.push(Box::new(AdaptiveDownscaleBlock::new(
-                down_w.max(1), down_h.max(1), 0, "constant", "crop")));
+                down_w.max(1), down_h.max(1), 0, "constant", "fit")));
             // ── AuxHook after downscale: AWB/CCT/stats read from downscaled data ──
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_ds")));
         }
@@ -476,7 +477,7 @@ impl PipelineProfile {
                 let tgt_h = (src_h as f32 * factor).ceil() as i64;
                 let tgt_w = (src_w as f32 * factor).ceil() as i64;
                 let mut ds = AdaptiveDownscaleBlock::new(
-                    tgt_w.max(1), tgt_h.max(1), 0, "constant", "crop")
+                    tgt_w.max(1), tgt_h.max(1), 0, "constant", "fit")
                     .with_concrete_dims(src_h, src_w);
                 ds.set_input_source(&stats_input_owned);
                 info!("Stats downscale: {}×{} → {}×{} (factor={:.3}, crop mode)",
