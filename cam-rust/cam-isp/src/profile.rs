@@ -70,9 +70,6 @@ pub struct PipelineProfile {
     pub use_fused_unpack: bool,
     /// Fuse demosaic+CCM into a single block (saves 1 session).
     pub use_demosaic_ccm: bool,
-    /// Run aux blocks (FCS, LDCI, EE) at half resolution.
-    /// Inserts ResizeBlock down/up around the aux chain, 4× fewer pixels.
-    pub use_aux_half_res: bool,
     /// Enable per-zone RGB means (AveragePool) for multi-illuminant AWB.
     pub use_zone_stats: bool,
     /// Enable global channel means (ReduceMean) for grey-world AWB.
@@ -117,7 +114,6 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
-        use_aux_half_res: false,
         use_zone_stats: true,      // zone RGB means for basic AWB
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: false,     // skip AE tone stats (LITE)
@@ -143,7 +139,6 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
-        use_aux_half_res: false,
         use_zone_stats: true,      // zone stats for multi-illuminant AWB
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: true,      // tone stats for AE metering
@@ -169,7 +164,6 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
-        use_aux_half_res: false,
         use_zone_stats: true,
         use_channel_means: true,
         use_tone_stats: true,
@@ -195,7 +189,6 @@ impl PipelineProfile {
         use_hdr: true,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
-        use_aux_half_res: false,
         use_zone_stats: true,      // zone stats for multi-illuminant AWB
         use_channel_means: true,   // channel means for grey-world AWB
         use_tone_stats: true,      // tone stats for AE metering
@@ -222,7 +215,6 @@ impl PipelineProfile {
         use_unsharp: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
-        use_aux_half_res: false,
         use_zone_stats: true,      // zone stats for AWB (single block test)
         use_channel_means: false,  // skip channel means
         use_tone_stats: false,     // skip tone stats
@@ -251,7 +243,6 @@ impl PipelineProfile {
         use_hdr: bool,
         use_fused_unpack: bool,
         use_demosaic_ccm: bool,
-        use_aux_half_res: bool,
         use_zone_stats: bool,      // per-zone RGB means (AveragePool) for multi-illuminant AWB
         use_channel_means: bool,   // global channel means (ReduceMean) for grey-world AWB
         use_tone_stats: bool,      // luma mean/min/max + clipped/shadows for AE metering
@@ -275,7 +266,6 @@ impl PipelineProfile {
             use_hdr,
             use_fused_unpack,
             use_demosaic_ccm,
-            use_aux_half_res,
             use_zone_stats,      // per-zone RGB means (AWB multi-illuminant)
             use_channel_means,   // global channel means (grey-world AWB)
             use_tone_stats,      // luma stats for AE metering
@@ -393,12 +383,7 @@ impl PipelineProfile {
 
         // ── Auxiliary blocks (atomic, individually controlled by profile) ──
         // Each aux block is independently gated by its profile flag.
-        // When use_aux_half_res is set, wrap the aux chain with Resize down/up
-        // to run FCS, LDCI, EE at 4× fewer pixels.
         let any_aux = self.use_fcs || self.use_ldci || self.use_ee;
-        if any_aux && self.use_aux_half_res {
-            blocks.push(Box::new(crate::blocks::ResizeBlock::new(0.5)));
-        }
         if self.use_fcs {
             blocks.push(Box::new(FcsBlock::new()));
         }
@@ -407,9 +392,6 @@ impl PipelineProfile {
         }
         if self.use_ee {
             blocks.push(Box::new(EeBlock::new()));
-        }
-        if any_aux && self.use_aux_half_res {
-            blocks.push(Box::new(crate::blocks::ResizeBlock::new(2.0)));
         }
 
         // ── Display output ──
@@ -533,8 +515,6 @@ impl PipelineProfile {
         if self.use_fcs { count += 1; }
         if self.use_ldci { count += 1; }
         if self.use_ee { count += 1; }
-        // Half-res aux wraps in resize_down + resize_up (2 extra blocks)
-        if any_aux && self.use_aux_half_res { count += 2; }
         // bad_pixel (DPC) is handled by a separate BLC only in non-fused path
         if self.use_bad_pixel && !(self.use_fused_unpack && self.use_unpack) { count += 1; }
         if self.use_lsc { count += 1; }
@@ -607,7 +587,6 @@ mod tests {
             "CUSTOM", PipelineLevel::Pro, true, true, true, true, true,
             DemosaicQuality::Edge, true, true, true, true, false, false,
             true,  // use_demosaic_ccm
-            false, // use_aux_half_res
             true,  // use_zone_stats
             false, // use_channel_means
             true,  // use_tone_stats
@@ -631,7 +610,6 @@ mod tests {
             "LEGACY", PipelineLevel::Lite, false, false, false, false, false,
             DemosaicQuality::Standard, false, false, false, false, false, false,
             false, // use_demosaic_ccm
-            false, // use_aux_half_res
             false, // use_zone_stats
             false, // use_channel_means
             false, // use_tone_stats

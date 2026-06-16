@@ -17,8 +17,6 @@ use cam_isp::pipeline::IspBlock;
 
 /// Build prefix of the packed INT32 pipeline blocks up to `count`.
 /// Mirrors `PipelineProfile::build_blocks()` — the default production path.
-/// Blocks: RawInput(INT32,w/2) → Unpack → Normalize → Cfa → Blc →
-///         BayerWb → Demosaic → Ccm → Tone → Display
 fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize, fused: bool, legacy: bool) -> Vec<Box<dyn IspBlock>> {
     let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
     let full_w = target_width as i64;
@@ -228,7 +226,6 @@ fn main() {
         false, // use_hdr
         true,  // use_fused_unpack (faster fused unpack+norm+CFA)
         true,  // use_demosaic_ccm (fused demosaic+CCM, saves 1 session)
-        false, // use_aux_half_res
         false, // use_zone_stats
         false, // use_channel_means
         false, // use_tone_stats
