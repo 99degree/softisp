@@ -18,6 +18,7 @@ mod unpack;
 mod demosaic_ccm;
 mod unpack_cfa;
 mod resize;
+mod adaptive_downscale;
 mod stats;
 
 pub use raw_input::RawInputBlock;
@@ -38,6 +39,7 @@ pub use unpack_cfa::UnpackCfaBlock;
 pub use unpack::UnpackBlock;
 pub use demosaic_ccm::DemosaicCcmBlock;
 pub use resize::ResizeBlock;
+pub use adaptive_downscale::AdaptiveDownscaleBlock;
 pub use stats::{ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock};
 
 /// Register all built-in blocks with the engine registry.
