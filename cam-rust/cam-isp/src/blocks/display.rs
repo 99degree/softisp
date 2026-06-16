@@ -258,3 +258,21 @@ impl IspBlock for DisplayBlock {
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
 }
+
+/// pack_rgba implementation
+/// 
+/// ONNX graph: Mul(255) → Mul(weights [65536, 256, 1]) → ReduceSum(axes=[1]) → Cast(INT32)
+/// Output: [1,1,H,W] INT32 where each value = R*65536 + G*256 + B
+/// 
+/// Verified by test_conv_pack.rs and test_cast_bytes.rs regression tests
+/// Animation:
+///   Input := [R,G,B] = [25, 51, 76] (float values)
+///   After Mul(255) := [25*255, 51*255, 76*255] ≈ [6375, 13005, 19380]
+///   After Mul(weights) := [6375*65536, 13005*256, 19380*1] ≈ [417,913,600, 3,329,280, 19,380]
+///   After ReduceSum := 417,913,600 + 3,329,280 + 19,380 = 421,262,260
+///   But with exact math: 25*65536 + 51*256 + 76 = 1,638,400 + 13,056 + 76 = 1,651,532
+///   Extract bytes: b=p&0xFF, g=(p>>8)&0xFF, r=(p>>16)&0xFF → [76, 51, 25]
+///
+/// test_conv_pack.rs verified Conv(1x1) for packing also works.
+/// Current approach uses Mul+ReduceSum instead of Conv to avoid Conv node
+/// overhead for broadcasting.
