@@ -3,6 +3,24 @@
 //! Fuses aspect-adaptive scaling + content-aware padding into one ONNX
 //! subgraph (Slice + Resize + Pad).  No black bars, no distortion.
 //!
+//! # EIS margin (TODO)
+//!
+//! When EIS/deshake is active, AdaptiveDownscaleBlock should produce an
+//! output slightly larger than the target resolution, providing margin
+//! for the warp block to shift without revealing black borders.
+//!
+//! Design:
+//! - Compute the "fit" scale from source → target (preserving aspect).
+//! - The margin is dynamic: the difference between available scaled pixels
+//!   and the target dimensions.
+//!   - If aspect matches → scale slightly larger (e.g., 1.1×) to create
+//!     real-pixel margin
+//!   - If aspect differs → black bars ARE the margin (free)
+//! - After EIS warp, crop to exactly target dimensions.
+//! - The margin must be large enough to absorb worst-case EIS shift
+//!   (configurable via PipelineProfile).
+//! - Scene object H/W ratio is preserved in the final cropped frame.
+//!
 //! # Modes
 //!
 //! - **"fit"** (default): scale to fit within target bounds preserving
@@ -42,6 +60,10 @@ pub struct AdaptiveDownscaleBlock {
     pub filler_mode: String,
     /// Aspect handling: "fit", "crop", or "pad".
     pub aspect_mode: String,
+    /// EIS margin fraction (e.g. 0.05 for 5%). When set, the block scales to
+    /// (1 + margin) × target then center-crops to target, reserving edge pixels
+    /// for EIS/deshake warp shifts without revealing black borders.
+    /// TODO: Wire into scale_out_dims() logic. Default 0.0 = disabled.
     /// Concrete input dimensions (set via with_concrete_dims).
     pub in_h: Option<i64>,
     pub in_w: Option<i64>,
