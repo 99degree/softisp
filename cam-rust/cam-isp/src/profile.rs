@@ -89,6 +89,14 @@ pub struct PipelineProfile {
     /// Example: for 4K input (2160×3840), setting this to 1080 downsamples
     /// stats to 540×960 — 16× fewer pixels, 16× faster stats.
     pub stats_downscale_max: u32,
+    /// Maximum pixel dimension for the main pipeline processing.
+    /// If the sensor resolution exceeds this, a ResizeBlock is inserted
+    /// after CFA/BLC to downsample before the expensive blocks
+    /// (demosaic, CCM, tone, cosmetic, display).
+    ///
+    /// Set to 0 to always process at full resolution.
+    /// Example: 4K sensor (3840) → set to 1920 for FHD-equivalent processing.
+    pub pipeline_downscale_target: u32,
 }
 
 impl PipelineProfile {
@@ -115,6 +123,7 @@ impl PipelineProfile {
         use_tone_stats: false,     // skip AE tone stats (LITE)
         use_histogram: false,      // skip histogram (LITE)
         stats_downscale_max: 0,    // full resolution
+        pipeline_downscale_target: 0,
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -140,6 +149,7 @@ impl PipelineProfile {
         use_tone_stats: true,      // tone stats for AE metering
         use_histogram: false,      // skip histogram (MED)
         stats_downscale_max: 0,    // full resolution
+        pipeline_downscale_target: 0,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -165,6 +175,7 @@ impl PipelineProfile {
         use_tone_stats: true,
         use_histogram: true,
         stats_downscale_max: 0,    // full resolution
+        pipeline_downscale_target: 0,
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -190,6 +201,7 @@ impl PipelineProfile {
         use_tone_stats: true,      // tone stats for AE metering
         use_histogram: true,       // 16-bin histogram (full AE stats)
         stats_downscale_max: 0,    // full resolution
+        pipeline_downscale_target: 0,
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -216,6 +228,7 @@ impl PipelineProfile {
         use_tone_stats: false,     // skip tone stats
         use_histogram: false,      // skip histogram
         stats_downscale_max: 0,    // full resolution
+        pipeline_downscale_target: 0,
     };
 
     /// All built-in profiles.
@@ -244,6 +257,7 @@ impl PipelineProfile {
         use_tone_stats: bool,      // luma mean/min/max + clipped/shadows for AE metering
         use_histogram: bool,       // 16-bin luminance histogram for AE and clipping detection
         stats_downscale_max: u32,  // max pixel dimension for stats (0 = full res)
+        pipeline_downscale_target: u32, // max pixel dimension for main pipeline (0 = full res)
     ) -> Self {
         Self {
             label,
@@ -267,6 +281,7 @@ impl PipelineProfile {
             use_tone_stats,      // luma stats for AE metering
             use_histogram,       // 16-bin luminance histogram
             stats_downscale_max, // adaptive stats downscale
+            pipeline_downscale_target, // main pipeline downscale target
         }
     }
 
@@ -319,6 +334,23 @@ impl PipelineProfile {
 
         // ── AuxHook: source data (after BLC, clean reference for aux blocks) ──
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_src")));
+
+        // ── Pipeline downscale (optional, for high-res sensors) ──
+        // If the sensor width exceeds pipeline_downscale_target, insert a
+        // ResizeBlock to downsample before the expensive heavy blocks
+        // (demosaic, CCM, tone, cosmetic, display).
+        let pipeline_factor = if self.pipeline_downscale_target > 0 {
+            let tw = target_width as f32;
+            let target = self.pipeline_downscale_target as f32;
+            if tw > target { Some(target / tw) } else { None }
+        } else {
+            None
+        };
+        if let Some(factor) = pipeline_factor {
+            info!("Pipeline downscale: width={} → {} (factor={:.3})",
+                target_width, (target_width as f32 * factor) as u32, factor);
+            blocks.push(Box::new(ResizeBlock::new(factor)));
+        }
 
         // ── Lens shading correction (optional) ──
         if self.use_lsc {
@@ -480,6 +512,8 @@ impl PipelineProfile {
         if self.use_channel_means { count += 1; }
         if self.use_tone_stats { count += 1; }
         if self.use_histogram { count += 1; }
+        // Pipeline downscale (1 block if target > 0)
+        if self.pipeline_downscale_target > 0 { count += 1; }
         count
     }
 
@@ -547,6 +581,7 @@ mod tests {
             true,  // use_tone_stats
             false, // use_histogram
             0,     // stats_downscale_max
+            0,     // pipeline_downscale_target
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -570,6 +605,7 @@ mod tests {
             false, // use_tone_stats
             false, // use_histogram
             0,     // stats_downscale_max
+            0,     // pipeline_downscale_target
         );
         let blocks = p.build_blocks(128, 0);
         assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks, got {}", blocks.len());

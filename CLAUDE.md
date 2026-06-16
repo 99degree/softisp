@@ -161,3 +161,7 @@ PipelineManager::process_frame()
 | `&'static dyn SimdEngine` | `OnceLock<Box<dyn SimdEngine>>` ensures zero-cost dispatch after init |
 | Per-frame logs at `debug!` level | `info!` reserved for lifecycle; `debug!` for timing breakdowns |
 | `mnn_buffer` behind feature flag | Isolates pre-existing compilation errors |
+| Triple-buffered RollingStats | 3-slot rotate: engine writes → controller processes → next frame reads. No lock contention. |
+| ONNX dual-registration | Extra inputs registered as BOTH initializer AND graph input, enabling runtime override of CCM/tone/WB params |
+| Bayer pattern in CCM fusion | `set_extra_inputs(bayer_pattern)` selects RGGB/BGGR/GRBG/GBRG demosaic weights before fusing with CCM matrix |
+| Adaptive stats downscale | `stats_downscale_max` auto-inserts ResizeBlock before stats blocks for 4K+ sensors (e.g., 4K→540×960 = 16× fewer pixels) |
