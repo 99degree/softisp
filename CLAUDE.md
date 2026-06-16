@@ -1,9 +1,10 @@
 # CLAUDE.md — Rust Camera ISP Pipeline
 
-## Status: ✅ ALL JAVA CODE PORTED — +SIMD Backend System
+## Status: ✅ ALL JAVA CODE PORTED — +SIMD Backend System +AdaptiveDownscaleBlock
 
 All Java/Kotlin code ported with enhancements. New **SIMD backend system** auto-selects NEON, FP16, DOTPROD, or scalar at runtime.
-Workspace compiles with **0 warnings** and **185 unit tests pass**.
+New **AdaptiveDownscaleBlock** replaces simple ResizeBlock for distortion-free pipeline downscale with 3 modes (fit/crop/pad).
+Workspace compiles with **0 warnings** and **195 unit tests pass**.
 
 ## SIMD Backend Architecture (new)
 
@@ -70,8 +71,7 @@ RawInput(INT16) → Normalize(FLOAT) → DPC(median) → Gaussian Denoise
 | `ZoneStatsBlock.kt` | `controller.rs` | 3 | ✅ Full |
 | — **PipelineManager engine select** | `manager.rs` | — | ✅ MNN→CPU fallback |
 | — **Triple-buffered rolling stats** | `controller.rs` | — | ✅ 3-slot rotate |
-| — **SIMD backend system** | `simd/` (4 backends) | 7 | ✅ New |
-| — **Android logcat** | `cam-core/logger.rs` | — | ✅ New |
+| — **AdaptiveDownscaleBlock** | `blocks/adaptive_downscale.rs` | 10 | ✅ New |
 
 ## What's NOT ported (blocked by external deps or impractical)
 
@@ -88,7 +88,7 @@ RawInput(INT16) → Normalize(FLOAT) → DPC(median) → Gaussian Denoise
 
 ```bash
 cd cam-rust
-cargo test --lib -p cam-isp          # 185 unit tests, <0.08s
+cargo test --lib -p cam-isp          # 195 unit tests, <0.08s
 cargo check --workspace              # 0 warnings
 RUST_LOG=info cargo run --example pipeline -p cam-isp   # Single frame PNG
 bash bench-tests.sh bench 50 64 48   # Performance benchmark
