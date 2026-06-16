@@ -69,7 +69,7 @@ impl ApplicationHolder {
                 let tone_params = ToneParams::default();
                 engine.process(
                     width, height, stride, buf, sensor_max, target_width,
-                    None, &tone_params, None, None, 1.0, 0.0, None, None, None,
+                    None, &tone_params, None, None, 0, 1.0, 0.0, None, None, None,
                 ).ok()
             }
             None => {
