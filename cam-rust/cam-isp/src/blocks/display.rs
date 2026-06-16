@@ -67,16 +67,6 @@ impl DisplayBlock {
         matches!(self.rotate_mode, 2 | 3 | 5) // ROT180 | ROT270 | VFLIP
     }
 
-    /// Output dimensions after rotation.
-    fn out_dims(&self) -> (i64, i64) {
-        match (self.in_h, self.in_w) {
-            (Some(h), Some(w)) => {
-                if self.swaps_dims() { (w, h) } else { (h, w) }
-            }
-            _ => (0, 0),
-        }
-    }
-
     /// Returns true if no rotation/flip transform is requested.
     fn is_identity(&self) -> bool {
         self.rotate_mode == 0
@@ -123,12 +113,13 @@ impl IspBlock for DisplayBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        let scale = format!("{}/scale", ns);
         let final_output = &self.frame_tensor;
 
-        // Fast path: no rotation → identity (rename tensor, zero cost)
+        // Fast path: no rotation → scale by 1.0 (trivial, all backends)
         if self.is_identity() {
             return vec![
-                Proto::node("Identity", &[&self.input_source], &[final_output], &[]),
+                Proto::node("Mul", &[&self.input_source, &scale], &[final_output], &[]),
             ];
         }
 
@@ -179,9 +170,9 @@ impl IspBlock for DisplayBlock {
             prev = tensor_pool.last().unwrap().as_str();
         }
 
-        // Final: identity rename to output tensor
+        // Final: scale by 1.0 (identity mul, all backends)
         if prev != final_output {
-            nodes.push(Proto::node("Identity", &[prev], &[final_output], &[]));
+            nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
         }
 
         nodes
@@ -189,9 +180,11 @@ impl IspBlock for DisplayBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        // No scale Mul needed — output is float [0,1] directly.
-        // Consumer (display driver or engine readback) multiplies by 255.
-        let mut inits: Vec<Vec<u8>> = Vec::new();
+        // Scale by 1.0 — trivial on all backends, avoids Identity op issues on Vulkan
+        // Output is float [0,1] directly. Consumer (display) multiplies by 255.
+        let mut inits = vec![
+            Proto::tensor_proto_float_scalar(&format!("{}/scale", ns), 1.0),
+        ];
 
         if self.is_identity() { return inits; }
 
