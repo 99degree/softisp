@@ -52,13 +52,13 @@ fn main() {
             .with_elem_type(6)
             .with_concrete_dims(full_h, packed_w)),
 
-        // 2. Unpack CFA with fused 2× width downscale (stride_w=2)
-        //    sensor_max=1023 for 10-bit Bayer test data
-        //    Output: [1,4,1080,960] packed = FHD actual pixels
+        // 2. Unpack CFA with stride_w=1 (packing already halves width 3840→1920)
+        //    stride=2 in height halves 2160→1080, stride=1 in width keeps 1920
+        //    Output: [1,4,1080,1920] packed = FHD
         Box::new(UnpackCfaBlock::new()
             .with_concrete_width(full_w)
             .with_concrete_dims(full_h, full_w)
-            .with_downscale(2)
+            .with_downscale(1)
             .with_sensor_max(1023.0)
             .with_blc(true)),
 
@@ -86,9 +86,9 @@ fn main() {
         Box::new(LdciBlock::new()),
         Box::new(EeBlock::new()),
 
-        // 12. Display output at FHD (pack as INT32 — reverse-unpack for BGRA)
+        // 12. Display output at FHD (float [0,1] RGB, to_bgra in Rust)
         Box::new(DisplayBlock::new(pipe_w)
-            .with_pack_rgba(true)
+            .with_pack_rgba(false)
             .with_concrete_dims(ds_h, ds_w)),
     ];
 
@@ -132,6 +132,7 @@ fn main() {
         let t0 = Instant::now();
         let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
         params.target_width = pipe_w;  // output at FHD, not 4K
+        params.target_height = pipe_h;  // output at FHD, not 4K
         params.sensor_max = 1023.0;   // 10-bit Bayer test data
         
         let result = engine.process(&params);
