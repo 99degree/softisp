@@ -72,7 +72,7 @@ fn test_controller_gray_4x4() {
     let tone = cam_isp::engine::default_tone_params();
     let result = engine.process(
         w, h, w, &raw, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
+        None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
     ).expect("Process failed");
 
     assert_eq!(result.width, w);
@@ -97,7 +97,7 @@ fn test_controller_convergence() {
     for _ in 0..10 {
         let _result = engine.process(
             w, h, w, &warm_raw, 65535.0, w,
-            None, &tone, None, None, 1.0, 0.0, None, None, None,
+            None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
         ).expect("Process failed");
     }
 
@@ -127,7 +127,7 @@ fn test_pipeline_gray_balance() {
     let tone = cam_isp::engine::default_tone_params();
     let result = engine.process(
         w, h, w, &raw, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
+        None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
     ).expect("Process failed");
 
     assert_eq!(result.width, w);
@@ -172,7 +172,7 @@ fn test_pipeline_gradient() {
     let tone = cam_isp::engine::default_tone_params();
     let result = engine.process(
         w, h, w, &raw, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
+        None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
     ).expect("Process failed");
 
     let left_end = (w / 4) as usize;
@@ -211,7 +211,7 @@ fn test_pipeline_edge_cases() {
     let black = gray_raw(w, h, 0.0);
     let result = engine.process(
         w, h, w, &black, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
+        None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
     ).expect("Black frame failed");
     assert!(!result.data.is_empty());
 
@@ -219,7 +219,7 @@ fn test_pipeline_edge_cases() {
     let white = gray_raw(w, h, 0.95);
     let result = engine.process(
         w, h, w, &white, 65535.0, w,
-        None, &tone, None, None, 1.0, 0.0, None, None, None,
+        None, &tone, None, None, 0, 1.0, 0.0, None, None, None,
     ).expect("White frame failed");
     assert!(!result.data.is_empty());
     let max_val = result.data.iter().take((w * h * 4) as usize).max().copied().unwrap_or(0);

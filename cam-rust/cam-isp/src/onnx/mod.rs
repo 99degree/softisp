@@ -151,6 +151,7 @@ impl IspEngine for OnnxEngine {
         _tone_params: &ToneParams,
         _bayer_gains: Option<&[f32; 4]>,
         _awb_gains: Option<&[f32; 3]>,
+        _bayer_pattern: i32,
         _analog_gain: f32,
         _scene_change: f32,
         _lsc_gains: Option<&[f32]>,
