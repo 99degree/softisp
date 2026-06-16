@@ -9,7 +9,7 @@ use std::time::Instant;
 use log::info;
 
 use crate::controller::IspController;
-use crate::engine::IspEngine;
+use crate::engine::{IspEngine, ProcessParams};
 use crate::cpu::CpuEngine;
 use crate::profile::PipelineProfile;
 use crate::pipeline::IspBlock;
@@ -177,29 +177,35 @@ impl PipelineManager {
         let engine = engine_guard.as_ref().ok_or("Pipeline not built")?;
 
         // Read controller params for this frame's inference
-        // (Controller state comes from previous frame's stats feedback)
         let ctrl = engine.controller().lock().map_err(|e| format!("Ctrl lock: {}", e))?;
         let ccm: [f32; 9] = ctrl.get_ccm();
         let tone = ctrl.get_tone_params();
-        let bayer_gains = [1.0f32; 4];  // TODO: read from controller
+        let bayer_gains = [1.0f32; 4];
         let awb_gains = ctrl.get_awb_gains();
-        drop(ctrl);  // Release lock before inference
+        drop(ctrl);
+
+        // Build unified process params
+        let params = ProcessParams {
+            width,
+            height,
+            stride_width: width,
+            buf: raw_data,
+            sensor_max,
+            target_width: self.target_width,
+            ccm_matrix: Some(ccm),
+            tone_params: tone,
+            bayer_gains: Some(bayer_gains),
+            awb_gains: Some(awb_gains),
+            bayer_pattern: 0,
+            analog_gain: 1.0,
+            scene_change: 0.0,
+            lsc_gains: None,
+            blc_values: None,
+            warp_grid: None,
+        };
 
         // Process
-        let frame = engine.process(
-            width, height, width, raw_data,
-            sensor_max, self.target_width,
-            Some(&ccm),
-            &tone,
-            Some(&bayer_gains),
-            Some(&awb_gains),
-            0,   // bayer_pattern (0=RGGB)
-            1.0,   // analog gain
-            0.0,   // scene change
-            None,  // lsc gains
-            None,  // blc values
-            None,  // warp grid
-        )?;
+        let frame = engine.process(&params)?;
 
         let latency = t0.elapsed();
 
