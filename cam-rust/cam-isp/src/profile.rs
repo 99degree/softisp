@@ -78,6 +78,9 @@ pub struct PipelineProfile {
     pub use_fused_unpack: bool,
     /// Fuse demosaic+CCM into a single block (saves 1 session).
     pub use_demosaic_ccm: bool,
+    /// Fuse tone (contrast × brightness) into DemosaicCcmBlock Conv.
+    /// Saves one full-frame Mul+Add pass.
+    pub use_fused_tone: bool,
     /// Orientation transform: 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip.
     pub rotate_mode: i32,
     /// Enable per-zone RGB means (AveragePool) for multi-illuminant AWB.
@@ -127,6 +130,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,      // zone RGB means for basic AWB
         use_channel_means: true,   // channel means for grey-world AWB
@@ -154,6 +158,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,      // zone stats for multi-illuminant AWB
         use_channel_means: true,   // channel means for grey-world AWB
@@ -181,6 +186,7 @@ impl PipelineProfile {
         use_hdr: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,
         use_channel_means: true,
@@ -208,6 +214,7 @@ impl PipelineProfile {
         use_hdr: true,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,      // zone stats for multi-illuminant AWB
         use_channel_means: true,   // channel means for grey-world AWB
@@ -236,6 +243,7 @@ impl PipelineProfile {
         use_unsharp: false,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
+        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,      // zone stats for AWB (single block test)
         use_channel_means: false,  // skip channel means
@@ -266,6 +274,7 @@ impl PipelineProfile {
         use_hdr: bool,
         use_fused_unpack: bool,
         use_demosaic_ccm: bool,
+        use_fused_tone: bool,
         rotate_mode: i32,         // 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip
         use_zone_stats: bool,      // per-zone RGB means (AveragePool) for multi-illuminant AWB
         use_channel_means: bool,   // global channel means (ReduceMean) for grey-world AWB
@@ -291,6 +300,7 @@ impl PipelineProfile {
             use_hdr,
             use_fused_unpack,
             use_demosaic_ccm,
+            use_fused_tone,
             rotate_mode,
             use_zone_stats,      // per-zone RGB means (AWB multi-illuminant)
             use_channel_means,   // global channel means (grey-world AWB)
@@ -308,6 +318,8 @@ impl PipelineProfile {
     /// and `blocks` is the full ordered list for `GraphComposer::compose_from_vec()`.
     pub fn build_blocks(&self, target_width: u32, bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
+        info!("build_blocks: profile={}, target_width={}, bayer_pattern={}",
+            self.label, target_width, bayer_pattern);
         let full_w = target_width as i64;
         let packed_w = (target_width / 2) as i64;
 
@@ -382,7 +394,11 @@ impl PipelineProfile {
 
         // ── Lens shading correction (optional) ──
         if self.use_lsc {
-            blocks.push(Box::new(CcmBlock::new())); // simplified: reuse CCM for LSC
+            info!("  lsc: CcmBlock");
+            blocks.push(Box::new(CcmBlock::new()));
+        } else {
+            info!("  lsc: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("lsc")));
         }
 
         // ── Bayer white balance ──
@@ -403,22 +419,39 @@ impl PipelineProfile {
             blocks.push(Box::new(CcmBlock::new())); // placeholder
         }
 
-        // ── Tone curve ──
-        blocks.push(Box::new(ToneBlock::new()));
+        // ── Tone curve (fused into DemosaicCcmBlock if use_fused_tone) ──
+        if self.use_fused_tone {
+            info!("  tone: IDENTITY (fused into DemosaicCcmBlock)");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("tone")));
+        } else {
+            info!("  tone: ToneBlock");
+            blocks.push(Box::new(ToneBlock::new()));
+        }
 
         // ── AuxHook: output data (after tone, for post-processing aux blocks) ──
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_out")));
 
         // ── Auxiliary blocks (atomic, individually controlled by profile) ──
-        // Aux blocks independently gated by their profile flag.
         if self.use_fcs {
+            info!("  fcs: FcsBlock");
             blocks.push(Box::new(FcsBlock::new()));
+        } else {
+            info!("  fcs: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("fcs")));
         }
         if self.use_ldci {
+            info!("  ldci: LdciBlock");
             blocks.push(Box::new(LdciBlock::new()));
+        } else {
+            info!("  ldci: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("ldci")));
         }
         if self.use_ee {
+            info!("  ee: EeBlock");
             blocks.push(Box::new(EeBlock::new()));
+        } else {
+            info!("  ee: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("ee")));
         }
 
         // ── Display output + orientation transform (fused) ──
@@ -426,6 +459,11 @@ impl PipelineProfile {
         blocks.push(Box::new(DisplayBlock::new(target_width)
             .with_rotate(self.rotate_mode)
             .with_concrete_dims(display_h, target_width as i64)));
+
+        info!("  blocks: {} total", blocks.len());
+        for (i, b) in blocks.iter().enumerate() {
+            info!("    [{:2}] {}", i, b.id());
+        }
 
         // Wire blocks so each block's input_source points to the previous block's frame_tensor.
         // This is required before passing to GraphComposer::compose_from_vec.
@@ -446,6 +484,7 @@ impl PipelineProfile {
     /// otherwise from `aux_hook_src/out` (full-res Bayer).
     pub fn build_aux_blocks(&self, input_h: i64, input_w: i64) -> Vec<Box<dyn IspBlock>> {
         let mut aux: Vec<Box<dyn IspBlock>> = Vec::new();
+        info!("build_aux_blocks: profile={}, input={}×{}", self.label, input_h, input_w);
 
         // Stats blocks read from aux_hook_ds (downscaled Bayer) when pipeline
         // downscale is active, otherwise fall back to aux_hook_src (full-res).
@@ -523,39 +562,15 @@ impl PipelineProfile {
             aux.push(Box::new(b));
         }
 
+        info!("  aux blocks: {} total", aux.len());
+        for (i, b) in aux.iter().enumerate() {
+            info!("    [{:2}] {}", i, b.id());
+        }
+
         aux
     }
-
-    /// Number of blocks in this profile's chain.
     pub fn block_count(&self) -> usize {
-        let mut count: usize = if self.use_fused_unpack && self.use_unpack {
-            if self.use_demosaic_ccm {
-                // Fused, demosaic_ccm: raw + unpack_cfa + hook + bayer_wb + demosaic_ccm + tone + hook_out + display
-                8
-            } else {
-                // Fused, separate demosaic+ccm: same + 1 extra
-                9
-            }
-        } else if self.use_unpack {
-            12  // standard packed: raw + unpack + norm + cfa + hooks + main + display
-        } else {
-            11  // legacy: raw + norm + cfa + hooks + main + display
-        };
-        if self.use_fcs { count += 1; }
-        if self.use_ldci { count += 1; }
-        if self.use_ee { count += 1; }
-        // bad_pixel (DPC) is handled by a separate BLC only in non-fused path
-        if self.use_bad_pixel && !(self.use_fused_unpack && self.use_unpack) { count += 1; }
-        if self.use_lsc { count += 1; }
-        if self.use_warp { count += 1; }
-        if self.use_hdr { count += 1; }
-        if self.use_zone_stats { count += 1; }
-        if self.use_channel_means { count += 1; }
-        if self.use_tone_stats { count += 1; }
-        if self.use_histogram { count += 1; }
-        // Pipeline downscale (1 block + aux_hook_ds = 2 blocks if target > 0)
-        if self.pipeline_downscale_target > 0 { count += 2; }
-        count
+        self.build_blocks(128, 0).len() + self.build_aux_blocks(128, 128).len()
     }
 
     /// Estimate ONNX node count for this profile.
@@ -597,16 +612,14 @@ mod tests {
     #[test]
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 0);
-        // LITE: raw → unpack → norm → cfa → blc → bayer_wb → demo → ccm → tone → display = 10
-        assert_eq!(blocks.len(), 8, "LITE (fused, demosaic_ccm) should have 8 blocks, got {}", blocks.len());
+        // LITE: always has 12 main-chain blocks (identity placeholders for disabled features)
+        assert_eq!(blocks.len(), 12, "LITE (fused, demosaic_ccm) should have 12 blocks, got {}", blocks.len());
     }
 
     #[test]
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
-        // HEAVY: base(10) + bad_pixel + fcs + ldci + ee + lsc = 15
-        // Fused: 10 base + fcs + ldci + ee + lsc = 14
-        // HEAVY: 8 base + fcs + ldci + ee + lsc = 12
+        // HEAVY: all blocks present (no identity placeholders)
         assert_eq!(blocks.len(), 12, "HEAVY (fused, demosaic_ccm) should have 12 blocks, got {}", blocks.len());
     }
 
@@ -616,6 +629,7 @@ mod tests {
             "CUSTOM", PipelineLevel::Pro, true, true, true, true, true,
             DemosaicQuality::Edge, true, true, true, true, false, false,
             true,  // use_demosaic_ccm
+            true,  // use_fused_tone
             0,     // rotate_mode: none
             true,  // use_zone_stats
             false, // use_channel_means
@@ -641,6 +655,7 @@ mod tests {
             "LEGACY", PipelineLevel::Lite, false, false, false, false, false,
             DemosaicQuality::Standard, false, false, false, false, false, false,
             false, // use_demosaic_ccm
+            false, // use_fused_tone
             0,     // rotate_mode: none
             false, // use_zone_stats
             false, // use_channel_means
@@ -651,14 +666,14 @@ mod tests {
             0.0,   // eis_margin
         );
         let blocks = p.build_blocks(128, 0);
-        assert_eq!(blocks.len(), 11, "Legacy should have 11 blocks, got {}", blocks.len());
+        assert_eq!(blocks.len(), 15, "Legacy should have 15 blocks (all with identity placeholders), got {}", blocks.len());
         assert_eq!(blocks[0].id(), "raw_input");
         assert_eq!(blocks[1].id(), "normalize", "Second block should be Normalize (no Unpack)");
     }
 
     #[test]
     fn test_block_count() {
-        assert_eq!(PipelineProfile::LITE.block_count(), 10, "LITE: 8 main + 2 stats");
+        assert_eq!(PipelineProfile::LITE.block_count(), 14, "LITE: 12 main + 2 stats");
         assert_eq!(PipelineProfile::HEAVY.block_count(), 16, "HEAVY: 12 main + 4 stats");
     }
 
