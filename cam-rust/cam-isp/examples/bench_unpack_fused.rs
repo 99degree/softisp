@@ -41,14 +41,10 @@ fn bench_separate(h: u32, w_full: u32) -> (f64, String) {
         }
     }
 
-    let params = cam_isp::engine::default_tone_params();
     let mut totals = Vec::new();
 
     for run in 0..n_runs {
-        let result = engine.process(
-            w_full, h, w_full, &buf, 1023.0, w_full, None, &params,
-            None, None, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams::new(w_full, h, &buf));
         match result {
             Ok(frame) => {
                 let ms = frame.inference_duration_ns as f64 / 1_000_000.0;
@@ -96,14 +92,10 @@ fn bench_fused(h: u32, w_full: u32) -> (f64, String) {
         }
     }
 
-    let params = cam_isp::engine::default_tone_params();
     let mut totals = Vec::new();
 
     for run in 0..n_runs {
-        let result = engine.process(
-            w_full, h, w_full, &buf, 1023.0, w_full, None, &params,
-            None, None, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams::new(w_full, h, &buf));
         match result {
             Ok(frame) => {
                 let ms = frame.inference_duration_ns as f64 / 1_000_000.0;
