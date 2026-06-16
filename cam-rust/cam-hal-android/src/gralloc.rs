@@ -6,14 +6,12 @@
 //! - NDK AHardwareBuffer path (`AHardwareBuffer_fromHardwareBuffer`)
 //! - Raw fd path (extract fd → mmap, no NDK needed)
 
-use std::os::raw::{c_int, c_void};
+use std::os::raw::c_int;
 
 use cam_hal::buffer::{CameraBuffer};
 
 use crate::adapter::ahardware_buffer::{
-    AHardwareBuffer, AHardwareBuffer_Desc, AHardwareBuffer_describe,
-    AHardwareBuffer_lock, AHardwareBuffer_unlock,
-    AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
+    AHardwareBuffer, AHardwareBuffer_Desc,
 };
 
 // ── native_handle_t FFI ────────────────────────────────────────────────────
@@ -29,15 +27,15 @@ pub struct native_handle_t {
 }
 
 /// Android `buffer_handle_t` = `const native_handle_t*`.
-pub type buffer_handle_t = *const native_handle_t;
+pub type BufferHandleT = *const native_handle_t;
 
 // ── AHardwareBuffer_fromHardwareBuffer (NDK API 26+) ─────────────────────
 
 extern "C" {
-    /// Convert a `buffer_handle_t` (native_handle) to an `AHardwareBuffer*`.
+    /// Convert a `BufferHandleT` (native_handle) to an `AHardwareBuffer*`.
     /// Returns NULL on failure.
     /// Defined in <android/hardware_buffer.h>, libnativewindow.so.
-    pub fn AHardwareBuffer_fromHardwareBuffer(handle: buffer_handle_t) -> *mut AHardwareBuffer;
+    pub fn AHardwareBuffer_fromHardwareBuffer(handle: BufferHandleT) -> *mut AHardwareBuffer;
 
     /// Allocate a new AHardwareBuffer with the given description.
     /// Returns 0 on success, or a negative error code.
@@ -60,8 +58,8 @@ pub trait GrallocInterop: Send + Sync {
     /// Import a framework-provided buffer handle and wrap it as a CameraBuffer.
     ///
     /// # Safety
-    /// `handle` must be a valid `buffer_handle_t` from a `camera3_stream_buffer_t`.
-    unsafe fn import(&self, handle: buffer_handle_t, format: i32, width: u32, height: u32, frame_number: u64)
+    /// `handle` must be a valid `BufferHandleT` from a `camera3_stream_buffer_t`.
+    unsafe fn import(&self, handle: BufferHandleT, format: i32, width: u32, height: u32, frame_number: u64)
         -> Result<Box<dyn CameraBuffer>, String>;
 
     /// Allocate a new gralloc buffer (for internal processing).
@@ -80,7 +78,7 @@ pub struct AHardwareBufferInterop;
 impl GrallocInterop for AHardwareBufferInterop {
     unsafe fn import(
         &self,
-        handle: buffer_handle_t,
+        handle: BufferHandleT,
         format: i32,
         width: u32,
         height: u32,
@@ -123,14 +121,14 @@ pub struct RawFdInterop;
 impl GrallocInterop for RawFdInterop {
     unsafe fn import(
         &self,
-        handle: buffer_handle_t,
+        handle: BufferHandleT,
         format: i32,
         width: u32,
         height: u32,
         frame_number: u64,
     ) -> Result<Box<dyn CameraBuffer>, String> {
         if handle.is_null() {
-            return Err("Null buffer_handle_t".to_string());
+            return Err("Null BufferHandleT".to_string());
         }
         let nh = &*handle;
 
