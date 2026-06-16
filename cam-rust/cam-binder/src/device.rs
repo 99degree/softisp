@@ -47,19 +47,13 @@ impl CameraDevice {
     ///
     /// Creates a capture session and delivers it via the callback's onOpened().
     pub fn open(&self, callback: Arc<dyn ICameraDeviceCallback>) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
-        // Check if already opened — use try_lock to avoid deadlock
-        let already_opened = self.opened.try_lock()
-            .map(|g| *g)
-            .unwrap_or(false);
-        if already_opened {
+        if *self.opened.lock().unwrap() {
             return Err(format!("Camera {} already opened", self.camera_id));
         }
 
         // Clone before moving into self.callback
         let callback_for_session = callback.clone();
-        if let Ok(mut cb) = self.callback.try_lock() {
-            *cb = Some(callback);
-        }
+        *self.callback.lock().unwrap() = Some(callback);
 
         // Create a new session for this device
         let session = Arc::new(Mutex::new(CameraDeviceSession::new(
@@ -67,12 +61,8 @@ impl CameraDevice {
             self.device_path.clone(),
             self.info.clone(),
         )));
-        if let Ok(mut s) = self.session.try_lock() {
-            *s = Some(session.clone());
-        }
-        if let Ok(mut op) = self.opened.try_lock() {
-            *op = true;
-        }
+        *self.session.lock().unwrap() = Some(session.clone());
+        *self.opened.lock().unwrap() = true;
 
         // Give the session a reference to the same callback
         session.lock().unwrap().set_callback(callback_for_session);
@@ -89,11 +79,7 @@ impl CameraDevice {
 
     /// Close the camera and all sessions.
     pub fn close(&self) {
-        // Use try_lock to check opened state
-        let is_open = self.opened.try_lock()
-            .map(|g| *g)
-            .unwrap_or(false);
-        if !is_open {
+        if !*self.opened.lock().unwrap() {
             return;
         }
 
@@ -102,9 +88,7 @@ impl CameraDevice {
             session.lock().unwrap().close();
         }
 
-        if let Ok(mut op) = self.opened.try_lock() {
-            *op = false;
-        }
+        *self.opened.lock().unwrap() = false;
         info!("CameraDevice({}): closed", self.camera_id);
     }
 

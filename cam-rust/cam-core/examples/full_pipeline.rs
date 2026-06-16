@@ -20,9 +20,6 @@ fn main() -> Result<(), String> {
     cam_core::logger::init_logger_with_tag(true, "softisp_demo");
     log::info!("=== SoftISP Full Pipeline Demo ===");
 
-    // 2. Initialize ISP library (registers CPU engine)
-    cam_isp::init();
-
     // 2. Create the Android camera adapter
     let mut adapter = AndroidCameraAdapter::new("0");
 

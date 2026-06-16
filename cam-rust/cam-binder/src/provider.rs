@@ -124,12 +124,8 @@ impl CameraProvider {
 
     /// Notify device state change (folded, covered, etc.)
     pub fn notify_device_state_change(&self, state: i64) {
-        let old = self.device_state.try_lock()
-            .map(|g| *g)
-            .unwrap_or(DEVICE_STATE_NORMAL);
-        if let Ok(mut ds) = self.device_state.try_lock() {
-            *ds = state;
-        }
+        let old = *self.device_state.lock().unwrap();
+        *self.device_state.lock().unwrap() = state;
         info!("CameraProvider: device state changed {} -> {}", old, state);
 
         // Notify callback if camera availability may have changed
