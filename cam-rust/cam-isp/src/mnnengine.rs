@@ -885,12 +885,32 @@ impl IspEngine for MnnEngine {
 
             // MNN can't resolve output shapes for complex ISP pipelines on OpenCL/CPU.
             // The output tensor has shape=[0,0,0,0] with dtype=4 (FLOAT) regardless
-            // of actual model output format.  We override n with the expected count
-            // computed from pipeline dimensions.
+            // of actual model output format.  But after runSession, the output DATA
+            // contains the correct number of elements — we detect channel count from n.
             let oh = p.target_height as usize;
             let ow = tw as usize;
-            // Output channels: 1=packed INT32, 3=RGB float [0,1], 4=BGRA float [0,255]
-            let ch = p.output_channels as usize;
+            let n_valid = n.max(0) as usize;
+
+            // ── Determine channel count and conversion mode ──
+            // For conversion formats (Bgra, Rgba, etc.): detect model channel
+            // count from actual output element count (MNN resolves n after
+            // inference even when shape was [0,0,0,0]).
+            // For model-native formats (FloatRgb, FloatBgra, PackedRgb):
+            // channel count is fixed, no conversion.
+            use crate::engine::OutputFormat;
+            let (ch, raw_bytes_per_pixel) = match p.output_format {
+                OutputFormat::FloatRgb => (3usize, 12usize),   // f32×3
+                OutputFormat::FloatBgra => (4usize, 16usize),  // f32×4
+                OutputFormat::PackedRgb => (1usize, 4usize),   // INT32
+                _ => {
+                    // Conversion formats: detect from n
+                    let ch = if n_valid == oh * ow { 1 }        // INT32 packed
+                        else if n_valid == oh * ow * 4 { 4 }    // bg4a float
+                        else { 3 };                               // default float RGB
+                    (ch, 4) // converted output is always u8×4 (or ×3 for Rgb/Bgr)
+                }
+            };
+            let needs_convert = p.output_format.needs_conversion();
             let expected_n = oh * ow * ch;
             let nf = if n <= 0 || n < (expected_n as i32) / 10 {
                 expected_n
@@ -898,10 +918,19 @@ impl IspEngine for MnnEngine {
                 n as usize
             };
 
-            // Buffer convert + release: explicit lifecycle boundary.
-            // out_data borrows from pool; once bgra is built, release buf.
-            let bgra = Self::convert_output(&out_data[..nf], ch, oh, ow);
-            pool.release(buf_id);
+            // Convert or copy output buffer, then release pool slot.
+            let data_out: Vec<u8> = if needs_convert {
+                let bgra = Self::convert_output(&out_data[..nf], ch, oh, ow, p.output_format);
+                pool.release(buf_id);
+                bgra
+            } else {
+                // Model-native: just memcpy the raw bytes (no unpack math).
+                let n_bytes = oh * ow * raw_bytes_per_pixel;
+                let raw = out_data.as_ptr() as *const u8;
+                let raw_vec = unsafe { std::slice::from_raw_parts(raw, n_bytes) }.to_vec();
+                pool.release(buf_id);
+                raw_vec
+            };
 
             // ── Read stats output tensors from MNN session and feed to controller ──
             // After inference, all output tensors are available in the session.
@@ -1045,10 +1074,10 @@ impl IspEngine for MnnEngine {
             }
 
             info!("pipeline stage=output_frame {}×{} frame={}B total={:?}",
-                tw, oh, bgra.len(), t_total_elapsed);
+                tw, oh, data_out.len(), t_total_elapsed);
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
             let mut frame = IspFrame::new(tw, oh as u32, FrameFormat::Rgba8888);
-            frame.data = bgra;
+            frame.data = data_out;
             // Stats are fed into the controller above (not returned in IspAuxOutput).
             // The controller modifies its internal state for the next frame.
             frame.aux = None;
