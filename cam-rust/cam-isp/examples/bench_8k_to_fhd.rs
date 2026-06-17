@@ -67,20 +67,20 @@ fn main() {
             .with_sensor_max(1023.0)
             .with_blc(true)),
 
-        // 3. Adaptive downscale: 2160×3840 → 1080×1920 (FHD)
-        //    Placed before expensive demosaic+CCM to reduce pixel count by 4×.
-        //    Mode "fit" preserves all content with edge-reflect padding.
-        Box::new(AdaptiveDownscaleBlock::new(ds_w, ds_h, 1, "reflect", "fit")
-            .with_concrete_dims(mid_h, mid_w)),
-
-        // 4. Aux hook (reference-corrected Bayer for stats)
+        // 3. Aux hook (reference-corrected Bayer for stats) — at 4K
         Box::new(IdentityBlock::new("aux_hook_src")),
 
-        // 5. LSC (lens shading correction)
+        // 4. LSC (lens shading correction) — at 4K Bayer resolution
         Box::new(CcmBlock::new()),
 
-        // 6. Bayer WB (white balance gains)
+        // 5. Bayer WB (white balance gains) — at 4K Bayer resolution
         Box::new(BayerWbBlock::new()),
+
+        // 6. Adaptive downscale: 2160×3840 → 1080×1920 (FHD)
+        //    After LSC+WB so downscale operates on corrected data (less aliasing).
+        //    Then demosaic/CCM/cosmetic blocks run at FHD (4× fewer pixels).
+        Box::new(AdaptiveDownscaleBlock::new(ds_w, ds_h, 1, "reflect", "fit")
+            .with_concrete_dims(mid_h, mid_w)),
 
         // 7. Fused demosaic + CCM (at FHD resolution)
         Box::new(DemosaicCcmBlock::new(0)
