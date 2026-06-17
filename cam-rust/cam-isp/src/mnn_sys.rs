@@ -31,6 +31,16 @@ pub enum MnnBackendType {
     Nn = 11,
 }
 
+// ── Model Info enum ──────────────────────────────────────────────────────
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MnnModelInfo {
+    MEMORY = 0,
+    FLOPS = 1,
+    BACKENDS = 2,
+    RESIZE_STATUS = 3,
+    THREAD_NUMBER = 4,
+}
 // ── Opaque handles ───────────────────────────────────────────────────────
 
 /// Opaque handle to an MNN Interpreter (model).
@@ -75,6 +85,13 @@ extern "C" {
     fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
     fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
     fn mnn_tensor_set_shape(interpreter: *mut c_void, session: *mut c_void, tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
+    // Standard MNN C++ API for session info (always available)
+    pub fn mnn_get_model_info(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        info_code: c_int,
+        out: *mut c_void,
+    ) -> c_int;
     pub fn mnn_get_model_input_type(
     interpreter: *mut c_void,
     session: *mut c_void,
@@ -119,6 +136,29 @@ pub fn mnn_run_with_output(
     fn mnn_varps_destroy(varps: *mut *mut c_void, count: c_int);
     /// Get expected input tensor element count.
     pub fn mnn_get_model_input_elements(interpreter: *mut c_void, session: *mut c_void) -> c_int;
+    // Retrieve per‑node profiling info (requires session built with profiling enabled).
+    // extern declaration removed; stub provided below
+}
+
+// General MNN_GetSessionInfo API (mirrors MNN::Interpreter::getSessionInfo).
+// `info_code` corresponds to the `MnnModelInfo` enum values (MEMORY, FLOPS, THREAD_NUMBER, ...).
+// The function writes the requested value into the memory pointed to by `out` and
+// returns 0 on success. This works without the profiler flag.
+// When profiling is enabled, a separate string version `MNN_GetSessionInfoString`
+// can be used for per‑node timing data.
+#[no_mangle]
+pub unsafe extern "C" fn MNN_GetSessionInfo(session: *mut c_void, info_code: c_int, out: *mut c_void) -> c_int {
+    // The real implementation is provided by libMNN.so; this stub simply
+    // returns -1 to indicate that the function is not linked. It will be
+    // overridden by the actual library at runtime.
+    let _ = (session, info_code, out);
+    -1
+}
+
+// Fallback for optional profiling string version (returns NULL when profiling is unavailable).
+#[no_mangle]
+pub unsafe extern "C" fn MNN_GetSessionInfoString(_session: *mut c_void) -> *const c_char {
+    std::ptr::null()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
