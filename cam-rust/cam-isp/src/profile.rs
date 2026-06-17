@@ -198,7 +198,7 @@ impl PipelineProfile {
         use_tone_stats: true,
         use_histogram: true,
         stats_downscale_max: 0,    // full resolution
-        pipeline_downscale_target: 0,
+        pipeline_downscale_target: 1920, // downscale 4K→FHD before post-processing
         eis_margin: 0.0,
         output_format: OutputFormat::PackedRgb,
     };
