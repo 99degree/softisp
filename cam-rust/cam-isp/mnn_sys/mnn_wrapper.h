@@ -281,9 +281,26 @@ int mnn_express_var_resize(MnnVARP varp, const int* dims, int ndim);
 MnnVARP* mnn_express_forward(MnnExpressModule module, MnnVARP* inputs, int n_inputs, int* out_count);
 void mnn_varps_destroy(MnnVARP* varps, int count);
 
+// Model info enum
+typedef enum {
+    MNN_MODEL_INFO_MEMORY = 0,
+    MNN_MODEL_INFO_FLOPS = 1,
+    MNN_MODEL_INFO_BACKENDS = 2,
+    MNN_MODEL_INFO_RESIZE_STATUS = 3,
+    MNN_MODEL_INFO_THREAD_NUMBER = 4,
+} MnnModelInfo;
+
+/**
+ * Get model info (MEMORY, FLOPS, etc.) for a session.
+ * @param interpreter Opaque handle from mnn_interpreter_create_from_file.
+ * @param session Opaque handle from mnn_session_create.
+ * @param info_code One of MNN_MODEL_INFO_*.
+ * @param out Pointer to store result (float for MEMORY/FLOPS, int for others).
+ * @return 0 on success, non-zero on failure.
+ */
+int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelInfo info_code, void* out);
 #ifdef __cplusplus
 }
 #endif
-
 
 #endif /* MNN_WRAPPER_H */

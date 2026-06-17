@@ -75,13 +75,14 @@ fn main() {
         Box::new(IdentityBlock::new("bayer_wb")),
 
         // 5. Fused demosaic + WB + CCM + tone (single Conv at FHD)
-        //    The ONNX/MNN model will handle any required down‑scale or pillar‑box padding
-        //    based on the target_width/target_height values supplied in ProcessParams.
-        //    Hence we omit a CPU AdaptiveDownscaleBlock here.
         Box::new(DemosaicCcmBlock::new(0)
             .with_concrete_dims(ds_h, ds_w)),
 
-
+        // 6. Adaptive downscale – ONNX block (run inside MNN)
+        //    The block generates Slice/Resize/Pad nodes that the fused ONNX model
+        //    (converted to MNN) will execute on the GPU. No CPU down‑scale occurs.
+        Box::new(AdaptiveDownscaleBlock::new(post_w_i, post_h_i, 0, "edge", "fit")
+            .with_concrete_dims(ds_h, ds_w)),
 
         // 7. Tone (identity — already fused)
         Box::new(IdentityBlock::new("tone")),
