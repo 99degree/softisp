@@ -6,11 +6,13 @@
 //! height (kernel=(2,1)), so with stride=2 in width (kernel=(2,2)) the
 //! output is [1,4,H/2,W/4] packed = [1,4,1080,960] = FHD resolution.
 //!
+//! Bayer test data generated inline (deterministic pseudo-random).
+//!
 //! Run: LD_LIBRARY_PATH=$PWD/lib/aarch64 \
 //!        cargo run --release --example bench_4k_to_fhd -p cam-isp --features mnn
 
 use std::time::Instant;
-use cam_isp::pipeline::{IspBlock, GraphComposer, IspFrame};
+use cam_isp::pipeline::{IspBlock, GraphComposer};
 use cam_isp::engine::{IspEngine, ProcessParams};
 use cam_isp::blocks::*;
 
@@ -24,10 +26,16 @@ fn main() {
     let pipe_h   = 1080u32;   // pipeline downscale target height
     let n_frames = 20;
 
-    // Load UHD Bayer test data
-    let raw = std::fs::read("bayer_uhd.raw")
-        .expect("Generate bayer_uhd.raw first (python3 -c ...)");
-    assert_eq!(raw.len(), (sensor_w * sensor_h * 2) as usize);
+    // Generate UHD Bayer test data inline (deterministic pseudo-random)
+    use std::io::Write;
+    let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 2) as usize);
+    let mut rng_state = 42u64;
+    for _ in 0..sensor_w * sensor_h {
+        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let val = (rng_state >> 22) as u16 & 0x3FF; // 10-bit
+        raw_buf.extend_from_slice(&val.to_le_bytes());
+    }
+    let raw = raw_buf;
 
     // ── Build pipeline blocks ──────────────────────────────────────
     // Sensor: 3840×2160 packed → unpack_cfa(stride_w=2) → aux_hook_src
@@ -117,27 +125,22 @@ fn main() {
     println!("Input: {}×{} → Pipeline: {}×{}", sensor_w, sensor_h, pipe_w, pipe_h);
     println!("Running {} frames...\n", n_frames);
 
+    // Shared params — bayer buffer reused across all frames (no per-frame alloc)
+    let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
+    params.target_width = pipe_w;
+    params.target_height = pipe_h;
+    params.sensor_max = 1023.0;
+    params.output_channels = 4;
+
     // Warmup
     for _ in 0..3 {
-        let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
-        params.target_width = pipe_w;  // output at FHD, not 4K
-        params.sensor_max = 1023.0;
-        params.target_height = pipe_h;
-        
         let _ = engine.process(&params);
     }
 
     // Timed run
-    let start = Instant::now();
     let mut sum_ms = 0.0f64;
     for i in 0..n_frames {
         let t0 = Instant::now();
-        let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
-        params.target_width = pipe_w;  // output at FHD, not 4K
-        params.target_height = pipe_h;  // output at FHD, not 4K
-        params.sensor_max = 1023.0;   // 10-bit Bayer test data
-        params.output_channels = 4;   // bg4a: 4-channel BGRA [0,255] float
-        
         let result = engine.process(&params);
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         sum_ms += ms;
