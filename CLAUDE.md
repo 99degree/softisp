@@ -2,7 +2,7 @@
 
 ## Status: ✅ ALL JAVA PORTED — SIMD + AdaptiveDownscale + pack_rgba default
 
-Workspace: **0 warnings**, **195 unit tests pass** (`cargo test --lib -p cam-isp`).
+Workspace: **0 warnings**, **201 unit tests pass** (`cargo test --lib -p cam-isp`).
 
 ## Output Format — pack_rgba default
 
@@ -45,10 +45,11 @@ display_output   ~3×     batch 4 BGRA
 
 ```bash
 cd cam-rust
-cargo test --lib -p cam-isp              # 195 tests
+cargo test --lib -p cam-isp              # 201 tests
 cargo check --workspace                  # 0 warnings
 RUST_LOG=info cargo run --example pipeline -p cam-isp   # single frame PNG
 bash bench-tests.sh bench 50 64 48       # perf benchmark
+# Synthetic benchmark fixed: packed INT32 input, no -4 errors
 ```
 
 ## Architecture (10 crates)
@@ -112,6 +113,7 @@ Total:~111ms                Total:~81ms      -27%
 ```
 
 Vulkan wins on Conv-heavy blocks (ldci -92%, ee -67%) but adds kernel-launch overhead on elementwise ops.
+- 4K→FHD benchmark on Vulkan: ≈ 4.7 FPS (≈ 211 ms/frame) using packed INT32 input.
 
 ## MNNConvert — Static C FFI (No Subprocess)
 
@@ -128,7 +130,8 @@ Vulkan wins on Conv-heavy blocks (ldci -92%, ee -67%) but adds kernel-launch ove
 - Tone fused into DemosaicCcmBlock Conv
 - pack_rgba INT32 default output
 - MNNConvert static C FFI (no subprocess)
-- Pipeline tests: 195 pass
+- All MNN libraries updated from `~/MNN/build`, including `libMNN_GL.so`
+- Pipeline tests: 201 pass
 
 ### ⏳ In Progress
 - Numeric agreement ONNX stats ↔ software stats at FHD
