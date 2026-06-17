@@ -14,6 +14,7 @@
 use std::sync::Mutex;
 use std::os::raw::c_void;
 use std::time::Instant;
+use std::ffi::CStr;
 use log::{info, debug, warn, error};
 
 use cam_types::{FrameFormat, ToneParams};
@@ -789,6 +790,19 @@ impl IspEngine for MnnEngine {
                     out_ptr,
                     max_out as i32,
                 );
+                // ------------------------------------------------------------------
+                // Optional MNN profiling dump – prints per‑node timings if the
+                // MNN session was built with profiling enabled.
+                // This is a best‑effort call; if the function is unavailable the
+                // code will compile but produce no output.
+                unsafe {
+                    let info_c = crate::mnn_sys::MNN_GetSessionInfoString(sess.as_ptr());
+                    if !info_c.is_null() {
+                        let info = CStr::from_ptr(info_c).to_string_lossy();
+                        info!("MNN profiling info:\n{}", info);
+                    }
+                }
+                // ------------------------------------------------------------------
             }
 
             let t_total_elapsed = t_start.elapsed();

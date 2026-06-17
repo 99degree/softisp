@@ -18,6 +18,7 @@ cc = "1"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
+half = "2.4"
 clap = { version = "4", features = ["derive"] }
 env_logger = { workspace = true }
 prost = "0.14.4"

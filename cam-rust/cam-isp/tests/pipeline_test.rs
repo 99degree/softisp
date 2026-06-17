@@ -8,6 +8,7 @@
 //!   (gradient direction, gray balance, non-empty output).
 
 use cam_isp::cpu::CpuEngine;
+use std::time::Instant;
 use cam_isp::engine::IspEngine;
 use cam_isp::profile::PipelineProfile;
 use cam_isp::fused::FusedPipeline;
@@ -68,7 +69,10 @@ fn test_controller_gray_4x4() {
     let mut engine = CpuEngine::new();
     engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
 
+    let start = Instant::now();
     let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw)).expect("Process failed");
+    let elapsed = start.elapsed();
+    println!("[perf] test_controller_gray_4x4 duration: {:?}", elapsed);
 
     assert_eq!(result.width, w);
     assert_eq!(result.height, h);
@@ -112,7 +116,10 @@ fn test_pipeline_gray_balance() {
     let mut engine = CpuEngine::new();
     engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
 
+    let start = Instant::now();
     let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw)).expect("Process failed");
+    let elapsed = start.elapsed();
+    println!("[perf] test_pipeline_gray_balance duration: {:?}", elapsed);
 
     assert_eq!(result.width, w);
     assert_eq!(result.height, h);

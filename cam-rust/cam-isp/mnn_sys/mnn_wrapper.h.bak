@@ -281,6 +281,13 @@ int mnn_express_var_resize(MnnVARP varp, const int* dims, int ndim);
 MnnVARP* mnn_express_forward(MnnExpressModule module, MnnVARP* inputs, int n_inputs, int* out_count);
 void mnn_varps_destroy(MnnVARP* varps, int count);
 
+#ifdef __cplusplus
+}
+#endif
+
+
+#endif /* MNN_WRAPPER_H */
+
 // Model info enum
 typedef enum {
     MNN_MODEL_INFO_MEMORY = 0,
@@ -299,8 +306,3 @@ typedef enum {
  * @return 0 on success, non-zero on failure.
  */
 int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelInfo info_code, void* out);
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* MNN_WRAPPER_H */

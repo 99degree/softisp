@@ -571,3 +571,50 @@ extern "C" int mnn_run_with_output(
     for (auto d : out_shape) out_total *= d;
     return out_total < max_out ? out_total : max_out;
 }
+
+// ── Model Info ──────────────────────────────────────────────────────────────
+extern "C" int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelInfo info_code, void* out) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !out) return -1;
+    
+    MNN::Interpreter::SessionInfoCode code;
+    switch (info_code) {
+        case MNN_MODEL_INFO_MEMORY:
+            code = MNN::Interpreter::MEMORY;
+            break;
+        case MNN_MODEL_INFO_FLOPS:
+            code = MNN::Interpreter::FLOPS;
+            break;
+        case MNN_MODEL_INFO_BACKENDS:
+            code = MNN::Interpreter::BACKENDS;
+            break;
+        case MNN_MODEL_INFO_RESIZE_STATUS:
+            code = MNN::Interpreter::RESIZE_STATUS;
+            break;
+        case MNN_MODEL_INFO_THREAD_NUMBER:
+            code = MNN::Interpreter::THREAD_NUMBER;
+            break;
+        default:
+            return -1;
+    }
+    
+    // Use the standard C++ API: Interpreter::getSessionInfo
+    // This is always available in MNN
+    if (code == MNN::Interpreter::MEMORY) {
+        float memory = 0;
+        net->getSessionInfo(sess, code, &memory);
+        *reinterpret_cast<float*>(out) = memory;
+        return 0;
+    } else if (code == MNN::Interpreter::FLOPS) {
+        float flops = 0;
+        net->getSessionInfo(sess, code, &flops);
+        *reinterpret_cast<float*>(out) = flops;
+        return 0;
+    } else {
+        int value = 0;
+        net->getSessionInfo(sess, code, &value);
+        *reinterpret_cast<int*>(out) = value;
+        return 0;
+    }
+}
