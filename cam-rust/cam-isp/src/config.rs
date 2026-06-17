@@ -36,6 +36,13 @@ pub struct PipelineConfig {
     pub use_warp: bool,
     /// Enable HDR merge.
     pub use_hdr: bool,
+    /// Max pixel dimension for main pipeline (0 = full res).
+    /// When >0, inserts AdaptiveDownscaleBlock before debayer.
+    /// Toggle this for perf measurement without code mod.
+    pub pipeline_downscale_target: u32,
+    /// Max pixel dimension for stats blocks (0 = full res).
+    /// When >0, inserts AdaptiveDownscaleBlock before stats.
+    pub stats_downscale_max: u32,
     /// Human-readable label.
     pub label: String,
 }
@@ -55,6 +62,8 @@ impl PipelineConfig {
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
+        pipeline_downscale_target: 0,
+        stats_downscale_max: 0,
         label: String::new(),
     };
 
@@ -73,8 +82,29 @@ impl PipelineConfig {
             use_lsc: profile.use_lsc,
             use_warp: profile.use_warp,
             use_hdr: profile.use_hdr,
+            pipeline_downscale_target: profile.pipeline_downscale_target,
+            stats_downscale_max: profile.stats_downscale_max,
             label: profile.label.to_string(),
         }
+    }
+
+    /// Merge this config back into a `PipelineProfile`, overriding fields.
+    pub fn to_profile(&self) -> PipelineProfile {
+        let mut p = self.profile.clone();
+        p.use_unpack = self.use_unpack;
+        p.use_fcs = self.use_fcs;
+        p.use_ldci = self.use_ldci;
+        p.use_ee = self.use_ee;
+        p.use_bad_pixel = self.use_bad_pixel;
+        p.demosaic_quality = self.demosaic_quality;
+        p.use_local_contrast = self.use_local_contrast;
+        p.use_unsharp = self.use_unsharp;
+        p.use_lsc = self.use_lsc;
+        p.use_warp = self.use_warp;
+        p.use_hdr = self.use_hdr;
+        p.pipeline_downscale_target = self.pipeline_downscale_target;
+        p.stats_downscale_max = self.stats_downscale_max;
+        p
     }
 
     /// Whether this config differs from its base profile (custom variant).
@@ -90,6 +120,8 @@ impl PipelineConfig {
             || self.use_lsc != self.profile.use_lsc
             || self.use_warp != self.profile.use_warp
             || self.use_hdr != self.profile.use_hdr
+            || self.pipeline_downscale_target != self.profile.pipeline_downscale_target
+            || self.stats_downscale_max != self.profile.stats_downscale_max
     }
 
     /// Build a human-readable block chain preview string.
@@ -167,6 +199,8 @@ impl PipelineConfig {
     pub fn with_lsc(mut self, v: bool) -> Self { self.use_lsc = v; self }
     pub fn with_warp(mut self, v: bool) -> Self { self.use_warp = v; self }
     pub fn with_hdr(mut self, v: bool) -> Self { self.use_hdr = v; self }
+    pub fn with_pipeline_downscale(mut self, v: u32) -> Self { self.pipeline_downscale_target = v; self }
+    pub fn with_stats_downscale(mut self, v: u32) -> Self { self.stats_downscale_max = v; self }
     pub fn with_label(mut self, v: impl Into<String>) -> Self { self.label = v.into(); self }
 
     /// Set label from profile name + custom markers.
