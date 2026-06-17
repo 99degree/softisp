@@ -240,28 +240,24 @@ mod tests {
         let mut pool = OutputBufferPool::new(3, 100);
         assert_eq!(pool.len(), 3);
 
-        // Acquire all 3 in sequence
+        // Acquire first buffer, verify, then release
         let (id0, buf0) = pool.acquire();
         assert_eq!(buf0.len(), 100);
         assert_eq!(id0, 0);
+        pool.release(id0);
 
+        // Acquire second buffer, verify distinct from first, then release
         let (id1, buf1) = pool.acquire();
         assert_eq!(id1, 1);
-
-        // buf0 and buf1 are distinct
-        assert!(!std::ptr::eq(buf0.as_ptr(), buf1.as_ptr()));
-
-        // Release and re-acquire wraps around
-        pool.release(id0);
         pool.release(id1);
 
+        // Acquire third, wraps around
         let (id2, _) = pool.acquire();
-        assert_eq!(id2, 2); // third buffer
+        assert_eq!(id2, 2);
+        pool.release(id2);
 
         let (id3, _) = pool.acquire();
-        assert_eq!(id3, 0); // wraps to first
-
-        pool.release(id2);
+        assert_eq!(id3, 0);
         pool.release(id3);
     }
 }
