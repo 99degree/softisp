@@ -934,26 +934,31 @@ extern "C" int mnn_run_with_output(
     int total = 1;
     for (int i = 0; i < in_ndim; i++) total *= in_shape[i];
 
+    // Set input host pointer (zero-copy input — works on all backends)
+    in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
+    in_tensor->buffer().device = 0;
+
+    // Resize if input element count doesn't match model
     size_t tensor_size = in_tensor->elementSize();
     if (tensor_size != (size_t)total) {
         net->resizeSession(sess);
         in_tensor = net->getSessionInput(sess, nullptr);
         if (!in_tensor) return -3;
+        in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
+        in_tensor->buffer().device = 0;
         tensor_size = in_tensor->elementSize();
         if (tensor_size != (size_t)total) {
             return -4;
         }
     }
 
-    in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
-    in_tensor->buffer().device = 0;
-
     auto run_ok = net->runSession(sess);
     if (run_ok != 0) {
         return static_cast<int>(run_ok);
     }
 
-    // Get the SPECIFIED output tensor
+    // Get the SPECIFIED output tensor by name
+    // GPU backends store output in device memory — must copyToHostTensor.
     auto* out_tensor = (output_name != nullptr)
         ? net->getSessionOutput(sess, output_name)
         : net->getSessionOutput(sess, nullptr);

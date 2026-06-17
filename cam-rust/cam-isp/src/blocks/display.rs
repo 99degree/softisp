@@ -87,9 +87,10 @@ impl DisplayBlock {
         matches!(self.rotate_mode, 2 | 3 | 5) // ROT180 | ROT270 | VFLIP
     }
 
-    /// Returns true if no rotation/flip transform is requested.
+    /// Returns true if no rotation/flip transform is requested
+    /// AND no output format conversion (bg4a/pack_rgba) is needed.
     fn is_identity(&self) -> bool {
-        self.rotate_mode == 0
+        self.rotate_mode == 0 && !self.bg4a && !self.pack_rgba
     }
 }
 
@@ -262,11 +263,11 @@ impl IspBlock for DisplayBlock {
             // Order: oc0[B](ic0,ic1,ic2), oc1[G](ic0,ic1,ic2), oc2[R], oc3[A]
             inits.push(Proto::tensor_proto_float(
                 &format!("{}/bg4a_w", ns),
-                &[12],
-                &[0.0, 0.0, 255.0,   // B = 255*B_in
-                  0.0, 255.0, 0.0,   // G = 255*G_in
-                  255.0, 0.0, 0.0,   // R = 255*R_in
-                  0.0, 0.0, 0.0]));  // A = 0
+                &[4, 3, 1, 1],
+                &[0.0, 0.0, 255.0,   // oc0 (B): B = 255*B_in
+                  0.0, 255.0, 0.0,   // oc1 (G): G = 255*G_in
+                  255.0, 0.0, 0.0,   // oc2 (R): R = 255*R_in
+                  0.0, 0.0, 0.0]));  // oc3 (A): 0 (bias handles alpha=255)
             // Bias [4]: B=0, G=0, R=0, A=255
             inits.push(Proto::tensor_proto_float(
                 &format!("{}/bg4a_b", ns),
