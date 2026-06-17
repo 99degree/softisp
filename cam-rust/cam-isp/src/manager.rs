@@ -9,7 +9,7 @@ use std::time::Instant;
 use log::info;
 
 use crate::controller::IspController;
-use crate::engine::{IspEngine, ProcessParams};
+use crate::engine::{IspEngine, ProcessParams, OutputFormat};
 use crate::cpu::CpuEngine;
 use crate::profile::PipelineProfile;
 use crate::pipeline::IspBlock;
@@ -69,8 +69,8 @@ pub struct PipelineManager {
     status: PipelineStatus,
 
     // Internal engine
-    /// Output channels: 1=packed INT32, 3=RGB float, 4=BGRA float.
-    pub output_channels: u32,
+    /// Output format: PackedInt32 (raw) or Bgra (converted).
+    pub output_format: OutputFormat,
     engine: Mutex<Option<Box<dyn IspEngine>>>,
     /// Last build timestamp.
     last_build: Option<Instant>,
@@ -83,7 +83,7 @@ impl PipelineManager {
             controller: IspController::new(),
             target_width: 480,
             bayer_pattern: 3, // BGGR default
-            output_channels: 1, // packed INT32 by default
+            output_format: OutputFormat::Bgra, // convert to BGRA by default
             status: PipelineStatus::Building,
             engine: Mutex::new(None),
             last_build: None,
@@ -206,7 +206,7 @@ impl PipelineManager {
             blc_values: None,
             warp_grid: None,
             target_height: height,
-            output_channels: self.output_channels,
+            output_format: self.output_format,
         };
 
         // Process

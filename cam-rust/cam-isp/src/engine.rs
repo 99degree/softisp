@@ -9,6 +9,60 @@ use cam_types::ToneParams;
 use crate::pipeline::{IspBlock, IspFrame};
 use crate::controller::IspController;
 
+/// Output format from the ISP pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Output pixel format selector.
+///
+/// Controls whether the engine converts the MNN output to a specific byte
+/// format (BGRA, RGBA, ARGB, etc.) or returns raw bytes with no conversion.
+///
+/// Model-native formats (no conversion):
+/// - `FloatRgb` → `[1,3,H,W]` f32×3 per pixel (12 bytes/pixel)
+/// - `FloatBgra` → `[1,4,H,W]` f32×4 per pixel (16 bytes/pixel, bg4a)
+/// - `PackedRgb` → `[1,1,H,W]` INT32 packed (4 bytes/pixel, R<<16|G<<8|B)
+///
+/// For byte formats, the engine converts from whatever the model outputs
+/// into the requested byte order (u8, 3 or 4 bytes/pixel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// Float RGB [0,1] — return raw f32×3 planar bytes.
+    FloatRgb,
+    /// Float BGRA [0,255] — return raw f32×4 planar bytes (bg4a).
+    FloatBgra,
+    /// INT32 packed — return raw packed bytes (R<<16|G<<8|B, 4B/pixel).
+    PackedRgb,
+    /// BGRA u8 (4 bytes/pixel). Always converted.
+    Bgra,
+    /// RGBA u8 (4 bytes/pixel). Always converted.
+    Rgba,
+    /// ARGB u8 (4 bytes/pixel). Always converted.
+    Argb,
+    /// ABGR u8 (4 bytes/pixel). Always converted.
+    Abgr,
+    /// RGB u8 (3 bytes/pixel). Always converted.
+    Rgb,
+    /// BGR u8 (3 bytes/pixel). Always converted.
+    Bgr,
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self { Self::Bgra }
+}
+
+impl OutputFormat {
+    /// Whether this format requires conversion from the model output.
+    pub fn needs_conversion(self) -> bool {
+        matches!(self, Self::Bgra | Self::Rgba | Self::Argb | Self::Abgr | Self::Rgb | Self::Bgr)
+    }
+    /// Bytes per pixel for this format.
+    pub fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Rgb | Self::Bgr => 3,
+            _ => 4,
+        }
+    }
+}
+
 /// Default tone parameters for the ISP pipeline.
 pub fn default_tone_params() -> ToneParams {
     ToneParams {
@@ -43,8 +97,8 @@ pub struct ProcessParams<'a> {
     pub lsc_gains: Option<&'a [f32]>,
     pub blc_values: Option<[f32; 4]>,
     pub warp_grid: Option<&'a [f32]>,
-    /// Output channels: 3=RGB float [0,1], 4=BGRA float [0,255] (bg4a mode).
-    pub output_channels: u32,
+    /// Output format: PackedInt32 (raw) or Bgra (converted).
+    pub output_format: OutputFormat,
 }
 
 impl<'a> ProcessParams<'a> {
@@ -65,7 +119,7 @@ impl<'a> ProcessParams<'a> {
             bayer_pattern: 0,
             analog_gain: 1.0,
             scene_change: 0.0,
-            output_channels: 3,
+            output_format: OutputFormat::default(),
             lsc_gains: None,
             blc_values: None,
             warp_grid: None,
