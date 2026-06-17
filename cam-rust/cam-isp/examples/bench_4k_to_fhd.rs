@@ -29,6 +29,8 @@ fn main() {
     let sensor_h = 2160u32;
     let pipe_w   = 1920u32;
     let pipe_h   = 1080u32;
+    let post_w   = 960u32;   // post-downscale width for expensive blocks
+    let post_h   = 540u32;   // post-downscale height
     let n_frames = 20;
 
     // Generate 4K Bayer test data inline
@@ -48,6 +50,8 @@ fn main() {
     let full_h   = sensor_h as i64;
     let ds_w     = pipe_w as i64;
     let ds_h     = pipe_h as i64;
+    let post_w_i = post_w as i64;
+    let post_h_i = post_h as i64;
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
         // 1. Packed INT32 input
@@ -74,7 +78,11 @@ fn main() {
         Box::new(DemosaicCcmBlock::new(0)
             .with_concrete_dims(ds_h, ds_w)),
 
-        // 6. Tone (identity — already fused)
+        // 6. Adaptive downscale FHD→post for expensive blocks
+        Box::new(AdaptiveDownscaleBlock::new(post_w_i, post_h_i, 0, "edge", "fit")
+            .with_concrete_dims(ds_h, ds_w)),
+
+        // 7. Tone (identity — already fused)
         Box::new(IdentityBlock::new("tone")),
 
         // 7. Aux hook out
@@ -85,11 +93,11 @@ fn main() {
         Box::new(LdciBlock::new()),
         Box::new(EeBlock::new()),
 
-        // 11. Display output (bg4a: Conv 1×1 BGRA float [0,255])
-        Box::new(DisplayBlock::new(pipe_w)
+        // 12. Display output (bg4a: Conv 1×1 BGRA float [0,255])
+        Box::new(DisplayBlock::new(post_w)
             .with_pack_rgba(false)
             .with_bg4a(true)
-            .with_concrete_dims(ds_h, ds_w)),
+            .with_concrete_dims(post_h_i, post_w_i)),
     ];
 
     GraphComposer::wire_blocks(&mut blocks);
@@ -109,14 +117,14 @@ fn main() {
     }
     result.unwrap();
 
-    println!("Pipeline: 10 blocks (main) + 4 aux (stats tap at aux_hook_src)");
-    println!("Input: {}×{} → FHD Output: {}×{}", sensor_w, sensor_h, pipe_w, pipe_h);
+    println!("Pipeline: 11 blocks (main) + 4 aux (stats tap at aux_hook_src)");
+    println!("Input: {}×{} → FHD→ {}×{} post-downscale", sensor_w, sensor_h, post_w, post_h);
     println!("Running {} frames...\n", n_frames);
 
     // Shared params
     let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
-    params.target_width = pipe_w;
-    params.target_height = pipe_h;
+    params.target_width = post_w;
+    params.target_height = post_h;
     params.sensor_max = 1023.0;
     params.output_format = cam_isp::engine::OutputFormat::FloatBgra;
 

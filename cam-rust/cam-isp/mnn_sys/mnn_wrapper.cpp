@@ -547,6 +547,10 @@ extern "C" int mnn_run_with_output(
     auto* out_tensor = (output_name != nullptr)
         ? net->getSessionOutput(sess, output_name)
         : net->getSessionOutput(sess, nullptr);
+    // Fallback: if named output not found, try first output
+    if (!out_tensor && output_name != nullptr) {
+        out_tensor = net->getSessionOutput(sess, nullptr);
+    }
     if (!out_tensor) return -1;
 
     auto out_type = out_tensor->getType();
