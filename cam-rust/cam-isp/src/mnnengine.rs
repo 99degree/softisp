@@ -808,6 +808,7 @@ impl IspEngine for MnnEngine {
             let data_out = out_bytes;
 
             // ── Read stats output tensors from MNN session and feed to controller ──
+            let mut calib_vals: Option<[f32; 24]> = None;
             // After inference, all output tensors are available in the session.
             // Try reading known stats output names.  If a tensor doesn't exist
             // in the graph (block not enabled in this profile), get_output returns None.
@@ -857,6 +858,20 @@ impl IspEngine for MnnEngine {
                         hist_vals = Some(hist);
                     }
                 }
+
+                // CalibrationBlock/frame → [24] (quad means, vars, mins, maxs, ranges, frame stats)
+                if let Some(t) = interp.get_output(&sess, "CalibrationBlock/frame") {
+                    if let Some(bytes) = t.as_bytes() {
+                        let floats: &[f32] = unsafe {
+                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                        };
+                        let mut cal = [0.0f32; 24];
+                        let n = floats.len().min(24);
+                        cal[..n].copy_from_slice(&floats[..n]);
+                        calib_vals = Some(cal);
+                    }
+                }
+
                 // ZoneStatsBlock/frame → [1, 3, rows, cols]
                 if let Some(t) = interp.get_output(&sess, "ZoneStatsBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
@@ -958,7 +973,10 @@ impl IspEngine for MnnEngine {
             frame.data = data_out;
             // Stats are fed into the controller above (not returned in IspAuxOutput).
             // The controller modifies its internal state for the next frame.
-            frame.aux = None;
+            frame.aux = Some(IspAuxOutput {
+                calibration_stats: calib_vals,
+                ..Default::default()
+            });
             frame.timestamp_ns = 0;  // TODO: pass from HAL
             // prep = time before inference starts (setup + norm for float path)
             // infer = time for MNN inference only

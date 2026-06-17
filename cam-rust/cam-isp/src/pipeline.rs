@@ -8,7 +8,7 @@ use cam_types::FrameFormat;
 use crate::onnx::proto::Proto;
 
 /// Auxiliary outputs from ISP processing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct IspAuxOutput {
     pub channel_means: Option<[f32; 3]>,
     pub tone_stats: Option<[f32; 3]>,

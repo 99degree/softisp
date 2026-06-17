@@ -457,6 +457,156 @@ impl IspBlock for CoarseHistogramBlock {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// CalibrationBlock — quad-level Bayer stats for AF/learner
+// ═══════════════════════════════════════════════════════════════════
+
+/// Calibration statistics block — quad-level Bayer stats for AF + learner.
+///
+/// Input:  [1, 4, H, W]  Bayer quadrants (from aux_hook_src or its downscale)
+/// Output: [1, 24]       calibration stats matching CalibrationStats layout:
+///   [0:4]   quad_means     — mean of each quad channel
+///   [4:8]   quad_vars      — variance per quad (used by AF focus metric)
+///   [8:12]  quad_mins      — min per quad
+///   [12:16] quad_maxs      — max per quad
+///   [16:20] quad_ranges    — (max-min)/(max+ε) per quad
+///   [20]    frame_lum      — mean of 4 quad means
+///   [21]    frame_noise    — mean of 4 quad vars
+///   [22]    frame_min      — min across all quads
+///   [23]    frame_max      — max across all quads
+///
+/// Graph: var = E[X²] - E[X]² (linearity of variance)
+pub struct CalibrationBlock {
+    pub id: String,
+    pub prev: Option<Box<dyn IspBlock>>,
+    pub next: Option<Box<dyn IspBlock>>,
+    pub frame_tensor: String,
+    pub input_source: String,
+    pub concrete_h: Option<i64>,
+    pub concrete_w: Option<i64>,
+}
+
+impl CalibrationBlock {
+    pub fn new() -> Self {
+        Self {
+            id: "calibration".into(), prev: None, next: None,
+            frame_tensor: "CalibrationBlock/frame".into(),
+            input_source: String::new(), concrete_h: None, concrete_w: None,
+        }
+    }
+    pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
+        self.concrete_h = Some(h); self.concrete_w = Some(w); self
+    }
+}
+
+impl IspBlock for CalibrationBlock {
+    fn id(&self) -> &str { &self.id }
+    fn tensor_ns(&self) -> String { "CalibrationBlock".into() }
+    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
+    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
+    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
+    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+
+    fn input_value_info(&self) -> Option<Vec<u8>> {
+        let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
+            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
+                 Proto::tensor_dim_value(h), Proto::tensor_dim_value(w)]
+        } else {
+            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
+                 Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")]
+        };
+        Some(Proto::value_info(&self.input_source, &dims, 1))
+    }
+
+    fn output_value_info(&self) -> Option<Vec<u8>> {
+        let dims = vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(24)];
+        Some(Proto::value_info(&self.frame_tensor, &dims, 1))
+    }
+
+    fn nodes(&self) -> Vec<Vec<u8>> {
+        use crate::onnx::proto::Proto as P;
+        let x = &self.input_source;
+        let ns = |name: &str| format!("CalibrationBlock/{}", name);
+
+        let x2 = ns("x2");       // X²
+        let e_x = ns("e_x");     // E[X]
+        let e_x2 = ns("e_x2");   // E[X²]
+        let e_x_2 = ns("e_x_2"); // E[X]²
+        let var = ns("var");     // Var[X]
+        let min = ns("min");     // per-quad min
+        let max = ns("max");     // per-quad max
+        let r_pre = ns("r_pre"); // max - min
+        let r_max = ns("r_max"); // max + ε
+        let range = ns("range"); // (max-min)/(max+ε)
+        let lum = ns("lum");     // frame luminance
+        let noise = ns("noise"); // frame noise
+        let fmin = ns("fmin");   // frame min
+        let fmax = ns("fmax");   // frame max
+        let c_all = ns("c_all");
+        let out = &self.frame_tensor;
+
+        vec![
+            // 1. X² = Mul(x, x)
+            P::node("Mul", &[x, x], &[&x2], &[]),
+            // 2. E[X] = ReduceMean(x, axes=[2,3])
+            P::node("ReduceMean", &[x], &[&e_x],
+                &[P::attribute_ints("axes", &[2, 3]), P::attribute_int("keepdims", 1)]),
+            // 3. E[X²] = ReduceMean(x², axes=[2,3])
+            P::node("ReduceMean", &[&x2], &[&e_x2],
+                &[P::attribute_ints("axes", &[2, 3]), P::attribute_int("keepdims", 1)]),
+            // 4. E[X]² = Mul(E[X], E[X])
+            P::node("Mul", &[&e_x, &e_x], &[&e_x_2], &[]),
+            // 5. Var = E[X²] - E[X]²
+            P::node("Sub", &[&e_x2, &e_x_2], &[&var], &[]),
+            // 6. Min = ReduceMin(x, axes=[2,3])
+            P::node("ReduceMin", &[x], &[&min],
+                &[P::attribute_ints("axes", &[2, 3]), P::attribute_int("keepdims", 1)]),
+            // 7. Max = ReduceMax(x, axes=[2,3])
+            P::node("ReduceMax", &[x], &[&max],
+                &[P::attribute_ints("axes", &[2, 3]), P::attribute_int("keepdims", 1)]),
+            // 8. Range_pre = Max - Min
+            P::node("Sub", &[&max, &min], &[&r_pre], &[]),
+            // 9. Max_safe = Max + ε (avoid div-by-zero)
+            P::node("Add", &[&max, "CalibrationBlock/eps"], &[&r_max], &[]),
+            // 10. Range = Range_pre / Max_safe
+            P::node("Div", &[&r_pre, &r_max], &[&range], &[]),
+            // 11-14. Scalar frame stats (ReduceMean/Min/Max on axis=1 of [1,4,1,1])
+            P::node("ReduceMean", &[&e_x], &[&lum],
+                &[P::attribute_ints("axes", &[1]), P::attribute_int("keepdims", 1)]),
+            P::node("ReduceMean", &[&var], &[&noise],
+                &[P::attribute_ints("axes", &[1]), P::attribute_int("keepdims", 1)]),
+            P::node("ReduceMin", &[&min], &[&fmin],
+                &[P::attribute_ints("axes", &[1]), P::attribute_int("keepdims", 1)]),
+            P::node("ReduceMax", &[&max], &[&fmax],
+                &[P::attribute_ints("axes", &[1]), P::attribute_int("keepdims", 1)]),
+            // 15. Concat all 9 tensors along axis=1
+            //   [1,4,1,1] ×5 + [1,1,1,1] ×4 → [1,24,1,1]
+            P::node("Concat", &[&e_x, &var, &min, &max, &range, &lum, &noise, &fmin, &fmax],
+                &[&c_all], &[P::attribute_int("axis", 1)]),
+            // 16. Reshape [1,24,1,1] → [1,24]
+            P::node("Reshape", &[&c_all, "CalibrationBlock/shape"], &[out], &[]),
+        ]
+    }
+
+    fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![
+            Proto::tensor_proto_float_scalar("CalibrationBlock/eps", 1e-6f32),
+            Proto::tensor_proto_int64("CalibrationBlock/shape", &[1, 24]),
+        ]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
