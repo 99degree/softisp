@@ -40,7 +40,7 @@ pub use unpack::UnpackBlock;
 pub use demosaic_ccm::DemosaicCcmBlock;
 pub use resize::ResizeBlock;
 pub use adaptive_downscale::AdaptiveDownscaleBlock;
-pub use stats::{ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock};
+pub use stats::{ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock, CalibrationBlock};
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.

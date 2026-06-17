@@ -197,7 +197,7 @@ impl PipelineProfile {
         use_channel_means: true,
         use_tone_stats: true,
         use_histogram: true,
-        stats_downscale_max: 0,    // full resolution
+        stats_downscale_max: 540,   // stats read from ~540p (downscaled from aux_hook_src)
         pipeline_downscale_target: 1920, // downscale 4K→FHD before post-processing
         eis_margin: 0.0,
         output_format: OutputFormat::PackedRgb,
@@ -568,6 +568,14 @@ impl PipelineProfile {
         }
         if self.use_histogram {
             let mut b = CoarseHistogramBlock::new(16);
+            b.set_input_source(stats_input);
+            aux.push(Box::new(b));
+        }
+        // Calibration stats for AF (quad-level means/vars/mins/maxs)
+        // Always enabled when AF is active.
+        {
+            let mut b = CalibrationBlock::new()
+                .with_concrete_dims(input_h, input_w);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }
