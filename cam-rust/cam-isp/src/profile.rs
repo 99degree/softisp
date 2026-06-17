@@ -694,15 +694,15 @@ mod tests {
 
     #[test]
     fn test_block_count() {
-        assert_eq!(PipelineProfile::LITE.block_count(), 14, "LITE: 12 main + 2 stats");
-        assert_eq!(PipelineProfile::HEAVY.block_count(), 16, "HEAVY: 12 main + 4 stats");
+        assert_eq!(PipelineProfile::LITE.block_count(), 15, "LITE: 12 main + 3 stats (includes CalibrationBlock)");
+        assert_eq!(PipelineProfile::HEAVY.block_count(), 17, "HEAVY: 12 main + 5 stats (includes CalibrationBlock)");
     }
 
     #[test]
     fn test_build_aux_blocks_lite() {
         let aux = PipelineProfile::LITE.build_aux_blocks(1080, 1920);
-        // LITE: zone_stats + channel_means
-        assert_eq!(aux.len(), 2, "LITE stats: zone + channel means");
+        // LITE: zone_stats + channel_means + calibration
+        assert_eq!(aux.len(), 3, "LITE stats: zone + channel + calibration");
         assert_eq!(aux[0].id(), "zone_stats");
         assert_eq!(aux[1].id(), "channel_means");
     }
@@ -710,14 +710,14 @@ mod tests {
     #[test]
     fn test_build_aux_blocks_pro() {
         let aux = PipelineProfile::PRO.build_aux_blocks(1080, 1920);
-        // PRO: zone_stats + channel_means + tone_stats + histogram
-        assert_eq!(aux.len(), 4, "PRO stats: all 4 enabled");
+        // PRO: zone_stats + channel_means + tone_stats + histogram + calibration
+        assert_eq!(aux.len(), 5, "PRO stats: all 4 + calibration");
     }
 
     #[test]
     fn test_build_aux_blocks_test() {
         let aux = PipelineProfile::TEST.build_aux_blocks(1080, 1920);
-        // TEST: only zone_stats
-        assert_eq!(aux.len(), 1, "TEST stats: zone_stats only");
+        // TEST: zone_stats + calibration
+        assert_eq!(aux.len(), 2, "TEST stats: zone_stats + calibration");
     }
 }
