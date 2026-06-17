@@ -724,6 +724,8 @@ impl IspEngine for MnnEngine {
             let mut n: i32;
             let t_prep_end: std::time::Instant;
             let t_infer_start: std::time::Instant;
+            let t_tensor_before: std::time::Instant;
+            let t_tensor_after: std::time::Instant;
 
             // Determine if packed: model expects INT32 packed input
             let is_packed = if self.packed_input {
@@ -737,6 +739,7 @@ impl IspEngine for MnnEngine {
             };
 
             // ── Pre-inference: resize session and set extra inputs ──
+            t_tensor_before = Instant::now();
             {
                 let shape = if is_packed {
                     vec![1, 1, h as i32, (w / 2).max(1) as i32]
@@ -749,6 +752,9 @@ impl IspEngine for MnnEngine {
                 let _ = sess.resize();
                 Self::set_extra_inputs(&self.tensor_pool, ccm, tone, bayer, awb, bayer_pattern);
             }
+            t_tensor_after = Instant::now();
+            info!("pipeline stage=tensor_assign elapsed={:?}",
+                t_tensor_after.duration_since(t_tensor_before));
 
             debug!("MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
                 w, h, (w / 2).max(1), is_packed, self.expected_input_elements);
@@ -784,8 +790,9 @@ impl IspEngine for MnnEngine {
                 return Err(format!("MNN inference failed: {}", n));
             }
 
-            info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts)",
-                path, t_infer_elapsed, w, h, n);
+            info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts) prep={:?} infer={:?}",
+                path, t_infer_elapsed, w, h, n,
+                t_prep_end - t_start, t_infer_elapsed);
 
             // ── Determine output size from format and actual element count ──
             let oh = p.target_height as usize;
@@ -941,8 +948,11 @@ impl IspEngine for MnnEngine {
                 }
             }
 
-            info!("pipeline stage=output_frame {}×{} frame={}B total={:?}",
-                tw, oh, data_out.len(), t_total_elapsed);
+            info!("pipeline stage=output_frame {}×{} frame={}B total={:?} prep={:?} resize={:?} infer={:?}",
+                tw, oh, data_out.len(), t_total_elapsed,
+                t_prep_end - t_start,
+                t_tensor_after - t_tensor_before,
+                t_infer_elapsed);
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
             let mut frame = IspFrame::new(tw, oh as u32, FrameFormat::Rgba8888);
             frame.data = data_out;
