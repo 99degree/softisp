@@ -75,12 +75,13 @@ fn main() {
         Box::new(IdentityBlock::new("bayer_wb")),
 
         // 5. Fused demosaic + WB + CCM + tone (single Conv at FHD)
+        //    The ONNX/MNN model will handle any required down‑scale or pillar‑box padding
+        //    based on the target_width/target_height values supplied in ProcessParams.
+        //    Hence we omit a CPU AdaptiveDownscaleBlock here.
         Box::new(DemosaicCcmBlock::new(0)
             .with_concrete_dims(ds_h, ds_w)),
 
-        // 6. Adaptive downscale FHD→post for expensive blocks
-        Box::new(AdaptiveDownscaleBlock::new(post_w_i, post_h_i, 0, "edge", "fit")
-            .with_concrete_dims(ds_h, ds_w)),
+
 
         // 7. Tone (identity — already fused)
         Box::new(IdentityBlock::new("tone")),
@@ -105,9 +106,12 @@ fn main() {
     // ── Select engine and build ────────────────────────────────
     let mut all = blocks;
     let head = all.remove(0);
-    let mut engine: Box<dyn IspEngine> = match cam_isp::engine::select_engine() {
+    let mut engine: Box<dyn IspEngine> = match cam_isp::engine::select_engine_by_name("vulkan") {
         Some(e) => e,
-        None => Box::new(cam_isp::cpu::CpuEngine::new()),
+        None => match cam_isp::engine::select_engine() {
+            Some(e) => e,
+            None => Box::new(cam_isp::cpu::CpuEngine::new()),
+        },
     };
     println!("Engine: {} (priority {})", engine.backend_name(), engine.priority());
 
