@@ -75,11 +75,17 @@ fn test_mnn_engine_streaming() {
             }
         }
 
-        let result = engine.process(
-            w, h, w, &buf, smax, 64,
-            None, &cam_isp::engine::default_tone_params(),
-            None, None, 0, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams {
+    width: w, height: h, stride_width: w,
+    buf: &buf,
+    sensor_max: smax, target_width: 64, target_height: h,
+    ccm_matrix: None,
+    tone_params: cam_isp::engine::default_tone_params(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+});
 
         match &result {
             Ok(frame) => {
@@ -121,14 +127,32 @@ fn test_mnn_engine_frame_difference() {
 
     // Frame 0: all zeros
     let buf0 = vec![0u8; 48 * 64 * 2];
-    let f0 = engine.process(48, 64, 48, &buf0, 1024.0, 64, None, &params,
-        None, None, 0, 1.0, 0.0, None, None, None).expect("frame 0");
+    let f0 = engine.process(&cam_isp::engine::ProcessParams {
+    width: 48, height: 64, stride_width: 48,
+    buf: &buf0,
+    sensor_max: 1024.0, target_width: 64, target_height: 64,
+    ccm_matrix: None,
+    tone_params: params.clone(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+}).expect("frame 0");
     outputs.push(f0.data);
 
     // Frame 1: all 0xFF
     let buf1 = vec![0xFFu8; 48 * 64 * 2];
-    let f1 = engine.process(48, 64, 48, &buf1, 1024.0, 64, None, &params,
-        None, None, 0, 1.0, 0.0, None, None, None).expect("frame 1");
+    let f1 = engine.process(&cam_isp::engine::ProcessParams {
+    width: 48, height: 64, stride_width: 48,
+    buf: &buf1,
+    sensor_max: 1024.0, target_width: 64, target_height: 64,
+    ccm_matrix: None,
+    tone_params: params.clone(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+}).expect("frame 1");
     outputs.push(f1.data);
 
     // Frame 2: ramp pattern
@@ -138,8 +162,17 @@ fn test_mnn_engine_frame_difference() {
         chunk[0] = v as u8;
         chunk[1] = (v >> 8) as u8;
     }
-    let f2 = engine.process(48, 64, 48, &buf2, 1024.0, 64, None, &params,
-        None, None, 0, 1.0, 0.0, None, None, None).expect("frame 2");
+    let f2 = engine.process(&cam_isp::engine::ProcessParams {
+    width: 48, height: 64, stride_width: 48,
+    buf: &buf2,
+    sensor_max: 1024.0, target_width: 64, target_height: 64,
+    ccm_matrix: None,
+    tone_params: params.clone(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+}).expect("frame 2");
     outputs.push(f2.data);
 
     // Verify all 3 outputs are different from each other
@@ -201,11 +234,17 @@ fn test_mnn_engine_lite_profile() {
                 buf[off + 1] = (val >> 8) as u8;
             }
         }
-        let result = engine.process(
-            w, h, w, &buf, smax, 64,
-            None, &cam_isp::engine::default_tone_params(),
-            None, None, 0, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams {
+    width: w, height: h, stride_width: w,
+    buf: &buf,
+    sensor_max: smax, target_width: 64, target_height: h,
+    ccm_matrix: None,
+    tone_params: cam_isp::engine::default_tone_params(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+});
         match &result {
             Ok(frame) => {
                 eprintln!("Frame {}: {}×{} fmt={:?} size={}",
@@ -264,11 +303,17 @@ fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
 
     let w = 48u32; let h = 64u32;
     let buf = vec![0x80u8; (w * h * 2) as usize];
-    let result = engine.process(
-        w, h, w, &buf, 1024.0, 64,
-        None, &cam_isp::engine::default_tone_params(),
-        None, None, 0, 1.0, 0.0, None, None, None,
-    );
+    let result = engine.process(&cam_isp::engine::ProcessParams {
+    width: w, height: h, stride_width: w,
+    buf: &buf,
+    sensor_max: 1024.0, target_width: 64, target_height: h,
+    ccm_matrix: None,
+    tone_params: cam_isp::engine::default_tone_params(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+});
     match &result {
         Ok(frame) => {
             eprintln!("{}: {}×{} fmt={:?} size={}",
@@ -324,10 +369,17 @@ fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
         }
 
         let t_start = Instant::now();
-        let result = engine.process(
-            w, h, w, &buf, 1024.0, w,
-            None, &params, None, None, 0, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams {
+    width: w, height: h, stride_width: w,
+    buf: &buf,
+    sensor_max: 1024.0, target_width: w, target_height: h,
+    ccm_matrix: None,
+    tone_params: params.clone(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+});
         let elapsed = t_start.elapsed();
         total_duration += elapsed;
 
@@ -425,10 +477,17 @@ fn stream_mnn_backend(w: u32, h: u32, n_frames: u32, backend: &str) -> Result<f6
         }
 
         let t_start = Instant::now();
-        let result = engine.process(
-            w, h, w, &buf, 1024.0, w,
-            None, &params, None, None, 0, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams {
+    width: w, height: h, stride_width: w,
+    buf: &buf,
+    sensor_max: 1024.0, target_width: w, target_height: h,
+    ccm_matrix: None,
+    tone_params: params.clone(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+});
         let elapsed = t_start.elapsed();
         total_duration += elapsed;
 
@@ -541,10 +600,17 @@ fn test_mnn_packed_pipeline() {
 
     // Run packed inference through engine
     let params = cam_isp::engine::default_tone_params();
-    let result = engine.process(
-        w as u32, h as u32, w as u32, buf, 65536.0, w as u32,
-        None, &params, None, None, 0, 1.0, 0.0, None, None, None,
-    );
+    let result = engine.process(&cam_isp::engine::ProcessParams {
+    width: w as u32, height: h as u32, stride_width: w as u32,
+    buf: buf,
+    sensor_max: 65536.0, target_width: w as u32, target_height: h as u32,
+    ccm_matrix: None,
+    tone_params: params.clone(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+});
 
     match &result {
         Ok(frame) => {
@@ -572,11 +638,17 @@ fn test_mnn_engine_uninitialized() {
         use cam_isp::engine::IspEngine;
         use cam_isp::mnnengine::{MnnEngine, MnnBackend};
         let engine = MnnEngine::new(MnnBackend::Cpu);
-        let result = engine.process(
-            48, 64, 48, &[0u8; 48*64*2], 1024.0, 64,
-            None, &cam_isp::engine::default_tone_params(),
-            None, None, 0, 1.0, 0.0, None, None, None,
-        );
+        let result = engine.process(&cam_isp::engine::ProcessParams {
+    width: 48, height: 64, stride_width: 48,
+    buf: &[0u8; 48*64*2],
+    sensor_max: 1024.0, target_width: 64, target_height: 64,
+    ccm_matrix: None,
+    tone_params: cam_isp::engine::default_tone_params(),
+    bayer_gains: None, awb_gains: None,
+    bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
+    lsc_gains: None, blc_values: None, warp_grid: None,
+    output_format: cam_isp::engine::OutputFormat::default(),
+});
         assert!(result.is_err(), "uninitialized should fail");
         eprintln!("Uninitialized check OK: {:?}", result.err().unwrap());
     }
