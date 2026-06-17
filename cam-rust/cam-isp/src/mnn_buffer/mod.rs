@@ -82,6 +82,59 @@ pub unsafe fn get_tensor_shape(tensor: *mut std::ffi::c_void) -> Vec<i32> {
     dims
 }
 
+/// Pipeline-aligned output buffer pool.
+///
+/// Lifecycle per buffer per frame:
+///   Free → acquire() → Writing (MNN zero-copy write)
+///                           → release() → Free
+///
+/// Pre-allocated at pipeline build(), recycled every frame.
+/// Avoids per-frame vec![0.0f32; 16M] = 66MB zero-fill allocation.
+pub struct OutputBufferPool {
+    buffers: Vec<Vec<f32>>,
+    pool_size: usize,
+    next_idx: usize,
+}
+
+impl OutputBufferPool {
+    /// Create pool with `count` buffers, each of `capacity` f32 elements.
+    /// All buffers are pre-allocated and zero-filled once.
+    pub fn new(count: usize, capacity: usize) -> Self {
+        let total_mb = (count * capacity * 4) as f64 / 1_048_576.0;
+        log::info!("bufpool alloc: {} buffers × {} f32 = {:.1} MB",
+            count, capacity, total_mb);
+        let mut buffers = Vec::with_capacity(count);
+        for _ in 0..count {
+            buffers.push(vec![0.0f32; capacity]);
+        }
+        Self { buffers, pool_size: count, next_idx: 0 }
+    }
+
+    /// Acquire the next buffer for inference output.
+    /// Round-robin across all buffers. Never blocks.
+    /// Returns (buffer_id, &mut [f32]) where buffer_id is used for release().
+    pub fn acquire(&mut self) -> (usize, &mut [f32]) {
+        let idx = self.next_idx;
+        self.next_idx = (idx + 1) % self.pool_size;
+        log::info!("bufpool acquire: idx={}/{} cap={}",
+            idx, self.pool_size, self.buffers[idx].len());
+        (idx, &mut self.buffers[idx])
+    }
+
+    /// Release buffer back to pool after CPU conversion is done.
+    /// In round-robin mode this is a no-op (buffer will be recycled naturally),
+    /// but the explicit call marks the lifecycle boundary for the pipeline.
+    pub fn release(&mut self, idx: usize) {
+        log::info!("bufpool release: idx={}/{}", idx, self.pool_size);
+    }
+
+    /// Number of buffers in the pool.
+    pub fn len(&self) -> usize { self.pool_size }
+
+    /// Capacity of each buffer (f32 elements).
+    pub fn buffer_capacity(&self) -> usize { self.buffers.first().map(|b| b.len()).unwrap_or(0) }
+}
+
 /// MNN inference context
 ///
 /// Manages the lifecycle of MNN model, session, and buffers
@@ -179,5 +232,36 @@ mod tests {
         let dims = vec![1, 3, 224, 224];
         let size = tensor_size(&dims, 32);
         assert_eq!(size, 3 * 224 * 224 * 4);
+    }
+
+    #[test]
+    fn test_output_buffer_pool() {
+        // Pool of 3 buffers, each 100 f32
+        let mut pool = OutputBufferPool::new(3, 100);
+        assert_eq!(pool.len(), 3);
+
+        // Acquire all 3 in sequence
+        let (id0, buf0) = pool.acquire();
+        assert_eq!(buf0.len(), 100);
+        assert_eq!(id0, 0);
+
+        let (id1, buf1) = pool.acquire();
+        assert_eq!(id1, 1);
+
+        // buf0 and buf1 are distinct
+        assert!(!std::ptr::eq(buf0.as_ptr(), buf1.as_ptr()));
+
+        // Release and re-acquire wraps around
+        pool.release(id0);
+        pool.release(id1);
+
+        let (id2, _) = pool.acquire();
+        assert_eq!(id2, 2); // third buffer
+
+        let (id3, _) = pool.acquire();
+        assert_eq!(id3, 0); // wraps to first
+
+        pool.release(id2);
+        pool.release(id3);
     }
 }

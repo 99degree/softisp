@@ -42,7 +42,7 @@ required-features = ["mnn"]
 default = []
 mnn_buffer = []
 ort = ["dep:ort"]
-mnn = []
+mnn = ["mnn_buffer"]
 
 [dependencies.ort]
 version = "2.0.0-rc.12"

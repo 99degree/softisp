@@ -70,9 +70,11 @@ pub struct MnnEngine {
     /// MNN session (references interpreter). Dropped before interp.
     #[cfg(feature = "mnn")]
     sess: Option<Mutex<MnnSessionSafe>>,
-    /// Reusable output buffer — pre-allocated once, avoids 66MB per-frame zero-fill.
+    /// Pipeline-aligned output buffer pool.
+    /// Pre-allocated at build(), recycled every frame via acquire/release.
+    /// Lifecycle: Free → acquire() → Writing → release() → Free.
     #[cfg(feature = "mnn")]
-    output_buf: Mutex<Vec<f32>>,
+    buf_pool: Mutex<crate::mnn_buffer::OutputBufferPool>,
 }
 
 #[cfg(feature = "mnn")]
@@ -109,7 +111,7 @@ impl MnnEngine {
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
             #[cfg(feature = "mnn")]
-            output_buf: Mutex::new(Vec::new()),
+            buf_pool: Mutex::new(crate::mnn_buffer::OutputBufferPool::new(3, 1)),
             #[cfg(feature = "mnn")]
             interp: None,
             #[cfg(feature = "mnn")]
@@ -467,6 +469,29 @@ impl MnnEngine {
         }
         out
     }
+    /// Convert MNN output float buffer to BGRA Vec<u8>.
+    /// Handles both bg4a (4-channel, values [0,255]) and standard (3-channel, [0,1]).
+    /// This is a pure function (no &self) so it can be called from any scope.
+    fn convert_output(data: &[f32], ch: usize, h: usize, w: usize) -> Vec<u8> {
+        if ch >= 4 {
+            // bg4a path: 4-channel float [0,255] BGRA from Conv(1×1)
+            let n_pixels = h * w;
+            let mut out = Vec::with_capacity(n_pixels * 4);
+            for i in 0..n_pixels {
+                let base = i * 4;
+                out.extend_from_slice(&[
+                    data[base] as u8,
+                    data[base + 1] as u8,
+                    data[base + 2] as u8,
+                    255,
+                ]);
+            }
+            out
+        } else {
+            Self::to_bgra(data, ch, h, w)
+        }
+    }
+
     fn c(v: f32) -> u8 { (v * 255.0).round().clamp(0.0, 255.0) as u8 }
 
     /// Write extra input tensors (CCM, tone, gains) into the MNN session
@@ -712,15 +737,22 @@ impl IspEngine for MnnEngine {
 
             let t_start = Instant::now();
 
-            // Allocate output buffer (enough for 4K HD RGBA floats)
+            info!("pipeline stage=arrive raw={}×{} bayer={}B sensor_max={}",
+                w, h, buf.len(), smax);
+
+            // Acquire output buffer from pool.
+            // Lifecycle: Free → acquire() (Writing) → release() (Free).
+            // Pre-allocated at first frame to avoid 66MB per-frame zero-fill.
             let max_out = (tw * h * 4) as i32;
-            // Use reusable buffer from engine — avoids 66MB per-frame zero-fill.
-            // First call: allocate + zero-fill. Subsequent calls: no allocation.
-            let mut out_data_guard = self.output_buf.lock().unwrap();
-            if out_data_guard.len() < max_out as usize {
-                out_data_guard.resize(max_out as usize, 0.0f32);
+            let mut pool = self.buf_pool.lock().unwrap();
+            // Resize pool if first call or resolution changed
+            if pool.len() == 0 || pool.buffer_capacity() < max_out as usize {
+                *pool = crate::mnn_buffer::OutputBufferPool::new(3, max_out as usize);
             }
-            let out_data = &mut *out_data_guard;
+            let (buf_id, _buf_slice) = pool.acquire();
+            let out_data: &mut [f32] = _buf_slice;
+
+            info!("pipeline stage=acquire buf_id={}", buf_id);
 
             // Determine inference path based on model input type
             //   1) packed_input (INT32): true zero-copy — reinterpret u16 as i32, host ptr
@@ -782,6 +814,8 @@ impl IspEngine for MnnEngine {
                         buf.len() / 4  // u8 → i32: 4× fewer elements
                     )
                 };
+                info!("pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
+                    buf.len(), packed_buf.len() * 4, is_packed, h, packed_w);
                 t_prep_end = Instant::now();  // prep = just the pointer cast
                 t_infer_start = Instant::now();
                 unsafe {
@@ -870,7 +904,7 @@ impl IspEngine for MnnEngine {
                 return Err(format!("MNN inference failed: {}", n));
             }
 
-            debug!("MNN inference: path={} total={:?} ({}x{} -> {} flt)",
+            info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} flt)",
                 path, t_infer_elapsed, w, h, n);
 
             // MNN can't resolve output shapes for complex ISP pipelines on OpenCL/CPU.
@@ -883,34 +917,15 @@ impl IspEngine for MnnEngine {
             let ch = p.output_channels.max(3) as usize;
             let expected_n = oh * ow * ch;
             let nf = if n <= 0 || n < (expected_n as i32) / 10 {
-                // Use expected — MNN writes correct data despite broken shape
                 expected_n
             } else {
                 n as usize
             };
 
-            let bgra = {
-                let is_bg4a = ch == 4;
-                if is_bg4a {
-                    // bg4a path: 4-channel float [0,255] BGRA from Conv(1×1)
-                    // Just truncate f32→u8 (values are exact integers after Conv).
-                    let data = &out_data[..nf];
-                    let n_pixels = oh * ow;
-                    let mut out = Vec::with_capacity(n_pixels * 4);
-                    for i in 0..n_pixels {
-                        let base = i * 4;
-                        out.extend_from_slice(&[
-                            data[base] as u8,
-                            data[base + 1] as u8,
-                            data[base + 2] as u8,
-                            255,
-                        ]);
-                    }
-                    out
-                } else {
-                    Self::to_bgra(&out_data[..nf], ch, oh, ow)
-                }
-            };
+            // Buffer convert + release: explicit lifecycle boundary.
+            // out_data borrows from pool; once bgra is built, release buf.
+            let bgra = Self::convert_output(&out_data[..nf], ch, oh, ow);
+            pool.release(buf_id);
 
             // ── Read stats output tensors from MNN session and feed to controller ──
             // After inference, all output tensors are available in the session.
@@ -1053,6 +1068,8 @@ impl IspEngine for MnnEngine {
                 }
             }
 
+            info!("pipeline stage=output_frame {}×{} frame={}B total={:?}",
+                tw, oh, bgra.len(), t_total_elapsed);
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
             let mut frame = IspFrame::new(tw, oh as u32, FrameFormat::Rgba8888);
             frame.data = bgra;
