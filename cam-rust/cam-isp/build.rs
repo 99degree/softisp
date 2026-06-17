@@ -76,9 +76,7 @@ fn link_mnn() {
     println!("cargo:rustc-link-lib=MNN_Express");
     println!("cargo:rustc-link-lib=MNN_Vulkan");
     println!("cargo:rustc-link-lib=MNN_CL");
-    // Note: libMNN_GL.so is not part of the NDK prebuilt set;
-    // runtime loads it dynamically.
-    // println!("cargo:rustc-link-lib=MNN_GL");
+    println!("cargo:rustc-link-lib=MNN_GL");
 }
 
 #[cfg(feature = "mnn")]
