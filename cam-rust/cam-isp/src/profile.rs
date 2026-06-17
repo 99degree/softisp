@@ -198,7 +198,7 @@ impl PipelineProfile {
         use_tone_stats: true,
         use_histogram: true,
         stats_downscale_max: 540,   // stats read from ~540p (downscaled from aux_hook_src)
-        pipeline_downscale_target: 1920, // downscale 4K→FHD before post-processing
+        pipeline_downscale_target: 0,    // 0 = disabled; set to e.g. 1920 for perf measurement
         eis_margin: 0.0,
         output_format: OutputFormat::PackedRgb,
     };
