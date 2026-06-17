@@ -3,20 +3,14 @@
 //! 8K sensor (7680×4320) → packed INT32 → UnpackCfaBlock(stride_w=1)
 //! → fused demosaic+CCM → cosmetic blocks → DisplayBlock(bg4a) → 4K BGRA.
 //!
+//! Bayer test data is generated inline (deterministic pseudo-random).
+//!
 //! Run:
-//!   python3 -c "
-//!     import struct, random
-//!     random.seed(42)
-//!     raw=bytearray()
-//!     for i in range(7680*4320):
-//!         raw += struct.pack('<H', random.randint(0,1023))
-//!     with open('bayer_8k.raw','wb') as f: f.write(bytes(raw))
-//!   "
 //!   LD_LIBRARY_PATH=$PWD/lib/aarch64 \
 //!     RUST_LOG=warn cargo run --release --example bench_8k -p cam-isp --features mnn
 
 use std::time::Instant;
-use cam_isp::pipeline::{IspBlock, GraphComposer, IspFrame};
+use cam_isp::pipeline::{IspBlock, GraphComposer};
 use cam_isp::engine::{IspEngine, ProcessParams};
 use cam_isp::blocks::*;
 
@@ -31,11 +25,16 @@ fn main() {
     let pipe_h   = 2160u32;   // pipeline output target height (4K)
     let n_frames = 10;        // fewer frames because 8K is slow
 
-    // Load 8K Bayer test data
-    let raw = std::fs::read("bayer_8k.raw")
-        .expect("Generate bayer_8k.raw first (python3 -c ...)");
-    assert_eq!(raw.len(), (sensor_w * sensor_h * 2) as usize,
-        "Expected {} bytes, got {}", sensor_w * sensor_h * 2, raw.len());
+    // Generate 8K Bayer test data inline (deterministic pseudo-random)
+    use std::io::Write;
+    let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 2) as usize);
+    let mut rng_state = 42u64;
+    for _ in 0..sensor_w * sensor_h {
+        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let val = (rng_state >> 22) as u16 & 0x3FF; // 10-bit
+        raw_buf.extend_from_slice(&val.to_le_bytes());
+    }
+    let raw = raw_buf;
 
     // ── Build pipeline blocks ──────────────────────────────────────
     let packed_w = (sensor_w / 2) as i64;
@@ -111,27 +110,22 @@ fn main() {
     println!("Input: {}×{} → Pipeline: {}×{}", sensor_w, sensor_h, pipe_w, pipe_h);
     println!("Running {} frames...\n", n_frames);
 
+    // Shared params — bayer buffer reused across all frames (no per-frame alloc)
+    let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
+    params.target_width = pipe_w;
+    params.target_height = pipe_h;
+    params.sensor_max = 1023.0;
+    params.output_channels = 4;
+
     // Warmup
     for _ in 0..3 {
-        let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
-        params.target_width = pipe_w;
-        params.target_height = pipe_h;
-        params.sensor_max = 1023.0;
-        params.output_channels = 4;
         let _ = engine.process(&params);
     }
 
     // Timed run
-    let start = Instant::now();
     let mut sum_ms = 0.0f64;
     for i in 0..n_frames {
         let t0 = Instant::now();
-        let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
-        params.target_width = pipe_w;
-        params.target_height = pipe_h;
-        params.sensor_max = 1023.0;
-        params.output_channels = 4;
-
         let result = engine.process(&params);
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         sum_ms += ms;
