@@ -18,8 +18,6 @@ pub mod mnnengine;
 #[cfg(feature = "mnn")]
 pub mod mnn_converter;
 #[cfg(feature = "mnn")]
-pub mod mnn_host;
-#[cfg(feature = "mnn")]
 #[cfg(feature = "mnn_buffer")]
 pub mod mnn_buffer;
 
