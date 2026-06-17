@@ -98,14 +98,14 @@ impl MNNBufferManager {
             ManagedBuffer {
                 data,
                 memfd: Some(memfd),
-                ref_count: 1,
+                ref_count: 2,
                 last_access: std::time::Instant::now(),
             }
         } else {
             ManagedBuffer {
                 data: vec![0u8; size],
                 memfd: None,
-                ref_count: 1,
+                ref_count: 2,
                 last_access: std::time::Instant::now(),
             }
         };

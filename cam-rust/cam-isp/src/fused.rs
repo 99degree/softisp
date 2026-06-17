@@ -116,7 +116,7 @@ mod tests {
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(32, 0);
 
-        let pipeline = FusedPipeline::build(blocks, 32);
+        let pipeline = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()));
         assert!(pipeline.is_ok(), "Build failed: {:?}", pipeline.err());
         let pipe = pipeline.unwrap();
         assert!(pipe.is_loaded());
