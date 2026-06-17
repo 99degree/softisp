@@ -1,12 +1,12 @@
-//! Benchmark 8K Bayer → FHD pipeline with ResizeBlock half-scale.
+//! Benchmark 8K Bayer → FHD pipeline with AdaptiveDownscaleBlock.
 //!
-//! 8K sensor (7680×4320) → packed INT32 → UnpackCfaBlock(stride_w=1)
-//! → ResizeBlock(0.5) halves both dims (2160×3840→1080×1920)
-//! → fused demosaic+CCM → cosmetic blocks → DisplayBlock(bg4a) → FHD BGRA.
+//! 8K sensor (7680×4320) → packed INT32 → UnpackCfaBlock(stride_w=1, 4K Bayer)
+//! → aux_hook_src → BayerWb(4K) → CCM(4K) → AdaptiveDownscale(FHD)
+//! → DemosaicCcm → cosmetics → DisplayBlock(bg4a) → FHD BGRA.
 //!
-//! The AdaptiveDownscaleBlock is placed between UnpackCfaBlock and the expensive
-//! demosaic/CCM blocks so the Conv-heavy stages run at 1080p instead of 2160p,
-//! which reduces pixel count by 4×.
+//! WB + CCM run at 4K before downscale so white-balance and color
+//! correction preserve full chroma precision. Demosaic and cosmetic
+//! blocks run at FHD (4× fewer pixels).
 //!
 //! Bayer test data is generated inline (deterministic pseudo-random).
 //!
@@ -70,17 +70,19 @@ fn main() {
         // 3. Aux hook (reference-corrected Bayer for stats) — at 4K
         Box::new(IdentityBlock::new("aux_hook_src")),
 
-        // 4. CCM (color correction matrix) — at 4K Bayer resolution
+        // 4. Bayer WB (white balance gains from AWB controller) — at 4K
+        //    Applied before CCM + downscale so full chroma precision
+        //    is preserved for both color correction and statistics.
+        Box::new(BayerWbBlock::new()),
+
+        // 5. CCM (color correction matrix) — at 4K Bayer resolution
         Box::new(CcmBlock::new()),
 
-        // 5. Adaptive downscale: 2160×3840 → 1080×1920 (FHD)
-        //    After CCM so color transform runs at 4K, then downscale
-        //    reduces pixel count 4× before WB + demosaic + cosmetics.
+        // 6. Adaptive downscale: 2160×3840 → 1080×1920 (FHD)
+        //    After WB + CCM so both run at 4K, then downscale
+        //    reduces pixel count 4× before demosaic + cosmetics.
         Box::new(AdaptiveDownscaleBlock::new(ds_w, ds_h, 1, "reflect", "fit")
             .with_concrete_dims(mid_h, mid_w)),
-
-        // 6. Bayer WB (white balance gains) — at FHD
-        Box::new(BayerWbBlock::new()),
 
         // 7. Fused demosaic + CCM (at FHD resolution)
         Box::new(DemosaicCcmBlock::new(0)
