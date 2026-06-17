@@ -387,15 +387,16 @@ impl PipelineProfile {
         if let Some(factor) = pipeline_factor {
             info!("Pipeline downscale: width={} → {} (factor={:.3})",
                 target_width, (target_width as f32 * factor) as u32, factor);
-            // Use AdaptiveDownscaleBlock in "fit" mode: scales to fit within
+            // Use AdaptiveDownscaleBlock in "pad" mode: scales to fit within
             // target bounds, black pillarbox/letterbox bars for remainder.
             // Preserves ALL content — no edge cropping, no distortion.
             // The stats downscale (2nd AdaptiveDownscaleBlock, "crop" mode)
             // will crop out these black bars before AWB/CCT computation.
+            // NOTE: If target dims match source AR, no bars appear.
             let down_w = (target_width as f64 * factor as f64).round() as i64;
             let down_h = (target_width as f64 * factor as f64 / 1.5).round() as i64; // approx
             blocks.push(Box::new(AdaptiveDownscaleBlock::new(
-                down_w.max(1), down_h.max(1), 0, "constant", "fit")
+                down_w.max(1), down_h.max(1), 0, "edge", "pad")
                 .with_margin(self.eis_margin)));
             // ── AuxHook after downscale: AWB/CCT/stats read from downscaled data ──
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_ds")));
@@ -507,7 +508,9 @@ impl PipelineProfile {
         let mut stats_input_owned = String::from(stats_input_base);
 
         // Stats downscale: AdaptiveDownscaleBlock in "crop" mode.
-        // This handles removing any pillarbox/letterbox from the pipeline
+        // Crops to match target aspect ratio then resizes — maintains aspect
+        // ratio without distortion, no black bars. This also handles removing
+        // any pillarbox/letterbox from the pipeline
         // downscale, then further reducing resolution for cheap stats.
         // The target is computed from stats_downscale_max to limit the
         // longer side, preserving aspect ratio.
@@ -538,7 +541,7 @@ impl PipelineProfile {
                 let tgt_h = (src_h as f32 * factor).ceil() as i64;
                 let tgt_w = (src_w as f32 * factor).ceil() as i64;
                 let mut ds = AdaptiveDownscaleBlock::new(
-                    tgt_w.max(1), tgt_h.max(1), 0, "constant", "fit")
+                    tgt_w.max(1), tgt_h.max(1), 0, "constant", "crop")
                     .with_concrete_dims(src_h, src_w);
                 ds.set_input_source(&stats_input_owned);
                 info!("Stats downscale: {}×{} → {}×{} (factor={:.3}, crop mode)",
