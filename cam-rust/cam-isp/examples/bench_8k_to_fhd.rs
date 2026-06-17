@@ -142,7 +142,7 @@ fn main() {
     params.target_width = pipe_w;
     params.target_height = pipe_h;
     params.sensor_max = 1023.0;
-    params.output_format = cam_isp::engine::OutputFormat::Bgra;
+    params.output_format = cam_isp::engine::OutputFormat::FloatBgra;
 
     // Warmup
     for _ in 0..3 {

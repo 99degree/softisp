@@ -446,73 +446,6 @@ impl MnnEngine {
         buf.chunks_exact(2).map(|c| (u16::from_ne_bytes([c[0], c[1]]) as f32 / max).clamp(0.0, 1.0)).collect()
     }
 
-    fn to_bgra(data: &[f32], ch: usize, h: usize, w: usize) -> Vec<u8> {
-        let mut out = Vec::with_capacity(h * w * 4);
-        if ch >= 4 {
-            // bg4a path: model outputs [1,4,H,W] FLOAT [0,255] BGRA.
-            // Values are exact integers (Conv(1×1) + bias + round = whole numbers).
-            // Just truncate f32→u8, no multiply or clamp needed.
-            for i in 0..h * w {
-                let base = i * 4;
-                out.extend_from_slice(&[
-                    data[base] as u8,       // B
-                    data[base + 1] as u8,   // G
-                    data[base + 2] as u8,   // R
-                    255,                    // A
-                ]);
-            }
-        } else {
-            // Standard float [0,1] RGB path: multiply by 255, round, swap
-            for i in 0..h * w {
-                let base = i * ch;
-                let r = Self::c(data.get(base).copied().unwrap_or(0.0));
-                let g = Self::c(data.get(base + 1).copied().unwrap_or(0.0));
-                let b = Self::c(data.get(base + 2).copied().unwrap_or(0.0));
-                let a = if ch >= 4 { Self::c(data.get(base + 3).copied().unwrap_or(1.0)) } else { 255u8 };
-                out.extend_from_slice(&[b, g, r, a]);
-            }
-        }
-        out
-    }
-    /// Convert MNN output buffer to BGRA Vec<u8>.
-    /// Handles:
-    ///   ch=1: packed INT32 (R*65536+G*256+B, must reinterpret &[f32] as &[i32])
-    ///   ch=3: float [0,1] RGB
-    ///   ch=4: float [0,255] BGRA (bg4a)
-    fn convert_output(data: &[f32], ch: usize, h: usize, w: usize) -> Vec<u8> {
-        let n_pixels = h * w;
-        let mut out = Vec::with_capacity(n_pixels * 4);
-        if ch == 1 {
-            // Packed INT32 path: each i32 = R*65536 + G*256 + B
-            let ints: &[i32] = unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const i32, data.len())
-            };
-            for i in 0..n_pixels {
-                let packed = ints.get(i).copied().unwrap_or(0);
-                let r = ((packed >> 16) & 0xFF) as u8;
-                let g = ((packed >> 8) & 0xFF) as u8;
-                let b = (packed & 0xFF) as u8;
-                out.extend_from_slice(&[b, g, r, 255]);
-            }
-        } else if ch >= 4 {
-            // bg4a path: 4-channel float [0,255] BGRA from Conv(1×1)
-            for i in 0..n_pixels {
-                let base = i * 4;
-                out.extend_from_slice(&[
-                    data[base] as u8,
-                    data[base + 1] as u8,
-                    data[base + 2] as u8,
-                    255,
-                ]);
-            }
-        } else {
-            Self::to_bgra(data, ch, h, w)
-        }
-        out
-    }
-
-    fn c(v: f32) -> u8 { (v * 255.0).round().clamp(0.0, 255.0) as u8 }
-
     /// Write extra input tensors (CCM, tone, gains) into the MNN session
     /// BEFORE inference.  Must be called AFTER resizeSession so tensor
     /// host buffers are valid for writing.
@@ -778,38 +711,25 @@ impl IspEngine for MnnEngine {
             info!("pipeline stage=arrive raw={}×{} bayer={}B sensor_max={}",
                 w, h, buf.len(), smax);
 
-            // Acquire output buffer from pool.
-            // Lifecycle: Free → acquire() (Writing) → release() (Free).
-            // Pre-allocated at first frame to avoid 66MB per-frame zero-fill.
-            let max_out = (tw * h * 4) as i32;
-            let mut pool = self.buf_pool.lock().unwrap();
-            // Resize pool if first call or resolution changed
-            if pool.len() == 0 || pool.buffer_capacity() < max_out as usize {
-                *pool = crate::mnn_buffer::OutputBufferPool::new(3, max_out as usize);
-            }
-            let (buf_id, _buf_slice) = pool.acquire();
-            let out_data: &mut [f32] = _buf_slice;
-
-            info!("pipeline stage=acquire buf_id={}", buf_id);
+            // ── Pre-allocate output buffer (zero-copy target) ──
+            // MNN writes directly into this Vec via host pointer.
+            // We return it as frame.data — no memcpy at all.
+            let max_out = (tw * h * 4) as usize; // max f32 elements: H×W×4
+            let mut out_bytes: Vec<u8> = Vec::with_capacity(max_out * 4);
+            unsafe { out_bytes.set_len(max_out * 4); }
+            let out_ptr = out_bytes.as_mut_ptr() as *mut f32;
 
             // Determine inference path based on model input type
-            //   1) packed_input (INT32): true zero-copy — reinterpret u16 as i32, host ptr
-            //   2) true_zero_copy (INT16/UINT16): direct u16 buffer, blocked by MNN upcast
-            //   3) u16_conversion: copy u16→int32 via host tensor
-            //   4) float_fallback: normalize to f32 then host tensor
             let path: &str;
             let mut n: i32;
             let t_prep_end: std::time::Instant;
             let t_infer_start: std::time::Instant;
 
             // Determine if packed: model expects INT32 packed input
-            // When expected_elems is Some, verify element count matches h*w/2.
-            // When None (unknown height), trust the packed_input flag.
             let is_packed = if self.packed_input {
                 if let Some(expected) = self.expected_input_elements {
                     expected == h * w / 2
                 } else {
-                    // Unknown height — model is still packed, trust the flag
                     true
                 }
             } else {
@@ -817,10 +737,6 @@ impl IspEngine for MnnEngine {
             };
 
             // ── Pre-inference: resize session and set extra inputs ──
-            // Resize BEFORE the convenience wrappers so that:
-            //   1. resizeSession allocates all internal buffers
-            //   2. Extra inputs (CCM, tone, gains) are written to valid host buffers
-            //   3. Convenience wrapper won't resize again (shapes already match)
             {
                 let shape = if is_packed {
                     vec![1, 1, h as i32, (w / 2).max(1) as i32]
@@ -831,26 +747,17 @@ impl IspEngine for MnnEngine {
                     let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
                 }
                 let _ = sess.resize();
-                // Extra inputs: write AFTER resize so host buffers are valid
                 Self::set_extra_inputs(&self.tensor_pool, ccm, tone, bayer, awb, bayer_pattern);
             }
 
             debug!("MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
                 w, h, (w / 2).max(1), is_packed, self.expected_input_elements);
 
-            // ── PACKED ZERO-COPY (ONLY PATH) ──
-            // Model expects INT32[1,1,h,w/2]. Our u16 bayer buffer is reinterpreted
-            // as i32[h*w/2] — same memory, half as many elements.
-            // Input host pointer set before runSession → backend maps via DMA.
-            // Output host pointer set on DisplayBlock/frame before runSession.
-            // Result: zero allocation, zero copy, zero memcpy per frame.
+            // ── PACKED ZERO-COPY ──
             let packed_w = (w / 2).max(1) as i32;
             let packed_shape = [1, 1, h as i32, packed_w];
             let packed_buf: &[i32] = unsafe {
-                std::slice::from_raw_parts(
-                    buf.as_ptr() as *const i32,
-                    buf.len() / 4
-                )
+                std::slice::from_raw_parts(buf.as_ptr() as *const i32, buf.len() / 4)
             };
             info!("pipeline stage=write_input buf={}B -> {} chans packed=true shape=[1,1,{},{}]",
                 buf.len(), packed_buf.len() * 4, h, packed_w);
@@ -859,16 +766,13 @@ impl IspEngine for MnnEngine {
             t_infer_start = Instant::now();
             unsafe {
                 n = crate::mnn_sys::mnn_run_with_output(
-                    interp.as_ptr(),
-                    sess.as_ptr(),
+                    interp.as_ptr(), sess.as_ptr(),
                     packed_buf.as_ptr() as *const c_void,
-                    0,                         // halide_type_int
-                    32,                        // bits
-                    packed_shape.as_ptr(),
-                    packed_shape.len() as i32,
-                    c"DisplayBlock/frame".as_ptr(), // named output
-                    out_data.as_mut_ptr(),
-                    max_out,
+                    0, 32,
+                    packed_shape.as_ptr(), packed_shape.len() as i32,
+                    c"DisplayBlock/frame".as_ptr(),
+                    out_ptr,
+                    max_out as i32,
                 );
             }
 
@@ -880,57 +784,21 @@ impl IspEngine for MnnEngine {
                 return Err(format!("MNN inference failed: {}", n));
             }
 
-            info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} flt)",
+            info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts)",
                 path, t_infer_elapsed, w, h, n);
 
-            // MNN can't resolve output shapes for complex ISP pipelines on OpenCL/CPU.
-            // The output tensor has shape=[0,0,0,0] with dtype=4 (FLOAT) regardless
-            // of actual model output format.  But after runSession, the output DATA
-            // contains the correct number of elements — we detect channel count from n.
+            // ── Determine output size from format and actual element count ──
             let oh = p.target_height as usize;
             let ow = tw as usize;
             let n_valid = n.max(0) as usize;
+            let bpp = p.output_format.bytes_per_pixel();
+            let n_bytes = oh * ow * bpp;
+            // Trim Vec to actual data written by MNN
+            let n_bytes_actual = n_valid.min(n_bytes / bpp) * bpp;
+            unsafe { out_bytes.set_len(n_bytes_actual); }
 
-            // ── Determine channel count and conversion mode ──
-            // For conversion formats (Bgra, Rgba, etc.): detect model channel
-            // count from actual output element count (MNN resolves n after
-            // inference even when shape was [0,0,0,0]).
-            // For model-native formats (FloatRgb, FloatBgra, PackedRgb):
-            // channel count is fixed, no conversion.
-            use crate::engine::OutputFormat;
-            let (ch, raw_bytes_per_pixel) = match p.output_format {
-                OutputFormat::FloatRgb => (3usize, 12usize),   // f32×3
-                OutputFormat::FloatBgra => (4usize, 16usize),  // f32×4
-                OutputFormat::PackedRgb => (1usize, 4usize),   // INT32
-                _ => {
-                    // Conversion formats: detect from n
-                    let ch = if n_valid == oh * ow { 1 }        // INT32 packed
-                        else if n_valid == oh * ow * 4 { 4 }    // bg4a float
-                        else { 3 };                               // default float RGB
-                    (ch, 4) // converted output is always u8×4 (or ×3 for Rgb/Bgr)
-                }
-            };
-            let needs_convert = p.output_format.needs_conversion();
-            let expected_n = oh * ow * ch;
-            let nf = if n <= 0 || n < (expected_n as i32) / 10 {
-                expected_n
-            } else {
-                n as usize
-            };
-
-            // Convert or copy output buffer, then release pool slot.
-            let data_out: Vec<u8> = if needs_convert {
-                let bgra = Self::convert_output(&out_data[..nf], ch, oh, ow, p.output_format);
-                pool.release(buf_id);
-                bgra
-            } else {
-                // Model-native: just memcpy the raw bytes (no unpack math).
-                let n_bytes = oh * ow * raw_bytes_per_pixel;
-                let raw = out_data.as_ptr() as *const u8;
-                let raw_vec = unsafe { std::slice::from_raw_parts(raw, n_bytes) }.to_vec();
-                pool.release(buf_id);
-                raw_vec
-            };
+            // All conversion is done by the ONNX graph — just return raw bytes.
+            let data_out = out_bytes;
 
             // ── Read stats output tensors from MNN session and feed to controller ──
             // After inference, all output tensors are available in the session.

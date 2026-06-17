@@ -1,0 +1,220 @@
+   Compiling cam-hal-android v0.1.0 (/data/data/com.termux/files/home/softisp/cam-rust/cam-hal-android)
+warning: unused import: `c_int`
+  --> cam-hal-android/src/lib.rs:16:28
+   |
+16 | use std::os::raw::{c_char, c_int, c_void};
+   |                            ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0539]: malformed `link` attribute input
+   --> cam-hal-android/src/lib.rs:563:1
+    |
+563 | #[link(symbol = "HAL_MODULE_INFO_SYM")]
+    | ^^^^^^^------------------------------^^
+    |        |
+    |        valid arguments are "name", "kind", "modifiers", "cfg", "wasm_import_module" or "import_name_type"
+    |
+    = note: for more information, visit <https://doc.rust-lang.org/reference/items/external-blocks.html#the-link-attribute>
+
+error[E0459]: `#[link]` attribute requires a `name = "string"` argument
+   --> cam-hal-android/src/lib.rs:563:1
+    |
+563 | #[link(symbol = "HAL_MODULE_INFO_SYM")]
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `name` argument
+
+warning: attribute should be applied to an `extern` block with non-Rust ABI
+   --> cam-hal-android/src/lib.rs:563:1
+    |
+563 | #[link(symbol = "HAL_MODULE_INFO_SYM")]
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+564 | pub static __HAL_MODULE_INFO_SYM: camera_module_t = HAL_MODULE_INFO_SYM;
+    | ------------------------------------------------------------------------ not an `extern` block
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+error[E0277]: `*mut c_void` cannot be sent between threads safely
+   --> cam-hal-android/src/lib.rs:199:19
+    |
+199 | static HAL_STATE: OnceLock<CameraHalState> = OnceLock::new();
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^ `*mut c_void` cannot be sent between threads safely
+    |
+    = help: within `Option<camera3_callback_ops_t>`, the trait `Send` is not implemented for `*mut c_void`
+note: required because it appears within the type `camera3_callback_ops_t`
+   --> cam-hal-android/src/lib.rs:119:12
+    |
+119 | pub struct camera3_callback_ops_t {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `Option<camera3_callback_ops_t>`
+   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/option.rs:600:9
+    = note: required for `std::sync::Mutex<Option<camera3_callback_ops_t>>` to implement `Sync`
+note: required because it appears within the type `CameraHalState`
+   --> cam-hal-android/src/lib.rs:183:8
+    |
+183 | struct CameraHalState {
+    |        ^^^^^^^^^^^^^^
+    = note: required for `OnceLock<CameraHalState>` to implement `Sync`
+    = note: shared static variables must have a type that implements `Sync`
+
+error[E0277]: `*mut c_void` cannot be shared between threads safely
+   --> cam-hal-android/src/lib.rs:541:33
+    |
+541 | pub static HAL_MODULE_INFO_SYM: camera_module_t = camera_module_t {
+    |                                 ^^^^^^^^^^^^^^^ `*mut c_void` cannot be shared between threads safely
+    |
+    = help: within `camera_module_t`, the trait `Sync` is not implemented for `*mut c_void`
+note: required because it appears within the type `hardware_module_t`
+   --> cam-hal-android/src/lib.rs:28:12
+    |
+ 28 | pub struct hardware_module_t {
+    |            ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `camera_module_t`
+   --> cam-hal-android/src/lib.rs:55:12
+    |
+ 55 | pub struct camera_module_t {
+    |            ^^^^^^^^^^^^^^^
+    = note: shared static variables must have a type that implements `Sync`
+
+error[E0277]: `*mut c_void` cannot be shared between threads safely
+   --> cam-hal-android/src/lib.rs:564:35
+    |
+564 | pub static __HAL_MODULE_INFO_SYM: camera_module_t = HAL_MODULE_INFO_SYM;
+    |                                   ^^^^^^^^^^^^^^^ `*mut c_void` cannot be shared between threads safely
+    |
+    = help: within `camera_module_t`, the trait `Sync` is not implemented for `*mut c_void`
+note: required because it appears within the type `hardware_module_t`
+   --> cam-hal-android/src/lib.rs:28:12
+    |
+ 28 | pub struct hardware_module_t {
+    |            ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `camera_module_t`
+   --> cam-hal-android/src/lib.rs:55:12
+    |
+ 55 | pub struct camera_module_t {
+    |            ^^^^^^^^^^^^^^^
+    = note: shared static variables must have a type that implements `Sync`
+
+error[E0609]: no field `width` on type `*mut camera3_stream_t`
+   --> cam-hal-android/src/lib.rs:251:38
+    |
+251 |                 width: buffer.stream.width,
+    |                                      ^^^^^ unknown field
+    |
+help: `buffer.stream` is a raw pointer; try dereferencing it
+    |
+251 |                 width: (*buffer.stream).width,
+    |                        ++             +
+
+error[E0609]: no field `height` on type `*mut camera3_stream_t`
+   --> cam-hal-android/src/lib.rs:252:39
+    |
+252 |                 height: buffer.stream.height,
+    |                                       ^^^^^^ unknown field
+    |
+help: `buffer.stream` is a raw pointer; try dereferencing it
+    |
+252 |                 height: (*buffer.stream).height,
+    |                         ++             +
+
+error[E0599]: no variant or associated item named `Raw16` found for enum `FrameFormat` in the current scope
+   --> cam-hal-android/src/lib.rs:253:38
+    |
+253 |                 format: FrameFormat::Raw16, // Assume RAW16 for now
+    |                                      ^^^^^ variant or associated item not found in `FrameFormat`
+
+error[E0609]: no field `callbacks` on type `&camera_module_callbacks_t`
+   --> cam-hal-android/src/lib.rs:341:35
+    |
+341 |         *cb_lock = Some(callbacks.callbacks);
+    |                                   ^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `camera_device_status`, `camera_device_available`, `camera_device_unavailable`, `reserved`
+
+error[E0277]: the trait bound `Box<dyn ICameraAdapter>: ICameraAdapter` is not satisfied
+   --> cam-hal-android/src/lib.rs:386:54
+    |
+386 |     let camera_device = AndroidCameraDevice::new(id, adapter);
+    |                                                      ^^^^^^^ the trait `ICameraAdapter` is not implemented for `Box<dyn ICameraAdapter>`
+    |
+help: the trait `ICameraAdapter` is implemented for `StubCameraAdapter`
+   --> cam-hal-android/src/lib.rs:583:1
+    |
+583 | impl ICameraAdapter for StubCameraAdapter {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: required for the cast from `Box<Box<dyn ICameraAdapter>>` to `Box<(dyn ICameraAdapter + 'static)>`
+
+error[E0606]: casting `&c_void` as `*const Arc<std::sync::Mutex<AndroidCameraDevice>>` is invalid
+   --> cam-hal-android/src/lib.rs:465:22
+    |
+465 |     let device_arc = &*(*dev_struct).priv_ as *const Arc<Mutex<AndroidCameraDevice>>;
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0277]: `*const camera3_capture_request_t` cannot be sent between threads safely
+   --> cam-hal-android/src/lib.rs:514:24
+    |
+514 |       std::thread::spawn(move || {
+    |       ------------------ ^------
+    |       |                  |
+    |  _____|__________________within this `{closure@cam-hal-android/src/lib.rs:514:24: 514:31}`
+    | |     |
+    | |     required by a bound introduced by this call
+515 | |         let device = device_clone.lock().unwrap();
+516 | |         let result = device.process_request(request);
+517 | |         if result != 0 {
+...   |
+520 | |     });
+    | |_____^ `*const camera3_capture_request_t` cannot be sent between threads safely
+    |
+    = help: within `{closure@cam-hal-android/src/lib.rs:514:24: 514:31}`, the trait `Send` is not implemented for `*const camera3_capture_request_t`
+note: required because it's used within this closure
+   --> cam-hal-android/src/lib.rs:514:24
+    |
+514 |     std::thread::spawn(move || {
+    |                        ^^^^^^^
+note: required by a bound in `spawn`
+   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/thread/functions.rs:125:0
+
+error[E0277]: `*mut c_void` cannot be sent between threads safely
+   --> cam-hal-android/src/lib.rs:514:24
+    |
+514 |       std::thread::spawn(move || {
+    |  _____------------------_^
+    | |     |
+    | |     required by a bound introduced by this call
+515 | |         let device = device_clone.lock().unwrap();
+516 | |         let result = device.process_request(request);
+517 | |         if result != 0 {
+...   |
+520 | |     });
+    | |_____^ `*mut c_void` cannot be sent between threads safely
+    |
+    = help: within `Option<camera3_callback_ops_t>`, the trait `Send` is not implemented for `*mut c_void`
+note: required because it appears within the type `camera3_callback_ops_t`
+   --> cam-hal-android/src/lib.rs:119:12
+    |
+119 | pub struct camera3_callback_ops_t {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `Option<camera3_callback_ops_t>`
+   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/option.rs:600:9
+    = note: required for `std::sync::Mutex<Option<camera3_callback_ops_t>>` to implement `Send`
+note: required because it appears within the type `AndroidCameraDevice`
+   --> cam-hal-android/src/lib.rs:205:8
+    |
+205 | struct AndroidCameraDevice {
+    |        ^^^^^^^^^^^^^^^^^^^
+    = note: required for `std::sync::Mutex<AndroidCameraDevice>` to implement `Sync`
+    = note: 1 redundant requirement hidden
+    = note: required for `Arc<std::sync::Mutex<AndroidCameraDevice>>` to implement `Send`
+note: required because it's used within this closure
+   --> cam-hal-android/src/lib.rs:514:24
+    |
+514 |     std::thread::spawn(move || {
+    |                        ^^^^^^^
+note: required by a bound in `spawn`
+   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/thread/functions.rs:125:0
+
+Some errors have detailed explanations: E0277, E0459, E0539, E0599, E0606, E0609.
+For more information about an error, try `rustc --explain E0277`.
+warning: `cam-hal-android` (lib) generated 2 warnings
+error: could not compile `cam-hal-android` (lib) due to 13 previous errors; 2 warnings emitted
