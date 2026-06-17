@@ -221,8 +221,13 @@ impl MnnEngine {
 
         let h = bench_h as i64;
         let w = bench_w as i64;
+        let packed_w = (bench_w / 2).max(1) as i64;
 
         // ── Dimension helpers ──
+        let dim_1packed = || vec![
+            Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(h), Proto::tensor_dim_value(packed_w),
+        ];
         let dim_1hw = || vec![
             Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
             Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
@@ -234,6 +239,10 @@ impl MnnEngine {
         let dim_8hw = || vec![
             Proto::tensor_dim_value(1), Proto::tensor_dim_value(8),
             Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
+        ];
+        let dim_8packed = || vec![
+            Proto::tensor_dim_value(1), Proto::tensor_dim_value(8),
+            Proto::tensor_dim_value(h), Proto::tensor_dim_value(packed_w),
         ];
         let dim_8111 = || vec![
             Proto::tensor_dim_value(1), Proto::tensor_dim_value(8),
@@ -315,13 +324,13 @@ impl MnnEngine {
         ];
 
         // ── Value info ──
-        let inputs = vec![Proto::value_info("input", &dim_1hw(), 5)];  // 5 = INT16
+        let inputs = vec![Proto::value_info("input", &dim_1packed(), 6)];  // 6 = INT32 packed: [1,1,H,W/2]
         let outputs = vec![Proto::value_info("output", &dim_3hw(), 1)];
         let vi = vec![
-            Proto::value_info("conv1_out", &dim_8hw(), 1),
-            Proto::value_info("relu1_out", &dim_8hw(), 1),
-            Proto::value_info("conv2_out", &dim_8hw(), 1),
-            Proto::value_info("relu2_out", &dim_8hw(), 1),
+            Proto::value_info("conv1_out", &dim_8packed(), 1),
+            Proto::value_info("relu1_out", &dim_8packed(), 1),
+            Proto::value_info("conv2_out", &dim_8packed(), 1),
+            Proto::value_info("relu2_out", &dim_8packed(), 1),
             Proto::value_info("gap_out", &dim_8111(), 1),
             Proto::value_info("flat8_out", &dim_8(), 1),
             Proto::value_info("mm1_out", &dim_64(), 1),
@@ -635,7 +644,7 @@ impl IspEngine for MnnEngine {
             })?;
             let sess = interp.create_session(self.backend.to_sys(), 4)
                 .ok_or("session create fail")?;
-            
+
             // Query model input type for zero-copy optimization
             let mut input_code = 0i32;
             let mut input_bits = 0i32;
