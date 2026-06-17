@@ -4,6 +4,7 @@
 //! processing cost. Ported from `com.camcore.isp.pipeline.PipelineProfile` (Java).
 
 use crate::blocks::*;
+use crate::engine::OutputFormat;
 use crate::pipeline::IspBlock;
 use log::info;
 
@@ -110,6 +111,8 @@ pub struct PipelineProfile {
     /// EIS margin fraction (0.05 = 5%). Passed to AdaptiveDownscaleBlock for
     /// reserving edge pixels for EIS/deshake warp shifts.
     pub eis_margin: f64,
+    /// Output pixel format.
+    pub output_format: OutputFormat,
 }
 
 impl PipelineProfile {
@@ -139,6 +142,7 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        output_format: OutputFormat::PackedRgb,
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -167,6 +171,7 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        output_format: OutputFormat::PackedRgb,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -195,6 +200,7 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        output_format: OutputFormat::PackedRgb,
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -223,6 +229,7 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        output_format: OutputFormat::PackedRgb,
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -252,6 +259,7 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        output_format: OutputFormat::PackedRgb,
     };
 
     /// All built-in profiles.
@@ -309,6 +317,7 @@ impl PipelineProfile {
             stats_downscale_max, // adaptive stats downscale
             pipeline_downscale_target, // main pipeline downscale target
             eis_margin,          // EIS margin fraction
+            output_format: OutputFormat::PackedRgb,
         }
     }
 
@@ -458,7 +467,7 @@ impl PipelineProfile {
         let display_h = (target_width as f64 / 1.5).round() as i64; // 16:9 approx
         blocks.push(Box::new(DisplayBlock::new(target_width)
             .with_rotate(self.rotate_mode)
-            .with_pack_rgba(true)
+            .with_output_format(self.output_format)
             .with_concrete_dims(display_h, target_width as i64)));
 
         info!("  blocks: {} total", blocks.len());

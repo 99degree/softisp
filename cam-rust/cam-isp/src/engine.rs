@@ -9,8 +9,6 @@ use cam_types::ToneParams;
 use crate::pipeline::{IspBlock, IspFrame};
 use crate::controller::IspController;
 
-/// Output format from the ISP pipeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Output pixel format selector.
 ///
 /// Controls whether the engine converts the MNN output to a specific byte
@@ -50,13 +48,20 @@ impl Default for OutputFormat {
 }
 
 impl OutputFormat {
-    /// Whether this format requires conversion from the model output.
-    pub fn needs_conversion(self) -> bool {
-        matches!(self, Self::Bgra | Self::Rgba | Self::Argb | Self::Abgr | Self::Rgb | Self::Bgr)
+    /// Model output channel count for this format.
+    pub fn channel_count(self) -> usize {
+        match self {
+            Self::PackedRgb => 1,
+            Self::FloatRgb | Self::Rgb | Self::Bgr => 3,
+            _ => 4,
+        }
     }
-    /// Bytes per pixel for this format.
+    /// Bytes per pixel in the final output.
     pub fn bytes_per_pixel(self) -> usize {
         match self {
+            Self::FloatRgb => 12,     // f32×3
+            Self::FloatBgra => 16,    // f32×4
+            Self::PackedRgb => 4,     // INT32
             Self::Rgb | Self::Bgr => 3,
             _ => 4,
         }
