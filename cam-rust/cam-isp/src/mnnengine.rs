@@ -72,9 +72,11 @@ pub struct MnnEngine {
     sess: Option<Mutex<MnnSessionSafe>>,
     /// Pipeline-aligned output buffer pool.
     /// Pre-allocated at build(), recycled every frame via acquire/release.
-    /// Lifecycle: Free → acquire() → Writing → release() → Free.
     #[cfg(feature = "mnn")]
     buf_pool: Mutex<crate::mnn_buffer::OutputBufferPool>,
+    /// Cached tensor handles for extra inputs — avoids CString alloc per frame.
+    #[cfg(feature = "mnn")]
+    tensor_pool: Vec<(String, crate::mnn_sys::MnnTensorSafe)>,
 }
 
 #[cfg(feature = "mnn")]
@@ -113,9 +115,12 @@ impl MnnEngine {
             #[cfg(feature = "mnn")]
             buf_pool: Mutex::new(crate::mnn_buffer::OutputBufferPool::new(3, 1)),
             #[cfg(feature = "mnn")]
+            #[cfg(feature = "mnn")]
             interp: None,
             #[cfg(feature = "mnn")]
             sess: None,
+            #[cfg(feature = "mnn")]
+            tensor_pool: Vec::new(),
         }
     }
 
@@ -510,15 +515,17 @@ impl MnnEngine {
     /// - 2 = GRBG
     /// - 3 = GBRG
     fn set_extra_inputs(
-        interp: &crate::mnn_sys::MnnInterpreterSafe,
-        sess: &crate::mnn_sys::MnnSessionSafe,
+        pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
         ccm: Option<&[f32; 9]>,
         tone: &ToneParams,
         bayer: Option<&[f32; 4]>,
         _awb: Option<&[f32; 3]>,
         bayer_pattern: i32,
     ) {
-        use crate::mnn_sys::MnnInterpreterSafe as MI;
+        /// Look up a cached tensor handle by name prefix (fast — no CString alloc).
+        fn find<'a>(pool: &'a [(String, crate::mnn_sys::MnnTensorSafe)], name: &str) -> Option<&'a crate::mnn_sys::MnnTensorSafe> {
+            pool.iter().find(|(n, _)| n == name).map(|(_, t)| t)
+        }
 
         // DemosaicCcmBlock/w [3,4,1,1] — fused CCM × demosaic weights
         //
@@ -573,7 +580,7 @@ impl MnnEngine {
                     fused[i * 4 + j] = s * tone.contrast;
                 }
             }
-            if let Some(t) = interp.get_input(sess, "DemosaicCcmBlock/w") {
+            if let Some(t) = find(pool, "DemosaicCcmBlock/w") {
                 if let Some(mut bytes) = t.as_bytes_mut() {
                     let src = unsafe {
                         std::slice::from_raw_parts(fused.as_ptr() as *const u8, 48)
@@ -583,7 +590,7 @@ impl MnnEngine {
             }
         }
         // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
-        if let Some(t) = interp.get_input(sess, "DemosaicCcmBlock/b") {
+        if let Some(t) = find(pool, "DemosaicCcmBlock/b") {
             if let Some(mut bytes) = t.as_bytes_mut() {
                 // When tone is fused in, absorb brightness into bias
                 let bias = [tone.brightness; 3];
@@ -593,7 +600,7 @@ impl MnnEngine {
         }
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains
         if let Some(gains) = bayer {
-            if let Some(t) = interp.get_input(sess, "BayerWbBlock/gains") {
+            if let Some(t) = find(pool, "BayerWbBlock/gains") {
                 if let Some(mut bytes) = t.as_bytes_mut() {
                     let src = unsafe { std::slice::from_raw_parts(gains.as_ptr() as *const u8, 16) };
                     if bytes.len() >= 16 { bytes[..16].copy_from_slice(src); }
@@ -601,21 +608,21 @@ impl MnnEngine {
             }
         }
         // ToneBlock/contrast [1]
-        if let Some(t) = interp.get_input(sess, "ToneBlock/contrast") {
+        if let Some(t) = find(pool, "ToneBlock/contrast") {
             if let Some(mut bytes) = t.as_bytes_mut() {
                 let src = unsafe { std::slice::from_raw_parts((&tone.contrast as *const f32) as *const u8, 4) };
                 if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
             }
         }
         // ToneBlock/brightness [1]
-        if let Some(t) = interp.get_input(sess, "ToneBlock/brightness") {
+        if let Some(t) = find(pool, "ToneBlock/brightness") {
             if let Some(mut bytes) = t.as_bytes_mut() {
                 let src = unsafe { std::slice::from_raw_parts((&tone.brightness as *const f32) as *const u8, 4) };
                 if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
             }
         }
         // ToneBlock/gamma_recip [1]
-        if let Some(t) = interp.get_input(sess, "ToneBlock/gamma_recip") {
+        if let Some(t) = find(pool, "ToneBlock/gamma_recip") {
             if let Some(mut bytes) = t.as_bytes_mut() {
                 let src = unsafe { std::slice::from_raw_parts((&tone.gamma_recip as *const f32) as *const u8, 4) };
                 if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
@@ -704,7 +711,24 @@ impl IspEngine for MnnEngine {
             self.packed_input = input_code == 0 && input_bits == 32;
             info!("MNN model input type: code={}, bits={} packed={} expected_elems={}",
                 input_code, input_bits, self.packed_input, expected_elems);
-            
+
+            // Populate tensor pool: cache all extra input handles to avoid
+            // per-frame CString allocations in set_extra_inputs().
+            let extra_names = [
+                "DemosaicCcmBlock/w",
+                "DemosaicCcmBlock/b",
+                "BayerWbBlock/gains",
+                "ToneBlock/contrast",
+                "ToneBlock/brightness",
+                "ToneBlock/gamma_recip",
+            ];
+            for name in &extra_names {
+                if let Some(t) = interp.get_input(&sess, name) {
+                    self.tensor_pool.push((name.to_string(), t));
+                }
+            }
+            debug!("tensor_pool: {} cached handles", self.tensor_pool.len());
+
             self.interp = Some(interp);
             self.sess = Some(Mutex::new(sess));
             info!("MNN engine loaded from {} (backend={:?})", mnn, self.backend);
@@ -794,107 +818,45 @@ impl IspEngine for MnnEngine {
                 }
                 let _ = sess.resize();
                 // Extra inputs: write AFTER resize so host buffers are valid
-                Self::set_extra_inputs(&interp, &sess, ccm, tone, bayer, awb, bayer_pattern);
+                Self::set_extra_inputs(&self.tensor_pool, ccm, tone, bayer, awb, bayer_pattern);
             }
 
             debug!("MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
                 w, h, (w / 2).max(1), is_packed, self.expected_input_elements);
 
-            if is_packed {
-                // ── PACKED ZERO-COPY (TRUE ZERO-COPY) ──
-                // Model expects INT32[1,1,h,w/2]. Our buffer has u16[h*w] worth of data.
-                // Reinterpret as i32[h*w/2] — same memory, half as many elements.
-                // MNN uses the buffer's host pointer directly — no allocation, no copy.
-                path = "packed_zero_copy";
-                let packed_w = (w / 2).max(1) as i32;
-                let packed_shape = [1, 1, h as i32, packed_w];
-                let packed_buf: &[i32] = unsafe {
-                    std::slice::from_raw_parts(
-                        buf.as_ptr() as *const i32,
-                        buf.len() / 4  // u8 → i32: 4× fewer elements
-                    )
-                };
-                info!("pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
-                    buf.len(), packed_buf.len() * 4, is_packed, h, packed_w);
-                t_prep_end = Instant::now();  // prep = just the pointer cast
-                t_infer_start = Instant::now();
-                unsafe {
-                    n = crate::mnn_sys::mnn_run_true_zero_copy(
-                        interp.as_ptr(),
-                        sess.as_ptr(),
-                        packed_buf.as_ptr() as *const c_void,
-                        0,   // halide_type_int = 0
-                        32,  // bits = 32
-                        packed_shape.as_ptr(),
-                        packed_shape.len() as i32,
-                        out_data.as_mut_ptr(),
-                        max_out,
-                    );
-                }
-            } else if self.model_input_type.map_or(false, |(code, bits)| {
-                (code == 1 && bits == 16) || (code == 0 && bits == 16)
-            }) {
-                // ── TRUE ZERO-COPY (INT16/UINT16) ──
-                // Pass raw u16 buffer directly. Works only if MNN converter preserves INT16.
-                // Currently blocked by MNN converter upcast to INT32.
-                path = "true_zero_copy";
-                let shape = [1, 1, h as i32, w as i32];
-                t_prep_end = Instant::now();
-                t_infer_start = Instant::now();
-                unsafe {
-                    n = crate::mnn_sys::mnn_run_true_zero_copy(
-                        interp.as_ptr(),
-                        sess.as_ptr(),
-                        buf.as_ptr() as *const c_void,
-                        1,   // halide_type_uint = 1
-                        16,  // bits = 16
-                        shape.as_ptr(),
-                        shape.len() as i32,
-                        out_data.as_mut_ptr(),
-                        max_out,
-                    );
-                }
-            } else if self.model_input_type.map_or(false, |(code, bits)| {
-                (code == 0 || code == 1) && (bits == 16 || bits == 32)
-            }) {
-                // ── U16 CONVERSION (FAST COPY) ──
-                // Pass u16 buffer, MNN host tensor wrapper converts to model type.
-                // Does a copy, but achieves ~0ms prep in practice.
-                path = "u16_conversion";
-                let shape = [1, 1, h as i32, w as i32];
-                t_prep_end = Instant::now();
-                t_infer_start = Instant::now();
-                unsafe {
-                    n = crate::mnn_sys::mnn_run_host_tensors_u16(
-                        interp.as_ptr(),
-                        sess.as_ptr(),
-                        buf.as_ptr() as *const u16,
-                        shape.as_ptr(),
-                        shape.len() as i32,
-                        out_data.as_mut_ptr(),
-                        max_out,
-                    );
-                }
-            } else {
-                // ── FLOAT FALLBACK ──
-                // Normalize u16→f32, use host tensors. Slowest due to normalization.
-                path = "float_fallback";
-                let shape = [1, 1, h as i32, w as i32];
-                let f32d = Self::norm(buf, smax);
-                t_prep_end = Instant::now();  // norm done
-                t_infer_start = Instant::now();
-                unsafe {
-                    n = crate::mnn_sys::mnn_run_host_tensors(
-                        interp.as_ptr(),
-                        sess.as_ptr(),
-                        f32d.as_ptr(),
-                        shape.as_ptr(),
-                        shape.len() as i32,
-                        out_data.as_mut_ptr(),
-                        max_out,
-                    );
-                }
+            // ── PACKED ZERO-COPY (ONLY PATH) ──
+            // Model expects INT32[1,1,h,w/2]. Our u16 bayer buffer is reinterpreted
+            // as i32[h*w/2] — same memory, half as many elements.
+            // Input host pointer set before runSession → backend maps via DMA.
+            // Output host pointer set on DisplayBlock/frame before runSession.
+            // Result: zero allocation, zero copy, zero memcpy per frame.
+            let packed_w = (w / 2).max(1) as i32;
+            let packed_shape = [1, 1, h as i32, packed_w];
+            let packed_buf: &[i32] = unsafe {
+                std::slice::from_raw_parts(
+                    buf.as_ptr() as *const i32,
+                    buf.len() / 4
+                )
             };
+            info!("pipeline stage=write_input buf={}B -> {} chans packed=true shape=[1,1,{},{}]",
+                buf.len(), packed_buf.len() * 4, h, packed_w);
+            path = "packed_zero_copy";
+            t_prep_end = Instant::now();
+            t_infer_start = Instant::now();
+            unsafe {
+                n = crate::mnn_sys::mnn_run_with_output(
+                    interp.as_ptr(),
+                    sess.as_ptr(),
+                    packed_buf.as_ptr() as *const c_void,
+                    0,                         // halide_type_int
+                    32,                        // bits
+                    packed_shape.as_ptr(),
+                    packed_shape.len() as i32,
+                    c"DisplayBlock/frame".as_ptr(), // named output
+                    out_data.as_mut_ptr(),
+                    max_out,
+                );
+            }
 
             let t_total_elapsed = t_start.elapsed();
             let t_infer_elapsed = t_infer_start.elapsed();

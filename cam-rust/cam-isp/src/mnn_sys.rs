@@ -75,43 +75,7 @@ extern "C" {
     fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
     fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
     fn mnn_tensor_set_shape(interpreter: *mut c_void, session: *mut c_void, tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
-    pub fn mnn_run_host_tensors(
-        interpreter: *mut c_void,
-        session: *mut c_void,
-        in_data: *const c_float,
-        in_shape: *const c_int,
-        in_ndim: c_int,
-        out_data: *mut c_float,
-        max_out: c_int,
-    ) -> c_int;
-
-    // ── Express Module API ──
-// ── Zero-copy inference with existing buffer ──────────────────────
-
-fn mnn_run_with_buffer(
-    interpreter: *mut c_void,
-    session: *mut c_void,
-    buffer: *const c_void,
-    buffer_type_code: c_int,
-    buffer_type_bits: c_int,
-    in_shape: *const c_int,
-    in_ndim: c_int,
-    out_data: *mut c_float,
-    max_out: c_int,
-) -> c_int;
-
-
-pub fn mnn_run_zero_copy(
-    interpreter: *mut c_void,
-    session: *mut c_void,
-    buffer: *const c_void,
-    in_shape: *const c_int,
-    in_ndim: c_int,
-    out_data: *mut c_float,
-    max_out: c_int,
-) -> c_int;
-
-pub fn mnn_get_model_input_type(
+    pub fn mnn_get_model_input_type(
     interpreter: *mut c_void,
     session: *mut c_void,
     out_code: *mut c_int,
@@ -139,16 +103,6 @@ pub fn mnn_run_with_output(
     in_shape: *const c_int,
     in_ndim: c_int,
     output_name: *const c_char,
-    out_data: *mut c_float,
-    max_out: c_int,
-) -> c_int;
-
-pub fn mnn_run_host_tensors_u16(
-    interpreter: *mut c_void,
-    session: *mut c_void,
-    in_data: *const u16,
-    in_shape: *const c_int,
-    in_ndim: c_int,
     out_data: *mut c_float,
     max_out: c_int,
 ) -> c_int;
