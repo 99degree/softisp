@@ -1,14 +1,24 @@
-//! Benchmark 8K Bayer → FHD pipeline with AdaptiveDownscaleBlock.
+//! Benchmark 8K Bayer → FHD pipeline — clean architecture.
 //!
-//! 8K sensor (7680×4320) → packed INT32 → UnpackCfaBlock(stride_w=1, 4K Bayer)
-//! → aux_hook_src → BayerWb(4K) → CCM(4K) → AdaptiveDownscale(FHD)
-//! → DemosaicCcm → cosmetics → DisplayBlock(bg4a) → FHD BGRA.
+//! Main flow (12 blocks):
+//!   RawInput → UnpackCfa(4K Bayer) → aux_hook_src
+//!     → bayer_wb(id) → DemosaicCcm(4K, fused WB+CCM+tone)
+//!     → AdaptiveDownscale(FHD) → tone(id) → aux_hook_out
+//!     → FCS → LDCI → EE → Display(BGRA)
 //!
-//! WB + CCM run at 4K before downscale so white-balance and color
-//! correction preserve full chroma precision. Demosaic and cosmetic
-//! blocks run at FHD (4× fewer pixels).
+//! Design principle: chain fusible ops together (WB+CCM+tone into
+//! DemosaicCcmBlock at 4K), then downscale before non-fusible blocks
+//! (FCS, LDCI, EE) so they run at FHD with 4× fewer pixels.
 //!
-//! Bayer test data is generated inline (deterministic pseudo-random).
+//! All stats blocks (ZoneStats, ChannelMeans, ToneStats, CoarseHistogram)
+//! tap exclusively at aux_hook_src — they read Bayer for statistics without
+//! modifying the main pipeline.
+//!
+//! WB and Tone kept as IdentityBlock placeholders — architecture reference.
+//! Actual fusion is in DemosaicCcmBlock. Controller passes gains, matrix,
+//! and params as extra inputs at inference time.
+//!
+//! Bayer test data generated inline (deterministic pseudo-random).
 //!
 //! Run:
 //!   LD_LIBRARY_PATH=$PWD/lib/aarch64 \
@@ -24,42 +34,46 @@ fn main() {
     cam_isp::init();
 
     // ── 8K sensor → FHD pipeline ──
-    let sensor_w = 7680u32;   // 8K sensor width
-    let sensor_h = 4320u32;   // 8K sensor height
-    let pipe_w   = 1920u32;   // pipeline output target width  (FHD)
-    let pipe_h   = 1080u32;   // pipeline output target height (FHD)
+    let sensor_w = 7680u32;
+    let sensor_h = 4320u32;
+    let pipe_w   = 1920u32;
+    let pipe_h   = 1080u32;
     let n_frames = 20;
 
-    // Generate 8K Bayer test data inline (no file I/O, deterministic)
+    // Generate 8K Bayer test data inline
     use std::io::Write;
     let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 2) as usize);
     let mut rng_state = 42u64;
     for _ in 0..sensor_w * sensor_h {
         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        let val = (rng_state >> 22) as u16 & 0x3FF; // 10-bit
+        let val = (rng_state >> 22) as u16 & 0x3FF;
         raw_buf.extend_from_slice(&val.to_le_bytes());
     }
     let raw = raw_buf;
 
-    // ── Build pipeline blocks ──────────────────────────────────────
+    // ── Build main pipeline blocks (10 blocks) ─────────────────
+    //
+    // All stats/blocks connect to aux_hook_src as aux branches —
+    // they read Bayer for statistics without modifying main flow.
+    //
+    // Controller params (WB gains, CCM matrix, tone curve) are passed
+    // as extra inputs to DemosaicCcmBlock at inference time.
     let packed_w = (sensor_w / 2) as i64;
     let full_w   = sensor_w as i64;
     let full_h   = sensor_h as i64;
     let ds_w     = pipe_w as i64;
     let ds_h     = pipe_h as i64;
-
-    // Intermediate after unpack: 2160×3840 (4K, 4-channel Bayer)
-    let mid_h = (full_h / 2) as i64;      // 2160 (after UnpackCfa stride=2)
-    let mid_w = packed_w;                  // 3840 (stride_w=1 keeps width)
+    let mid_h    = (full_h / 2) as i64;   // 2160 (after UnpackCfa stride=2)
+    let mid_w    = packed_w;               // 3840
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-        // 1. Packed INT32 input (sensor resolution)
+        // 1. Packed INT32 input
         Box::new(RawInputBlock::new()
             .with_elem_type(6)
             .with_concrete_dims(full_h, packed_w)),
 
-        // 2. Unpack CFA: stride=2 in height (4320→2160), stride=1 in width
-        //    Output: [1,4,2160,3840] = 4K Bayer middle
+        // 2. Unpack CFA: stride=2 height (4320→2160), stride=1 width
+        //    Output: [1,4,2160,3840] = 4K Bayer (unpacked + normalized + BLC)
         Box::new(UnpackCfaBlock::new()
             .with_concrete_width(full_w)
             .with_concrete_dims(full_h, full_w)
@@ -67,39 +81,34 @@ fn main() {
             .with_sensor_max(1023.0)
             .with_blc(true)),
 
-        // 3. Aux hook (reference-corrected Bayer for stats) — at 4K
+        // 3. Stats hook — all stats blocks tap here
         Box::new(IdentityBlock::new("aux_hook_src")),
 
-        // 4. Bayer WB (white balance gains from AWB controller) — at 4K
-        //    Applied before CCM + downscale so full chroma precision
-        //    is preserved for both color correction and statistics.
-        Box::new(BayerWbBlock::new()),
+        // 4. White balance (identity — fused into DemosaicCcmBlock)
+        Box::new(IdentityBlock::new("bayer_wb")),
 
-        // 5. CCM (color correction matrix) — at 4K Bayer resolution
-        Box::new(CcmBlock::new()),
+        // 5. Fused demosaic + WB + CCM + tone (single Conv block @ 4K)
+        //    Runs at 2160×3840 for full demosaic quality before downscale.
+        Box::new(DemosaicCcmBlock::new(0)       // 0 = RGGB
+            .with_concrete_dims(mid_h, mid_w)),
 
         // 6. Adaptive downscale: 2160×3840 → 1080×1920 (FHD)
-        //    After WB + CCM so both run at 4K, then downscale
-        //    reduces pixel count 4× before demosaic + cosmetics.
+        //    After fusible chain. Everything after runs at FHD: 4× fewer pixels.
         Box::new(AdaptiveDownscaleBlock::new(ds_w, ds_h, 1, "reflect", "fit")
             .with_concrete_dims(mid_h, mid_w)),
 
-        // 7. Fused demosaic + CCM (at FHD resolution)
-        Box::new(DemosaicCcmBlock::new(0)
-            .with_concrete_dims(ds_h, ds_w)),
-
-        // 8. Tone (identity when fused)
+        // 7. Tone (identity — already fused, placeholder for topology)
         Box::new(IdentityBlock::new("tone")),
 
-        // 9. Aux hook out
+        // 8. Aux hook out
         Box::new(IdentityBlock::new("aux_hook_out")),
 
-        // 10–12. Cosmetic blocks (at FHD)
+        // 7–9. Cosmetic post-processing at FHD
         Box::new(FcsBlock::new()),
         Box::new(LdciBlock::new()),
         Box::new(EeBlock::new()),
 
-        // 13. Display output at FHD (bg4a: Conv 1×1 BGRA float [0,255])
+        // 10. Display output (bg4a: Conv 1×1 BGRA float [0,255])
         Box::new(DisplayBlock::new(pipe_w)
             .with_pack_rgba(false)
             .with_bg4a(true)
@@ -108,7 +117,7 @@ fn main() {
 
     GraphComposer::wire_blocks(&mut blocks);
 
-    // ── Select engine and build ────────────────────────────────────
+    // ── Select engine and build ────────────────────────────────
     let mut all = blocks;
     let head = all.remove(0);
     let mut engine: Box<dyn IspEngine> = match cam_isp::engine::select_engine() {
@@ -117,18 +126,18 @@ fn main() {
     };
     println!("Engine: {} (priority {})", engine.backend_name(), engine.priority());
 
-    let result = engine.build(head, all, None, 22);
+    let result = engine.build(head, all, None, 21);
     if let Err(ref e) = result {
         eprintln!("Engine build FAILED: {}", e);
     }
     result.unwrap();
 
-    println!("Pipeline: 12 blocks + downscale, 4 aux (stats)");
-    println!("Input: {}×{} → Middle: 2160×3840 → Output: {}×{}",
+    println!("Pipeline: 10 blocks (main) + 4 aux (stats tap at aux_hook_src)");
+    println!("Input: {}×{} → 4K Bayer → FHD Output: {}×{}",
         sensor_w, sensor_h, pipe_w, pipe_h);
     println!("Running {} frames...\n", n_frames);
 
-    // Shared params — bayer buffer reused across all frames (no per-frame alloc)
+    // Shared params — bayer buffer reused across all frames
     let mut params = ProcessParams::new(sensor_w, sensor_h, &raw);
     params.target_width = pipe_w;
     params.target_height = pipe_h;
