@@ -70,17 +70,17 @@ fn main() {
         // 3. Aux hook (reference-corrected Bayer for stats) — at 4K
         Box::new(IdentityBlock::new("aux_hook_src")),
 
-        // 4. LSC (lens shading correction) — at 4K Bayer resolution
+        // 4. CCM (color correction matrix) — at 4K Bayer resolution
         Box::new(CcmBlock::new()),
 
-        // 5. Bayer WB (white balance gains) — at 4K Bayer resolution
-        Box::new(BayerWbBlock::new()),
-
-        // 6. Adaptive downscale: 2160×3840 → 1080×1920 (FHD)
-        //    After LSC+WB so downscale operates on corrected data (less aliasing).
-        //    Then demosaic/CCM/cosmetic blocks run at FHD (4× fewer pixels).
+        // 5. Adaptive downscale: 2160×3840 → 1080×1920 (FHD)
+        //    After CCM so color transform runs at 4K, then downscale
+        //    reduces pixel count 4× before WB + demosaic + cosmetics.
         Box::new(AdaptiveDownscaleBlock::new(ds_w, ds_h, 1, "reflect", "fit")
             .with_concrete_dims(mid_h, mid_w)),
+
+        // 6. Bayer WB (white balance gains) — at FHD
+        Box::new(BayerWbBlock::new()),
 
         // 7. Fused demosaic + CCM (at FHD resolution)
         Box::new(DemosaicCcmBlock::new(0)
