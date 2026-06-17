@@ -1,12 +1,23 @@
 //! DisplayBlock — final format conversion + orientation transform fused.
 //!
-//! Converts float [0,1] RGB → float [0,255] BGRA and optionally applies
-//! rotation/flip (90°/180°/270°/hflip/vflip) in the same ONNX subgraph.
-//! Fusing saves one full-frame memory pass vs a separate RotateBlock.
+//! The output format is selected at build time via `with_output_format()`.
+//! The ONNX subgraph produces the exact byte layout requested — the engine
+//! just reads the raw output buffer, no Rust-side conversion needed.
 //!
-//! Rotation modes (i32): 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip.
-//! Constants defined in crate::profile::ROTATE_*.
+//! Format → ONNX subgraph:
+//! - `FloatRgb`:  identity Mul(1.0) → [1,3,H,W] f32 RGB [0,1]
+//! - `FloatBgra`: Conv(1×1) BGR permutation + alpha=255 → [1,4,H,W] f32 BGRA [0,255]
+//! - `PackedRgb`: Mul(255)→Mul(weights)→ReduceSum→Cast(INT32) → [1,1,H,W] INT32
+//! - `Bgra`:      same Conv as FloatBgra → [1,4,H,W] f32 BGRA [0,255]
+//! - `Rgba`:      Conv(1×1) identity permutation + alpha=255 → [1,4,H,W] f32 RGBA [0,255]
+//! - `Argb`:      Conv(1×1) alpha-first permutation → [1,4,H,W] f32 ARGB [0,255]
+//! - `Abgr`:      Conv(1×1) ABGR permutation → [1,4,H,W] f32 ABGR [0,255]
+//! - `Rgb`:       Conv(1×1) identity permutation, no alpha → [1,3,H,W] f32 RGB [0,255]
+//! - `Bgr`:       Conv(1×1) BGR permutation, no alpha → [1,3,H,W] f32 BGR [0,255]
+//!
+//! Rotation/flip modes fused via Transpose + Slice before the format node.
 
+use crate::engine::OutputFormat;
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
@@ -22,11 +33,8 @@ pub struct DisplayBlock {
     /// Concrete input dims (set via with_concrete_dims) for Slice initializers.
     pub in_h: Option<i64>,
     pub in_w: Option<i64>,
-    /// INT32 packed RGBA (Mul+ReduceSum+Cast). Unreliable on OpenCL.
-    pub pack_rgba: bool,
-    /// BGRA float [0,255] via Conv(1×1): does channel swap + mul(255) + alpha
-    /// in one ONNX op. Rust to_bgra becomes trivial f32→u8 truncation.
-    pub bg4a: bool,
+    /// Output pixel format — determines the ONNX subgraph (Conv, Mul, Cast, etc.).
+    pub output_format: OutputFormat,
 }
 
 impl DisplayBlock {
@@ -41,8 +49,7 @@ impl DisplayBlock {
             rotate_mode: 0,
             in_h: None,
             in_w: None,
-            pack_rgba: false,
-            bg4a: false,
+            output_format: OutputFormat::default(),
         }
     }
 
@@ -58,17 +65,29 @@ impl DisplayBlock {
         self.in_w = Some(w);
         self
     }
-    /// Enable packed RGBA output: Mul(255) + Mul(weights) + ReduceSum + Cast(INT32).
-    /// Output is [1,1,H,W] INT32 where each value = R*65536 + G*256 + B.
-    pub fn with_pack_rgba(mut self, enable: bool) -> Self {
-        self.pack_rgba = enable;
+
+    /// Select the output pixel format. The ONNX subgraph is built to produce
+    /// bytes in exactly this layout — engine reads them raw, no conversion.
+    pub fn with_output_format(mut self, fmt: OutputFormat) -> Self {
+        self.output_format = fmt;
         self
     }
-    /// Enable BGRA float [0,255] output via Conv(1×1).
-    /// Does channel swap (RGB→BGR), multiply by 255, and adds alpha=255.
-    /// Output: [1,4,H,W] FLOAT [0,255] — Rust only needs f32→u8 truncation.
+    /// Enable packed RGBA output: Mul(255) + Mul(weights) + ReduceSum + Cast(INT32).
+    /// Output is [1,1,H,W] INT32 where each value = R*65536 + G*256 + B.
+    /// Enable packed RGBA output (PackedRgb format): INT32 packed.
+    /// Equivalent to `.with_output_format(OutputFormat::PackedRgb)`.
+    pub fn with_pack_rgba(mut self, enable: bool) -> Self {
+        if enable {
+            self.output_format = OutputFormat::PackedRgb;
+        }
+        self
+    }
+    /// Enable BGRA float [0,255] output via Conv(1×1) (FloatBgra format).
+    /// Equivalent to `.with_output_format(OutputFormat::FloatBgra)`.
     pub fn with_bg4a(mut self, enable: bool) -> Self {
-        self.bg4a = enable;
+        if enable {
+            self.output_format = OutputFormat::FloatBgra;
+        }
         self
     }
 
@@ -90,7 +109,7 @@ impl DisplayBlock {
     /// Returns true if no rotation/flip transform is requested
     /// AND no output format conversion (bg4a/pack_rgba) is needed.
     fn is_identity(&self) -> bool {
-        self.rotate_mode == 0 && !self.bg4a && !self.pack_rgba
+        self.rotate_mode == 0 && self.output_format == OutputFormat::FloatRgb
     }
 }
 
@@ -119,7 +138,7 @@ impl IspBlock for DisplayBlock {
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        let ch = if self.pack_rgba { 1 } else if self.bg4a { 4 } else { 3 };
+        let ch = self.output_format.channel_count() as i64;
         match (self.in_h, self.in_w) {
             (Some(h), Some(w)) => {
                 let (oh, ow) = if self.swaps_dims() { (w, h) } else { (h, w) };
@@ -192,53 +211,47 @@ impl IspBlock for DisplayBlock {
             prev = tensor_pool.last().unwrap().as_str();
         }
 
-        // Final: scale, optionally pack via bg4a (Conv 1×1) or pack_rgba (INT32)
-        if self.bg4a {
-            // BGRA float [0,255] output via Conv(1×1):
-            //   - Channel swap RGB→BGR
-            //   - Multiply by 255
-            //   - Alpha = 255
-            // Weight [4,3,1,1]:  [[0,0,255], [0,255,0], [255,0,0], [0,0,0]]
-            // Bias [4]:         [0, 0, 0, 255]
-            let conv_w = format!("{}/bg4a_w", ns);
-            let conv_b = format!("{}/bg4a_b", ns);
-            let conv_out = format!("{}/bg4a_out", ns);
-            // Only add Conv if we need to actually transform (not identity)
-            if prev != final_output || true {
+        // Final: apply output format conversion
+        use OutputFormat::*;
+        match self.output_format {
+            FloatRgb => {
+                // Identity — Mul(1.0) for float [0,1] RGB
+                if prev != final_output {
+                    nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
+                }
+            }
+            FloatBgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr => {
+                // Conv(1×1) with format-specific weight permutation + scale(255) + alpha bias.
+                // Output is always float [0,255] (u8 truncation happens in the consumer).
+                let conv_w = format!("{}/conv_w", ns);
+                let conv_b = format!("{}/conv_b", ns);
+                let conv_out = format!("{}/conv_out", ns);
                 nodes.push(Proto::node("Conv", &[prev, &conv_w, &conv_b], &[&conv_out],
                     &[Proto::attribute_ints("kernel_shape", &[1, 1]),
                       Proto::attribute_int("group", 1)]));
                 tensor_pool.push(conv_out);
                 prev = tensor_pool.last().unwrap().as_str();
+                if prev != final_output {
+                    nodes.push(Proto::node("Identity", &[prev], &[final_output], &[]));
+                }
             }
-            if prev != final_output {
-                nodes.push(Proto::node("Identity", &[prev], &[final_output], &[]));
-            }
-        } else if self.pack_rgba {
-            // pack_rgba: Mul(255) -> Mul(weights [65536,256,1]) -> ReduceSum -> Cast(INT32)
-            // Output: [1,1,H,W] INT32, each value = R*65536+G*256+B
-            let scale_255 = format!("{}/scale_255", ns);
-            let scaled = format!("{}/scaled", ns);
-            let pack_w = format!("{}/pack_w", ns);
-            let wweighted = format!("{}/wweighted", ns);
-            let rsum = format!("{}/rsum", ns);
-            let cast_out = format!("{}/cast", ns);
-            // 1. Mul by 255
-            nodes.push(Proto::node("Mul", &[prev, &scale_255], &[&scaled], &[]));
-            // 2. Mul with weights [65536, 256, 1] — broadcast across H,W
-            nodes.push(Proto::node("Mul", &[&scaled, &pack_w], &[&wweighted], &[]));
-            // 3. ReduceSum along channel axis → [1,1,H,W]
-            nodes.push(Proto::node("ReduceSum", &[&wweighted], &[&rsum],
-                &[Proto::attribute_ints("axes", &[1]), Proto::attribute_int("keepdims", 1)]));
-            // 4. Cast to INT32
-            nodes.push(Proto::node("Cast", &[&rsum], &[&cast_out], &[Proto::attribute_int("to", 6)])); // INT32
-            if &cast_out != final_output {
-                nodes.push(Proto::node("Identity", &[&cast_out], &[final_output], &[]));
-            }
-        } else {
-            // Float [0,1] output
-            if prev != final_output {
-                nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
+            PackedRgb => {
+                // pack_rgba: Mul(255) -> Mul(weights [65536,256,1]) -> ReduceSum -> Cast(INT32)
+                // Output: [1,1,H,W] INT32, each value = R*65536+G*256+B
+                let scale_255 = format!("{}/scale_255", ns);
+                let scaled = format!("{}/scaled", ns);
+                let pack_w = format!("{}/pack_w", ns);
+                let wweighted = format!("{}/wweighted", ns);
+                let rsum = format!("{}/rsum", ns);
+                let cast_out = format!("{}/cast", ns);
+                nodes.push(Proto::node("Mul", &[prev, &scale_255], &[&scaled], &[]));
+                nodes.push(Proto::node("Mul", &[&scaled, &pack_w], &[&wweighted], &[]));
+                nodes.push(Proto::node("ReduceSum", &[&wweighted], &[&rsum],
+                    &[Proto::attribute_ints("axes", &[1]), Proto::attribute_int("keepdims", 1)]));
+                nodes.push(Proto::node("Cast", &[&rsum], &[&cast_out], &[Proto::attribute_int("to", 6)]));
+                if &cast_out != final_output {
+                    nodes.push(Proto::node("Identity", &[&cast_out], &[final_output], &[]));
+                }
             }
         }
 
@@ -247,32 +260,73 @@ impl IspBlock for DisplayBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        // Scale by 1.0 — trivial on all backends, avoids Identity op issues on Vulkan
-        // Output is float [0,1] directly. Consumer (display) multiplies by 255.
+        // Scale 1.0 — trivial Mul for FloatRgb identity path
         let mut inits = vec![
             Proto::tensor_proto_float_scalar(&format!("{}/scale", ns), 1.0),
-        Proto::tensor_proto_float_scalar(&format!("{}/scale_255", ns), 255.0),
-        // Pack weights: [65536, 256, 1] for R*65536+G*256+B
-        Proto::tensor_proto_float(&format!("{}/pack_w", ns), &[3], &[65536.0, 256.0, 1.0]),
         ];
 
-        if self.bg4a {
-            // Conv(1×1) weight [4,3,1,1]:  B=0*R+0*G+255*B,  G=0*R+255*G+0*B,
-            // R=255*R+0*G+0*B,  A=(bias)
-            // Layout: [oc, ic, kh, kw] = [4, 3, 1, 1]
-            // Order: oc0[B](ic0,ic1,ic2), oc1[G](ic0,ic1,ic2), oc2[R], oc3[A]
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/bg4a_w", ns),
-                &[4, 3, 1, 1],
-                &[0.0, 0.0, 255.0,   // oc0 (B): B = 255*B_in
-                  0.0, 255.0, 0.0,   // oc1 (G): G = 255*G_in
-                  255.0, 0.0, 0.0,   // oc2 (R): R = 255*R_in
-                  0.0, 0.0, 0.0]));  // oc3 (A): 0 (bias handles alpha=255)
-            // Bias [4]: B=0, G=0, R=0, A=255
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/bg4a_b", ns),
-                &[4],
-                &[0.0, 0.0, 0.0, 255.0]));
+        // Format-specific initializers
+        use OutputFormat::*;
+        match self.output_format {
+            FloatRgb => {
+                // No extra initializers needed
+            }
+            PackedRgb => {
+                // Packed INT32: Mul(255) + Mul(weights [65536,256,1]) + ReduceSum + Cast
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/scale_255", ns), 255.0));
+                inits.push(Proto::tensor_proto_float(
+                    &format!("{}/pack_w", ns), &[3], &[65536.0, 256.0, 1.0]));
+            }
+            fmt @ (FloatBgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
+                // Conv(1×1): channel permutation + scale(255) + alpha bias
+                let oc = fmt.channel_count(); // 3 for Rgb/Bgr, 4 for others
+                let (weights, bias): (Vec<f32>, Vec<f32>) = match fmt {
+                    FloatBgra | Bgra => (
+                        // oc0(B)=255*B, oc1(G)=255*G, oc2(R)=255*R, oc3(A)=0
+                        vec![0.0, 0.0, 255.0,  0.0, 255.0, 0.0,
+                             255.0, 0.0, 0.0,  0.0, 0.0, 0.0],
+                        vec![0.0, 0.0, 0.0, 255.0],
+                    ),
+                    Rgba => (
+                        // oc0(R)=255*R, oc1(G)=255*G, oc2(B)=255*B, oc3(A)=0
+                        vec![255.0, 0.0, 0.0,  0.0, 255.0, 0.0,
+                             0.0, 0.0, 255.0, 0.0, 0.0, 0.0],
+                        vec![0.0, 0.0, 0.0, 255.0],
+                    ),
+                    Argb => (
+                        // oc0(A)=0, oc1(R)=255*R, oc2(G)=255*G, oc3(B)=255*B
+                        vec![0.0, 0.0, 0.0,  255.0, 0.0, 0.0,
+                             0.0, 255.0, 0.0, 0.0, 0.0, 255.0],
+                        vec![255.0, 0.0, 0.0, 0.0],
+                    ),
+                    Abgr => (
+                        // oc0(A)=0, oc1(B)=255*B, oc2(G)=255*G, oc3(R)=255*R
+                        vec![0.0, 0.0, 0.0,  0.0, 0.0, 255.0,
+                             0.0, 255.0, 0.0, 255.0, 0.0, 0.0],
+                        vec![255.0, 0.0, 0.0, 0.0],
+                    ),
+                    Rgb => (
+                        // oc0(R)=255*R, oc1(G)=255*G, oc2(B)=255*B
+                        vec![255.0, 0.0, 0.0,  0.0, 255.0, 0.0,
+                             0.0, 0.0, 255.0],
+                        vec![0.0, 0.0, 0.0],
+                    ),
+                    Bgr => (
+                        // oc0(B)=255*B, oc1(G)=255*G, oc2(R)=255*R
+                        vec![0.0, 0.0, 255.0,  0.0, 255.0, 0.0,
+                             255.0, 0.0, 0.0],
+                        vec![0.0, 0.0, 0.0],
+                    ),
+                    _ => unreachable!(),
+                };
+                let w_shape: Vec<i64> = vec![oc as i64, 3, 1, 1];
+                let b_shape: Vec<i64> = vec![oc as i64];
+                inits.push(Proto::tensor_proto_float(
+                    &format!("{}/conv_w", ns), &w_shape, &weights));
+                inits.push(Proto::tensor_proto_float(
+                    &format!("{}/conv_b", ns), &b_shape, &bias));
+            }
         }
 
         if self.is_identity() { return inits; }
