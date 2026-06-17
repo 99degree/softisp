@@ -458,6 +458,7 @@ impl PipelineProfile {
         let display_h = (target_width as f64 / 1.5).round() as i64; // 16:9 approx
         blocks.push(Box::new(DisplayBlock::new(target_width)
             .with_rotate(self.rotate_mode)
+            .with_pack_rgba(true)
             .with_concrete_dims(display_h, target_width as i64)));
 
         info!("  blocks: {} total", blocks.len());

@@ -474,14 +474,28 @@ impl MnnEngine {
         }
         out
     }
-    /// Convert MNN output float buffer to BGRA Vec<u8>.
-    /// Handles both bg4a (4-channel, values [0,255]) and standard (3-channel, [0,1]).
-    /// This is a pure function (no &self) so it can be called from any scope.
+    /// Convert MNN output buffer to BGRA Vec<u8>.
+    /// Handles:
+    ///   ch=1: packed INT32 (R*65536+G*256+B, must reinterpret &[f32] as &[i32])
+    ///   ch=3: float [0,1] RGB
+    ///   ch=4: float [0,255] BGRA (bg4a)
     fn convert_output(data: &[f32], ch: usize, h: usize, w: usize) -> Vec<u8> {
-        if ch >= 4 {
+        let n_pixels = h * w;
+        let mut out = Vec::with_capacity(n_pixels * 4);
+        if ch == 1 {
+            // Packed INT32 path: each i32 = R*65536 + G*256 + B
+            let ints: &[i32] = unsafe {
+                std::slice::from_raw_parts(data.as_ptr() as *const i32, data.len())
+            };
+            for i in 0..n_pixels {
+                let packed = ints.get(i).copied().unwrap_or(0);
+                let r = ((packed >> 16) & 0xFF) as u8;
+                let g = ((packed >> 8) & 0xFF) as u8;
+                let b = (packed & 0xFF) as u8;
+                out.extend_from_slice(&[b, g, r, 255]);
+            }
+        } else if ch >= 4 {
             // bg4a path: 4-channel float [0,255] BGRA from Conv(1×1)
-            let n_pixels = h * w;
-            let mut out = Vec::with_capacity(n_pixels * 4);
             for i in 0..n_pixels {
                 let base = i * 4;
                 out.extend_from_slice(&[
@@ -491,10 +505,10 @@ impl MnnEngine {
                     255,
                 ]);
             }
-            out
         } else {
             Self::to_bgra(data, ch, h, w)
         }
+        out
     }
 
     fn c(v: f32) -> u8 { (v * 255.0).round().clamp(0.0, 255.0) as u8 }
@@ -875,8 +889,8 @@ impl IspEngine for MnnEngine {
             // computed from pipeline dimensions.
             let oh = p.target_height as usize;
             let ow = tw as usize;
-            // Determine output channels: 3=RGB[0,1], 4=BGRA[0,255](bg4a)
-            let ch = p.output_channels.max(3) as usize;
+            // Output channels: 1=packed INT32, 3=RGB float [0,1], 4=BGRA float [0,255]
+            let ch = p.output_channels as usize;
             let expected_n = oh * ow * ch;
             let nf = if n <= 0 || n < (expected_n as i32) / 10 {
                 expected_n

@@ -69,6 +69,8 @@ pub struct PipelineManager {
     status: PipelineStatus,
 
     // Internal engine
+    /// Output channels: 1=packed INT32, 3=RGB float, 4=BGRA float.
+    pub output_channels: u32,
     engine: Mutex<Option<Box<dyn IspEngine>>>,
     /// Last build timestamp.
     last_build: Option<Instant>,
@@ -81,6 +83,7 @@ impl PipelineManager {
             controller: IspController::new(),
             target_width: 480,
             bayer_pattern: 3, // BGGR default
+            output_channels: 1, // packed INT32 by default
             status: PipelineStatus::Building,
             engine: Mutex::new(None),
             last_build: None,
@@ -203,7 +206,7 @@ impl PipelineManager {
             blc_values: None,
             warp_grid: None,
             target_height: height,
-            output_channels: 3,
+            output_channels: self.output_channels,
         };
 
         // Process

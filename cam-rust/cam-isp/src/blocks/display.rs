@@ -119,7 +119,7 @@ impl IspBlock for DisplayBlock {
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        let ch = if self.bg4a { 4 } else { 3 };
+        let ch = if self.pack_rgba { 1 } else if self.bg4a { 4 } else { 3 };
         match (self.in_h, self.in_w) {
             (Some(h), Some(w)) => {
                 let (oh, ow) = if self.swaps_dims() { (w, h) } else { (h, w) };
