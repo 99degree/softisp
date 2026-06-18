@@ -54,7 +54,7 @@ fn link_mnn() {
             .cpp(true)
             .std("c++17")
             .file("mnn_sys/mnn_wrapper.cpp")
-            .include(&mnn_include)
+            .include(&mnn_include).include("vendor/mnn/tools")
             .compile("mnn_wrapper");
 
         // Copy .a to lib/aarch64 so it's findable by ALL targets
@@ -73,10 +73,10 @@ fn link_mnn() {
     println!("cargo:rustc-link-lib=static=mnn_wrapper");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=c++_shared");
-    println!("cargo:rustc-link-lib=MNN_Express");
-    println!("cargo:rustc-link-lib=MNN_Vulkan");
-    println!("cargo:rustc-link-lib=MNN_CL");
-    println!("cargo:rustc-link-lib=MNN_GL");
+//     println!("cargo:rustc-link-lib=MNN_Express");
+//     println!("cargo:rustc-link-lib=MNN_Vulkan");
+//     println!("cargo:rustc-link-lib=MNN_CL");
+//     println!("cargo:rustc-link-lib=MNN_GL");
 }
 
 #[cfg(feature = "mnn")]
@@ -98,7 +98,7 @@ fn link_mnnconvert() {
         .std("c++17")
         .file(src_dir.join("mnnconvert_shared.cpp"))
         .file("mnn_sys/mnn_convert_api.cpp")  // C FFI wrapper, statically linked
-        .include(&mnn_include)
+        .include(&mnn_include).include("vendor/mnn/tools")
         .include(mnnconvert_include).include("vendor/mnn/mnnconvert/include/converter")
         .define("MNN_CONVERT_API_EXPORTS", None)
         .compile("mnnconvert");
