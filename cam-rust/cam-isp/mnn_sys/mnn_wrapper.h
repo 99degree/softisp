@@ -299,6 +299,13 @@ typedef enum {
  * @return 0 on success, non-zero on failure.
  */
 int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelInfo info_code, void* out);
+
+// Profiler API (requires MNN_PIPELINE_PROFILE=ON)
+typedef void* MnnExecutor;
+MnnExecutor mnn_executor_get_global();
+void mnn_executor_reset_profile(MnnExecutor executor);
+void mnn_executor_dump_profile(MnnExecutor executor);
+float mnn_executor_get_last_gpu_time_ms(MnnExecutor executor);
 #ifdef __cplusplus
 }
 #endif
