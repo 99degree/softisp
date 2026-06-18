@@ -603,3 +603,21 @@ extern "C" {
         result: *mut MnnConvertResult,
     );
 }
+
+// ── Profiler API (requires MNN_PIPELINE_PROFILE=ON) ────────────────────────
+
+pub type MnnExecutor = *mut c_void;
+
+extern "C" {
+    /// Get the global executor handle.
+    pub fn mnn_executor_get_global() -> MnnExecutor;
+
+    /// Reset the profiler before running inference.
+    pub fn mnn_executor_reset_profile(executor: MnnExecutor);
+
+    /// Dump profile information to stdout.
+    pub fn mnn_executor_dump_profile(executor: MnnExecutor);
+
+    /// Get last GPU execution time in milliseconds.
+    pub fn mnn_executor_get_last_gpu_time_ms(executor: MnnExecutor) -> f32;
+}
