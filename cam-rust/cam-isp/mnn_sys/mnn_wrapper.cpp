@@ -618,3 +618,32 @@ extern "C" int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session
         return 0;
     }
 }
+
+
+// ── Profiler API (requires MNN_PIPELINE_PROFILE=ON) ──────────────────────
+#include <MNN/expr/Executor.hpp>
+
+extern "C" MnnExecutor mnn_executor_get_global() {
+    auto exec = MNN::Express::Executor::getGlobalExecutor();
+    return reinterpret_cast<MnnExecutor>(exec.get());
+}
+
+extern "C" void mnn_executor_reset_profile(MnnExecutor executor) {
+    auto* exec = reinterpret_cast<MNN::Express::Executor*>(executor);
+    if (exec) {
+        exec->resetProfile();
+    }
+}
+
+extern "C" void mnn_executor_dump_profile(MnnExecutor executor) {
+    auto* exec = reinterpret_cast<MNN::Express::Executor*>(executor);
+    if (exec) {
+        exec->dumpProfile();
+    }
+}
+
+extern "C" float mnn_executor_get_last_gpu_time_ms(MnnExecutor executor) {
+    auto* exec = reinterpret_cast<MNN::Express::Executor*>(executor);
+    if (!exec) return -1.0f;
+    return exec->getLastGpuTimeMs();
+}
