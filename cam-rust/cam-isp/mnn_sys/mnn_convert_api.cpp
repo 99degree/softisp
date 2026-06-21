@@ -27,6 +27,7 @@ typedef struct {
 /// @param optimize_level  Graph optimization level (0=none, 1=safe, 2=aggressive).
 /// @param weight_quant_bits  Weight quantization bits (0=no quant, 2-8 for INT8 etc.).
 /// @param fp16        Whether to convert weights to FP16.
+/// @param preserve_input_type  Preserve int16/uint16/float16 input types (no widening to int32).
 /// @param result      Output result structure.
 MNN_PUBLIC void mnn_convert_onnx_to_mnn(
     const char* onnx_path,
@@ -35,6 +36,7 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
     int optimize_level,
     int weight_quant_bits,
     int fp16,
+    int preserve_input_type,
     MnnConvertResult* result)
 {
     result->success = 0;
@@ -49,6 +51,7 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
         config.optimizeLevel = optimize_level;
         config.weightQuantBits = weight_quant_bits;
         config.saveHalfFloat = fp16 != 0;
+        config.preserveInputType = preserve_input_type != 0;
 
         if (!MNN::Cli::convertModel(config)) {
             result->success = -1;
@@ -65,6 +68,7 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
 }
 
 /// Convert a TensorFlow model to MNN format.
+/// @param preserve_input_type  Preserve int16/uint16/float16 input types.
 MNN_PUBLIC void mnn_convert_tf_to_mnn(
     const char* tf_model_path,
     const char* mnn_path,
@@ -72,6 +76,7 @@ MNN_PUBLIC void mnn_convert_tf_to_mnn(
     int optimize_level,
     int weight_quant_bits,
     int fp16,
+    int preserve_input_type,
     MnnConvertResult* result)
 {
     result->success = 0;
@@ -86,6 +91,7 @@ MNN_PUBLIC void mnn_convert_tf_to_mnn(
         config.optimizeLevel = optimize_level;
         config.weightQuantBits = weight_quant_bits;
         config.saveHalfFloat = fp16 != 0;
+        config.preserveInputType = preserve_input_type != 0;
 
         if (!MNN::Cli::convertModel(config)) {
             result->success = -1;

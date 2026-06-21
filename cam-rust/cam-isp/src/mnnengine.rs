@@ -59,6 +59,9 @@ pub struct MnnEngine {
     /// True when model expects INT32 packed input (w/2 width, each element = 2 pixels).
     /// Triggers true zero-copy: buffer reinterpreted as i32, host pointer set directly.
     packed_input: bool,
+    /// Whether to preserve input type (int16/uint16/float16) instead of widening to int32.
+    /// Used by NativeInt16 mode to avoid Cast(int32→int16) in UnpackCfaBlock.
+    preserve_input_type: bool,
     /// Expected input tensor element count from model (for validation).
     expected_input_elements: Option<u32>,
     /// ISP controller for AWB/AE/CCM/tone parameter estimation.
@@ -112,6 +115,7 @@ impl MnnEngine {
             model_path: None,
             model_input_type: None,
             packed_input: false,
+            preserve_input_type: false,
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
             #[cfg(feature = "mnn")]
@@ -128,6 +132,17 @@ impl MnnEngine {
 
     /// Point to pre-converted .mnn file (skips on-the-fly conversion).
     pub fn set_model_path(&mut self, path: impl Into<String>) { self.model_path = Some(path.into()); }
+
+    /// Set whether to preserve input type (int16/uint16/float16) instead of widening to int32.
+    /// Used by NativeInt16 mode to avoid Cast(int32→int16) in UnpackCfaBlock.
+    pub fn set_preserve_input_type(&mut self, preserve: bool) {
+        self.preserve_input_type = preserve;
+    }
+
+    /// Get whether to preserve input type.
+    pub fn preserve_input_type(&self) -> bool {
+        self.preserve_input_type
+    }
 
     /// Register MNN engine factories for all available backends.
     /// Benchmarks each backend at startup and sets priority by actual FPS.
@@ -602,6 +617,8 @@ impl IspEngine for MnnEngine {
         #[cfg(feature = "mnn")]
         {
             use std::path::Path;
+            use crate::mnn_converter::MnnConvertOptions;
+
 
             let mnn = match &self.model_path {
                 Some(p) => p.clone(),
@@ -617,7 +634,10 @@ impl IspEngine for MnnEngine {
                     let on = format!(".mnn_temp_{}.onnx", std::process::id());
                     let mn = on.replace(".onnx", ".mnn");
                     std::fs::write(&on, &onnx).map_err(|e| format!("write: {}", e))?;
-                    crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, None).map_err(|e| format!("convert: {}", e))?;
+                    let mut opts = MnnConvertOptions::default();
+                    opts.preserve_input_type = self.preserve_input_type;
+                    info!("preserve_input_type: {}", self.preserve_input_type);
+                    crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, Some(&opts)).map_err(|e| format!("convert: {}", e))?;
                     let _ = std::fs::remove_file(&on);
                     mn
                 }
@@ -771,23 +791,53 @@ impl IspEngine for MnnEngine {
             debug!("MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
                 w, h, (w / 2).max(1), is_packed, self.expected_input_elements);
 
-            // ── PACKED ZERO-COPY ──
-            let packed_w = (w / 2).max(1) as i32;
-            let packed_shape = [1, 1, h as i32, packed_w];
-            let packed_buf: &[i32] = unsafe {
-                std::slice::from_raw_parts(buf.as_ptr() as *const i32, buf.len() / 4)
+            let (buffer_ptr, buffer_type_code, buffer_type_bits, input_shape, path_str) = if is_packed {
+                let packed_w = (w / 2).max(1) as i32;
+                let packed_shape = [1, 1, h as i32, packed_w];
+                let packed_buf: &[i32] = unsafe {
+                    std::slice::from_raw_parts(buf.as_ptr() as *const i32, buf.len() / 4)
+                };
+                (
+                    packed_buf.as_ptr() as *const c_void,
+                    0,   // INT32
+                    32,
+                    packed_shape.to_vec(),
+                    "packed_zero_copy"
+                )
+            } else {
+                let raw_shape = [1, 1, h as i32, w as i32];
+                (
+                    buf.as_ptr() as *const c_void,
+                    5,   // INT16
+                    16,
+                    raw_shape.to_vec(),
+                    "raw_zero_copy"
+                )
             };
-            info!("pipeline stage=write_input buf={}B -> {} chans packed=true shape=[1,1,{},{}]",
-                buf.len(), packed_buf.len() * 4, h, packed_w);
-            path = "packed_zero_copy";
+
+            info!("pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
+                buf.len(),
+                if is_packed {
+                    (buf.len() / 4) as usize
+                } else {
+                    (buf.len() / 2) as usize
+                },
+                is_packed,
+                input_shape[2],
+                input_shape[3]
+            );
+
+            path = path_str;
             t_prep_end = Instant::now();
             t_infer_start = Instant::now();
             unsafe {
                 n = crate::mnn_sys::mnn_run_with_output(
                     interp.as_ptr(), sess.as_ptr(),
-                    packed_buf.as_ptr() as *const c_void,
-                    0, 32,
-                    packed_shape.as_ptr(), packed_shape.len() as i32,
+                    buffer_ptr,
+                    buffer_type_code,
+                    buffer_type_bits,
+                    input_shape.as_ptr(),
+                    input_shape.len() as i32,
                     c"DisplayBlock/frame".as_ptr(),
                     out_ptr,
                     max_out as i32,
