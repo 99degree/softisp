@@ -3,7 +3,6 @@
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
 
     #[test]
     #[ignore = "Heavy test for profiling"]

@@ -424,6 +424,25 @@ impl MnnSessionSafe {
         let ret = unsafe { mnn_session_run(self.interpreter, self.inner) };
         if ret == 0 { Ok(()) } else { Err("Session run failed".to_string()) }
     }
+
+    /// Query model info (memory, FLOPS, etc.) via `MnnModelInfo`.
+    /// Returns the float value on success.
+    pub fn get_model_info(&self, info: MnnModelInfo) -> Result<f32, String> {
+        let mut out: f32 = 0.0;
+        let ret = unsafe {
+            mnn_get_model_info(
+                self.interpreter,
+                self.inner,
+                info as i32,
+                &mut out as *mut _ as *mut c_void,
+            )
+        };
+        if ret == 0 {
+            Ok(out)
+        } else {
+            Err(format!("get_model_info({:?}) failed", info))
+        }
+    }
 }
 
 impl Drop for MnnSessionSafe {
