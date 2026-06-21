@@ -9,7 +9,6 @@
 //! 5. Log performance metrics
 
 use std::time::Instant;
-use std::os::raw::c_void;
 use cam_isp::pipeline::GraphComposer;
 use cam_isp::blocks::{RawInputBlock, UnpackBayerToFp16Block};
 use cam_isp::pipeline::IspBlock;
@@ -123,53 +122,28 @@ fn test_mnn_unpack_performance_with_profiling() {
         let avg_inference_time = total_inference_time / num_runs as u32;
 
         // 7. Read profiling data
-        let mut memory_mb: f32 = 0.0;
-        let mut flops: f32 = 0.0;
+        let memory_mb = sess.get_model_info(MnnModelInfo::MEMORY).unwrap_or(0.0);
+        let flops = sess.get_model_info(MnnModelInfo::FLOPS).unwrap_or(0.0);
+        println!("  Memory usage: {:.2} MB", memory_mb);
+        println!("  FLOPS: {:.2} M", flops / 1_000_000.0);
 
-        let interp_ptr = interp.as_ptr();
-        let sess_ptr = sess.as_ptr();
-        unsafe {
-            let memory_code = MnnModelInfo::MEMORY as i32;
-            let ret = cam_isp::mnn_sys::mnn_get_model_info(
-                interp_ptr,
-                sess_ptr,
-                memory_code,
-                &mut memory_mb as *mut _ as *mut c_void,
-            );
-            if ret == 0 {
-                println!("  Memory usage: {:.2} MB", memory_mb);
-            }
+        // Get output tensor for size calculation
+        if let Some(t) = interp.get_first_output(&sess) {
+            let dims = t.shape();
+            let output_size = dims.iter().product::<i32>() as usize;
+            let output_size_mb = (output_size * 2) as f64 / (1024.0 * 1024.0);
 
-            let flops_code = MnnModelInfo::FLOPS as i32;
-            let ret = cam_isp::mnn_sys::mnn_get_model_info(
-                interp_ptr,
-                sess_ptr,
-                flops_code,
-                &mut flops as *mut _ as *mut c_void,
-            );
-            if ret == 0 {
-                println!("  FLOPS: {:.2} M", flops / 1_000_000.0);
-            }
-
-            // Get output tensor for size calculation
-            let output_tensor = interp.get_first_output(&sess);
-            if let Some(t) = output_tensor {
-                let dims = t.shape();
-                let output_size = dims.iter().product::<i32>() as usize;
-                let output_size_mb = (output_size * 2) as f64 / (1024.0 * 1024.0);
-
-                // 8. Store metrics
-                metrics.push(MnnPerfMetrics {
-                    resolution: res.name.to_string(),
-                    model_load_time,
-                    session_create_time,
-                    inference_time: avg_inference_time,
-                    memory_usage_mb: memory_mb,
-                    flops,
-                    input_size_mb,
-                    output_size_mb,
-                });
-            }
+            // 8. Store metrics
+            metrics.push(MnnPerfMetrics {
+                resolution: res.name.to_string(),
+                model_load_time,
+                session_create_time,
+                inference_time: avg_inference_time,
+                memory_usage_mb: memory_mb,
+                flops,
+                input_size_mb,
+                output_size_mb,
+            });
         }
         
         // Clean up temp file
