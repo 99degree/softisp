@@ -1,12 +1,12 @@
-//! C wrapper for MNNConverter library (libMNNConvertDeps.so).
-//! Exposes a simple C API for converting ONNX/TF/TFLite models to MNN format.
-//!
-//! Compile with:
-//!   clang++ -std=c++17 -c mnn_convert_api.cpp \
-//!     -I${MNN_INCLUDE_DIR} -I${MNN_TOOLS_DIR}/converter/include \
-//!     -o mnn_convert_api.o -fPIC -O2
-//!
-//! Then link with libMNNConvertDeps.so when building the final binary.
+/** C wrapper for MNNConverter library (libMNNConvertDeps.so).
+    Exposes a simple C API for converting ONNX/TF/TFLite models to MNN format.
+
+    Compile with:
+      clang++ -std=c++17 -c mnn_convert_api.cpp
+          -I${MNN_INCLUDE_DIR} -I${MNN_TOOLS_DIR}/converter/include
+          -o mnn_convert_api.o -fPIC -O2
+
+    Then link with libMNNConvertDeps.so when building the final binary. */
 
 #include <string>
 #include "config.hpp"

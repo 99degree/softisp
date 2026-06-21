@@ -30,11 +30,10 @@
 //! 5. **Lifetime Management**: Client allocates, MNN uses, client frees
 
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
-use std::path::Path;
-use std::sync::{Arc, Mutex, RwLock};
+use std::fs::OpenOptions;
+use std::io;
+use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
+use std::sync::{Arc, RwLock};
 
 /// Alignment requirement for hardware access
 /// - 4096 = Page size (minimum for mmap)
@@ -273,7 +272,7 @@ impl CMABufferInfo {
     /// Allocate using Android ION
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn allocate_ion(size: usize, usage: &[BufferUsage]) -> io::Result<Self> {
-        use std::ffi::CString;
+        
 
         // Open /dev/ion
         let ion_fd = OpenOptions::new()
@@ -414,12 +413,12 @@ impl CMABufferInfo {
     }
 
     /// Allocate using DMABuf (direct dma-buf import)
-    fn allocate_dmabuf(size: usize) -> io::Result<Self> {
+    fn allocate_dmabuf(_size: usize) -> io::Result<Self> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "DMABuf allocator not available on this platform"))
     }
 
     /// Allocate using POSIX shared memory
-    fn allocate_shm(size: usize) -> io::Result<Self> {
+    fn allocate_shm(_size: usize) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         {
             // Create unique name
@@ -718,7 +717,7 @@ impl CMABufferManager {
     pub fn get_mnn_buffer(
         &self,
         tensor_name: &str,
-        elem_type: u8,  // MNN data type code
+        _elem_type: u8,  // MNN data type code
         elem_bits: u8,  // Bits per element
         dims: &[i32],
     ) -> io::Result<Arc<CMABuffer>> {
@@ -727,7 +726,7 @@ impl CMABufferManager {
         let total_size = dims.iter().product::<i32>() as usize * elem_size;
 
         // Determine alignment based on usage
-        let alignment = if total_size >= 1024 * 1024 {
+        let _alignment = if total_size >= 1024 * 1024 {
             // Large buffers: 64KB alignment for better DMA
             BufferAlignment::Align64K
         } else if total_size >= 64 * 1024 {
@@ -823,7 +822,7 @@ pub extern "C" fn cma_buffer_manager_new() -> *mut CMABufferManager {
 #[no_mangle]
 pub extern "C" fn cma_buffer_manager_free(manager: *mut CMABufferManager) {
     if !manager.is_null() {
-        unsafe { Box::from_raw(manager) };
+        unsafe { let _ = Box::from_raw(manager); }
     }
 }
 
@@ -890,7 +889,7 @@ pub extern "C" fn cma_buffer_release(buffer: *mut CMABuffer) -> bool {
 #[no_mangle]
 pub extern "C" fn cma_buffer_free(buffer: *mut CMABuffer) {
     if !buffer.is_null() {
-        unsafe { Box::from_raw(buffer) };
+        unsafe { let _ = Box::from_raw(buffer); }
     }
 }
 

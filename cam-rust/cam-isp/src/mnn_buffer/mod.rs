@@ -138,6 +138,7 @@ impl OutputBufferPool {
 /// MNN inference context
 ///
 /// Manages the lifecycle of MNN model, session, and buffers
+#[allow(dead_code)]
 pub struct MNNContext {
     /// Interpreter pointer
     interpreter: *mut std::ffi::c_void,
@@ -151,7 +152,7 @@ pub struct MNNContext {
 
 impl MNNContext {
     /// Create a new MNN context from a model file
-    pub fn from_file(model_path: &str) -> Result<Self, String> {
+    pub fn from_file(_model_path: &str) -> Result<Self, String> {
         // This would use the C++ FFI to create the interpreter and session
         // For now, we'll use the C wrapper functions
         
