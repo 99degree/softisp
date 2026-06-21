@@ -1,3 +1,11 @@
+# Build logs
+build.log
+cam-rust/build.log
+cam-rust/build_android_hal.log
+
+# Agent prompt instructions
+AGENTS.md
+
 # Rust build artifacts
 cam-rust/target/
 

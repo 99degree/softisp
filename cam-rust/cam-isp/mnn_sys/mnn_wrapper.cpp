@@ -89,7 +89,7 @@ int mnn_session_run(MnnInterpreter interpreter, MnnSession session) {
 
 // ── Tensor ───────────────────────────────────────────────────────────────
 
-MnnTensor mnn_session_get_input(MnnSession session, const char* name) {
+MnnTensor mnn_session_get_input(MnnSession session, const char* /*name*/) {
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!sess) return nullptr;
 
@@ -128,7 +128,6 @@ int mnn_tensor_get_shape(MnnTensor tensor, int* dims, int max_dims) {
     auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
     if (!t || !dims) return 0;
 
-    auto elementSize = t->elementSize();
     auto shape = t->shape();
     int n = static_cast<int>(shape.size());
     if (n > max_dims) n = max_dims;
@@ -155,7 +154,7 @@ float* mnn_tensor_get_host_data(MnnTensor tensor) {
     return t->host<float>();
 }
 
-int mnn_tensor_set_shape(MnnInterpreter interpreter, MnnSession session, MnnTensor tensor, const int* dims, int ndim) {
+int mnn_tensor_set_shape(MnnInterpreter interpreter, MnnSession /*session*/, MnnTensor tensor, const int* dims, int ndim) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
     if (!net || !t || !dims) return -1;
@@ -553,7 +552,6 @@ extern "C" int mnn_run_with_output(
     }
     if (!out_tensor) return -1;
 
-    auto out_type = out_tensor->getType();
     out_tensor->buffer().host = reinterpret_cast<uint8_t*>(out_data);
     out_tensor->buffer().device = 0;
 

@@ -12,7 +12,7 @@
 //!   4. Read output float32 → BGRA U8
 
 use std::sync::Mutex;
-use std::os::raw::c_void;
+
 use std::time::Instant;
 use std::ffi::CStr;
 use log::{info, debug, warn, error};
@@ -74,6 +74,7 @@ pub struct MnnEngine {
     /// Pipeline-aligned output buffer pool.
     /// Pre-allocated at build(), recycled every frame via acquire/release.
     #[cfg(feature = "mnn")]
+    #[allow(dead_code)]
     buf_pool: Mutex<crate::mnn_buffer::OutputBufferPool>,
     /// Cached tensor handles for extra inputs — avoids CString alloc per frame.
     #[cfg(feature = "mnn")]
@@ -229,7 +230,7 @@ impl MnnEngine {
             Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
             Proto::tensor_dim_value(h), Proto::tensor_dim_value(packed_w),
         ];
-        let dim_1hw = || vec![
+        let _dim_1hw = || vec![
             Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
             Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
         ];
@@ -452,6 +453,7 @@ impl MnnEngine {
 
     // ── helpers ──
 
+    #[allow(dead_code)]
     fn norm(buf: &[u8], max: f32) -> Vec<f32> {
         buf.chunks_exact(2).map(|c| (u16::from_ne_bytes([c[0], c[1]]) as f32 / max).clamp(0.0, 1.0)).collect()
     }
@@ -538,7 +540,7 @@ impl MnnEngine {
                 }
             }
             if let Some(t) = find(pool, "DemosaicCcmBlock/w") {
-                if let Some(mut bytes) = t.as_bytes_mut() {
+                if let Some(bytes) = t.as_bytes_mut() {
                     let src = unsafe {
                         std::slice::from_raw_parts(fused.as_ptr() as *const u8, 48)
                     };
@@ -548,7 +550,7 @@ impl MnnEngine {
         }
         // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
         if let Some(t) = find(pool, "DemosaicCcmBlock/b") {
-            if let Some(mut bytes) = t.as_bytes_mut() {
+            if let Some(bytes) = t.as_bytes_mut() {
                 // When tone is fused in, absorb brightness into bias
                 let bias = [tone.brightness; 3];
                 let src = unsafe { std::slice::from_raw_parts(bias.as_ptr() as *const u8, 12) };
@@ -558,7 +560,7 @@ impl MnnEngine {
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains
         if let Some(gains) = bayer {
             if let Some(t) = find(pool, "BayerWbBlock/gains") {
-                if let Some(mut bytes) = t.as_bytes_mut() {
+                if let Some(bytes) = t.as_bytes_mut() {
                     let src = unsafe { std::slice::from_raw_parts(gains.as_ptr() as *const u8, 16) };
                     if bytes.len() >= 16 { bytes[..16].copy_from_slice(src); }
                 }
@@ -566,21 +568,21 @@ impl MnnEngine {
         }
         // ToneBlock/contrast [1]
         if let Some(t) = find(pool, "ToneBlock/contrast") {
-            if let Some(mut bytes) = t.as_bytes_mut() {
+            if let Some(bytes) = t.as_bytes_mut() {
                 let src = unsafe { std::slice::from_raw_parts((&tone.contrast as *const f32) as *const u8, 4) };
                 if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
             }
         }
         // ToneBlock/brightness [1]
         if let Some(t) = find(pool, "ToneBlock/brightness") {
-            if let Some(mut bytes) = t.as_bytes_mut() {
+            if let Some(bytes) = t.as_bytes_mut() {
                 let src = unsafe { std::slice::from_raw_parts((&tone.brightness as *const f32) as *const u8, 4) };
                 if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
             }
         }
         // ToneBlock/gamma_recip [1]
         if let Some(t) = find(pool, "ToneBlock/gamma_recip") {
-            if let Some(mut bytes) = t.as_bytes_mut() {
+            if let Some(bytes) = t.as_bytes_mut() {
                 let src = unsafe { std::slice::from_raw_parts((&tone.gamma_recip as *const f32) as *const u8, 4) };
                 if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
             }
@@ -731,7 +733,7 @@ impl IspEngine for MnnEngine {
 
             // Determine inference path based on model input type
             let path: &str;
-            let mut n: i32;
+            let n: i32;
             let t_prep_end: std::time::Instant;
             let t_infer_start: std::time::Instant;
             let t_tensor_before: std::time::Instant;
@@ -795,12 +797,10 @@ impl IspEngine for MnnEngine {
                 // MNN session was built with profiling enabled.
                 // This is a best‑effort call; if the function is unavailable the
                 // code will compile but produce no output.
-                unsafe {
-                    let info_c = crate::mnn_sys::MNN_GetSessionInfoString(sess.as_ptr());
-                    if !info_c.is_null() {
-                        let info = CStr::from_ptr(info_c).to_string_lossy();
-                        info!("MNN profiling info:\n{}", info);
-                    }
+                let info_c = crate::mnn_sys::MNN_GetSessionInfoString(sess.as_ptr());
+                if !info_c.is_null() {
+                    let info = CStr::from_ptr(info_c).to_string_lossy();
+                    info!("MNN profiling info:\n{}", info);
                 }
                 // ------------------------------------------------------------------
             }
@@ -837,7 +837,7 @@ impl IspEngine for MnnEngine {
             // in the graph (block not enabled in this profile), get_output returns None.
             #[cfg(feature = "mnn")]
             {
-                use crate::mnn_sys::MnnInterpreterSafe;
+                
 
                 // ── Phase 1: Read raw stats tensors into local variables ──
                 // (Avoid borrow conflicts with ctrl write_stats() above)
@@ -952,7 +952,7 @@ impl IspEngine for MnnEngine {
                         stats.zone_stats = zone_rgb;
                         stats.zone_stats_valid = true;
                     }
-                    drop(stats);
+                    // drop(stats) — implicit at end of scope
 
                     // Apply AE clipping gain from tone stats
                     if let Some(ts) = ts_vals {
@@ -971,7 +971,7 @@ impl IspEngine for MnnEngine {
                     let p_ts = [ps.tone_stats[0], ps.tone_stats[1], ps.tone_stats[2]];
                     let p_hist = ps.histogram;
                     let p_hist_ok = ps.histogram_valid;
-                    drop(ps);
+                    // drop(ps) — implicit
 
                     if p_cm[0] > 0.0 || p_cm[1] > 0.0 || p_cm[2] > 0.0 {
                         ctrl.update_channel_stats(&p_cm);
