@@ -42,8 +42,11 @@ cam-rust/cam-isp/tools/
 *.swp
 *.swo
 
-# Mesa Vulkan libs (prebuilt for portability)
-!cam-rust/lib/mesa/
+# Old duplicate native-lib directories; canonical libs live in lib/aarch64-v8a/
+cam-rust/lib/aarch64/
+cam-rust/lib/arm64-v8a/
+cam-rust/lib/mesa/
+cam-rust/lib/**/libmnn_wrapper.a
 
 # OS
 .DS_Store
