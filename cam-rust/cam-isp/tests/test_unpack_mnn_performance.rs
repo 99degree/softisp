@@ -9,11 +9,11 @@
 //! 5. Log performance metrics
 
 use std::time::Instant;
-use std::ffi::CString;
 use std::os::raw::c_void;
 use cam_isp::pipeline::GraphComposer;
 use cam_isp::blocks::{RawInputBlock, UnpackBayerToFp16Block};
 use cam_isp::pipeline::IspBlock;
+use cam_isp::mnn_sys::{MnnInterpreterSafe, MnnBackendType, MnnModelInfo};
 
 /// Pack two 10-bit values into one INT32: (A << 16) | B
 fn pack_ab(a: u16, b: u16) -> i32 {
@@ -86,120 +86,94 @@ fn test_mnn_unpack_performance_with_profiling() {
         let onnx_bytes = GraphComposer::compose_from_vec(&blocks, &[], 15)
             .expect("Failed to build ONNX model");
         
-        // 3. Convert to MNN
-        let mnn_bytes = cam_isp::mnn_converter::convert_onnx_to_mnn(&onnx_bytes)
-            .expect("ONNX→MNN conversion failed");
-        
-        // 4. Save to temp file
-        let temp_path = std::env::temp_dir().join(format!("test_unpack_{}.mnn", res.name.to_lowercase()));
-        std::fs::write(&temp_path, &mnn_bytes).expect("Failed to write temp MNN file");
-        let c_path = CString::new(temp_path.to_str().unwrap()).unwrap();
+        // 3. Save ONNX to temp file and convert to MNN
+        let onnx_path = std::env::temp_dir().join(format!("test_unpack_{}.onnx", res.name.to_lowercase()));
+        let mnn_path = std::env::temp_dir().join(format!("test_unpack_{}.mnn", res.name.to_lowercase()));
+        std::fs::write(&onnx_path, &onnx_bytes).expect("Failed to write temp ONNX file");
+        cam_isp::mnn_converter::convert_onnx_to_mnn(
+            onnx_path.to_str().unwrap(),
+            mnn_path.to_str().unwrap(),
+            None,
+        ).expect("ONNX→MNN conversion failed");
+        std::fs::remove_file(&onnx_path).ok();
         
         // 5. Load MNN model and create session with profiling
+        let load_start = Instant::now();
+        let interp = MnnInterpreterSafe::from_file(
+            mnn_path.to_str().unwrap()
+        ).expect("Failed to create interpreter");
+        let model_load_time = load_start.elapsed();
+
+        let session_start = Instant::now();
+        let sess = interp.create_session(MnnBackendType::Vulkan, 1)
+            .expect("Failed to create Vulkan session");
+        let session_create_time = session_start.elapsed();
+
+        // 6. Run inference multiple times for stable measurement
+        let num_runs = 5;
+        let mut total_inference_time = std::time::Duration::ZERO;
+
+        for _ in 0..num_runs {
+            let infer_start = Instant::now();
+            sess.run().expect("Inference failed");
+            let infer_time = infer_start.elapsed();
+            total_inference_time += infer_time;
+        }
+
+        let avg_inference_time = total_inference_time / num_runs as u32;
+
+        // 7. Read profiling data
+        let mut memory_mb: f32 = 0.0;
+        let mut flops: f32 = 0.0;
+
+        let interp_ptr = interp.as_ptr();
+        let sess_ptr = sess.as_ptr();
         unsafe {
-            // Load interpreter
-            let load_start = Instant::now();
-            let interp = cam_isp::mnn_sys::mnn_interpreter_create_from_file(c_path.as_ptr());
-            let model_load_time = load_start.elapsed();
-            assert!(!interp.is_null(), "Failed to create interpreter");
-            
-            // Create Vulkan session with profiling
-            let session_start = Instant::now();
-            let session = cam_isp::mnn_sys::mnn_session_create(
-                interp,
-                cam_isp::mnn_sys::MnnBackendType::Vulkan,
-                1,
-            );
-            let session_create_time = session_start.elapsed();
-            assert!(!session.is_null(), "Failed to create Vulkan session");
-            
-            // Resize session
-            cam_isp::mnn_sys::mnn_session_resize(interp, session);
-            
-            // 6. Run inference multiple times for stable measurement
-            let num_runs = 5;
-            let mut total_inference_time = std::time::Duration::ZERO;
-            
-            for _ in 0..num_runs {
-                // Set input tensor
-                let input_tensor = cam_isp::mnn_sys::mnn_session_get_input_v2(
-                    interp, session, std::ptr::null(),
-                );
-                assert!(!input_tensor.is_null(), "Failed to get input tensor");
-                
-                // Copy data to input tensor
-                let input_ptr = cam_isp::mnn_sys::mnn_tensor_get_host_data_raw(input_tensor);
-                assert!(!input_ptr.is_null(), "Failed to get input data pointer");
-                
-                // Note: This is a simplified approach. In practice, we'd need to:
-                // 1. Resize the input tensor to match the input shape
-                // 2. Copy the packed data to the tensor buffer
-                // For this test, we'll just measure the inference time
-                
-                let infer_start = Instant::now();
-                let ret = cam_isp::mnn_sys::mnn_session_run(interp, session);
-                let infer_time = infer_start.elapsed();
-                total_inference_time += infer_time;
-                
-                assert_eq!(ret, 0, "Inference failed");
-            }
-            
-            let avg_inference_time = total_inference_time / num_runs as u32;
-            
-            // 7. Read profiling data
-            let mut memory_mb: f32 = 0.0;
-            let mut flops: f32 = 0.0;
-            
-            let memory_code = cam_isp::mnn_sys::MnnModelInfo::MEMORY as i32;
+            let memory_code = MnnModelInfo::MEMORY as i32;
             let ret = cam_isp::mnn_sys::mnn_get_model_info(
-                interp,
-                session,
+                interp_ptr,
+                sess_ptr,
                 memory_code,
                 &mut memory_mb as *mut _ as *mut c_void,
             );
             if ret == 0 {
                 println!("  Memory usage: {:.2} MB", memory_mb);
             }
-            
-            let flops_code = cam_isp::mnn_sys::MnnModelInfo::FLOPS as i32;
+
+            let flops_code = MnnModelInfo::FLOPS as i32;
             let ret = cam_isp::mnn_sys::mnn_get_model_info(
-                interp,
-                session,
+                interp_ptr,
+                sess_ptr,
                 flops_code,
                 &mut flops as *mut _ as *mut c_void,
             );
             if ret == 0 {
                 println!("  FLOPS: {:.2} M", flops / 1_000_000.0);
             }
-            
+
             // Get output tensor for size calculation
-            let output_tensor = cam_isp::mnn_sys::mnn_session_get_output_v2(
-                interp, session, std::ptr::null(),
-            );
-            let mut dims = [0i32; 4];
-            let ndim = cam_isp::mnn_sys::mnn_tensor_get_shape(output_tensor, dims.as_mut_ptr(), 4);
-            let output_size = dims[..ndim as usize].iter().product::<i32>() as usize;
-            let output_size_mb = (output_size * 2) as f64 / (1024.0 * 1024.0); // FP16 = 2 bytes
-            
-            // 8. Store metrics
-            metrics.push(MnnPerfMetrics {
-                resolution: res.name.to_string(),
-                model_load_time,
-                session_create_time,
-                inference_time: avg_inference_time,
-                memory_usage_mb,
-                flops,
-                input_size_mb,
-                output_size_mb,
-            });
-            
-            // 9. Clean up
-            cam_isp::mnn_sys::mnn_session_release(interp, session);
-            cam_isp::mnn_sys::mnn_interpreter_destroy(interp);
+            let output_tensor = interp.get_first_output(&sess);
+            if let Some(t) = output_tensor {
+                let dims = t.shape();
+                let output_size = dims.iter().product::<i32>() as usize;
+                let output_size_mb = (output_size * 2) as f64 / (1024.0 * 1024.0);
+
+                // 8. Store metrics
+                metrics.push(MnnPerfMetrics {
+                    resolution: res.name.to_string(),
+                    model_load_time,
+                    session_create_time,
+                    inference_time: avg_inference_time,
+                    memory_usage_mb: memory_mb,
+                    flops,
+                    input_size_mb,
+                    output_size_mb,
+                });
+            }
         }
         
         // Clean up temp file
-        std::fs::remove_file(&temp_path).ok();
+        std::fs::remove_file(&mnn_path).ok();
     }
     
     // Log metrics

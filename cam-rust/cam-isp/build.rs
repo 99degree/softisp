@@ -114,10 +114,11 @@ fn link_mnnconvert() {
         println!("cargo:rerun-if-changed={}", dst.display());
     }
 
-    // Link flags
+    // Link flags — mnnconvert (static) must come before MNNConvertDeps (dynamic)
+    // because mnnconvert references MNN::Cli::convertModel from MNNConvertDeps.
     println!("cargo:rustc-link-search=native={}", abi_dir);
-    println!("cargo:rustc-link-lib=MNNConvertDeps");
     println!("cargo:rustc-link-lib=mnnconvert");
+    println!("cargo:rustc-link-lib=MNNConvertDeps");
 }
 
 /// Compute the ABI-specific library directory.
