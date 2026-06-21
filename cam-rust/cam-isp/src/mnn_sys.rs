@@ -59,32 +59,32 @@ pub struct MnnTensor(std::ptr::NonNull<c_void>);
 
 extern "C" {
     pub fn mnn_interpreter_create_from_file(path: *const c_char) -> *mut c_void;
-    fn mnn_interpreter_create_from_buffer(buffer: *const c_void, size: usize) -> *mut c_void;
-    fn mnn_interpreter_destroy(interpreter: *mut c_void);
-    fn mnn_session_create(
+    pub fn mnn_interpreter_create_from_buffer(buffer: *const c_void, size: usize) -> *mut c_void;
+    pub fn mnn_interpreter_destroy(interpreter: *mut c_void);
+    pub fn mnn_session_create(
         interpreter: *mut c_void,
         backend: MnnBackendType,
         num_threads: c_int,
     ) -> *mut c_void;
-    fn mnn_session_release(interpreter: *mut c_void, session: *mut c_void);
-    fn mnn_session_resize(interpreter: *mut c_void, session: *mut c_void) -> c_int;
-    fn mnn_session_run(interpreter: *mut c_void, session: *mut c_void) -> c_int;
-    fn mnn_session_get_input_v2(
+    pub fn mnn_session_release(interpreter: *mut c_void, session: *mut c_void);
+    pub fn mnn_session_resize(interpreter: *mut c_void, session: *mut c_void) -> c_int;
+    pub fn mnn_session_run(interpreter: *mut c_void, session: *mut c_void) -> c_int;
+    pub fn mnn_session_get_input_v2(
         interpreter: *mut c_void,
         session: *mut c_void,
         name: *const c_char,
     ) -> *mut c_void;
-    fn mnn_session_get_output_v2(
+    pub fn mnn_session_get_output_v2(
         interpreter: *mut c_void,
         session: *mut c_void,
         name: *const c_char,
     ) -> *mut c_void;
-    fn mnn_tensor_get_shape(tensor: *mut c_void, dims: *mut c_int, max_dims: c_int) -> c_int;
-    fn mnn_tensor_get_type(tensor: *mut c_void) -> c_int;
-    fn mnn_tensor_get_host_data(tensor: *mut c_void) -> *mut f32;
-    fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
-    fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
-    fn mnn_tensor_set_shape(interpreter: *mut c_void, session: *mut c_void, tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
+    pub fn mnn_tensor_get_shape(tensor: *mut c_void, dims: *mut c_int, max_dims: c_int) -> c_int;
+    pub fn mnn_tensor_get_type(tensor: *mut c_void) -> c_int;
+    pub fn mnn_tensor_get_host_data(tensor: *mut c_void) -> *mut f32;
+    pub fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
+    pub fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
+    pub fn mnn_tensor_set_shape(interpreter: *mut c_void, session: *mut c_void, tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
     // Standard MNN C++ API for session info (always available)
     pub fn mnn_get_model_info(
         interpreter: *mut c_void,
