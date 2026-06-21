@@ -1,1 +1,5 @@
 *.png
+
+# Generated native build artifacts
+cam-isp/lib/
+lib/**/libmnn_wrapper.a
