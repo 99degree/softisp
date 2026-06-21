@@ -14,13 +14,28 @@ use crate::controller::IspController;
 /// Controls whether the engine converts the MNN output to a specific byte
 /// format (BGRA, RGBA, ARGB, etc.) or returns raw bytes with no conversion.
 ///
-/// Model-native formats (no conversion):
-/// - `FloatRgb` → `[1,3,H,W]` f32×3 per pixel (12 bytes/pixel)
-/// - `FloatBgra` → `[1,4,H,W]` f32×4 per pixel (16 bytes/pixel, bg4a)
-/// - `PackedRgb` → `[1,1,H,W]` INT32 packed (4 bytes/pixel, R<<16|G<<8|B)
+/// # Format Table
 ///
-/// For byte formats, the engine converts from whatever the model outputs
-/// into the requested byte order (u8, 3 or 4 bytes/pixel).
+/// | Format       | ONNX shape     | Data type  | B/px | ONNX subgraph                    |
+/// |--------------|----------------|------------|------|----------------------------------|
+/// | `FloatRgb`   | `[1,3,H,W]`    | f32×3      | 12   | identity Mul(1.0)                |
+/// | `FloatBgra`  | `[1,4,H,W]`    | f32×4      | 16   | Conv(1×1): B←R, G←G, R←B, A←255 |
+/// | `PackedRgb`  | `[1,1,H,W]`    | INT32      |  4   | Mul(255)→Mul(w)→ReduceSum→Cast   |
+/// | `Bgra`       | `[1,4,H,W]`    | f32×4      |  4   | Conv(1×1): B←R, G←G, R←B, A←255 |
+/// | `Rgba`       | `[1,4,H,W]`    | f32×4      |  4   | Conv(1×1): R←R, G←G, B←B, A←255 |
+/// | `Argb`       | `[1,4,H,W]`    | f32×4      |  4   | Conv(1×1): A←255, R←R, G←G, B←B |
+/// | `Abgr`       | `[1,4,H,W]`    | f32×4      |  4   | Conv(1×1): A←255, B←B, G←G, R←R |
+/// | `Rgb`        | `[1,3,H,W]`    | f32×3      |  3   | Conv(1×1): R←R, G←G, B←B        |
+/// | `Bgr`        | `[1,3,H,W]`    | f32×3      |  3   | Conv(1×1): B←B, G←G, R←R        |
+///
+/// Notes:
+/// - `Float*` and `PackedRgb` are model-native — ONNX graph outputs data in
+///   exactly this layout, engine memcpys the raw bytes, zero copy.
+/// - `Bgra`/`Rgba`/etc. (no `Float` prefix) also use the same Conv(1×1) ONNX
+///   subgraph, producing `f32 [0,255]` values. Consumer truncates to u8.
+/// - All Conv-based formats also multiply by 255 (weights include the scale).
+/// - `PackedRgb` encodes R,G,B into a single INT32: `R<<16 | G<<8 | B`.
+/// - Per default (`PackedRgb`), every frame is `[1,1,H,W]` INT32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     /// Float RGB [0,1] — return raw f32×3 planar bytes.
