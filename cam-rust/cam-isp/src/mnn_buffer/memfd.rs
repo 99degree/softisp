@@ -25,7 +25,7 @@
 // ```
 
 use std::fs::File;
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::Arc;
 
 // Alignment for hardware access
@@ -142,7 +142,7 @@ impl MemfdBuffer {
         // On non-Linux, we can't use memfd, so we'll use a temporary file
         // or just regular allocation
         use tempfile::tempfile;
-        let mut file = tempfile()?;
+        let file = tempfile()?;
         file.set_len(size as u64)?;
         Ok(file)
     }
@@ -170,7 +170,7 @@ impl MemfdBuffer {
     
     /// Fallback mmap for non-Linux
     #[cfg(not(target_os = "linux"))]
-    fn mmap(file: &File, size: usize) -> std::io::Result<*mut u8> {
+    fn mmap(_file: &File, size: usize) -> std::io::Result<*mut u8> {
         // Use regular malloc
         let ptr = unsafe {
             libc::malloc(size) as *mut u8
@@ -357,7 +357,7 @@ impl Clone for MemfdBuffer {
     fn clone(&self) -> Self {
         // Create a new buffer with the same size
         Self::new(self.original_size, self.alignment, "mnn_buffer_clone")
-            .map(|mut new_buf| {
+            .map(|new_buf| {
                 // Copy data
                 unsafe {
                     std::ptr::copy_nonoverlapping(
@@ -448,7 +448,7 @@ impl MemfdBufferManager {
         &mut self,
         tensor: *mut std::ffi::c_void,
         tensor_name: &str,
-        elem_type_code: u8,
+        _elem_type_code: u8,
         elem_bits: u8,
         dims: &[i32],
     ) -> std::io::Result<Arc<MemfdBuffer>> {
@@ -545,7 +545,7 @@ pub extern "C" fn memfd_buffer_create(
 #[no_mangle]
 pub extern "C" fn memfd_buffer_free(buffer: *mut CMemfdBuffer) {
     if !buffer.is_null() {
-        unsafe { Box::from_raw(buffer) };
+        unsafe { let _ = Box::from_raw(buffer); }
     }
 }
 
@@ -614,7 +614,7 @@ pub extern "C" fn memfd_buffer_manager_new() -> *mut CMemfdBufferManager {
 #[no_mangle]
 pub extern "C" fn memfd_buffer_manager_free(manager: *mut CMemfdBufferManager) {
     if !manager.is_null() {
-        unsafe { Box::from_raw(manager) };
+        unsafe { let _ = Box::from_raw(manager); }
     }
 }
 
@@ -640,7 +640,7 @@ pub extern "C" fn memfd_buffer_manager_setup_mnn(
     manager: *mut CMemfdBufferManager,
     tensor: *mut std::ffi::c_void,
     name: *const libc::c_char,
-    elem_bits: u8,
+    _elem_bits: u8,
     ndims: i32,
     dims: *const i32,
 ) -> *mut CMemfdBuffer {

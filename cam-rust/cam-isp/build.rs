@@ -90,7 +90,7 @@ fn link_mnnconvert() {
     let mnnconvert_include = "vendor/mnn/mnnconvert/include";
 
     let src_dir = std::path::Path::new("vendor/mnn/mnnconvert/source");
-    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let _out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
     // Build mnnconvert wrapper (C API)
     cc::Build::new()

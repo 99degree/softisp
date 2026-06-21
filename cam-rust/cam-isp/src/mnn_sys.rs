@@ -551,6 +551,7 @@ mod tests {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+#[allow(non_snake_case)]
 pub struct MnnConvert_Options {
     pub bizCode: *const c_char,
     pub optimizeLevel: c_int,
