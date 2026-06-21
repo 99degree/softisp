@@ -620,6 +620,19 @@ extern "C" {
         optimize_level: i32,
         weight_quant_bits: i32,
         fp16: i32,
+        preserve_input_type: i32,
+        result: *mut MnnConvertResult,
+    );
+
+    /// Convert TensorFlow model to MNN format.
+    pub fn mnn_convert_tf_to_mnn(
+        tf_model_path: *const c_char,
+        mnn_path: *const c_char,
+        biz_code: *const c_char,
+        optimize_level: i32,
+        weight_quant_bits: i32,
+        fp16: i32,
+        preserve_input_type: i32,
         result: *mut MnnConvertResult,
     );
 }

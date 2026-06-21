@@ -1,26 +1,26 @@
 //! Build script for cam-isp.
 //!
 //! Links prebuilt native libraries from the `lib/` directory.
-//!   lib/arm64-v8a/libonnxruntime.so  — ONNX Runtime (for `ort` feature)
-//!   lib/arm64-v8a/libMNN.so          — MNN inference engine (for `mnn` feature)
+//!   lib/aarch64-v8a/libMNN.so          — MNN inference engine (for `mnn` feature)
+//!   lib/aarch64-v8a/libMNNConvertDeps.so — MNN converter shared library
+//!   lib/arm64-v8a/libonnxruntime.so    — ONNX Runtime (for `ort` feature)
 //!
-//! Set the following environment variables for custom paths:
-//!   MNN_INCLUDE_DIR  — path to MNN C++ headers
-//!   MNN_LIB_DIR      — path to prebuilt libMNN.so directory
-//!   ORT_LIB_DIR      — path to prebuilt libonnxruntime.so directory
+//! By default all MNN headers/libs are resolved from `$HOME/MNN` (Termux:
+//! `~/MNN`). Override with:
+//!   MNN_DIR           — MNN source/build root (default: $HOME/MNN)
+//!   MNN_INCLUDE_DIR   — MNN include directory (default: $MNN_DIR/include)
+//!   MNN_LIB_DIR       — libMNN.so build directory (default: $MNN_DIR/build_vk/OFF)
+//!   MNN_CONVERT_DIR   — libMNNConvertDeps.so build directory (default: $MNN_DIR/build_vk/tools/converter/OFF)
+//!   MNN_CONVERT_INCLUDE_DIR — converter headers (default: $MNN_DIR/tools/converter/include)
+//!   ORT_LIB_DIR       — path to prebuilt libonnxruntime.so directory
 
 fn main() {
-    // Library base paths — computed lazily inside feature gates
-
-    // --- ONNX Runtime (ort feature only) ---
     #[cfg(feature = "ort")]
     link_onnxruntime();
 
-    // --- MNN (mnn feature only) ---
     #[cfg(feature = "mnn")]
     link_mnn();
 
-    // --- MNN Convert (mnn feature only) ---
     #[cfg(feature = "mnn")]
     link_mnnconvert();
 }
@@ -37,28 +37,27 @@ fn link_onnxruntime() {
 #[cfg(feature = "mnn")]
 fn link_mnn() {
     let abi_dir = compute_abi_dir();
-    let mnn_include = std::env::var("MNN_INCLUDE_DIR").unwrap_or_else(|_| {
-        "vendor/mnn/include".to_string()
-    });
+    let mnn_include = mnn_include_dir();
 
-    let wrapper_src = std::path::Path::new("mnn_sys/mnn_wrapper.cpp");
-    let wrapper_hdr = std::path::Path::new("mnn_sys/mnn_wrapper.h");
+    copy_if_newer(&mnn_lib_src().join("libMNN.so"), &Path::new(&abi_dir).join("libMNN.so"));
+
+    let wrapper_src = Path::new("mnn_sys/mnn_wrapper.cpp");
+    let wrapper_hdr = Path::new("mnn_sys/mnn_wrapper.h");
 
     if wrapper_src.exists() && wrapper_hdr.exists() {
         println!("cargo:rerun-if-changed=mnn_sys/mnn_wrapper.cpp");
         println!("cargo:rerun-if-changed=mnn_sys/mnn_wrapper.h");
 
-        let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
         cc::Build::new()
             .cpp(true)
             .std("c++17")
-            .file("mnn_sys/mnn_wrapper.cpp")
-            .include(&mnn_include).include("vendor/mnn/tools")
+            .file(wrapper_src)
+            .include(&mnn_include)
+            .include(mnn_dir().join("tools"))
             .compile("mnn_wrapper");
 
-        // Copy .a to lib/aarch64 so it's findable by ALL targets
-        let lib_dir = std::path::Path::new(&abi_dir);
+        let lib_dir = Path::new(&abi_dir);
         std::fs::create_dir_all(lib_dir).ok();
         let src = out_dir.join("libmnn_wrapper.a");
         let dst = lib_dir.join("libmnn_wrapper.a");
@@ -68,64 +67,106 @@ fn link_mnn() {
         }
     }
 
-    // Always link from lib/ directory (works for all targets)
     println!("cargo:rustc-link-search=native={}", abi_dir);
     println!("cargo:rustc-link-lib=static=mnn_wrapper");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=c++_shared");
-//     println!("cargo:rustc-link-lib=MNN_Express");
-//     println!("cargo:rustc-link-lib=MNN_Vulkan");
-//     println!("cargo:rustc-link-lib=MNN_CL");
-//     println!("cargo:rustc-link-lib=MNN_GL");
 }
 
 #[cfg(feature = "mnn")]
 fn link_mnnconvert() {
     let abi_dir = compute_abi_dir();
-    let mnn_include = std::env::var("MNN_INCLUDE_DIR").unwrap_or_else(|_| {
-        "vendor/mnn/include".to_string()
-    });
+    let mnn_include = mnn_include_dir();
+    let mnnconvert_include = mnn_convert_include_dir();
 
-    // Include path for mnnconvert headers
-    let mnnconvert_include = "vendor/mnn/mnnconvert/include";
+    copy_if_newer(
+        &mnn_convert_lib_src().join("libMNNConvertDeps.so"),
+        &Path::new(&abi_dir).join("libMNNConvertDeps.so"),
+    );
 
-    let src_dir = std::path::Path::new("vendor/mnn/mnnconvert/source");
-    let _out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let src_dir = Path::new("vendor/mnn/mnnconvert/source");
+    if !src_dir.join("mnnconvert_shared.cpp").exists() {
+        panic!("missing mnnconvert_shared.cpp at {}", src_dir.join("mnnconvert_shared.cpp").display());
+    }
 
-    // Build mnnconvert wrapper (C API)
     cc::Build::new()
         .cpp(true)
         .std("c++17")
         .file(src_dir.join("mnnconvert_shared.cpp"))
-        .file("mnn_sys/mnn_convert_api.cpp")  // C FFI wrapper, statically linked
-        .include(&mnn_include).include("vendor/mnn/tools")
-        .include(mnnconvert_include).include("vendor/mnn/mnnconvert/include/converter")
+        .file("mnn_sys/mnn_convert_api.cpp")
+        .include(&mnn_include)
+        .include(&mnnconvert_include)
+        .include("vendor/mnn/mnnconvert/include")
         .define("MNN_CONVERT_API_EXPORTS", None)
         .compile("mnnconvert");
 
-    // Link libMNNConvertDeps.so from vendor lib
-    let lib_dir = std::path::Path::new(&abi_dir);
+    let lib_dir = Path::new(&abi_dir);
     std::fs::create_dir_all(lib_dir).ok();
 
-    let src = std::path::Path::new("vendor/mnn/mnnconvert/lib/libMNNConvertDeps.so");
-    let dst = lib_dir.join("libMNNConvertDeps.so");
-    if src.exists() {
-        std::fs::copy(src, &dst).ok();
-        println!("cargo:rerun-if-changed={}", dst.display());
-    }
-
-    // Link flags — mnnconvert (static) must come before MNNConvertDeps (dynamic)
-    // because mnnconvert references MNN::Cli::convertModel from MNNConvertDeps.
     println!("cargo:rustc-link-search=native={}", abi_dir);
     println!("cargo:rustc-link-lib=mnnconvert");
     println!("cargo:rustc-link-lib=MNNConvertDeps");
 }
 
-/// Compute the ABI-specific library directory.
-#[allow(dead_code)]
 fn compute_abi_dir() -> String {
-    let lib_dir = std::path::Path::new("lib");
+    let lib_dir = Path::new("lib");
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH")
-        .unwrap_or_else(|_| "arm64-v8a".to_string());
+        .unwrap_or_else(|_| "aarch64-v8a".to_string());
     format!("{}/{}", lib_dir.display(), target_arch)
 }
+
+fn mnn_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("MNN_DIR") {
+        PathBuf::from(path)
+    } else {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("MNN")
+    }
+}
+
+fn mnn_include_dir() -> PathBuf {
+    std::env::var_os("MNN_INCLUDE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| mnn_dir().join("include"))
+}
+
+fn mnn_convert_include_dir() -> PathBuf {
+    std::env::var_os("MNN_CONVERT_INCLUDE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| mnn_dir().join("tools/converter/include"))
+}
+
+fn mnn_lib_src() -> PathBuf {
+    std::env::var_os("MNN_LIB_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| mnn_dir().join("build_vk/OFF"))
+}
+
+fn mnn_convert_lib_src() -> PathBuf {
+    std::env::var_os("MNN_CONVERT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| mnn_dir().join("build_vk/tools/converter/OFF"))
+}
+
+fn copy_if_newer(src: &Path, dst: &Path) {
+    if !src.exists() {
+        eprintln!("warning: MNN artifact not found, leaving existing copy: {}", src.display());
+        return;
+    }
+    if dst.exists() {
+        let src_time = src.metadata().and_then(|m| m.modified()).ok();
+        let dst_time = dst.metadata().and_then(|m| m.modified()).ok();
+        if let (Some(src_time), Some(dst_time)) = (src_time, dst_time) {
+            if src_time <= dst_time {
+                return;
+            }
+        }
+    }
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::copy(src, dst).ok();
+    println!("cargo:rerun-if-changed={}", src.display());
+}
+
+use std::path::{Path, PathBuf};

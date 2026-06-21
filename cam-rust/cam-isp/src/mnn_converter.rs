@@ -13,6 +13,7 @@ pub struct MnnConvertOptions {
     pub biz_code: String,
     pub optimize_level: u8,
     pub fp16: bool,
+    pub preserve_input_type: bool,
     pub weight_quant_bits: u8,
     pub weight_quant_block: i32,
     pub save_static_model: bool,
@@ -29,6 +30,7 @@ impl Default for MnnConvertOptions {
             biz_code: "MNN".to_string(),
             optimize_level: 1,
             fp16: false,
+            preserve_input_type: false,
             weight_quant_bits: 0,
             weight_quant_block: -1,
             save_static_model: false,
@@ -69,6 +71,7 @@ pub fn convert_onnx_to_mnn(
             opts.optimize_level as i32,
             opts.weight_quant_bits as i32,
             if opts.fp16 { 1 } else { 0 },
+            if opts.preserve_input_type { 1 } else { 0 },
             &mut result,
         );
     }
