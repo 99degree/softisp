@@ -1,17 +1,19 @@
 //! Build script for cam-isp.
 //!
-//! Links prebuilt native libraries from the `lib/` directory.
-//!   lib/aarch64-v8a/libMNN.so          — MNN inference engine (for `mnn` feature)
-//!   lib/aarch64-v8a/libMNNConvertDeps.so — MNN converter shared library
-//!   lib/arm64-v8a/libonnxruntime.so    — ONNX Runtime (for `ort` feature)
+//! Native libraries are stored in a single canonical location:
+//!   repo-root/lib/aarch64-v8a/
 //!
-//! By default all MNN headers/libs are resolved from `$HOME/MNN` (Termux:
-//! `~/MNN`). Override with:
+//! Include priority:
+//!   1. $HOME/MNN (or MNN_DIR) when present — always used for the latest headers.
+//!   2. cam-isp/vendor/mnn — checked-in fallback headers copied from ~/MNN.
+//!
+//! Override with:
 //!   MNN_DIR           — MNN source/build root (default: $HOME/MNN)
 //!   MNN_INCLUDE_DIR   — MNN include directory (default: $MNN_DIR/include)
 //!   MNN_LIB_DIR       — libMNN.so build directory (default: $MNN_DIR/build_vk/OFF)
 //!   MNN_CONVERT_DIR   — libMNNConvertDeps.so build directory (default: $MNN_DIR/build_vk/tools/converter/OFF)
 //!   MNN_CONVERT_INCLUDE_DIR — converter headers (default: $MNN_DIR/tools/converter/include)
+//!   MNN_SCHEMA_DIR    — generated flatbuffer headers (default: $MNN_DIR/schema/current)
 //!   ORT_LIB_DIR       — path to prebuilt libonnxruntime.so directory
 
 fn main() {
@@ -27,19 +29,21 @@ fn main() {
 
 #[cfg(feature = "ort")]
 fn link_onnxruntime() {
-    let abi_dir = compute_abi_dir();
-    println!("cargo:rerun-if-changed={}/libonnxruntime.so", abi_dir);
-    let ort_lib_dir = std::env::var("ORT_LIB_DIR").unwrap_or_else(|_| abi_dir);
-    println!("cargo:rustc-link-search=native={}", ort_lib_dir);
+    let abi_dir = abi_dir();
+    println!("cargo:rerun-if-changed={}/libonnxruntime.so", abi_dir.display());
+    let ort_lib_dir = std::env::var_os("ORT_LIB_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| abi_dir.clone());
+    println!("cargo:rustc-link-search=native={}", ort_lib_dir.display());
     println!("cargo:rustc-link-lib=onnxruntime");
 }
 
 #[cfg(feature = "mnn")]
 fn link_mnn() {
-    let abi_dir = compute_abi_dir();
+    let abi_dir = abi_dir();
     let mnn_include = mnn_include_dir();
 
-    copy_if_newer(&mnn_lib_src().join("libMNN.so"), &Path::new(&abi_dir).join("libMNN.so"));
+    copy_if_newer(&mnn_lib_src().join("libMNN.so"), &abi_dir.join("libMNN.so"));
 
     let wrapper_src = Path::new("mnn_sys/mnn_wrapper.cpp");
     let wrapper_hdr = Path::new("mnn_sys/mnn_wrapper.h");
@@ -54,20 +58,18 @@ fn link_mnn() {
             .std("c++17")
             .file(wrapper_src)
             .include(&mnn_include)
-            .include(mnn_dir().join("tools"))
             .compile("mnn_wrapper");
 
-        let lib_dir = Path::new(&abi_dir);
-        std::fs::create_dir_all(lib_dir).ok();
+        std::fs::create_dir_all(&abi_dir).ok();
         let src = out_dir.join("libmnn_wrapper.a");
-        let dst = lib_dir.join("libmnn_wrapper.a");
+        let dst = abi_dir.join("libmnn_wrapper.a");
         if src.exists() {
             std::fs::copy(&src, &dst).ok();
             println!("cargo:rerun-if-changed={}", dst.display());
         }
     }
 
-    println!("cargo:rustc-link-search=native={}", abi_dir);
+    println!("cargo:rustc-link-search=native={}", abi_dir.display());
     println!("cargo:rustc-link-lib=static=mnn_wrapper");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=c++_shared");
@@ -75,13 +77,14 @@ fn link_mnn() {
 
 #[cfg(feature = "mnn")]
 fn link_mnnconvert() {
-    let abi_dir = compute_abi_dir();
+    let abi_dir = abi_dir();
     let mnn_include = mnn_include_dir();
     let mnnconvert_include = mnn_convert_include_dir();
+    let mnn_schema_include = mnn_schema_dir();
 
     copy_if_newer(
         &mnn_convert_lib_src().join("libMNNConvertDeps.so"),
-        &Path::new(&abi_dir).join("libMNNConvertDeps.so"),
+        &abi_dir.join("libMNNConvertDeps.so"),
     );
 
     let src_dir = Path::new("vendor/mnn/mnnconvert/source");
@@ -96,23 +99,35 @@ fn link_mnnconvert() {
         .file("mnn_sys/mnn_convert_api.cpp")
         .include(&mnn_include)
         .include(&mnnconvert_include)
+        .include(&mnn_schema_include)
         .include("vendor/mnn/mnnconvert/include")
         .define("MNN_CONVERT_API_EXPORTS", None)
         .compile("mnnconvert");
 
-    let lib_dir = Path::new(&abi_dir);
-    std::fs::create_dir_all(lib_dir).ok();
+    std::fs::create_dir_all(&abi_dir).ok();
 
-    println!("cargo:rustc-link-search=native={}", abi_dir);
+    println!("cargo:rustc-link-search=native={}", abi_dir.display());
     println!("cargo:rustc-link-lib=mnnconvert");
     println!("cargo:rustc-link-lib=MNNConvertDeps");
 }
 
-fn compute_abi_dir() -> String {
-    let lib_dir = Path::new("lib");
-    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH")
-        .unwrap_or_else(|_| "aarch64-v8a".to_string());
-    format!("{}/{}", lib_dir.display(), target_arch)
+fn abi_dir() -> PathBuf {
+    repo_root().join("lib").join(abi_suffix())
+}
+
+fn abi_suffix() -> String {
+    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+        "aarch64" | "arm64" => "aarch64-v8a".to_string(),
+        other if !other.is_empty() => other.to_string(),
+        _ => "aarch64-v8a".to_string(),
+    }
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("cam-isp must live under repo root")
+        .to_path_buf()
 }
 
 fn mnn_dir() -> PathBuf {
@@ -124,16 +139,47 @@ fn mnn_dir() -> PathBuf {
     }
 }
 
+fn vendor_mnn_dir() -> PathBuf {
+    Path::new("vendor/mnn").to_path_buf()
+}
+
 fn mnn_include_dir() -> PathBuf {
     std::env::var_os("MNN_INCLUDE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| mnn_dir().join("include"))
+        .unwrap_or_else(|| {
+            let primary = mnn_dir().join("include");
+            if primary.exists() {
+                primary
+            } else {
+                vendor_mnn_dir().join("include")
+            }
+        })
 }
 
 fn mnn_convert_include_dir() -> PathBuf {
     std::env::var_os("MNN_CONVERT_INCLUDE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| mnn_dir().join("tools/converter/include"))
+        .unwrap_or_else(|| {
+            let primary = mnn_dir().join("tools/converter/include");
+            if primary.exists() {
+                primary
+            } else {
+                vendor_mnn_dir().join("tools/converter/include")
+            }
+        })
+}
+
+fn mnn_schema_dir() -> PathBuf {
+    std::env::var_os("MNN_SCHEMA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let primary = mnn_dir().join("schema/current");
+            if primary.exists() {
+                primary
+            } else {
+                vendor_mnn_dir().join("schema/current")
+            }
+        })
 }
 
 fn mnn_lib_src() -> PathBuf {
