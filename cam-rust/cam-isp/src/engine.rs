@@ -177,6 +177,9 @@ pub trait IspEngine: Send + Sync {
     fn backend_name(&self) -> &'static str;
     fn priority(&self) -> i32;
     fn is_loaded(&self) -> bool;
+    /// Downcast to dyn Any for engine-specific configuration before build().
+    fn as_any(&self) -> &dyn std::any::Any { unimplemented!() }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { unimplemented!() }
     
     /// Build the engine from a pipeline of blocks.
     fn build(
