@@ -34,6 +34,8 @@ pub struct DemosaicCcmBlock {
     pub out_ch: i64,
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
+    /// Sensor max value for de-normalizing INT16 input.
+    pub sensor_max: f32,
 }
 
 impl DemosaicCcmBlock {
@@ -49,12 +51,18 @@ impl DemosaicCcmBlock {
             out_ch: 3,
             concrete_h: None,
             concrete_w: None,
+            sensor_max: 1023.0,
         }
     }
 
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
         self.concrete_h = Some(h);
         self.concrete_w = Some(w);
+        self
+    }
+
+    pub fn with_sensor_max(mut self, max: f32) -> Self {
+        self.sensor_max = max;
         self
     }
 
@@ -128,6 +136,8 @@ impl IspBlock for DemosaicCcmBlock {
     fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
     fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
 
+    fn input_elem_type(&self) -> i32 { 5 } // INT16 — Bayer domain integer
+
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let dims: Vec<Vec<u8>> = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
             vec![
@@ -144,7 +154,7 @@ impl IspBlock for DemosaicCcmBlock {
                 Proto::tensor_dim_param("W"),
             ]
         };
-        Some(Proto::value_info(&self.input_source, &dims, 1))
+        Some(Proto::value_info(&self.input_source, &dims, 5)) // INT16 input
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
@@ -169,10 +179,24 @@ impl IspBlock for DemosaicCcmBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
+            // INT16 Bayer → FLOAT (switch to float at CCM boundary)
+            Proto::node(
+                "Cast",
+                &[&self.input_source],
+                &[&format!("{}/input_f32", ns)],
+                &[Proto::attribute_int("to", 1)],
+            ),
+            // Normalize: Div by sensor_max to get [0,1] range for Conv
+            Proto::node(
+                "Div",
+                &[&format!("{}/input_f32", ns), &format!("{}/div_max", ns)],
+                &[&format!("{}/normed", ns)],
+                &[],
+            ),
             // Single Conv1×1 with runtime-fused weights (demosaic × CCM)
             Proto::node(
                 "Conv",
-                &[&self.input_source, &format!("{}/w", ns), &format!("{}/b", ns)],
+                &[&format!("{}/normed", ns), &format!("{}/w", ns), &format!("{}/b", ns)],
                 &[&format!("{}/conv_out", ns)],
                 &[
                     Proto::attribute_ints("kernel_shape", &[1, 1]),
@@ -210,6 +234,8 @@ impl IspBlock for DemosaicCcmBlock {
             // Clip constants
             Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
             Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
+            // Sensor max for normalization
+            Proto::tensor_proto_float_scalar(&format!("{}/div_max", ns), self.sensor_max),
         ]
     }
 
@@ -233,14 +259,14 @@ mod tests {
     fn test_demosaic_ccm_block_ops() {
         let block = DemosaicCcmBlock::new(2);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 2, "Should produce 2 nodes: Conv, Clip");
+        assert_eq!(nodes.len(), 4, "Should produce 4 nodes: Cast, Div, Conv, Clip");
     }
 
     #[test]
     fn test_demosaic_ccm_initializers() {
         let block = DemosaicCcmBlock::new(0);
         let inits = block.initializers();
-        assert_eq!(inits.len(), 4, "Should have 4 initializers (w, b, zero, one)");
+        assert_eq!(inits.len(), 5, "Should have 5 initializers (w, b, zero, one, div_max)");
     }
 
     #[test]
@@ -334,9 +360,9 @@ mod tests {
 
     #[test]
     fn test_demosaic_ccm_nodes_count() {
-        // 1 Conv + 1 Clip = 2 nodes
+        // 1 Cast + 1 Div + 1 Conv + 1 Clip = 4 nodes
         let fused = DemosaicCcmBlock::new(2);
-        assert_eq!(fused.nodes().len(), 2,
-            "1-Conv approach should produce 2 nodes, got {}", fused.nodes().len());
+        assert_eq!(fused.nodes().len(), 4,
+            "Cast+Div+Conv+Clip should produce 4 nodes, got {}", fused.nodes().len());
     }
 }

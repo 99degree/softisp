@@ -118,7 +118,7 @@ impl IspBlock for UnpackCfaBlock {
             UnpackMode::NativeInt16 => 5, // INT16
         }
     }
-    fn output_elem_type(&self) -> i32 { 1 } // FLOAT
+    fn output_elem_type(&self) -> i32 { 5 } // INT16 — keep Bayer domain integer
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let input_w = self.concrete_w.map(|w| {
@@ -157,7 +157,7 @@ impl IspBlock for UnpackCfaBlock {
                 Proto::tensor_dim_param("H2"), Proto::tensor_dim_param("W2"),
             ],
         };
-        Some(Proto::value_info(&self.frame_tensor, &dims, 1))
+        Some(Proto::value_info(&self.frame_tensor, &dims, 5)) // INT16
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -310,8 +310,10 @@ impl IspBlock for UnpackCfaBlock {
 impl UnpackCfaBlock {
     fn packed_nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        let cfa_out = format!("{}/cfa_out", ns);
+        let after_blc = format!("{}/after_blc", ns);
 
-        vec![
+        let mut nodes = vec![
             // Extract even (low 16 bits) via integer Mod by 65536, then cast to FLOAT.
             Proto::node("Mod", &[&self.input_source, &format!("{}/mod_65536", ns)],
                 &[&format!("{}/even", ns)], &[]),
@@ -334,54 +336,57 @@ impl UnpackCfaBlock {
                 &[&format!("{}/stacked", ns)],
                 &[Proto::attribute_int("axis", 1)]),
 
-            // 9: Conv stride=(2, stride_w) kernel=(2, stride_w) → [1,4,H/2,W/2/stride_w]
-            { // separate filters for RGGB pattern
-                let cfa_out = if self.use_blc {
-                    format!("{}/cfa_out", ns)
-                } else {
-                    self.frame_tensor.clone()
-                };
-                Proto::node("Conv",
-                    &[&format!("{}/stacked", ns), &format!("{}/cfa_w", ns), &format!("{}/cfa_b", ns)],
-                    &[&cfa_out],
-                    &[
-                        Proto::attribute_ints("kernel_shape", &[2, self.stride_w]),
-                        Proto::attribute_ints("strides", &[2, self.stride_w]),
-                        Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                        Proto::attribute_int("group", 1),
-                    ])
-            },
-        ].into_iter().chain(
-            // Optional BLC: Sub(blc_vals) + Clip(0,1)
-            if self.use_blc {
-                vec![
-                    Proto::node("Sub",
-                        &[&format!("{}/cfa_out", ns), &format!("{}/blc_vals", ns)],
-                        &[&format!("{}/subbed", ns)],
-                        &[]),
-                    Proto::node("Clip",
-                        &[&format!("{}/subbed", ns), &format!("{}/zero", ns), &format!("{}/one", ns)],
-                        &[&self.frame_tensor],
-                        &[]),
-                ]
-            } else {
-                vec![]
-            }
-        ).collect()
+            // Conv stride=(2, stride_w) → [1,4,H/2,W/2/stride_w]
+            Proto::node("Conv",
+                &[&format!("{}/stacked", ns), &format!("{}/cfa_w", ns), &format!("{}/cfa_b", ns)],
+                &[&cfa_out],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[2, self.stride_w]),
+                    Proto::attribute_ints("strides", &[2, self.stride_w]),
+                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                    Proto::attribute_int("group", 1),
+                ]),
+        ];
+
+        // Optional BLC: Sub(blc_vals) + Clip(0,1), then denormalize + Cast to INT16
+        if self.use_blc {
+            nodes.push(Proto::node("Sub",
+                &[&cfa_out, &format!("{}/blc_vals", ns)],
+                &[&after_blc],
+                &[]));
+            nodes.push(Proto::node("Clip",
+                &[&after_blc, &format!("{}/zero", ns), &format!("{}/one", ns)],
+                &[&format!("{}/clip_out", ns)],
+                &[]));
+            // Denormalize: Mul(sensor_max) → Cast(INT16)
+            nodes.push(Proto::node("Mul",
+                &[&format!("{}/clip_out", ns), &format!("{}/max_val", ns)],
+                &[&format!("{}/denorm", ns)],
+                &[]));
+            nodes.push(Proto::node("Cast", &[&format!("{}/denorm", ns)], &[&self.frame_tensor],
+                &[Proto::attribute_int("to", 5)]));
+        } else {
+            // Denormalize: Mul(sensor_max) → Cast(INT16)
+            nodes.push(Proto::node("Mul",
+                &[&cfa_out, &format!("{}/max_val", ns)],
+                &[&format!("{}/denorm", ns)],
+                &[]));
+            nodes.push(Proto::node("Cast", &[&format!("{}/denorm", ns)], &[&self.frame_tensor],
+                &[Proto::attribute_int("to", 5)]));
+        }
+
+        nodes
     }
 
     fn native_nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let cast_float = format!("{}/input_float", ns);
-        let cfa_out = if self.use_blc {
-            format!("{}/cfa_out", ns)
-        } else {
-            self.frame_tensor.clone()
-        };
+        let cfa_out = format!("{}/cfa_out", ns);
+        let after_blc = format!("{}/after_blc", ns);
         let stride = (2 * self.stride_w).max(2);
 
         let mut nodes = vec![
-            // INT16 raw Bayer → FLOAT normalized Bayer
+            // INT16 raw Bayer → FLOAT (original sensor scale, no normalization)
             Proto::node("Cast", &[&self.input_source], &[&cast_float],
                 &[Proto::attribute_int("to", 1)]),
             // Conv kernel [4,1,2,2*stride_w], stride=(2,2*stride_w) → [1,4,H/2,W/2/stride_w]
@@ -396,15 +401,23 @@ impl UnpackCfaBlock {
                 ]),
         ];
 
+        // Optional BLC: Sub(blc_vals) + Clip(0,1)
         if self.use_blc {
             nodes.push(Proto::node("Sub",
-                &[&format!("{}/cfa_out", ns), &format!("{}/blc_vals", ns)],
-                &[&format!("{}/subbed", ns)],
+                &[&cfa_out, &format!("{}/blc_vals", ns)],
+                &[&after_blc],
                 &[]));
             nodes.push(Proto::node("Clip",
-                &[&format!("{}/subbed", ns), &format!("{}/zero", ns), &format!("{}/one", ns)],
-                &[&self.frame_tensor],
+                &[&after_blc, &format!("{}/zero", ns), &format!("{}/one", ns)],
+                &[&format!("{}/clip_out", ns)],
                 &[]));
+            // Cast(F32→INT16) — values already in original sensor scale
+            nodes.push(Proto::node("Cast", &[&format!("{}/clip_out", ns)], &[&self.frame_tensor],
+                &[Proto::attribute_int("to", 5)]));
+        } else {
+            // Cast(F32→INT16) — values already in original sensor scale
+            nodes.push(Proto::node("Cast", &[&cfa_out], &[&self.frame_tensor],
+                &[Proto::attribute_int("to", 5)]));
         }
 
         nodes
@@ -420,12 +433,12 @@ mod tests {
     fn test_unpack_cfa_generates_nodes_packed() {
         let block = UnpackCfaBlock::new().with_concrete_dims(48, 64);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 8, "Packed UnpackCfaBlock (no BLC) should produce 8 nodes");
+        assert_eq!(nodes.len(), 10, "Packed UnpackCfaBlock (no BLC) should produce 10 nodes (+Mul+Cast to INT16)");
         let inits = block.initializers();
         assert_eq!(inits.len(), 5, "Packed UnpackCfaBlock (no BLC) should have 5 initializers");
 
         let block2 = UnpackCfaBlock::new().with_concrete_dims(48, 64).with_blc(true);
-        assert_eq!(block2.nodes().len(), 10, "Packed UnpackCfaBlock + BLC should produce 10 nodes");
+        assert_eq!(block2.nodes().len(), 12, "Packed UnpackCfaBlock + BLC should produce 12 nodes (+Sub+Clip+Mul+Cast)");
         assert_eq!(block2.initializers().len(), 8, "Packed UnpackCfaBlock + BLC should have 8 initializers");
         assert_eq!(block2.extra_inputs().len(), 4, "Packed UnpackCfaBlock + BLC should have 4 extra inputs");
     }
@@ -436,7 +449,7 @@ mod tests {
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 2, "Native UnpackCfaBlock (no BLC) should produce 2 nodes");
+        assert_eq!(nodes.len(), 3, "Native UnpackCfaBlock (no BLC) should produce 3 nodes (+Cast to INT16)");
         let inits = block.initializers();
         assert_eq!(inits.len(), 3, "Native UnpackCfaBlock (no BLC) should have 3 initializers");
         assert_eq!(block.input_elem_type(), 5);
@@ -446,7 +459,7 @@ mod tests {
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64)
             .with_blc(true);
-        assert_eq!(block2.nodes().len(), 4, "Native UnpackCfaBlock + BLC should produce 4 nodes");
+        assert_eq!(block2.nodes().len(), 5, "Native UnpackCfaBlock + BLC should produce 5 nodes (+Cast to INT16)");
         assert_eq!(block2.initializers().len(), 6, "Native UnpackCfaBlock + BLC should have 6 initializers");
         assert_eq!(block2.extra_inputs().len(), 2);
     }
