@@ -609,6 +609,8 @@ impl IspEngine for MnnEngine {
     fn backend_name(&self) -> &'static str { self.backend.id() }
     fn priority(&self) -> i32 { self.backend.priority() }
     fn is_loaded(&self) -> bool { self.initialized }
+    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
     fn controller(&self) -> &Mutex<IspController> { &self.controller }
 
     fn build(&mut self, head: Box<dyn IspBlock>, aux: Vec<Box<dyn IspBlock>>, _warp: Option<Box<dyn IspBlock>>, opset: i64) -> Result<(), String> {
@@ -636,7 +638,7 @@ impl IspEngine for MnnEngine {
                     std::fs::write(&on, &onnx).map_err(|e| format!("write: {}", e))?;
                     let mut opts = MnnConvertOptions::default();
                     opts.preserve_input_type = self.preserve_input_type;
-                    info!("preserve_input_type: {}", self.preserve_input_type);
+                    info!("preserve_input_type: {}, optimize_level: {}", self.preserve_input_type, opts.optimize_level);
                     crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, Some(&opts)).map_err(|e| format!("convert: {}", e))?;
                     let _ = std::fs::remove_file(&on);
                     mn
@@ -808,7 +810,7 @@ impl IspEngine for MnnEngine {
                 let raw_shape = [1, 1, h as i32, w as i32];
                 (
                     buf.as_ptr() as *const c_void,
-                    5,   // INT16
+                    0,   // signed INT16 (Halide signed integer code)
                     16,
                     raw_shape.to_vec(),
                     "raw_zero_copy"

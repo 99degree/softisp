@@ -4,8 +4,6 @@
 #[cfg(test)]
 mod tests {
     use cam_isp::mnn_sys::*;
-    use std::ffi::CString;
-    use std::os::raw::*;
 
     #[test]
     #[ignore = "Requires MNN_PIPELINE_PROFILE=ON and Express API"]

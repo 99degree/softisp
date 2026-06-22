@@ -9,10 +9,7 @@ use std::time::Instant;
 use cam_isp::engine::IspEngine;
 
 fn main() {
-    #[cfg(feature = "env_logger")]
-    env_logger::init();
-    #[cfg(not(feature = "env_logger"))]
-    let _ = std::env::set_var("RUST_LOG", "info");
+    let _ = env_logger::builder().is_test(false).filter_level(log::LevelFilter::Info).try_init();
 
     // Reuse cam_isp::init() which registers our benchmark
     cam_isp::init();
