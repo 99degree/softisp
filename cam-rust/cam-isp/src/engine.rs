@@ -156,6 +156,58 @@ impl<'a> ProcessParams<'a> {
     }
 }
 
+/// Runtime capabilities of a backend engine.
+/// Queried before building pipelines to select optimal input mode.
+#[derive(Debug, Clone)]
+pub struct BackendCapabilities {
+    /// Backend name (matches `IspEngine::backend_name()`).
+    pub name: String,
+    /// Whether the backend supports int16 native input directly.
+    /// CPU, Vulkan, and OpenCL support int16; OpenGL may not.
+    pub supports_native_int16: bool,
+    /// Whether the backend supports fp16 storage for internal tensors.
+    pub supports_fp16_storage: bool,
+    /// Best guess at whether GPU acceleration is actually in use
+    /// (vs CPU fallback in a container).
+    pub has_gpu_acceleration: bool,
+}
+
+impl BackendCapabilities {
+    /// Probe capabilities for a given backend name.
+    /// Returns a conservative estimate based on known backend characteristics.
+    pub fn probe(backend_name: &str) -> Self {
+        let lower = backend_name.to_lowercase();
+        let (native_int16, fp16, gpu) = if lower.contains("cpu") || lower.contains("neon") {
+            (true, false, false)
+        } else if lower.contains("vulkan") {
+            (true, true, true)
+        } else if lower.contains("opencl") || lower.contains("cl") {
+            (true, true, true)
+        } else if lower.contains("opengl") || lower.contains("gl") {
+            (false, false, false)
+        } else {
+            (false, false, false)
+        };
+        Self {
+            name: backend_name.to_string(),
+            supports_native_int16: native_int16,
+            supports_fp16_storage: fp16,
+            has_gpu_acceleration: gpu,
+        }
+    }
+
+    /// Returns `true` if NativeInt16 mode is recommended for this backend.
+    /// NativeInt16 uses `preserve_input_type=true` and `UnpackMode::NativeInt16`.
+    pub fn recommend_native_int16(&self) -> bool {
+        self.supports_native_int16
+    }
+
+    /// Returns `true` if PackedInt32 mode should be used (fallback).
+    pub fn recommend_packed_int32(&self) -> bool {
+        !self.supports_native_int16
+    }
+}
+
 /// Factory for creating an IspEngine instance.
 pub struct EngineFactory {
     pub name: &'static str,
