@@ -36,7 +36,7 @@ pub use fcs::FcsBlock;
 pub use ldci::LdciBlock;
 pub use warp::WarpBlock;
 pub use identity::{IdentityBlock, FastDemosaicBlock};
-pub use unpack_cfa::UnpackCfaBlock;
+pub use unpack_cfa::{UnpackCfaBlock, UnpackMode};
 pub use unpack_bayer_fp16::UnpackBayerToFp16Block;
 pub use unpack::UnpackBlock;
 pub use demosaic_ccm::DemosaicCcmBlock;

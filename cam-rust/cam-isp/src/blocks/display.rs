@@ -7,7 +7,8 @@
 //! Format → ONNX subgraph:
 //! - `FloatRgb`:  identity Mul(1.0) → [1,3,H,W] f32 RGB [0,1]
 //! - `FloatBgra`: Conv(1×1) BGR permutation + alpha=255 → [1,4,H,W] f32 BGRA [0,255]
-//! - `PackedRgb`: Mul(255)→Mul(weights)→ReduceSum→Cast(INT32) → [1,1,H,W] INT32
+//! - `PackedRgb`: adjacent-pixel pack → [1,1,H,W/2] INT32
+//!   word = (pixel0.R << 8) | pixel0.G | (pixel1.B << 24) | (pixel1.A << 16)
 //! - `Bgra`:      same Conv as FloatBgra → [1,4,H,W] f32 BGRA [0,255]
 //! - `Rgba`:      Conv(1×1) identity permutation + alpha=255 → [1,4,H,W] f32 RGBA [0,255]
 //! - `Argb`:      Conv(1×1) alpha-first permutation → [1,4,H,W] f32 ARGB [0,255]
@@ -35,6 +36,9 @@ pub struct DisplayBlock {
     pub in_w: Option<i64>,
     /// Output pixel format — determines the ONNX subgraph (Conv, Mul, Cast, etc.).
     pub output_format: OutputFormat,
+    /// PackedRgb stores two RGBA pixels per INT32 word:
+    /// lower 16 bits = pixel0.R|G, upper 16 bits = pixel1.B|A.
+    pub pack_two_pixels: bool,
 }
 
 impl DisplayBlock {
@@ -50,6 +54,7 @@ impl DisplayBlock {
             in_h: None,
             in_w: None,
             output_format: OutputFormat::default(),
+            pack_two_pixels: true,
         }
     }
 
@@ -72,14 +77,21 @@ impl DisplayBlock {
         self.output_format = fmt;
         self
     }
-    /// Enable packed RGBA output: Mul(255) + Mul(weights) + ReduceSum + Cast(INT32).
-    /// Output is [1,1,H,W] INT32 where each value = R*65536 + G*256 + B.
-    /// Enable packed RGBA output (PackedRgb format): INT32 packed.
+    /// Enable packed RGBA output: two pixels per INT32 word.
+    /// Output is [1,1,H,W/2] INT32:
+    /// lower 16 bits = pixel0.R|G, upper 16 bits = pixel1.B|A.
     /// Equivalent to `.with_output_format(OutputFormat::PackedRgb)`.
     pub fn with_pack_rgba(mut self, enable: bool) -> Self {
         if enable {
             self.output_format = OutputFormat::PackedRgb;
+            self.pack_two_pixels = true;
         }
+        self
+    }
+
+    /// Override adjacent-pixel packing for PackedRgb.
+    pub fn with_packed_two_pixels(mut self, enable: bool) -> Self {
+        self.pack_two_pixels = enable;
         self
     }
     /// Enable BGRA float [0,255] output via Conv(1×1) (FloatBgra format).
@@ -110,6 +122,18 @@ impl DisplayBlock {
     /// AND no output format conversion (bg4a/pack_rgba) is needed.
     fn is_identity(&self) -> bool {
         self.rotate_mode == 0 && self.output_format == OutputFormat::FloatRgb
+    }
+
+    fn packed_output_width(&self, width: i64) -> i64 {
+        if self.output_format == OutputFormat::PackedRgb && self.pack_two_pixels {
+            (width / 2).max(1)
+        } else {
+            width
+        }
+    }
+
+    fn can_pack_two_pixels(&self) -> bool {
+        self.output_format == OutputFormat::PackedRgb && self.pack_two_pixels && self.in_h.is_some() && self.in_w.is_some()
     }
 }
 
@@ -142,9 +166,10 @@ impl IspBlock for DisplayBlock {
         match (self.in_h, self.in_w) {
             (Some(h), Some(w)) => {
                 let (oh, ow) = if self.swaps_dims() { (w, h) } else { (h, w) };
+                let packed_ow = self.packed_output_width(ow);
                 Some(Proto::value_info(&self.frame_tensor,
                     &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(ch),
-                      Proto::tensor_dim_value(oh), Proto::tensor_dim_value(ow)], 1))
+                      Proto::tensor_dim_value(oh), Proto::tensor_dim_value(packed_ow)], 1))
             }
             _ => Some(Proto::value_info(&self.frame_tensor,
                 &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(ch),
@@ -236,21 +261,39 @@ impl IspBlock for DisplayBlock {
                 }
             }
             PackedRgb => {
-                // pack_rgba: Mul(255) -> Mul(weights [65536,256,1]) -> ReduceSum -> Cast(INT32)
-                // Output: [1,1,H,W] INT32, each value = R*65536+G*256+B
-                let scale_255 = format!("{}/scale_255", ns);
-                let scaled = format!("{}/scaled", ns);
-                let pack_w = format!("{}/pack_w", ns);
-                let wweighted = format!("{}/wweighted", ns);
-                let rsum = format!("{}/rsum", ns);
-                let cast_out = format!("{}/cast", ns);
-                nodes.push(Proto::node("Mul", &[prev, &scale_255], &[&scaled], &[]));
-                nodes.push(Proto::node("Mul", &[&scaled, &pack_w], &[&wweighted], &[]));
-                nodes.push(Proto::node("ReduceSum", &[&wweighted], &[&rsum],
-                    &[Proto::attribute_ints("axes", &[1]), Proto::attribute_int("keepdims", 1)]));
-                nodes.push(Proto::node("Cast", &[&rsum], &[&cast_out], &[Proto::attribute_int("to", 6)]));
-                if &cast_out != final_output {
-                    nodes.push(Proto::node("Identity", &[&cast_out], &[final_output], &[]));
+                if self.can_pack_two_pixels() {
+                    let pack_w = format!("{}/pack_pair_w", ns);
+                    let pack_b = format!("{}/pack_pair_b", ns);
+                    let conv_out = format!("{}/pack_conv_out", ns);
+                    let cast_out = format!("{}/cast", ns);
+
+                    nodes.push(Proto::node("Conv",
+                        &[prev, &pack_w, &pack_b], &[&conv_out],
+                        &[Proto::attribute_ints("kernel_shape", &[1, 2]),
+                          Proto::attribute_ints("strides", &[1, 2]),
+                          Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                          Proto::attribute_int("group", 1)]));
+                    nodes.push(Proto::node("Cast", &[&conv_out], &[&cast_out], &[Proto::attribute_int("to", 6)]));
+                    if &cast_out != final_output {
+                        nodes.push(Proto::node("Identity", &[&cast_out], &[final_output], &[]));
+                    }
+                } else {
+                    // Legacy per-pixel pack: Mul(255) -> Mul(weights [65536,256,1]) -> ReduceSum -> Cast(INT32)
+                    // Output: [1,1,H,W] INT32, each value = R*65536+G*256+B.
+                    let scale_255 = format!("{}/scale_255", ns);
+                    let scaled = format!("{}/scaled", ns);
+                    let pack_w = format!("{}/pack_w", ns);
+                    let wweighted = format!("{}/wweighted", ns);
+                    let rsum = format!("{}/rsum", ns);
+                    let cast_out = format!("{}/cast", ns);
+                    nodes.push(Proto::node("Mul", &[prev, &scale_255], &[&scaled], &[]));
+                    nodes.push(Proto::node("Mul", &[&scaled, &pack_w], &[&wweighted], &[]));
+                    nodes.push(Proto::node("ReduceSum", &[&wweighted], &[&rsum],
+                        &[Proto::attribute_ints("axes", &[1]), Proto::attribute_int("keepdims", 1)]));
+                    nodes.push(Proto::node("Cast", &[&rsum], &[&cast_out], &[Proto::attribute_int("to", 6)]));
+                    if &cast_out != final_output {
+                        nodes.push(Proto::node("Identity", &[&cast_out], &[final_output], &[]));
+                    }
                 }
             }
         }
@@ -272,11 +315,26 @@ impl IspBlock for DisplayBlock {
                 // No extra initializers needed
             }
             PackedRgb => {
-                // Packed INT32: Mul(255) + Mul(weights [65536,256,1]) + ReduceSum + Cast
                 inits.push(Proto::tensor_proto_float_scalar(
                     &format!("{}/scale_255", ns), 255.0));
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/pack_w", ns), &[3], &[65536.0, 256.0, 1.0]));
+                if self.can_pack_two_pixels() {
+                    let _ = match (self.in_h, self.in_w) {
+                        (Some(_), Some(_)) => (),
+                        _ => return inits,
+                    };
+                    inits.push(Proto::tensor_proto_float(
+                        &format!("{}/pack_pair_w", ns), &[1, 4, 1, 2],
+                        &[
+                            256.0, 0.0,
+                            1.0, 0.0,
+                            0.0, 16777216.0,
+                            0.0, 16777216.0,
+                        ]));
+                    inits.push(Proto::tensor_proto_float(&format!("{}/pack_pair_b", ns), &[1], &[0.0]));
+                } else {
+                    inits.push(Proto::tensor_proto_float(
+                        &format!("{}/pack_w", ns), &[3], &[65536.0, 256.0, 1.0]));
+                }
             }
             fmt @ (FloatBgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
                 // Conv(1×1): channel permutation + scale(255) + alpha bias

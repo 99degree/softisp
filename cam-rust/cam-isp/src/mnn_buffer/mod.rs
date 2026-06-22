@@ -248,7 +248,7 @@ mod tests {
         pool.release(id0);
 
         // Acquire second buffer, verify distinct from first, then release
-        let (id1, buf1) = pool.acquire();
+        let (id1, _buf1) = pool.acquire();
         assert_eq!(id1, 1);
         pool.release(id1);
 

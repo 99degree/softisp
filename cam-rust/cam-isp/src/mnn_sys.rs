@@ -536,8 +536,6 @@ impl MnnTensorSafe {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_mnn_not_available_without_library() {
         // This test verifies that we gracefully handle missing MNN library.
