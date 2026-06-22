@@ -1,17 +1,18 @@
-//! UnpackCfaBlock — fused packed INT32 or native INT16 Bayer input → CFA FLOAT quadrants.
+//! UnpackCfaBlock — Bayer input → 4-channel CFA quadrants via SpaceToDepth.
 //!
-//! PackedInt32 mode:
+//! PackedInt32 mode (legacy):
 //!   Input:  INT32[1,1,H,W/2]    (packed: pixel_even | (pixel_odd << 16))
-//!   Output: FLOAT[1,4,H/2,W/2]  (4 Bayer channels: R, Gr, Gb, B)
+//!   Uses:   integer split → Cast → Conv(2×2,stride=2) → [1,4,H/2,W/2]
 //!
-//! NativeInt16 mode:
+//! NativeInt16 mode (default):
 //!   Input:  INT16[1,1,H,W]      (raw Bayer samples)
-//!   Output: FLOAT[1,4,H/2,W/2]  (4 Bayer channels: R, Gr, Gb, B)
+//!   Uses:   SpaceToDepth(blocksize=2) → [1,4,H/2,W/2]
+//!           When use_blc|use_wb: Cast(INT16→F32) → SpaceToDepth → F32[1,4,H/2,W/2]
+//!           Otherwise: SpaceToDepth → INT16[1,4,H/2,W/2] (1 node, no Cast)
+//!   BLC + WB are fused into DemosaicCcmBlock's Conv1×1 weights.
 //!
-//! Fuses UnpackBlock + NormalizeBlock + CfaBlock (+ optionally BlcBlock)
+//! Fuses UnpackBlock + NormalizeBlock + CfaBlock (+ optionally BlcBlock, BayerWbBlock)
 //! into a single ONNX graph / MNN session. Avoids full-resolution interleave.
-//!
-//! When use_blc=true: adds Sub(blc_vals) + Clip(0,1) after the CFA Conv.
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
@@ -34,7 +35,8 @@ pub struct UnpackCfaBlock {
     pub concrete_w: Option<i64>,  // FULL width (original W)
     pub sensor_max: f32,
     pub use_blc: bool,            // fuse black level correction
-    pub stride_w: i64,            // 1=no downscale, 2=2× stride in width
+    pub use_wb: bool,             // fuse white balance gains
+    pub stride_w: i64,            // 1=no downscale, 2=2× stride in width (PackedInt32 only)
     pub mode: UnpackMode,
 }
 
@@ -56,6 +58,7 @@ impl UnpackCfaBlock {
             concrete_w: None,
             sensor_max: 65535.0,
             use_blc: false,
+            use_wb: false,
             stride_w: 1,
             mode: UnpackMode::PackedInt32,
         }
@@ -74,6 +77,11 @@ impl UnpackCfaBlock {
 
     pub fn with_blc(mut self, enable: bool) -> Self {
         self.use_blc = enable;
+        self
+    }
+
+    pub fn with_wb(mut self, enable: bool) -> Self {
+        self.use_wb = enable;
         self
     }
 
@@ -118,7 +126,13 @@ impl IspBlock for UnpackCfaBlock {
             UnpackMode::NativeInt16 => 5, // INT16
         }
     }
-    fn output_elem_type(&self) -> i32 { 5 } // INT16 — keep Bayer domain integer
+    fn output_elem_type(&self) -> i32 {
+        if (self.use_blc || self.use_wb) && self.mode == UnpackMode::NativeInt16 {
+            1 // FLOAT — BLC/WB fused downstream, no INT16 boundary
+        } else {
+            5 // INT16 — Bayer domain integer
+        }
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let input_w = self.concrete_w.map(|w| {
@@ -147,6 +161,7 @@ impl IspBlock for UnpackCfaBlock {
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         let sw = self.stride_w;
+        let elem_type = self.output_elem_type();
         let dims = match (self.concrete_h, self.concrete_w) {
             (Some(h), Some(w)) => vec![
                 Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
@@ -157,7 +172,7 @@ impl IspBlock for UnpackCfaBlock {
                 Proto::tensor_dim_param("H2"), Proto::tensor_dim_param("W2"),
             ],
         };
-        Some(Proto::value_info(&self.frame_tensor, &dims, 5)) // INT16
+        Some(Proto::value_info(&self.frame_tensor, &dims, elem_type))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -247,46 +262,27 @@ impl IspBlock for UnpackCfaBlock {
                 inits.push(Proto::tensor_proto_float(&format!("{}/cfa_b", ns), &[4], &[0f32; 4]));
             }
             UnpackMode::NativeInt16 => {
-                // Native input is already one Bayer sample per pixel. Conv kernel is
-                // [4, 1, 2, 2*stride_w] and selects/averages the RGGB positions.
-                let kw = (2 * sw).max(2);
-                let w: Vec<f32> = if sw == 1 {
-                    vec![
-                        // R:  top-left
-                        1.0, 0.0, 0.0, 0.0,
-                        // Gr: top-right
-                        0.0, 1.0, 0.0, 0.0,
-                        // Gb: bottom-left
-                        0.0, 0.0, 1.0, 0.0,
-                        // B:  bottom-right
-                        0.0, 0.0, 0.0, 1.0,
-                    ]
-                } else {
-                    vec![
-                        // R:  top row cols 0,2
-                        0.5, 0.0, 0.5, 0.0,
-                        // Gr: top row cols 1,3
-                        0.0, 0.5, 0.0, 0.5,
-                        // Gb: bottom row cols 0,2
-                        0.5, 0.0, 0.5, 0.0,
-                        // B:  bottom row cols 1,3
-                        0.0, 0.5, 0.0, 0.5,
-                    ]
-                };
-
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/cfa_w", ns),
-                    &[4i64, 1, 2, kw],
-                    &w,
-                ));
-                inits.push(Proto::tensor_proto_float(&format!("{}/cfa_b", ns), &[4], &[0f32; 4]));
+                // SpaceToDepth(blocksize=2) — no Conv weights needed.
+                // wb_gains is added in the use_blc||use_wb block below.
             }
         }
 
-        if self.use_blc {
-            inits.push(Proto::tensor_proto_float(&format!("{}/blc_vals", ns), &[1, 4, 1, 1], &[0.0, 0.0, 0.0, 0.0]));
-            inits.push(Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0));
-            inits.push(Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0));
+        if self.use_blc || self.use_wb {
+            // BLC/WB values are kept as initializers for the controller
+            // to use when computing DemosaicCcmBlock's fused weights.
+            // The ONNX nodes do NOT reference these — they are NOT graph inputs.
+            // But having them here doesn't hurt (unused initializers are ignored).
+            if self.use_blc {
+                inits.push(Proto::tensor_proto_float(&format!("{}/blc_vals", ns), &[1, 4, 1, 1], &[0.0, 0.0, 0.0, 0.0]));
+            }
+            if self.use_wb {
+                inits.push(Proto::tensor_proto_float(&format!("{}/wb_gains", ns), &[1, 4, 1, 1], &[1.0, 1.0, 1.0, 1.0]));
+            }
+            // PackedInt32 mode still needs zero/one for its Clip node
+            if self.mode == UnpackMode::PackedInt32 {
+                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0));
+                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0));
+            }
         }
         inits
     }
@@ -302,6 +298,9 @@ impl IspBlock for UnpackCfaBlock {
         }
         if self.use_blc {
             extras.push((format!("{}/blc_vals", ns), 1, vec![1, 4, 1, 1]));
+        }
+        if self.use_wb && self.mode == UnpackMode::NativeInt16 {
+            extras.push((format!("{}/wb_gains", ns), 1, vec![1, 4, 1, 1]));
         }
         extras
     }
@@ -380,47 +379,27 @@ impl UnpackCfaBlock {
 
     fn native_nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        let cast_float = format!("{}/input_float", ns);
-        let cfa_out = format!("{}/cfa_out", ns);
-        let after_blc = format!("{}/after_blc", ns);
-        let stride = (2 * self.stride_w).max(2);
+        let has_process = self.use_blc || self.use_wb;
 
-        let mut nodes = vec![
-            // INT16 raw Bayer → FLOAT (original sensor scale, no normalization)
-            Proto::node("Cast", &[&self.input_source], &[&cast_float],
-                &[Proto::attribute_int("to", 1)]),
-            // Conv kernel [4,1,2,2*stride_w], stride=(2,2*stride_w) → [1,4,H/2,W/2/stride_w]
-            Proto::node("Conv",
-                &[&cast_float, &format!("{}/cfa_w", ns), &format!("{}/cfa_b", ns)],
-                &[&cfa_out],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[2, stride]),
-                    Proto::attribute_ints("strides", &[2, stride]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                    Proto::attribute_int("group", 1),
-                ]),
-        ];
-
-        // Optional BLC: Sub(blc_vals) + Clip(0,1)
-        if self.use_blc {
-            nodes.push(Proto::node("Sub",
-                &[&cfa_out, &format!("{}/blc_vals", ns)],
-                &[&after_blc],
-                &[]));
-            nodes.push(Proto::node("Clip",
-                &[&after_blc, &format!("{}/zero", ns), &format!("{}/one", ns)],
-                &[&format!("{}/clip_out", ns)],
-                &[]));
-            // Cast(F32→INT16) — values already in original sensor scale
-            nodes.push(Proto::node("Cast", &[&format!("{}/clip_out", ns)], &[&self.frame_tensor],
-                &[Proto::attribute_int("to", 5)]));
+        if has_process {
+            // Cast(INT16→F32) then SpaceToDepth → F32 [1,4,H/2,W/2]
+            // No BLC/WB/Clip nodes — those are fused into DemosaicCcmBlock's Conv.
+            vec![
+                Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
+                    &[Proto::attribute_int("to", 1)]),
+                Proto::node("SpaceToDepth", &[&format!("{}/input_f32", ns)],
+                    &[&self.frame_tensor],
+                    &[Proto::attribute_int("blocksize", 2)]),
+            ]
         } else {
-            // Cast(F32→INT16) — values already in original sensor scale
-            nodes.push(Proto::node("Cast", &[&cfa_out], &[&self.frame_tensor],
-                &[Proto::attribute_int("to", 5)]));
+            // Direct SpaceToDepth → INT16 [1,4,H/2,W/2].
+            // No Cast, no processing — just pure memory rearrangement.
+            vec![
+                Proto::node("SpaceToDepth", &[&self.input_source],
+                    &[&self.frame_tensor],
+                    &[Proto::attribute_int("blocksize", 2)]),
+            ]
         }
-
-        nodes
     }
 }
 
@@ -445,23 +424,54 @@ mod tests {
 
     #[test]
     fn test_unpack_cfa_generates_nodes_native() {
+        // Without BLC/WB: just SpaceToDepth → 1 node, no extra initializers
         let block = UnpackCfaBlock::new()
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 3, "Native UnpackCfaBlock (no BLC) should produce 3 nodes (+Cast to INT16)");
+        assert_eq!(nodes.len(), 1, "Native no-BLC/WB: SpaceToDepth only = 1 node");
         let inits = block.initializers();
-        assert_eq!(inits.len(), 3, "Native UnpackCfaBlock (no BLC) should have 3 initializers");
+        assert_eq!(inits.len(), 1, "Native no-BLC/WB: just max_val = 1 initializer");
         assert_eq!(block.input_elem_type(), 5);
+        assert_eq!(block.output_elem_type(), 5);
         assert_eq!(block.extra_inputs().len(), 1);
 
+        // With BLC only: Cast → SpaceToDepth = 2 nodes (F32 output, no Sub/Clip/Cast)
         let block2 = UnpackCfaBlock::new()
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64)
             .with_blc(true);
-        assert_eq!(block2.nodes().len(), 5, "Native UnpackCfaBlock + BLC should produce 5 nodes (+Cast to INT16)");
-        assert_eq!(block2.initializers().len(), 6, "Native UnpackCfaBlock + BLC should have 6 initializers");
-        assert_eq!(block2.extra_inputs().len(), 2);
+        assert_eq!(block2.nodes().len(), 2, "Native + BLC: Cast+SpaceToDepth = 2");
+        assert_eq!(block2.output_elem_type(), 1, "Native + BLC: output F32");
+        // max_val + blc_vals = 2 (no zero/one for NativeInt16 PackedInt32 mode)
+        assert_eq!(block2.initializers().len(), 2, "Native + BLC: max_val+blc_vals = 2");
+        // max_val + blc_vals
+        assert_eq!(block2.extra_inputs().len(), 2, "Native + BLC: 2 extra inputs");
+
+        // With WB only: Cast → SpaceToDepth = 2 nodes
+        let block3 = UnpackCfaBlock::new()
+            .with_mode(UnpackMode::NativeInt16)
+            .with_concrete_dims(48, 64)
+            .with_wb(true);
+        assert_eq!(block3.nodes().len(), 2, "Native + WB: Cast+SpaceToDepth = 2");
+        assert_eq!(block3.output_elem_type(), 1, "Native + WB: output F32");
+        // max_val + wb_gains = 2
+        assert_eq!(block3.initializers().len(), 2, "Native + WB: max_val+wb_gains = 2");
+        // max_val + wb_gains
+        assert_eq!(block3.extra_inputs().len(), 2, "Native + WB: 2 extra inputs");
+
+        // With BLC + WB: Cast → SpaceToDepth = 2 nodes (same)
+        let block4 = UnpackCfaBlock::new()
+            .with_mode(UnpackMode::NativeInt16)
+            .with_concrete_dims(48, 64)
+            .with_blc(true)
+            .with_wb(true);
+        assert_eq!(block4.nodes().len(), 2, "Native + BLC+WB: Cast+SpaceToDepth = 2");
+        assert_eq!(block4.output_elem_type(), 1, "Native + BLC+WB: output F32");
+        // max_val + blc_vals + wb_gains = 3
+        assert_eq!(block4.initializers().len(), 3, "Native + BLC+WB: max_val+blc_vals+wb_gains = 3");
+        // max_val + blc_vals + wb_gains
+        assert_eq!(block4.extra_inputs().len(), 3, "Native + BLC+WB: 3 extra inputs");
     }
 
     #[test]
