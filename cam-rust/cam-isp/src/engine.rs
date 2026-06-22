@@ -20,7 +20,7 @@ use crate::controller::IspController;
 /// |--------------|----------------|------------|------|----------------------------------|
 /// | `FloatRgb`   | `[1,3,H,W]`    | f32×3      | 12   | identity Mul(1.0)                |
 /// | `FloatBgra`  | `[1,4,H,W]`    | f32×4      | 16   | Conv(1×1): B←R, G←G, R←B, A←255 |
-/// | `PackedRgb`  | `[1,1,H,W]`    | INT32      |  4   | Mul(255)→Mul(w)→ReduceSum→Cast   |
+/// | `PackedRgb`  | `[1,1,H,W/2]`  | INT32      |  2   | adjacent-pixel RGBA pack           |
 /// | `Bgra`       | `[1,4,H,W]`    | f32×4      |  4   | Conv(1×1): B←R, G←G, R←B, A←255 |
 /// | `Rgba`       | `[1,4,H,W]`    | f32×4      |  4   | Conv(1×1): R←R, G←G, B←B, A←255 |
 /// | `Argb`       | `[1,4,H,W]`    | f32×4      |  4   | Conv(1×1): A←255, R←R, G←G, B←B |
@@ -34,8 +34,9 @@ use crate::controller::IspController;
 /// - `Bgra`/`Rgba`/etc. (no `Float` prefix) also use the same Conv(1×1) ONNX
 ///   subgraph, producing `f32 [0,255]` values. Consumer truncates to u8.
 /// - All Conv-based formats also multiply by 255 (weights include the scale).
-/// - `PackedRgb` encodes R,G,B into a single INT32: `R<<16 | G<<8 | B`.
-/// - Per default (`PackedRgb`), every frame is `[1,1,H,W]` INT32.
+/// - `PackedRgb` encodes two RGBA pixels per INT32: lower 16 bits are pixel0.R|G,
+///   upper 16 bits are pixel1.B|A.
+/// - Per default (`PackedRgb`), every frame is `[1,1,H,W/2]` INT32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     /// Float RGB [0,1] — return raw f32×3 planar bytes.
@@ -76,7 +77,7 @@ impl OutputFormat {
         match self {
             Self::FloatRgb => 12,     // f32×3
             Self::FloatBgra => 16,    // f32×4
-            Self::PackedRgb => 4,     // INT32
+            Self::PackedRgb => 2,     // INT32 per two pixels
             Self::Rgb | Self::Bgr => 3,
             _ => 4,
         }
