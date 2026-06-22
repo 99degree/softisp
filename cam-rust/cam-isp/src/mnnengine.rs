@@ -12,6 +12,7 @@
 //!   4. Read output float32 → BGRA U8
 
 use std::sync::Mutex;
+use std::collections::VecDeque;
 
 use std::time::Instant;
 use std::ffi::CStr;
@@ -49,6 +50,103 @@ impl MnnBackend {
     }
 }
 
+// ── Session Pool (parallel inference) ─────────────────────────────────
+
+/// One session together with its cached extra-input tensor handles.
+#[cfg(feature = "mnn")]
+struct SessionSlot {
+    sess: MnnSessionSafe,
+    tensor_pool: Vec<(String, MnnTensorSafe)>,
+}
+
+/// A pool of N sessions sharing one interpreter.
+/// Threads acquire a slot, use it, release it back.
+///
+/// ⚠ Fields are dropped in declaration order. `slots` (sessions) must be
+/// dropped BEFORE `interp` because session release needs the interpreter.
+#[cfg(feature = "mnn")]
+struct SessionPool {
+    /// Queue of available slots (dropped first — sessions before interpreter).
+    slots: Mutex<VecDeque<SessionSlot>>,
+    /// Shared interpreter (owns the model). Dropped last.
+    interp: MnnInterpreterSafe,
+}
+
+#[cfg(feature = "mnn")]
+impl SessionPool {
+    fn new(interp: MnnInterpreterSafe, backend: MnnBackendType, n: usize, num_threads: i32) -> Result<Self, String> {
+        let extra_names = [
+            "DemosaicCcmBlock/w",
+            "DemosaicCcmBlock/b",
+            "BayerWbBlock/gains",
+            "ToneBlock/contrast",
+            "ToneBlock/brightness",
+            "ToneBlock/gamma_recip",
+        ];
+        let mut slots = VecDeque::with_capacity(n);
+        for _ in 0..n {
+            let sess = interp.create_session(backend, num_threads)
+                .ok_or_else(|| format!("create session {} failed", slots.len()))?;
+            let mut tensor_pool = Vec::new();
+            for name in &extra_names {
+                if let Some(t) = interp.get_input(&sess, name) {
+                    tensor_pool.push((name.to_string(), t));
+                }
+            }
+            slots.push_back(SessionSlot { sess, tensor_pool });
+        }
+        info!("SessionPool: {} slots created with {} extra tensors each", n, slots[0].tensor_pool.len());
+        Ok(Self { interp, slots: Mutex::new(slots) })
+    }
+
+    /// Acquire a slot (blocks until one is free).
+    fn acquire(&self) -> SessionGuard<'_> {
+        loop {
+            if let Some(slot) = self.slots.lock().unwrap().pop_front() {
+                return SessionGuard { pool: self, slot: Some(slot) };
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// Return a slot to the pool.
+    fn release(&self, slot: SessionSlot) {
+        self.slots.lock().unwrap().push_back(slot);
+    }
+}
+
+/// RAII guard: automatically returns the slot on drop.
+#[cfg(feature = "mnn")]
+struct SessionGuard<'a> {
+    pool: &'a SessionPool,
+    slot: Option<SessionSlot>,
+}
+
+#[cfg(feature = "mnn")]
+impl<'a> std::ops::Deref for SessionGuard<'a> {
+    type Target = SessionSlot;
+    fn deref(&self) -> &Self::Target {
+        self.slot.as_ref().unwrap()
+    }
+}
+
+#[cfg(feature = "mnn")]
+impl<'a> std::ops::DerefMut for SessionGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.slot.as_mut().unwrap()
+    }
+}
+
+#[cfg(feature = "mnn")]
+impl<'a> Drop for SessionGuard<'a> {
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot.take() {
+            self.pool.release(slot);
+        }
+    }
+}
+
+
 // ── Engine ──────────────────────────────────────────────────────────────
 
 pub struct MnnEngine {
@@ -68,32 +166,24 @@ pub struct MnnEngine {
     /// After each inference, stats output tensors are read and fed
     /// into the controller to update state for the next frame.
     pub controller: Mutex<IspController>,
-    /// MNN interpreter (owning the model). Must outlive session.
+    /// Number of parallel sessions.
+    pool_size: usize,
+    /// MNN interpreter + session pool.
     #[cfg(feature = "mnn")]
-    interp: Option<MnnInterpreterSafe>,
-    /// MNN session (references interpreter). Dropped before interp.
-    #[cfg(feature = "mnn")]
-    sess: Option<Mutex<MnnSessionSafe>>,
+    pool: Option<SessionPool>,
     /// Pipeline-aligned output buffer pool.
     /// Pre-allocated at build(), recycled every frame via acquire/release.
     #[cfg(feature = "mnn")]
     #[allow(dead_code)]
     buf_pool: Mutex<crate::mnn_buffer::OutputBufferPool>,
-    /// Cached tensor handles for extra inputs — avoids CString alloc per frame.
-    #[cfg(feature = "mnn")]
-    tensor_pool: Vec<(String, crate::mnn_sys::MnnTensorSafe)>,
 }
 
 #[cfg(feature = "mnn")]
 impl Drop for MnnEngine {
     fn drop(&mut self) {
-        // Drop session before interpreter to avoid dangling pointer.
-        // Session holds a raw interpreter pointer used in releaseSession().
-        if let Some(sess) = self.sess.take() {
-            drop(sess);
-        }
-        if let Some(interp) = self.interp.take() {
-            drop(interp);
+        // Drop pool (sessions) before interpreter to avoid dangling pointer.
+        if let Some(pool) = self.pool.take() {
+            drop(pool);
         }
     }
 }
@@ -109,6 +199,10 @@ impl MnnEngine {
     }
 
     pub fn new(backend: MnnBackend) -> Self {
+        Self::with_pool_size(backend, 4)
+    }
+
+    pub fn with_pool_size(backend: MnnBackend, pool_size: usize) -> Self {
         Self {
             backend,
             initialized: false,
@@ -118,15 +212,11 @@ impl MnnEngine {
             preserve_input_type: false,
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
+            pool_size,
+            #[cfg(feature = "mnn")]
+            pool: None,
             #[cfg(feature = "mnn")]
             buf_pool: Mutex::new(crate::mnn_buffer::OutputBufferPool::new(3, 1)),
-            #[cfg(feature = "mnn")]
-            #[cfg(feature = "mnn")]
-            interp: None,
-            #[cfg(feature = "mnn")]
-            sess: None,
-            #[cfg(feature = "mnn")]
-            tensor_pool: Vec::new(),
         }
     }
 
@@ -667,52 +757,41 @@ impl IspEngine for MnnEngine {
                 error!("Failed to load MNN model: {}", mnn);
                 format!("load fail: {}", mnn)
             })?;
-            let sess = interp.create_session(self.backend.to_sys(), 4)
-                .ok_or("session create fail")?;
 
-            // Query model input type for zero-copy optimization
+            // Use first session to probe model input type (before building pool)
+            let probe_sess = interp.create_session(self.backend.to_sys(), 4)
+                .ok_or("probe session create fail")?;
             let mut input_code = 0i32;
             let mut input_bits = 0i32;
             unsafe {
                 crate::mnn_sys::mnn_get_model_input_type(
                     interp.as_ptr(),
-                    sess.as_ptr(),
+                    probe_sess.as_ptr(),
                     &mut input_code,
                     &mut input_bits,
                 );
             }
             self.model_input_type = Some((input_code, input_bits));
-            // INT32 (code=0, bits=32) → packed_input mode for true zero-copy.
-            // Model expects w/2 INT32 elements; buffer is reinterpreted u16 as i32.
             let expected_elems = unsafe {
-                crate::mnn_sys::mnn_get_model_input_elements(interp.as_ptr(), sess.as_ptr())
+                crate::mnn_sys::mnn_get_model_input_elements(interp.as_ptr(), probe_sess.as_ptr())
             };
             self.expected_input_elements = if expected_elems > 0 { Some(expected_elems as u32) } else { None };
-            // Packed if INT32 (code=0, bits=32) — all pipeline models use packed input
             self.packed_input = input_code == 0 && input_bits == 32;
             info!("MNN model input type: code={}, bits={} packed={} expected_elems={}",
                 input_code, input_bits, self.packed_input, expected_elems);
+            // Don't need probe session any more — pool will create its own.
+            drop(probe_sess);
 
-            // Populate tensor pool: cache all extra input handles to avoid
-            // per-frame CString allocations in set_extra_inputs().
-            let extra_names = [
-                "DemosaicCcmBlock/w",
-                "DemosaicCcmBlock/b",
-                "BayerWbBlock/gains",
-                "ToneBlock/contrast",
-                "ToneBlock/brightness",
-                "ToneBlock/gamma_recip",
-            ];
-            for name in &extra_names {
-                if let Some(t) = interp.get_input(&sess, name) {
-                    self.tensor_pool.push((name.to_string(), t));
-                }
-            }
-            debug!("tensor_pool: {} cached handles", self.tensor_pool.len());
-
-            self.interp = Some(interp);
-            self.sess = Some(Mutex::new(sess));
-            info!("MNN engine loaded from {} (backend={:?})", mnn, self.backend);
+            // Build session pool (N sessions for parallel inference)
+            let pool = SessionPool::new(
+                interp,
+                self.backend.to_sys(),
+                self.pool_size.max(1),
+                4,
+            )?;
+            info!("MNN engine loaded from {} (backend={:?}) with {} sessions",
+                mnn, self.backend, self.pool_size);
+            self.pool = Some(pool);
         }
 
         #[cfg(not(feature = "mnn"))] { let _ = (head, aux, opset); }
@@ -736,9 +815,10 @@ impl IspEngine for MnnEngine {
 
         #[cfg(feature = "mnn")]
         {
-            let sess_lock = self.sess.as_ref().ok_or("no session")?;
-            let sess = sess_lock.lock().map_err(|_| "lock")?;
-            let interp = self.interp.as_ref().unwrap();
+            let pool = self.pool.as_ref().ok_or("no pool")?;
+            let slot = pool.acquire();
+            let sess = &slot.sess;
+            let interp = &pool.interp;
 
             let t_start = Instant::now();
 
@@ -780,11 +860,11 @@ impl IspEngine for MnnEngine {
                 } else {
                     vec![1, 1, h as i32, w as i32]
                 };
-                if let Some(t) = interp.get_first_input(&sess) {
+                if let Some(t) = interp.get_first_input(sess) {
                     let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
                 }
                 let _ = sess.resize();
-                Self::set_extra_inputs(&self.tensor_pool, ccm, tone, bayer, awb, bayer_pattern);
+                Self::set_extra_inputs(&slot.tensor_pool, ccm, tone, bayer, awb, bayer_pattern);
             }
             t_tensor_after = Instant::now();
             info!("pipeline stage=tensor_assign elapsed={:?}",
@@ -899,7 +979,7 @@ impl IspEngine for MnnEngine {
                 let mut zone_data: Option<(usize, usize, Vec<Vec<[f32; 3]>>)> = None;
 
                 // ChannelMeansBlock/frame → [1, 3] or [3]
-                if let Some(t) = interp.get_output(&sess, "ChannelMeansBlock/frame") {
+                if let Some(t) = interp.get_output(sess, "ChannelMeansBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
                             std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
@@ -910,7 +990,7 @@ impl IspEngine for MnnEngine {
                     }
                 }
                 // ToneStatsBlock/frame → [6]
-                if let Some(t) = interp.get_output(&sess, "ToneStatsBlock/frame") {
+                if let Some(t) = interp.get_output(sess, "ToneStatsBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
                             std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
@@ -922,7 +1002,7 @@ impl IspEngine for MnnEngine {
                     }
                 }
                 // CoarseHistogramBlock/frame → [1, 16]
-                if let Some(t) = interp.get_output(&sess, "CoarseHistogramBlock/frame") {
+                if let Some(t) = interp.get_output(sess, "CoarseHistogramBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
                             std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
@@ -935,7 +1015,7 @@ impl IspEngine for MnnEngine {
                 }
 
                 // CalibrationBlock/frame → [24] (quad means, vars, mins, maxs, ranges, frame stats)
-                if let Some(t) = interp.get_output(&sess, "CalibrationBlock/frame") {
+                if let Some(t) = interp.get_output(sess, "CalibrationBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
                             std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
@@ -948,7 +1028,7 @@ impl IspEngine for MnnEngine {
                 }
 
                 // ZoneStatsBlock/frame → [1, 3, rows, cols]
-                if let Some(t) = interp.get_output(&sess, "ZoneStatsBlock/frame") {
+                if let Some(t) = interp.get_output(sess, "ZoneStatsBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
                             std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
