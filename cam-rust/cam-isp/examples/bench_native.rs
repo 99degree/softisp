@@ -1,5 +1,5 @@
 fn main() {
-    let _ = env_logger::builder().is_test(false).filter_level(log::LevelFilter::Debug).try_init();
+    let _ = env_logger::builder().is_test(false).filter_level(log::LevelFilter::Info).try_init();
     cam_isp::init();
 
     let sensor_w = 3840u32; let sensor_h = 2160u32; let post_w = 960u32; let post_h = 540u32;
@@ -17,7 +17,27 @@ fn main() {
     }
     let raw = raw_buf;
 
-    let use_native = std::env::var("MODE").unwrap_or_default() == "native";
+    // ── Select engine ────────────────────────────────────────────────
+    let engine_name = std::env::var("ENGINE").unwrap_or_else(|_| "auto".to_string());
+    let mut engine = match cam_isp::engine::select_engine_by_name(&engine_name) {
+        Some(e) => e,
+        None => match cam_isp::engine::select_engine() { Some(e) => e, None => Box::new(cam_isp::cpu::CpuEngine::new()) },
+    };
+    let backend_name = engine.backend_name();
+
+    // ── Probe backend capabilities, auto-select optimal mode ─────────
+    let caps = cam_isp::engine::BackendCapabilities::probe(backend_name);
+    let use_native = match std::env::var("MODE").as_deref() {
+        Ok("native") => { true },
+        Ok("packed") => { false },
+        _ => {
+            // Auto-detect: prefer NativeInt16 if backend supports it
+            let auto = caps.recommend_native_int16();
+            println!("  auto mode: NativeInt16={} (backend={})", auto, backend_name);
+            auto
+        }
+    };
+
     let pw = if use_native { full_w } else { packed_w };
     let elem_type = if use_native { 5 } else { 6 };
 
@@ -38,20 +58,20 @@ fn main() {
     cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
 
     let mut all = blocks; let head = all.remove(0);
-    let engine_name = std::env::var("ENGINE").unwrap_or_else(|_| "cpu".to_string());
-    let mut engine = match cam_isp::engine::select_engine_by_name(&engine_name) {
-        Some(e) => e,
-        None => match cam_isp::engine::select_engine() { Some(e) => e, None => Box::new(cam_isp::cpu::CpuEngine::new()) },
-    };
-    println!("Engine: {} Mode: {} elem={}", engine.backend_name(), 
-        if use_native { "NativeInt16" } else { "PackedInt32" }, elem_type);
+
+    println!("=== BackendCapabilities ===");
+    println!("  engine:     {}", backend_name);
+    println!("  native_int16: {}", caps.supports_native_int16);
+    println!("  fp16_storage: {}", caps.supports_fp16_storage);
+    println!("  gpu_accel:    {}", caps.has_gpu_acceleration);
+    println!("  using:      {}", if use_native { "NativeInt16" } else { "PackedInt32" });
 
     if use_native {
         if let Some(mnn) = engine.as_any_mut().downcast_mut::<cam_isp::mnnengine::MnnEngine>() {
             mnn.set_preserve_input_type(true);
             println!("  preserve_input_type=TRUE");
         } else {
-            println!("  WARN: downcast failed!");
+            println!("  WARN: downcast failed (non-MNN engine)");
         }
     }
 
