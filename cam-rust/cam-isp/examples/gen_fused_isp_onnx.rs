@@ -49,12 +49,12 @@ fn main() {
         Proto::attribute_ints("group_size", &[8, 8, 1]),
         // Output shape: [N, C, H, W]
         Proto::attribute_ints("output_shape", &[1, 4, 1080, 1920]),
-        // Input binding: [is_output=0 (input), binding=1, tensor_idx=0]
-        // i=0 = tensor index for input, ints=[is_output=0, binding=1]
+        // Input binding: [is_output=0 (input), binding=1, tensor_position=0]
+        // i=0 = position 0 in op's input list
         Proto::attribute_input_ints("input", 0, &[0, 1]),
-        // Output binding: [is_output=1 (output), binding=2, tensor_idx=1]
-        // i=1 = tensor index for output, ints=[is_output=1, binding=2]
-        Proto::attribute_input_ints("input", 1, &[1, 2]),
+        // Output binding: [is_output=1 (output), binding=2, tensor_position=0]
+        // i=0 = position 0 in op's output list
+        Proto::attribute_input_ints("input", 0, &[1, 2]),
         // Const at binding=0 with uniform data as tensor (for VulkanFuse const handler)
         Proto::attribute_const_tensor("const", 0,
             &Proto::tensor_proto_float("const_data", &[uniforms.len() as i64], &uniforms)),
