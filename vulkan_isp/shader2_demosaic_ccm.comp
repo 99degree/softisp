@@ -1,0 +1,111 @@
+#version 450
+// ============================================================================
+// Shader 2: Demosaic + CCM (FP32/FP16 selectable)
+// Replaces: DemosaicCcmBlock (4 ops: Cast + Div + Conv1x1 + Clip)
+// Input:  [1, 4, 1080, 1920] FP32/FP16 RGGB channels
+// Output: [1, 3, 1080, 1920] FP32/FP16 RGB (before clip)
+// ============================================================================
+
+// Precision selector: 0 = FP32, 1 = FP16
+#ifndef USE_FP16
+#define USE_FP16 0
+#endif
+
+#if USE_FP16
+#pragma optionNV(fp16)
+#endif
+
+layout(set = 0, binding = 0) uniform Uniforms {
+    uint input_width;
+    uint input_height;
+    uint output_width;
+    uint output_height;
+    uint sensor_max;
+    float ccm[9];           // 3x3 CCM row-major
+    float wb_gains[4];      // unused here
+    float blc_vals[4];      // unused here
+    float dummy1;
+    float dummy2;
+    float dummy3;
+} uniforms;
+
+// Storage type based on precision
+#if USE_FP16
+#define StoreType uvec2  // FP16 stored as 2xuint16
+#define LoadF16 vload_half
+#else
+#define StoreType vec4
+#endif
+
+// Buffers: input r/g1/g2/b, output rgb
+layout(set = 0, binding = 1) readonly buffer InputR  { StoreType r_in[]; };
+layout(set = 0, binding = 2) readonly buffer InputG1 { StoreType g1_in[]; };
+layout(set = 0, binding = 3) readonly buffer InputG2 { StoreType g2_in[]; };
+layout(set = 0, binding = 4) readonly buffer InputB  { StoreType b_in[]; };
+layout(set = 0, binding = 5) writeonly buffer Output  { StoreType rgb_out[]; };
+
+#if USE_FP16
+float load_val(StoreType data, int comp) {
+    if (comp == 0) return unpackHalf2x16(data.x).x;
+    if (comp == 1) return unpackHalf2x16(data.y).x;
+    return 0.0;
+}
+void store_val(int comp, float val, int idx, inout StoreType data) {
+    if (comp == 0) data.x = packHalf2x16(vec2(val, 0.0));
+    if (comp == 1) data.y = packHalf2x16(vec2(val, 0.0));
+}
+#else
+float load_val(StoreType data, int comp) { return data[comp]; }
+void store_val(int comp, float val, int idx, inout StoreType data) { data[comp] = val; }
+#endif
+
+void main() {
+    uint ox = gl_GlobalInvocationID.x;
+    uint oy = gl_GlobalInvocationID.y;
+
+    if (ox >= uniforms.output_width || oy >= uniforms.output_height) return;
+
+    uint idx = oy * uniforms.output_width + ox;
+    uint out_idx = idx * 3;
+
+    // Read separated RGGB channels
+    StoreType r_data = r_in[idx];
+    StoreType g1_data = g1_in[idx];
+    StoreType g2_data = g2_in[idx];
+    StoreType b_data = b_in[idx];
+
+    float r = load_val(r_data, 0);
+    float g1 = load_val(g1_data, 0);
+    float g2 = load_val(g2_data, 0);
+    float b = load_val(b_data, 0);
+
+    // Average G channels
+    float g = (g1 + g2) * 0.5;
+
+    // Normalize to [0, 1]
+    float inv_max = 1.0 / float(uniforms.sensor_max);
+    vec3 rgb = vec3(r, g, b) * inv_max;
+
+    // Apply CCM
+    vec3 ccm0 = vec3(uniforms.ccm[0], uniforms.ccm[1], uniforms.ccm[2]);
+    vec3 ccm1 = vec3(uniforms.ccm[3], uniforms.ccm[4], uniforms.ccm[5]);
+    vec3 ccm2 = vec3(uniforms.ccm[6], uniforms.ccm[7], uniforms.ccm[8]);
+    rgb.r = dot(ccm0, rgb);
+    rgb.g = dot(ccm1, rgb);
+    rgb.b = dot(ccm2, rgb);
+
+    // Write output
+    StoreType out0, out1, out2;
+#if USE_FP16
+    out0.x = packHalf2x16(vec2(rgb.r, 0.0));
+    out1.x = packHalf2x16(vec2(rgb.g, 0.0));
+    out2.x = packHalf2x16(vec2(rgb.b, 0.0));
+#else
+    out0 = StoreType(rgb.r, 0.0, 0.0, 0.0);
+    out1 = StoreType(rgb.g, 0.0, 0.0, 0.0);
+    out2 = StoreType(rgb.b, 0.0, 0.0, 0.0);
+#endif
+    rgb_out[out_idx + 0] = out0;
+    rgb_out[out_idx + 1] = out1;
+    rgb_out[out_idx + 2] = out2;
+}

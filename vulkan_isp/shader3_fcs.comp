@@ -1,0 +1,91 @@
+#version 450
+// ============================================================================
+// Shader 3: Fcs (Flat Field Correction / Shading Correction)
+// Replaces: FcsBlock (13 ops)
+// Input:  [1, 3, H, W] RGB
+// Output: [1, 3, H, W] RGB
+// ============================================================================
+
+#ifndef USE_FP16
+#define USE_FP16 0
+#endif
+
+#if USE_FP16
+#pragma optionNV(fp16)
+#endif
+
+layout(set = 0, binding = 0) uniform Uniforms {
+    uint input_width;
+    uint input_height;
+    uint output_width;
+    uint output_height;
+    uint sensor_max;
+    float ccm[9];
+    float wb_gains[4];
+    float blc_vals[4];
+    float fcs_gain;        // 0.0 - 1.0
+    float fcs_center_th;    // center threshold
+    float fcs_suppression;  // max correction
+    float dummy3;
+} uniforms;
+
+#if USE_FP16
+#define StoreType uvec2
+#else
+#define StoreType vec4
+#endif
+
+layout(set = 0, binding = 1) readonly buffer Input  { StoreType rgb_in[]; };
+layout(set = 0, binding = 2) writeonly buffer Output { StoreType rgb_out[]; };
+
+float load_val(StoreType data) {
+#if USE_FP16
+    return unpackHalf2x16(data.x).x;
+#else
+    return data.x;
+#endif
+}
+
+StoreType to_store(float r, float g, float b) {
+#if USE_FP16
+    StoreType s;
+    s.x = packHalf2x16(vec2(r, 0.0));
+    s.y = packHalf2x16(vec2(g, 0.0));
+    return s;
+#else
+    return StoreType(r, g, b, 0.0);
+#endif
+}
+
+void main() {
+    uint ox = gl_GlobalInvocationID.x;
+    uint oy = gl_GlobalInvocationID.y;
+
+    if (ox >= uniforms.output_width || oy >= uniforms.output_height) return;
+
+    uint idx = oy * uniforms.output_width + ox;
+
+    // Read RGB
+    StoreType in_data = rgb_in[idx];
+    float r = load_val(in_data);
+#if USE_FP16
+    float g = unpackHalf2x16(in_data.y).x;
+    float b = unpackHalf2x16(in_data.y >> 16).x;
+#else
+    float g = in_data.y;
+    float b = in_data.z;
+#endif
+
+    // Calculate luma
+    float luma = r * 0.299 + g * 0.587 + b * 0.114;
+
+    // Fcs correction based on distance from center (0.5)
+    float deviation = abs(luma - 0.5) * 2.0;  // 0 to 1
+    float correction = 1.0 + uniforms.fcs_gain * deviation * deviation;
+    correction = clamp(correction, 
+                       1.0 - uniforms.fcs_suppression, 
+                       1.0 + uniforms.fcs_suppression);
+
+    // Apply correction
+    rgb_out[idx] = to_store(r * correction, g * correction, b * correction);
+}

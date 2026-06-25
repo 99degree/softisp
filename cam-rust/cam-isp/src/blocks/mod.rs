@@ -40,6 +40,7 @@ pub use unpack_cfa::{UnpackCfaBlock, UnpackMode};
 pub use unpack_bayer_fp16::UnpackBayerToFp16Block;
 pub use unpack::UnpackBlock;
 pub use demosaic_ccm::DemosaicCcmBlock;
+pub use bayer_proc::{BayerProcBlock, BayerMode, BayerPattern};
 pub use resize::ResizeBlock;
 pub use adaptive_downscale::AdaptiveDownscaleBlock;
 pub use stats::{ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock, CalibrationBlock};
@@ -60,3 +61,4 @@ pub(crate) fn nchw_value_info(name: &str, c: i64, elem_type: i32) -> Vec<u8> {
         crate::onnx::proto::Proto::tensor_dim_param("W"),
     ], elem_type)
 }
+pub mod bayer_proc;
