@@ -1,0 +1,268 @@
+#version 450
+// ============================================================================
+// Fused ISP Pipeline - Single Dispatch
+// Replaces: SpaceToDepth + BLC + WB + Demosaic + CCM + Fcs + Ee + Ldci + Display
+// ============================================================================
+// Input:  [1, 1, 2160, 3840] INT16 Bayer RGGB
+// Output: [1, 1080, 1920] RGB (sRGB, gamma corrected)
+
+// === Constants ===
+#define PI 3.14159265
+#define EPSILON 1e-6
+
+// === Uniforms ===
+layout(set = 0, binding = 0) uniform Uniforms {
+    // Tensor dimensions
+    uint input_width;
+    uint input_height;
+    uint output_width;    // 1920
+    uint output_height;   // 1080
+    uint sensor_max;      // 1023
+
+    // CCM (3x3 row-major, sRGB output)
+    float ccm[9];
+
+    // WB gains (RGGB)
+    float wb_gains[4];
+
+    // BLC offsets (RGGB)
+    float blc_vals[4];
+
+    // Fcs params
+    float fcs_gain;
+    float fcs_center_th;
+    float fcs_suppression;
+
+    // Ee params
+    float ee_gain;
+    float ee_threshold;
+
+    // Ldci params
+    float ldci_strength;
+    float ldci_boost;
+
+    // Display params
+    float brightness;
+    float contrast;
+    float saturation;
+} uniforms;
+
+// === Buffers ===
+layout(set = 0, binding = 1) readonly buffer InputBuffer { uint bayer[]; };
+layout(set = 0, binding = 2) writeonly buffer OutputR   { uint r_plane[]; };
+layout(set = 0, binding = 3) writeonly buffer OutputG    { uint g_plane[]; };
+layout(set = 0, binding = 4) writeonly buffer OutputB    { uint b_plane[]; };
+
+// ============================================================================
+// Helpers
+// ============================================================================
+uint to_fp16(float x) { return packHalf2x16(vec2(x, 0.0)); }
+
+float sigmoid(float x) { return 1.0 / (1.0 + exp(-x)); }
+
+// Read Bayer at position (clamped)
+float read_bayer(int x, int y) {
+    x = clamp(x, 0, int(uniforms.input_width) - 1);
+    y = clamp(y, 0, int(uniforms.input_height) - 1);
+    return float(bayer[y * int(uniforms.input_width) + x]);
+}
+
+// Read with border handling (edge pixels)
+float read_bayer_safe(int x, int y) {
+    if (x < 0 || x >= int(uniforms.input_width) || y < 0 || y >= int(uniforms.input_height)) {
+        return 0.0;
+    }
+    return float(bayer[y * int(uniforms.input_width) + x]);
+}
+
+// ============================================================================
+// Stage 1: BLC + WB + Demosaic + CCM
+// ============================================================================
+vec3 process_raw(uint ox, uint oy) {
+    uint ix = ox * 2;
+    uint iy = oy * 2;
+
+    // RGGB pattern
+    // R(0,0)   G(1,0)
+    // G(0,1)   B(1,1)
+    float r = read_bayer(int(ix),     int(iy));
+    float g1 = read_bayer(int(ix + 1), int(iy));
+    float g2 = read_bayer(int(ix),     int(iy + 1));
+    float b = read_bayer(int(ix + 1), int(iy + 1));
+
+    // BLC + WB
+    r  = (r - uniforms.blc_vals[0]) * uniforms.wb_gains[0];
+    g1 = (g1 - uniforms.blc_vals[1]) * uniforms.wb_gains[1];
+    g2 = (g2 - uniforms.blc_vals[2]) * uniforms.wb_gains[2];
+    b  = (b - uniforms.blc_vals[3]) * uniforms.wb_gains[3];
+
+    float g = (g1 + g2) * 0.5;
+
+    // Normalize
+    float inv_max = 1.0 / float(uniforms.sensor_max);
+    vec3 rgb = vec3(r, g, b) * inv_max;
+
+    // CCM
+    vec3 ccm_row0 = vec3(uniforms.ccm[0], uniforms.ccm[1], uniforms.ccm[2]);
+    vec3 ccm_row1 = vec3(uniforms.ccm[3], uniforms.ccm[4], uniforms.ccm[5]);
+    vec3 ccm_row2 = vec3(uniforms.ccm[6], uniforms.ccm[7], uniforms.ccm[8]);
+    rgb.r = dot(ccm_row0, rgb);
+    rgb.g = dot(ccm_row1, rgb);
+    rgb.b = dot(ccm_row2, rgb);
+
+    // Clip after CCM
+    rgb = clamp(rgb, 0.0, 1.0);
+
+    return rgb;
+}
+
+// ============================================================================
+// Stage 2: Fcs (Flat Field Correction / Shading Correction)
+// ============================================================================
+vec3 apply_fcs(vec3 color, float luma) {
+    float deviation = abs(luma - 0.5) * 2.0;
+    float correction = 1.0 + uniforms.fcs_gain * deviation * deviation;
+    correction = clamp(correction, 1.0 - uniforms.fcs_suppression, 1.0 + uniforms.fcs_suppression);
+    return color * correction;
+}
+
+// ============================================================================
+// Stage 3: Ee (Edge Enhancement / Sharpening)
+// ============================================================================
+vec3 apply_ee(vec3 color, uint ox, uint oy) {
+    if (ox < 2 || ox >= uniforms.output_width - 2 || oy < 2 || oy >= uniforms.output_height - 2) {
+        return color;
+    }
+
+    // Sobel edge detection on luma
+    float center_luma = dot(color, vec3(0.299, 0.587, 0.114));
+
+    // Sample 3x3 neighborhood
+    vec3 samples[9];
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            uint sx = ox + uint(dx);
+            uint sy = oy + uint(dy);
+            if (sx < uniforms.output_width && sy < uniforms.output_height) {
+                vec3 c = process_raw(sx, sy);
+                // Apply CCM first
+                vec3 ccm_row0 = vec3(uniforms.ccm[0], uniforms.ccm[1], uniforms.ccm[2]);
+                vec3 ccm_row1 = vec3(uniforms.ccm[3], uniforms.ccm[4], uniforms.ccm[5]);
+                vec3 ccm_row2 = vec3(uniforms.ccm[6], uniforms.ccm[7], uniforms.ccm[8]);
+                c.r = dot(ccm_row0, c);
+                c.g = dot(ccm_row1, c);
+                c.b = dot(ccm_row2, c);
+                samples[(dy + 1) * 3 + (dx + 1)] = c;
+            }
+        }
+    }
+
+    // Sobel X
+    float gx = -samples[0].g - 2*samples[3].g - samples[6].g
+               + samples[2].g + 2*samples[5].g + samples[8].g;
+
+    // Sobel Y
+    float gy = -samples[0].g - 2*samples[1].g - samples[2].g
+               + samples[6].g + 2*samples[7].g + samples[8].g;
+
+    float edge = sqrt(gx*gx + gy*gy);
+
+    // Enhance based on edge strength
+    float enhancement = uniforms.ee_gain * edge;
+    enhancement = clamp(enhancement, -0.5, 0.5);
+
+    return color + enhancement;
+}
+
+// ============================================================================
+// Stage 4: Ldci (Local Dynamic Contrast Improvement)
+// ============================================================================
+vec3 apply_ldci(vec3 color, uint ox, uint oy) {
+    // Simple local contrast: compare center to local average
+    float center_luma = dot(color, vec3(0.299, 0.587, 0.114));
+
+    // 3x3 local average
+    float avg_luma = 0.0;
+    int count = 0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            uint sx = ox + uint(dx);
+            uint sy = oy + uint(dy);
+            if (sx < uniforms.output_width && sy < uniforms.output_height) {
+                vec3 c = process_raw(sx, sy);
+                vec3 ccm_row1 = vec3(uniforms.ccm[3], uniforms.ccm[4], uniforms.ccm[5]);
+                c.g = dot(ccm_row1, c);
+                avg_luma += dot(c, vec3(0.299, 0.587, 0.114));
+                count++;
+            }
+        }
+    }
+    avg_luma /= float(count);
+
+    float local_contrast = center_luma - avg_luma;
+    float enhancement = uniforms.ldci_strength * local_contrast;
+    enhancement = clamp(enhancement, -0.3, 0.3);
+
+    return color + enhancement;
+}
+
+// ============================================================================
+// Stage 5: Display (Brightness/Contrast/Saturation + Gamma)
+// ============================================================================
+vec3 apply_display(vec3 color) {
+    // Brightness
+    color += uniforms.brightness;
+
+    // Contrast
+    color = (color - 0.5) * uniforms.contrast + 0.5;
+
+    // Saturation
+    float luma = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(vec3(luma), color, uniforms.saturation);
+
+    // Gamma correction (sRGB)
+    color = clamp(color, 0.0, 1.0);
+    if (color.r > 0.0031308) color.r = 1.055 * pow(color.r, 1.0/2.4) - 0.055;
+    else color.r *= 12.92;
+    if (color.g > 0.0031308) color.g = 1.055 * pow(color.g, 1.0/2.4) - 0.055;
+    else color.g *= 12.92;
+    if (color.b > 0.0031308) color.b = 1.055 * pow(color.b, 1.0/2.4) - 0.055;
+    else color.b *= 12.92;
+
+    return color;
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+void main() {
+    uint ox = gl_GlobalInvocationID.x;
+    uint oy = gl_GlobalInvocationID.y;
+
+    if (ox >= uniforms.output_width || oy >= uniforms.output_height) return;
+
+    // Stage 1: Raw processing (BLC + WB + Demosaic + CCM)
+    vec3 rgb = process_raw(ox, oy);
+    float luma = dot(rgb, vec3(0.299, 0.587, 0.114));
+
+    // Stage 2: Fcs
+    rgb = apply_fcs(rgb, luma);
+
+    // Stage 3: Ee
+    rgb = apply_ee(rgb, ox, oy);
+
+    // Stage 4: Ldci
+    rgb = apply_ldci(rgb, ox, oy);
+
+    // Stage 5: Display
+    rgb = apply_display(rgb);
+
+    // Clip final output
+    rgb = clamp(rgb, 0.0, 1.0);
+
+    // Write output
+    uint out_idx = oy * uniforms.output_width + ox;
+    r_plane[out_idx] = to_fp16(rgb.r);
+    g_plane[out_idx] = to_fp16(rgb.g);
+    b_plane[out_idx] = to_fp16(rgb.b);
+}

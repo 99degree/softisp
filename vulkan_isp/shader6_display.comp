@@ -1,0 +1,134 @@
+#version 450
+// ============================================================================
+// Shader 6: Display (Brightness/Contrast/Saturation + Gamma)
+// Replaces: DisplayBlock + AdaptiveDownscale
+// Input:  [1, 3, 1080, 1920] RGB
+// Output: [1, 3, 540, 960] RGB (downscaled, gamma corrected)
+// ============================================================================
+
+#ifndef USE_FP16
+#define USE_FP16 0
+#endif
+
+#if USE_FP16
+#pragma optionNV(fp16)
+#endif
+
+layout(set = 0, binding = 0) uniform Uniforms {
+    uint input_width;       // 1920
+    uint input_height;      // 1080
+    uint output_width;     // 960 (1080->540, 1920->960)
+    uint output_height;    // 540
+    uint sensor_max;
+    float ccm[9];
+    float wb_gains[4];
+    float blc_vals[4];
+    float brightness;    // -0.5 to 0.5
+    float contrast;      // 0.5 to 2.0
+    float saturation;    // 0.0 to 2.0
+    float gamma;         // 1.0 = sRGB, 2.2 = linear
+} uniforms;
+
+#if USE_FP16
+#define StoreType uvec2
+#else
+#define StoreType vec4
+#endif
+
+layout(set = 0, binding = 1) readonly buffer Input  { StoreType rgb_in[]; };
+layout(set = 0, binding = 2) writeonly buffer Output { StoreType rgb_out[]; };
+
+float load_val(StoreType data, int comp) {
+#if USE_FP16
+    if (comp == 0) return unpackHalf2x16(data.x).x;
+    if (comp == 1) return unpackHalf2x16(data.y).x;
+    return 0.0;
+#else
+    return data[comp];
+#endif
+}
+
+StoreType to_store(float r, float g, float b) {
+#if USE_FP16
+    return StoreType(packHalf2x16(vec2(r, 0.0)), packHalf2x16(vec2(g, 0.0)));
+#else
+    return StoreType(r, g, b, 0.0);
+#endif
+}
+
+// sRGB gamma correction
+float srgb_gamma(float x) {
+    if (x > 0.0031308) return 1.055 * pow(x, 1.0/2.4) - 0.055;
+    return x * 12.92;
+}
+
+void main() {
+    uint ox = gl_GlobalInvocationID.x;
+    uint oy = gl_GlobalInvocationID.y;
+
+    if (ox >= uniforms.output_width || oy >= uniforms.output_height) return;
+
+    // Downscale: 2x2 average
+    uint sx = ox * 2;
+    uint sy = oy * 2;
+
+    float r_sum = 0.0, g_sum = 0.0, b_sum = 0.0;
+    for (uint dy = 0; dy < 2; dy++) {
+        for (uint dx = 0; dx < 2; dx++) {
+            uint ix = sx + dx;
+            uint iy = sy + dy;
+            if (ix < uniforms.input_width && iy < uniforms.input_height) {
+                StoreType s = rgb_in[iy * uniforms.input_width + ix];
+                r_sum += load_val(s, 0);
+                g_sum += load_val(s, 1);
+                b_sum += load_val(s, 2);
+            }
+        }
+    }
+
+    float r = r_sum * 0.25;
+    float g = g_sum * 0.25;
+    float b = b_sum * 0.25;
+
+    // Brightness
+    r += uniforms.brightness;
+    g += uniforms.brightness;
+    b += uniforms.brightness;
+
+    // Contrast
+    r = (r - 0.5) * uniforms.contrast + 0.5;
+    g = (g - 0.5) * uniforms.contrast + 0.5;
+    b = (b - 0.5) * uniforms.contrast + 0.5;
+
+    // Saturation
+    float luma = r * 0.299 + g * 0.587 + b * 0.114;
+    r = mix(luma, r, uniforms.saturation);
+    g = mix(luma, g, uniforms.saturation);
+    b = mix(luma, b, uniforms.saturation);
+
+    // Clip
+    r = clamp(r, 0.0, 1.0);
+    g = clamp(g, 0.0, 1.0);
+    b = clamp(b, 0.0, 1.0);
+
+    // Gamma correction
+    if (uniforms.gamma > 1.9) {
+        // sRGB
+        r = srgb_gamma(r);
+        g = srgb_gamma(g);
+        b = srgb_gamma(b);
+    } else {
+        // Custom gamma
+        float inv_gamma = 1.0 / uniforms.gamma;
+        r = pow(max(r, 0.0), inv_gamma);
+        g = pow(max(g, 0.0), inv_gamma);
+        b = pow(max(b, 0.0), inv_gamma);
+    }
+
+    // Final clip
+    r = clamp(r, 0.0, 1.0);
+    g = clamp(g, 0.0, 1.0);
+    b = clamp(b, 0.0, 1.0);
+
+    rgb_out[oy * uniforms.output_width + ox] = to_store(r, g, b);
+}
