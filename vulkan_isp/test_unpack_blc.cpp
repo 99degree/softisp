@@ -80,9 +80,23 @@ int main(int argc, const char* argv[]) {
         extra->attr.push_back(std::move(a));
     }
     // group_size: [1,1,1] to bypass auto-tuning
+    // optimized_dispatch
+    {
+        std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
+        a->key = "optimized_dispatch";
+        a->b = true;
+        extra->attr.push_back(std::move(a));
+    }
     {
         std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
         a->key = "group_size";
+    // optimized_dispatch
+    {
+        std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
+        a->key = "optimized_dispatch";
+        a->b = true;
+        extra->attr.push_back(std::move(a));
+    }
         a->tensor.reset(new MNN::BlobT);
         a->tensor->dataType = MNN::DataType_DT_INT32;
         a->tensor->int32s = {1, 1, 1};
