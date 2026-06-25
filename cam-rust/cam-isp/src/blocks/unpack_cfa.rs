@@ -38,6 +38,9 @@ pub struct UnpackCfaBlock {
     pub use_wb: bool,             // fuse white balance gains
     pub stride_w: i64,            // 1=no downscale, 2=2× stride in width (PackedInt32 only)
     pub mode: UnpackMode,
+    /// Use Conv-based unpack (fast) instead of SpaceToDepth.
+    /// This replaces multi-dispatch Raster with a single VulkanConvolution dispatch.
+    pub use_fast_unpack: bool,
 }
 
 impl Default for UnpackCfaBlock {
@@ -61,6 +64,7 @@ impl UnpackCfaBlock {
             use_wb: false,
             stride_w: 1,
             mode: UnpackMode::PackedInt32,
+            use_fast_unpack: false,
         }
     }
 
@@ -105,6 +109,14 @@ impl UnpackCfaBlock {
         self.stride_w = factor.max(1);
         self
     }
+
+    /// Enable Conv-based fast unpack. When enabled, Cast(INT16→F32) + SpaceToDepth
+    /// is replaced with Cast(INT16→F32) + Conv(4ch, 2×2, stride=2), avoiding the
+    /// multi-dispatch Raster overhead of standard SpaceToDepth.
+    pub fn with_fast_unpack(mut self, enable: bool) -> Self {
+        self.use_fast_unpack = enable;
+        self
+    }
 }
 
 impl IspBlock for UnpackCfaBlock {
@@ -127,8 +139,8 @@ impl IspBlock for UnpackCfaBlock {
         }
     }
     fn output_elem_type(&self) -> i32 {
-        if (self.use_blc || self.use_wb) && self.mode == UnpackMode::NativeInt16 {
-            1 // FLOAT — BLC/WB fused downstream, no INT16 boundary
+        if self.use_fast_unpack || ((self.use_blc || self.use_wb) && self.mode == UnpackMode::NativeInt16) {
+            1 // FLOAT — fast Conv path or BLC/WB fused downstream
         } else {
             5 // INT16 — Bayer domain integer
         }
@@ -262,8 +274,26 @@ impl IspBlock for UnpackCfaBlock {
                 inits.push(Proto::tensor_proto_float(&format!("{}/cfa_b", ns), &[4], &[0f32; 4]));
             }
             UnpackMode::NativeInt16 => {
-                // SpaceToDepth(blocksize=2) — no Conv weights needed.
-                // wb_gains is added in the use_blc||use_wb block below.
+                // SpaceToDepth(blocksize=2) — no Conv weights needed for standard path.
+                // For fast path, Conv weights extract 4 Bayer positions from 2×2 blocks.
+                if self.use_fast_unpack {
+                    // Conv weights [4, 1, 2, 2] — 4 out_ch, 1 in_ch, kernel 2×2
+                    // Each out_ch picks one of 4 positions in each 2×2 block:
+                    // out_ch 0 (R):  TL → (kh=0, kw=0) = 1
+                    // out_ch 1 (Gr): TR → (kh=0, kw=1) = 1
+                    // out_ch 2 (Gb): BL → (kh=1, kw=0) = 1
+                    // out_ch 3 (B):  BR → (kh=1, kw=1) = 1
+                    let unpack_w = vec![
+                        1.0, 0.0, 0.0, 0.0, // oc=0: TL
+                        0.0, 1.0, 0.0, 0.0, // oc=1: TR
+                        0.0, 0.0, 1.0, 0.0, // oc=2: BL
+                        0.0, 0.0, 0.0, 1.0, // oc=3: BR
+                    ];
+                    inits.push(Proto::tensor_proto_float(
+                        &format!("{}/unpack_w", ns), &[4, 1, 2, 2], &unpack_w));
+                    inits.push(Proto::tensor_proto_float(
+                        &format!("{}/unpack_b", ns), &[4], &[0.0; 4]));
+                }
             }
         }
 
@@ -381,6 +411,46 @@ impl UnpackCfaBlock {
         let ns = self.tensor_ns();
         let has_process = self.use_blc || self.use_wb;
 
+        if self.use_fast_unpack {
+            // Fast path: Conv(4ch, 2x2, stride=2) replaces SpaceToDepth + Raster.
+            // Uses VulkanConvolution's optimized inner-product path instead of Raster's
+            // multi-dispatch strided access.
+            let nodes = if has_process {
+                vec![
+                    // Need Cast to F32 first, then Conv
+                    Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
+                        &[Proto::attribute_int("to", 1)]),
+                    Proto::node("Conv",
+                        &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[2, 2]),
+                            Proto::attribute_ints("strides", &[2, 2]),
+                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                            Proto::attribute_int("group", 1),
+                        ]),
+                ]
+            } else {
+                vec![
+                    // No processing needed - Cast + Conv
+                    Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
+                        &[Proto::attribute_int("to", 1)]),
+                    Proto::node("Conv",
+                        &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[2, 2]),
+                            Proto::attribute_ints("strides", &[2, 2]),
+                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                            Proto::attribute_int("group", 1),
+                        ]),
+                ]
+            };
+            
+            return nodes;
+        }
+
+        // Original SpaceToDepth path (standard Raster-based)
         if has_process {
             // Cast(INT16→F32) then SpaceToDepth → F32 [1,4,H/2,W/2]
             // No BLC/WB/Clip nodes — those are fused into DemosaicCcmBlock's Conv.
@@ -521,5 +591,37 @@ mod tests {
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let result = GraphComposer::compose_from_vec(&refs, &[], 16);
         assert!(result.is_ok(), "Native UnpackCfaBlock pipeline should compose: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_unpack_cfa_fast_path() {
+        // Test the Conv-based fast unpack replaces SpaceToDepth with Conv
+        let fast = UnpackCfaBlock::new()
+            .with_mode(UnpackMode::NativeInt16)
+            .with_concrete_dims(48, 64)
+            .with_fast_unpack(true);
+        
+        // Fast path: Cast(INT16→F32) + Conv(4ch,2×2,stride=2) = 2 nodes
+        let nodes = fast.nodes();
+        assert_eq!(nodes.len(), 2, "Fast unpack: Cast+Conv = 2 nodes");
+        assert_eq!(fast.output_elem_type(), 1, "Fast unpack: FLOAT output");
+        
+        // Check Conv weights exist
+        let inits = fast.initializers();
+        assert!(inits.len() >= 3, "Fast unpack: max_val + unpack_w + unpack_b >= 3");
+        
+        // Verify pipeline integration
+        let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
+            .with_elem_type(5)
+            .with_concrete_dims(48, 64));
+        let b2: Box<dyn IspBlock> = Box::new(UnpackCfaBlock::new()
+            .with_mode(UnpackMode::NativeInt16)
+            .with_concrete_dims(48, 64)
+            .with_fast_unpack(true));
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![b1, b2];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let result = GraphComposer::compose_from_vec(&refs, &[], 16);
+        assert!(result.is_ok(), "Fast unpack pipeline should compose: {:?}", result.err());
     }
 }
