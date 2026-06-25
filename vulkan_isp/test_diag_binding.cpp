@@ -13,23 +13,26 @@
 
 static std::vector<uint8_t> readFile(const char* path) {
     std::ifstream f(path, std::ios::binary | std::ios::ate);
-    if (!f.good()) return {};
-    size_t sz = f.tellg(); f.seekg(0);
+    if (!f.good()) { fprintf(stderr, "Cannot read: %s\n", path); return {}; }
+    size_t sz = f.tellg();
+    f.seekg(0);
     std::vector<uint8_t> buf(sz);
     f.read((char*)buf.data(), sz);
     return buf;
 }
 
 int main() {
-    auto spv = readFile("test_minimal.spv");
-    printf("SPIR-V: %zu bytes\n", spv.size());
+    auto spv = readFile("/data/data/com.termux/files/home/softisp/vulkan_isp/test_diag_binding.spv");
     if (spv.empty()) return 1;
+    printf("SPIR-V: %zu bytes\n", spv.size());
+    
     std::vector<int8_t> spv_i8(spv.size());
     memcpy(spv_i8.data(), spv.data(), spv.size());
     
-    flatbuffers::FlatBufferBuilder fbb(65536);
+    flatbuffers::FlatBufferBuilder fbb(1024 * 1024);
     std::unique_ptr<MNN::NetT> net(new MNN::NetT);
-    net->bizCode = "Minimal";
+    net->bizCode = "DiagBindings";
+    
     net->tensorName.push_back("tensor_0");
     net->tensorName.push_back("tensor_1");
     
@@ -38,10 +41,10 @@ int main() {
     op->main.type = MNN::OpParameter_Extra;
     op->main.value = new MNN::ExtraT();
     auto extra = static_cast<MNN::ExtraT*>(op->main.value);
-    extra->type = "Minimal";
+    extra->type = "DiagBind";
     op->inputIndexes.push_back(0);
     op->outputIndexes.push_back(1);
-    op->name = "minimal";
+    op->name = "diag_bind";
     
     // spirv
     {
@@ -52,7 +55,7 @@ int main() {
         a->tensor->int8s = spv_i8;
         extra->attr.push_back(std::move(a));
     }
-    // output_shape
+    // output_shape: [1,4,1,1] (4 channels, 1 pixel)
     {
         std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
         a->key = "output_shape";
@@ -61,7 +64,7 @@ int main() {
         a->tensor->int32s = {1, 4, 1, 1};
         extra->attr.push_back(std::move(a));
     }
-    // global_size
+    // global_size: [1,1,1]
     {
         std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
         a->key = "global_size";
@@ -70,7 +73,7 @@ int main() {
         a->tensor->int32s = {1, 1, 1};
         extra->attr.push_back(std::move(a));
     }
-    // group_size
+    // group_size: [1,1,1]
     {
         std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
         a->key = "group_size";
@@ -79,7 +82,7 @@ int main() {
         a->tensor->int32s = {1, 1, 1};
         extra->attr.push_back(std::move(a));
     }
-    // input binding
+    // input binding: [io_type=0, binding=1]
     {
         std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
         a->key = "input";
@@ -88,13 +91,26 @@ int main() {
         a->list->i = {0, 1};
         extra->attr.push_back(std::move(a));
     }
-    // output binding
+    // output binding: [io_type=1, binding=2]
     {
         std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
         a->key = "input";
         a->i = 0;
         a->list.reset(new MNN::ListValueT);
         a->list->i = {1, 2};
+        extra->attr.push_back(std::move(a));
+    }
+    // const uniform at binding 0, as STORAGE BUFFER (matching shader's 'buffer' keyword)
+    {
+        std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
+        a->key = "const";
+        a->i = 0;  // binding 0
+        a->tensor.reset(new MNN::BlobT);
+        a->tensor->dataType = MNN::DataType_DT_FLOAT;
+        // input_w=8, input_h=8, output_w=1, output_h=1, sensor_max=1023,
+        // blc=0,0,0,0, wb=0.5,0.5,0.5,0.5
+        a->tensor->float32s = {8, 8, 1, 1, 1023.0f, 0,0,0,0, 0.5f,0.5f,0.5f,0.5f};
+        a->b = false;  // STORAGE buffer (matches 'buffer' keyword in shader)
         extra->attr.push_back(std::move(a));
     }
     
@@ -104,34 +120,45 @@ int main() {
     fbb.Finish(netOffset);
     printf("Model: %zu bytes\n", fbb.GetSize());
     
+    // Load Vulkan
     dlopen("libMNN_Vulkan.so", RTLD_NOW | RTLD_GLOBAL);
     auto reg = (void(*)(void))dlsym(RTLD_DEFAULT, "MNNVulkanRegisterAll");
     if (reg) reg();
     
     auto interp = MNN::Interpreter::createFromBuffer(fbb.GetBufferPointer(), fbb.GetSize());
+    
     MNN::ScheduleConfig cfg;
     cfg.type = MNN_FORWARD_VULKAN;
     auto bc = new MNN::BackendConfig;
     bc->precision = MNN::BackendConfig::Precision_High;
     cfg.backendConfig = bc;
+    
     auto sess = interp->createSession(cfg);
     
     auto input = interp->getSessionInput(sess, "tensor_0");
-    interp->resizeTensor(input, {1,1,1,1});
+    std::vector<int> inDims = {1, 1, 1, 1};
+    interp->resizeTensor(input, inDims);
     interp->resizeSession(sess);
     
+    // Fill input with dummy value
     int32_t val = 42;
-    auto hostIn = MNN::Tensor::create({1,1,1,1}, input->getType(), &val, MNN::Tensor::CAFFE);
+    auto hostIn = MNN::Tensor::create(inDims, input->getType(), &val, MNN::Tensor::CAFFE);
     input->copyFromHostTensor(hostIn);
     
     interp->runSession(sess);
     
+    // Read output
     auto out = interp->getSessionOutput(sess, "tensor_1");
     float outData[4] = {0};
     auto hostOut = MNN::Tensor::create({1,4,1,1}, out->getType(), outData, MNN::Tensor::CAFFE);
     bool ok = out->copyToHostTensor(hostOut);
     printf("Copy: %d\n", ok);
     printf("Output: [%f, %f, %f, %f]\n", outData[0], outData[1], outData[2], outData[3]);
+    printf("Expected: [%f, %f, %f, %f]\n", 
+        8.0f*100.0f + 1.0f,    // input_w*100+1 = 801
+        1.0f*10.0f + 2.0f,     // output_w*10+2 = 12
+        1023.0f + 3.0f,        // sensor_max+3 = 1026
+        0.5f + 4.0f);          // wb_r+4 = 4.5
     
     interp->releaseSession(sess);
     delete interp;

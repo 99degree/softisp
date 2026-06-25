@@ -1,0 +1,14 @@
+SPIR-V: 812 bytes
+All approaches complex. Let me use the Interpreter API to build a model programmatically.
+Saved: test_raw.mnn (2436 bytes)
+libMNN_Vulkan.so loaded
+Calling MNNVulkanRegisterAll...
+Interpreter OK
+Session OK
+Run: OK (code=0)
+Output dims: 4 1 4 1 1
+Output type: code=2 bits=32
+Element size: 4
+Host dims: 4 1 4 1 1
+ [0]=1.5 [1]=2.5 [2]=3.5 [3]=4.5
+Non-zero: YES

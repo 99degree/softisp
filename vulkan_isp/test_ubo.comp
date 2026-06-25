@@ -1,0 +1,20 @@
+#version 450
+// Test with binding 0 as SSBO (like unpack_blc), but writes constants
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer Uniforms {
+    float val0;
+    float val1;
+    float val2;
+    float val3;
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBuf { int in_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+void main() {
+    out_data[0] = uniforms.val0;
+    out_data[1] = uniforms.val1;
+    out_data[2] = uniforms.val2;
+    out_data[3] = uniforms.val3;
+}

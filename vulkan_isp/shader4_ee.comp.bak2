@@ -7,8 +7,8 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform Uniforms {
-    float width;
-    float height;
+    uint width;
+    uint height;
     float strength;
     float threshold;
     float pad[4];
@@ -18,20 +18,20 @@ layout(set = 0, binding = 1) readonly buffer InBuf  { float in_data[]; };
 layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
 
 float read_pixel(int ch, int x, int y) {
-    uint plane = uint(uniforms.width) * uint(uniforms.height);
-    return in_data[ch*plane + uint(y)*uint(uniforms.width) + uint(x)];
+    uint plane = uniforms.width * uniforms.height;
+    return in_data[ch*plane + uint(y)*uniforms.width + uint(x)];
 }
 
 void write_pixel(int ch, int x, int y, float val) {
-    uint plane = uint(uniforms.width) * uint(uniforms.height);
-    out_data[ch*plane + uint(y)*uint(uniforms.width) + uint(x)] = val;
+    uint plane = uniforms.width * uniforms.height;
+    out_data[ch*plane + uint(y)*uniforms.width + uint(x)] = val;
 }
 
 void main() {
     int x = int(gl_GlobalInvocationID.x);
     int y = int(gl_GlobalInvocationID.y);
-    int w = int(uint(uniforms.width));
-    int h = int(uint(uniforms.height));
+    int w = int(uniforms.width);
+    int h = int(uniforms.height);
     if (x >= w || y >= h) return;
 
     // Simple unsharp mask: laplacian 3x3 kernel

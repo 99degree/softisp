@@ -7,11 +7,11 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform Uniforms {
-    float input_width;     // W/2 (RGGB quadrants)
-    float input_height;    // H/2
-    float output_width;    // W (full output)
-    float output_height;   // H (full output)
-    float sensor_max;
+    uint input_width;     // W/2 (RGGB quadrants)
+    uint input_height;    // H/2
+    uint output_width;    // W (full output)
+    uint output_height;   // H (full output)
+    uint sensor_max;
     float ccm[9];         // 3x3 row-major
     float pad[4];
 } uniforms;
@@ -21,26 +21,26 @@ layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
 
 // Helper: read a pixel from a specific RGGB channel (CHW layout)
 float read_ch(int ch, uint x, uint y) {
-    uint idx = ch * uint(uint(uniforms.input_height)) * uint(uint(uniforms.input_width))
-             + y * uint(uint(uniforms.input_width)) + x;
+    uint idx = ch * uniforms.input_height * uniforms.input_width
+             + y * uniforms.input_width + x;
     return in_data[idx];
 }
 
 // Helper: write a pixel to RGB output (CHW layout, 3 channels)
 void write_rgb(uint x, uint y, float r, float g, float b) {
-    uint plane = uint(uint(uniforms.output_height)) * uint(uint(uniforms.output_width));
-    out_data[0*plane + y*uint(uint(uniforms.output_width)) + x] = r;
-    out_data[1*plane + y*uint(uint(uniforms.output_width)) + x] = g;
-    out_data[2*plane + y*uint(uint(uniforms.output_width)) + x] = b;
+    uint plane = uniforms.output_height * uniforms.output_width;
+    out_data[0*plane + y*uniforms.output_width + x] = r;
+    out_data[1*plane + y*uniforms.output_width + x] = g;
+    out_data[2*plane + y*uniforms.output_width + x] = b;
 }
 
 void main() {
     uint ox = gl_GlobalInvocationID.x;  // block x
     uint oy = gl_GlobalInvocationID.y;  // block y
-    uint iw = uint(uniforms.input_width);
-    uint ih = uint(uniforms.input_height);
-    uint ow = uint(uniforms.output_width);
-    uint oh = uint(uniforms.output_height);
+    uint iw = uniforms.input_width;
+    uint ih = uniforms.input_height;
+    uint ow = uniforms.output_width;
+    uint oh = uniforms.output_height;
     if (ox >= iw || oy >= ih) return;
 
     // Read RGGB at this block position

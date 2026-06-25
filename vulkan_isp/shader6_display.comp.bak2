@@ -15,11 +15,11 @@
 #endif
 
 layout(set = 0, binding = 0) uniform Uniforms {
-    float input_width;       // 1920
-    float input_height;      // 1080
-    float output_width;     // 960 (1080->540, 1920->960)
-    float output_height;    // 540
-    float sensor_max;
+    uint input_width;       // 1920
+    uint input_height;      // 1080
+    uint output_width;     // 960 (1080->540, 1920->960)
+    uint output_height;    // 540
+    uint sensor_max;
     float ccm[9];
     float wb_gains[4];
     float blc_vals[4];
@@ -66,7 +66,7 @@ void main() {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
 
-    if (ox >= uint(uniforms.output_width) || oy >= uint(uniforms.output_height)) return;
+    if (ox >= uniforms.output_width || oy >= uniforms.output_height) return;
 
     // Downscale: 2x2 average
     uint sx = ox * 2;
@@ -77,8 +77,8 @@ void main() {
         for (uint dx = 0; dx < 2; dx++) {
             uint ix = sx + dx;
             uint iy = sy + dy;
-            if (ix < uint(uniforms.input_width) && iy < uint(uniforms.input_height)) {
-                StoreType s = rgb_in[iy * uint(uniforms.input_width) + ix];
+            if (ix < uniforms.input_width && iy < uniforms.input_height) {
+                StoreType s = rgb_in[iy * uniforms.input_width + ix];
                 r_sum += load_val(s, 0);
                 g_sum += load_val(s, 1);
                 b_sum += load_val(s, 2);
@@ -130,5 +130,5 @@ void main() {
     g = clamp(g, 0.0, 1.0);
     b = clamp(b, 0.0, 1.0);
 
-    rgb_out[oy * uint(uniforms.output_width) + ox] = to_store(r, g, b);
+    rgb_out[oy * uniforms.output_width + ox] = to_store(r, g, b);
 }
