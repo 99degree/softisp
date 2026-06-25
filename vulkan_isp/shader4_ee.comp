@@ -1,0 +1,112 @@
+#version 450
+// ============================================================================
+// Shader 4: Ee (Edge Enhancement / Sharpening)
+// Replaces: EeBlock (9 ops)
+// Input:  [1, 3, H, W] RGB
+// Output: [1, 3, H, W] RGB (enhanced)
+// ============================================================================
+
+#ifndef USE_FP16
+#define USE_FP16 0
+#endif
+
+#if USE_FP16
+#pragma optionNV(fp16)
+#endif
+
+layout(set = 0, binding = 0) uniform Uniforms {
+    uint input_width;
+    uint input_height;
+    uint output_width;
+    uint output_height;
+    uint sensor_max;
+    float ccm[9];
+    float wb_gains[4];
+    float blc_vals[4];
+    float ee_gain;       // enhancement strength
+    float ee_threshold;  // edge threshold
+    float dummy2;
+    float dummy3;
+} uniforms;
+
+#if USE_FP16
+#define StoreType uvec2
+#else
+#define StoreType vec4
+#endif
+
+layout(set = 0, binding = 1) readonly buffer Input  { StoreType rgb_in[]; };
+layout(set = 0, binding = 2) writeonly buffer Output { StoreType rgb_out[]; };
+
+float load_val(StoreType data, int comp) {
+#if USE_FP16
+    if (comp == 0) return unpackHalf2x16(data.x).x;
+    if (comp == 1) return unpackHalf2x16(data.y).x;
+    return 0.0;
+#else
+    return data[comp];
+#endif
+}
+
+StoreType to_store(float r, float g, float b) {
+#if USE_FP16
+    return StoreType(packHalf2x16(vec2(r, 0.0)), packHalf2x16(vec2(g, 0.0)));
+#else
+    return StoreType(r, g, b, 0.0);
+#endif
+}
+
+void main() {
+    uint ox = gl_GlobalInvocationID.x;
+    uint oy = gl_GlobalInvocationID.y;
+
+    if (ox >= uniforms.output_width || oy >= uniforms.output_height) return;
+
+    // Edge pixels: no enhancement
+    if (ox < 1 || ox >= uniforms.output_width - 1 || 
+        oy < 1 || oy >= uniforms.output_height - 1) {
+        rgb_out[oy * uniforms.output_width + ox] = rgb_in[oy * uniforms.output_width + ox];
+        return;
+    }
+
+    uint idx = oy * uniforms.output_width + ox;
+
+    // Read center pixel
+    StoreType center_data = rgb_in[idx];
+    float r = load_val(center_data, 0);
+    float g = load_val(center_data, 1);
+
+    // Sobel on G channel (most sensitive)
+    float g00 = load_val(rgb_in[(oy-1) * uniforms.output_width + (ox-1)], 1);
+    float g10 = load_val(rgb_in[oy * uniforms.output_width + (ox-1)], 1);
+    float g20 = load_val(rgb_in[(oy+1) * uniforms.output_width + (ox-1)], 1);
+    float g01 = load_val(rgb_in[(oy-1) * uniforms.output_width + ox], 1);
+    float g21 = load_val(rgb_in[(oy+1) * uniforms.output_width + ox], 1);
+    float g02 = load_val(rgb_in[(oy-1) * uniforms.output_width + (ox+1)], 1);
+    float g12 = load_val(rgb_in[oy * uniforms.output_width + (ox+1)], 1);
+    float g22 = load_val(rgb_in[(oy+1) * uniforms.output_width + (ox+1)], 1);
+
+    // Sobel X
+    float gx = -g00 - 2*g10 - g20 + g02 + 2*g12 + g22;
+    // Sobel Y
+    float gy = -g00 - 2*g01 - g02 + g20 + 2*g21 + g22;
+
+    float edge = sqrt(gx*gx + gy*gy);
+
+    // Edge threshold
+    if (edge < uniforms.ee_threshold) {
+        rgb_out[idx] = to_store(r, g, load_val(center_data, 2));
+        return;
+    }
+
+    // Enhance based on edge strength
+    float enhancement = uniforms.ee_gain * edge;
+    enhancement = clamp(enhancement, -0.5, 0.5);
+
+    // Apply to all channels
+    float r_new = r + enhancement;
+    float g_new = g + enhancement;
+    float b_new = load_val(center_data, 2) + enhancement;
+
+    rgb_out[idx] = to_store(r_new, g_new, b_new);
+}
