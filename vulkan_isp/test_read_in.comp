@@ -1,0 +1,22 @@
+#version 450
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer Uniforms {
+    float input_width;
+    float input_height;
+    float output_width;
+    float output_height;
+    float sensor_max;
+    float blc_r, blc_gr, blc_gb, blc_b;
+    float wb_r, wb_gr, wb_gb, wb_b;
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBuf { int in_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+void main() {
+    out_data[0] = float(in_data[0]);  // Just read first input element
+    out_data[1] = float(in_data[1]);
+    out_data[2] = float(in_data[2]);
+    out_data[3] = float(in_data[3]);
+}
