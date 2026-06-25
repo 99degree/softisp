@@ -10,11 +10,11 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) buffer Uniforms {
-    float input_width;
-    float input_height;
-    float output_width;
-    float output_height;
-    float sensor_max;
+    uint input_width;
+    uint input_height;
+    uint output_width;
+    uint output_height;
+    uint sensor_max;
     float blc_r, blc_gr, blc_gb, blc_b;
     float wb_r, wb_gr, wb_gb, wb_b;
 } uniforms;
@@ -25,11 +25,11 @@ layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
 void main() {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
-    uint ow = uint(uniforms.output_width);
-    uint oh = uint(uniforms.output_height);
+    uint ow = uniforms.output_width;
+    uint oh = uniforms.output_height;
     if (ox >= ow || oy >= oh) return;
 
-    uint iw = uint(uniforms.input_width);
+    uint iw = uniforms.input_width;
 
     // Read RGGB pixels from 2x2 Bayer block
     // MNN stored INT32 per pixel, row-major: in_data[y * iw + x]
@@ -42,7 +42,7 @@ void main() {
     int b  = in_data[(y_tl + 1u) * iw + x_tl + 1u]; // BR = B
 
     // Normalize to [0, 1]
-    float div = uniforms.sensor_max;
+    float div = float(uniforms.sensor_max);
     float rf  = float(r)  / div;
     float grf = float(gr) / div;
     float gbf = float(gb) / div;

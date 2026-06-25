@@ -7,8 +7,8 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform Uniforms {
-    float width;
-    float height;
+    uint width;
+    uint height;
     float gain;            // correction strength
     float center_th;       // center threshold
     float suppression;     // max correction factor
@@ -21,8 +21,8 @@ layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
 void main() {
     uint x = gl_GlobalInvocationID.x;
     uint y = gl_GlobalInvocationID.y;
-    uint w = uint(uniforms.width);
-    uint h = uint(uniforms.height);
+    uint w = uniforms.width;
+    uint h = uniforms.height;
     if (x >= w || y >= h) return;
 
     uint plane = w * h;

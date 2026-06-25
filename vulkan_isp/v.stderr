@@ -1,0 +1,14 @@
+[VulkanRuntime] _vulkan_runtime_init entere[VulkanRuntime] _vulkan_runtime_init donVulkanFuse::VulkanFuse() entered[VulkanFuse] spirv found, size=812
+[VulkanFuse::onEncode] entered[VulkanFuse] input[0]->binding=1
+[VulkanFuse]   vkBuf=0xb400007a5185f3f0 size=0 offset=0
+[VulkanFuse] output[0]->binding=2
+[VulkanFuse]   vkBuf=0xb400007a518590c0 size=16 offset=0
+[VulkanFuse] constStorage=0 constUniform=0
+[VulkanFuse] mNeedAutoTuning=0 mGlobalSize=[1,1,1] mGroupSize=[1,1,1]
+[VulkanFuse::onEncode] done[VulkanFuse::onEncode] entered[VulkanFuse] input[0]->binding=1
+[VulkanFuse]   vkBuf=0xb400007a518590c0 size=16 offset=0
+[VulkanFuse] output[0]->binding=2
+[VulkanFuse]   vkBuf=0xb400007a518634a0 size=16 offset=0
+[VulkanFuse] constStorage=0 constUniform=0
+[VulkanFuse] mNeedAutoTuning=0 mGlobalSize=[1,1,1] mGroupSize=[1,1,1]
+[VulkanFuse::onEncode] done[copyToHostTensor] Calling backend 0xb400007a4184d770 type=7

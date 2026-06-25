@@ -21,7 +21,7 @@ static std::vector<uint8_t> readFile(const char* path) {
 }
 
 int main() {
-    auto spv = readFile("test_minimal.spv");
+    auto spv = readFile("test_ubo.spv");
     printf("SPIR-V: %zu bytes\n", spv.size());
     if (spv.empty()) return 1;
     std::vector<int8_t> spv_i8(spv.size());
@@ -29,7 +29,7 @@ int main() {
     
     flatbuffers::FlatBufferBuilder fbb(65536);
     std::unique_ptr<MNN::NetT> net(new MNN::NetT);
-    net->bizCode = "Minimal";
+    net->bizCode = "UBOTest2";
     net->tensorName.push_back("tensor_0");
     net->tensorName.push_back("tensor_1");
     
@@ -38,10 +38,10 @@ int main() {
     op->main.type = MNN::OpParameter_Extra;
     op->main.value = new MNN::ExtraT();
     auto extra = static_cast<MNN::ExtraT*>(op->main.value);
-    extra->type = "Minimal";
+    extra->type = "UBOTest2";
     op->inputIndexes.push_back(0);
     op->outputIndexes.push_back(1);
-    op->name = "minimal";
+    op->name = "ubo2";
     
     // spirv
     {
@@ -97,6 +97,30 @@ int main() {
         a->list->i = {1, 2};
         extra->attr.push_back(std::move(a));
     }
+    // const at binding 0, using INT32 data type
+    {
+        std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
+        a->key = "const";
+        a->i = 0;
+        a->tensor.reset(new MNN::BlobT);
+        a->tensor->dataType = MNN::DataType_DT_INT32;
+        std::vector<int32_t> data;
+        data.push_back(8);     // input_w = 8
+        data.push_back(8);     // input_h = 8
+        data.push_back(4);     // output_w = 4
+        data.push_back(4);     // output_h = 4
+        data.push_back(1023);  // sensor_max
+        // Store floats as int32 bit patterns
+        float floats[] = {0.0f, 0.0f, 0.0f, 0.0f, 100.0f, 200.0f, 300.0f, 400.0f};
+        for (int i = 0; i < 8; i++) {
+            int32_t bits;
+            memcpy(&bits, &floats[i], sizeof(bits));
+            data.push_back(bits);
+        }
+        a->tensor->int32s = data;
+        a->b = false;  // STORAGE buffer
+        extra->attr.push_back(std::move(a));
+    }
     
     net->oplists.push_back(std::move(op));
     
@@ -132,6 +156,7 @@ int main() {
     bool ok = out->copyToHostTensor(hostOut);
     printf("Copy: %d\n", ok);
     printf("Output: [%f, %f, %f, %f]\n", outData[0], outData[1], outData[2], outData[3]);
+    printf("Expected: [100, 200, 300, 400]\n");
     
     interp->releaseSession(sess);
     delete interp;
