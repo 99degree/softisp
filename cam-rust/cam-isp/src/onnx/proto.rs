@@ -182,6 +182,16 @@ impl Proto {
         buf
     }
 
+    /// `onnx.AttributeProto` for int array with an explicit `i` int64 value.
+    /// Sets both field 3 (i) and field 7 (ints) for VulkanFuse compatibility.
+    pub fn attribute_input_ints(name: &str, i_value: i64, ints: &[i64]) -> Vec<u8> {
+        let mut buf = Self::string(1, name);
+        buf.extend_from_slice(&Self::int64(3, i_value));
+        buf.extend_from_slice(&Self::repeated_int64s(8, ints));
+        buf.extend_from_slice(&Self::int32(20, 7));
+        buf
+    }
+
     /// `onnx.AttributeProto` for string. type=STRING(3).
     pub fn attribute_string(name: &str, str_value: &str) -> Vec<u8> {
         let mut buf = Self::string(1, name);
@@ -213,6 +223,37 @@ impl Proto {
         let mut buf = Self::string(1, name);
         buf.extend_from_slice(&Self::int64(3, value));
         buf.extend_from_slice(&Self::int32(20, 2));
+        buf
+    }
+
+    /// `onnx.AttributeProto` for a tensor. type=TENSOR(4).
+    /// The tensor bytes should be encoded via `tensor_proto_raw_bytes` or similar.
+    pub fn attribute_tensor(name: &str, tensor_bytes: &[u8]) -> Vec<u8> {
+        let mut buf = Self::string(1, name);
+        buf.extend_from_slice(&Self::raw_bytes(5, tensor_bytes));
+        buf.extend_from_slice(&Self::int32(20, 4));
+        buf
+    }
+
+    /// `onnx.AttributeProto` for a const with int value AND tensor data.
+    /// Used for VulkanFuse const attributes that need both binding index (i)
+    /// and the actual data (tensor).
+    pub fn attribute_const_tensor(name: &str, i_value: i64, tensor_bytes: &[u8]) -> Vec<u8> {
+        let mut buf = Self::string(1, name);
+        buf.extend_from_slice(&Self::int64(3, i_value));
+        buf.extend_from_slice(&Self::raw_bytes(5, tensor_bytes));
+        buf.extend_from_slice(&Self::int32(20, 4));
+        buf
+    }
+
+    /// `onnx.TensorProto` for raw bytes with specified data type.
+    /// data_type: 3=INT8, 2=UINT8, 1=FLOAT, 6=INT32, etc.
+    /// dims: shape of the tensor (must be set for MNNConverter to calculate dataSize)
+    pub fn tensor_proto_raw_bytes(name: &str, data: &[u8], data_type: i32, dims: &[i64]) -> Vec<u8> {
+        let mut buf = Self::string(8, name);
+        buf.extend_from_slice(&Self::repeated_int64s(1, dims));
+        buf.extend_from_slice(&Self::int32(2, data_type));
+        buf.extend_from_slice(&Self::raw_bytes(9, data));
         buf
     }
 
