@@ -19,7 +19,6 @@ cam-rust/mnn_test_*.cpp
 
 # MNN model files
 cam-rust/*.mnn
-cam-rust/*.onnx
 
 # C++ test artifacts
 cam-rust/test_*
@@ -34,7 +33,6 @@ cam-rust/cam-isp/lib/
 cam-rust/cam-isp/tools/
 
 # ONNX model output
-*.onnx
 
 # Editor/IDE
 .vscode/
@@ -48,7 +46,6 @@ cam-rust/lib/arm64-v8a/
 cam-rust/lib/mesa/
 cam-rust/lib/**/libmnn_wrapper.a
 # MNN converter shared lib (too large for GitHub: 123MB)
-cam-rust/lib/aarch64-v8a/libMNNConvertDeps.so
 
 # OS
 .DS_Store
