@@ -47,6 +47,8 @@ cam-rust/lib/aarch64/
 cam-rust/lib/arm64-v8a/
 cam-rust/lib/mesa/
 cam-rust/lib/**/libmnn_wrapper.a
+# MNN converter shared lib (too large for GitHub: 123MB)
+cam-rust/lib/aarch64-v8a/libMNNConvertDeps.so
 
 # OS
 .DS_Store
