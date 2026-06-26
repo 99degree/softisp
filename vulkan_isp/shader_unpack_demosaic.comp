@@ -30,10 +30,10 @@ layout(set = 0, binding = 0, std430) buffer Uniforms {
     float u_pad[4];       // [22..25]
 } uniforms;
 
-layout(set = 0, binding = 1) readonly buffer InBayer { int bayer[]; };
+layout(set = 0, binding = 1) readonly buffer InBayer { float bayer[]; };
 layout(set = 0, binding = 2) writeonly buffer OutRGB { float out_data[]; };
 
-int read_bayer(int bx, int by) {
+float read_bayer(int bx, int by) {
     int bw = int(uint(uniforms.u_bw));
     int bh = int(uint(uniforms.u_bh));
     bx = clamp(bx, 0, bw-1);
@@ -61,16 +61,16 @@ void main() {
     // ── Unpack: read Bayer quad at 4K ──
     uint bx = 2u * x;
     uint by = 2u * y;
-    int r  = read_bayer(int(bx),     int(by));
-    int gr = read_bayer(int(bx + 1u), int(by));
-    int gb = read_bayer(int(bx),     int(by + 1u));
-    int b  = read_bayer(int(bx + 1u), int(by + 1u));
+    float r  = read_bayer(int(bx),     int(by));
+    float gr = read_bayer(int(bx + 1u), int(by));
+    float gb = read_bayer(int(bx),     int(by + 1u));
+    float b  = read_bayer(int(bx + 1u), int(by + 1u));
 
     float smax = uniforms.u_smax;
-    float rf  = float(r)  / smax;
-    float grf = float(gr) / smax;
-    float gbf = float(gb) / smax;
-    float bf  = float(b)  / smax;
+    float rf  = r  / smax;
+    float grf = gr / smax;
+    float gbf = gb / smax;
+    float bf  = b  / smax;
 
     rf  = max(rf  - uniforms.u_blc_r,  0.0);
     grf = max(grf - uniforms.u_blc_gr, 0.0);
