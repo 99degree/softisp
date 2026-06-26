@@ -1,0 +1,60 @@
+#version 450
+// demosaic_noscale.comp — RGGB 4-channel → RGB 3-channel (same resolution)
+// 
+// Takes unpacked RGGB planes at W×H and interpolates to RGB at same W×H.
+// No upscale — output dimensions match input dimensions.
+//
+// Binding 0: SSBO uniforms (float[16])
+//   [0]=W, [1]=H, [2]=sensor_max (=1.0, input pre-normalized)
+//   [3..14]=CCM 3×3 matrix (row-major) + pad[4]
+// Binding 1: SSBO input RGGB (float 4×W×H)
+// Binding 2: SSBO output RGB (float 3×W×H)
+//
+// local_size_x = 2, local_size_y = 2 (matching optimized_dispatch)
+//
+layout(local_size_x = 2, local_size_y = 2) in;
+
+layout(std430, binding = 0) readonly buffer Uniforms { float u[]; };
+layout(std430, binding = 1) readonly buffer InputBuf  { float inbuf[]; };
+layout(std430, binding = 2) writeonly buffer OutputBuf { float outbuf[]; };
+
+void main() {
+    uint W = uint(u[0]);
+    uint H = uint(u[1]);
+    float sensor_max = u[2];
+    
+    // CCM matrix (identity default)
+    float ccm[12];
+    for (int i = 0; i < 12; i++) ccm[i] = (3+i < 15) ? u[3+i] : (i == 0 ? 1.0 : 0.0);
+    
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    if (x >= W || y >= H) return;
+    
+    uint idx = y * W + x;
+    
+    // Read RGGB channels (normalized to [0,1])
+    float R  = inbuf[idx + 0*W*H] / sensor_max;
+    float Gr = inbuf[idx + 1*W*H] / sensor_max;
+    float Gb = inbuf[idx + 2*W*H] / sensor_max;
+    float B  = inbuf[idx + 3*W*H] / sensor_max;
+    
+    // Simple interpolation: G = (Gr + Gb) * 0.5
+    float r = R;
+    float g = (Gr + Gb) * 0.5;
+    float b = B;
+    
+    // Apply CCM (row-major: row i = ccm[i*3], ccm[i*3+1], ccm[i*3+2])
+    float rout = ccm[0]*r + ccm[1]*g + ccm[2]*b;   // row 0: R channel
+    float gout = ccm[3]*r + ccm[4]*g + ccm[5]*b;   // row 1: G channel
+    float bout = ccm[6]*r + ccm[7]*g + ccm[8]*b;   // row 2: B channel
+    
+    // Clamp
+    rout = max(0.0, min(rout, 1.0));
+    gout = max(0.0, min(gout, 1.0));
+    bout = max(0.0, min(bout, 1.0));
+    
+    outbuf[idx*3 + 0] = rout;
+    outbuf[idx*3 + 1] = gout;
+    outbuf[idx*3 + 2] = bout;
+}
