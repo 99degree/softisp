@@ -54,7 +54,8 @@ void main() {
     gout = max(0.0, min(gout, 1.0));
     bout = max(0.0, min(bout, 1.0));
     
-    outbuf[idx*3 + 0] = rout;
-    outbuf[idx*3 + 1] = gout;
-    outbuf[idx*3 + 2] = bout;
+    // Write CHW planar (same format as all other ISP shaders)
+    outbuf[0*W*H + idx] = rout;
+    outbuf[1*W*H + idx] = gout;
+    outbuf[2*W*H + idx] = bout;
 }
