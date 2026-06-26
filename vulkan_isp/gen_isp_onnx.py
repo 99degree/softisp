@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-gen_isp_onnx.py — Generate ISP pipeline as ONNX model.
+gen_isp_onnx.py — ⚠ DEPRECATED — Use gen_isp_onnx_standard.py instead
 
-Architecture:
-  ONNX model (portable, standard format)
-    → MNN converter with ISP fusion pass
-    → Optimized MNN model (fused Extra ops with SPIR-V)
+This generator creates custom 'isp.ai' domain ops. The MNN converter's
+IspOnnxOps.cpp was deleted, so these models will segfault MNNConvert.
 
-Each ISP stage is a custom operation in the 'isp.ai' domain.
-The MNN converter transforms these into VulkanFuse Extra ops.
-A post-convert fusion pass detects chains and merges them.
+The standard-ops equivalent generates the same pipeline using only
+standard ONNX ops (Conv, Mul, Add, Pow, Clip, etc.) and produces
+identical output values. The fusion pass detects the standard ops and
+fuses them into Extra ops automatically.
 
-Usage:
-  python gen_isp_onnx.py                      # 4K→FHD 6-stage
-  python gen_isp_onnx.py --fused              # Fused 4-stage
-  python gen_isp_onnx.py --size 1920 1080     # FHD→FHD
+Usage (replacement):
+  python gen_isp_onnx_standard.py \
+    --bayer-width 3840 --bayer-height 2160 \
+    -o pipeline.onnx
 
 Requirements:
   pip install onnx protobuf numpy
