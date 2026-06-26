@@ -5,7 +5,7 @@
 //!
 //! Run:
 //!   cd cam-rust
-//!   LD_LIBRARY_PATH=$PWD/lib/arm64-v8a \
+//!   LD_LIBRARY_PATH=$PWD/lib/aarch64-v8a \
 //!     cargo test --test test_mnn_engine -p cam-isp --features mnn -- --nocapture --ignored
 //!
 //! Requires:
