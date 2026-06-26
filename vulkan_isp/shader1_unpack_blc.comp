@@ -7,7 +7,7 @@
 // Note: MNN's ONNX converter converts INT16 tensors to INT32, so each
 // element is a full 32-bit integer. The shader reads each pixel directly.
 
-layout(local_size_x = 2, local_size_y = 2, local_size_z = 1) in;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) buffer Uniforms {
     float input_width;
