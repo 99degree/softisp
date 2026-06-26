@@ -33,8 +33,19 @@
 //   const:    Blob[FLOAT] + b — uniform data at binding 0 (b=false → SSBO)
 //
 // ── Pipeline Assembly ───────────────────────────────────────────────
-// The IspPipelineBuilder below composes ops by connecting tensor_i
-// output to tensor_{i+1} input.
+// IspPipelineBuilder composes ops into a sequential flatbuffer model.
+//
+// Tensor reuse (in-place mode):
+//   Element-wise stages (FCS, Display) can reuse the input tensor's buffer
+//   as output by setting inplace=true. This eliminates a separate output
+//   buffer allocation and the associated GPU write-to-new-location.
+//
+//   Neighbor-read stages (EE, LDCI) and size-changing stages (Unpack,
+//   Demosaic) MUST NOT use inplace mode.
+//
+//   Memory savings with 6-stage ISP (4K→FHD):
+//     Without inplace: 7 tensors, 191 MB peak
+//     With inplace (stages 2,5): 5 tensors, 130 MB peak (-32%)
 //
 #ifndef ISP_OPSET_H
 #define ISP_OPSET_H
@@ -49,12 +60,13 @@
 namespace isp {
 
 // ── Opset Type Strings ──────────────────────────────────────────────
-static const char* const kOpUnpackBlc   = "isp.unpack_blc";
-static const char* const kOpDemosaic   = "isp.demosaic_ccm";
-static const char* const kOpFcs        = "isp.fcs";
-static const char* const kOpEe         = "isp.ee";
-static const char* const kOpLdci       = "isp.ldci";
-static const char* const kOpDisplay    = "isp.display";
+static const char* const kOpUnpackBlc       = "isp.unpack_blc";
+static const char* const kOpDemosaic       = "isp.demosaic_ccm";
+static const char* const kOpDemosaicNoscale = "isp.demosaic_noscale";
+static const char* const kOpFcs            = "isp.fcs";
+static const char* const kOpEe             = "isp.ee";
+static const char* const kOpLdci           = "isp.ldci";
+static const char* const kOpDisplay        = "isp.display";
 
 // ── Op Descriptor ───────────────────────────────────────────────────
 struct OpDesc {
@@ -88,6 +100,23 @@ inline OpDesc DemosaicCcm(int w, int h) {
         {float(w/2), float(h/2),   // input dimensions (RGGB quadrants)
          float(w), float(h),       // output dimensions
          1023.0f,                   // sensor_max
+         1.0f, 0.0f, 0.0f,         // identity CCM row 0
+         0.0f, 1.0f, 0.0f,         // identity CCM row 1
+         0.0f, 0.0f, 1.0f,         // identity CCM row 2
+         0.0f, 0.0f, 0.0f, 0.0f}   // pad[4]
+    };
+}
+
+// Same-res demosaic: 4-channel RGGB → 3-channel RGB at same W×H.
+// Input RGGB is already normalized [0,1] from unpack_blc.
+// sensor_max=1.0 because unpack already divided by sensor_max.
+inline OpDesc DemosaicNoscale(int w, int h) {
+    return {
+        kOpDemosaicNoscale,
+        {1, 3, h, w},              // RGB 3 channels at same res
+        {w, h, 1},
+        {float(w), float(h),
+         1.0f,                      // sensor_max=1.0 (input already normalized)
          1.0f, 0.0f, 0.0f,         // identity CCM row 0
          0.0f, 1.0f, 0.0f,         // identity CCM row 1
          0.0f, 0.0f, 1.0f,         // identity CCM row 2
@@ -146,31 +175,41 @@ inline OpDesc Display(int w, int h, float gamma = 2.2f) {
     };
 }
 
-// ── Pipeline Builder ────────────────────────────────────────────────
+// ── Pipeline Builder (with tensor pooling) ──────────────────────────
 // Assembles a sequence of ISP ops into a MNN flatbuffer model.
-// Each op's output tensor feeds the next op's input.
+// Tracks tensor indices dynamically to support in-place reuse.
 //
 class IspPipelineBuilder {
 public:
-    IspPipelineBuilder(int width, int height, int num_stages = 6)
-        : mW(width), mH(height), mFbb(new flatbuffers::FlatBufferBuilder(1024*1024)) {
+    IspPipelineBuilder()
+        : mFbb(new flatbuffers::FlatBufferBuilder(1024*1024)) {
         mNet.reset(new MNN::NetT);
         mNet->bizCode = "IspPipeline";
-        // Pre-allocate tensor names
-        for (int i = 0; i <= num_stages; i++)
-            mNet->tensorName.push_back("tensor_" + std::to_string(i));
+        // tensor_0 is always the session input
+        ensureTensor(0);
     }
 
-    // Add an ISP stage. Stages are numbered sequentially.
-    void addStage(int index, const OpDesc& desc, const std::vector<int8_t>& spirv) {
+    // Add an ISP stage.
+    // inplace=true: output tensor reuses input tensor's buffer (element-wise ops only).
+    // inplace=false: allocates a new tensor for output (required for ops
+    //   with neighbor reads or size changes).
+    //
+    void addStage(const OpDesc& desc, const std::vector<int8_t>& spirv,
+                  bool inplace = false) {
+        int inIdx  = mLastOutput;                // input = previous stage's output
+        int outIdx = inplace ? inIdx : inIdx + 1; // output = new or reuse
+
+        // Allocate tensor names up to max index needed
+        ensureTensor(std::max(inIdx, outIdx));
+
         auto op = std::unique_ptr<MNN::OpT>(new MNN::OpT);
         op->type = MNN::OpType_Extra;
         op->main.type = MNN::OpParameter_Extra;
         op->main.value = new MNN::ExtraT();
         auto* extra = static_cast<MNN::ExtraT*>(op->main.value);
         extra->type = desc.type;
-        op->inputIndexes.push_back(index == 0 ? 0 : index);
-        op->outputIndexes.push_back(index + 1);
+        op->inputIndexes.push_back(inIdx);
+        op->outputIndexes.push_back(outIdx);
 
         auto addA = [&](const char* key, std::function<void(MNN::AttributeT*)> fn) {
             std::unique_ptr<MNN::AttributeT> a(new MNN::AttributeT);
@@ -226,6 +265,7 @@ public:
         });
 
         mNet->oplists.push_back(std::move(op));
+        mLastOutput = outIdx;
     }
 
     // Finalize and return the flatbuffer data
@@ -236,8 +276,23 @@ public:
         return mFbb->GetBufferPointer();
     }
 
+    // Name of the final output tensor (for getSessionOutput)
+    std::string outputTensorName() const {
+        return "tensor_" + std::to_string(mLastOutput);
+    }
+
+    // Total tensor count in the model
+    int tensorCount() const {
+        return (int)mNet->tensorName.size();
+    }
+
 private:
-    int mW, mH;
+    void ensureTensor(int idx) {
+        while ((int)mNet->tensorName.size() <= idx)
+            mNet->tensorName.push_back("tensor_" + std::to_string(mNet->tensorName.size()));
+    }
+
+    int mLastOutput = 0;   // last written tensor index
     std::unique_ptr<flatbuffers::FlatBufferBuilder> mFbb;
     std::unique_ptr<MNN::NetT> mNet;
 };

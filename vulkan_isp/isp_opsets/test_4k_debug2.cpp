@@ -27,13 +27,13 @@ int main(){
     auto ss=rf((base+"shader6_display_simple.spv").c_str());
 
     // 6-stage: unpack+demosaic_noscale+fcs+ee+ldci+display
-    isp::IspPipelineBuilder pipe(FW,FH,6);
-    pipe.addStage(0,isp::UnpackBlc(BW,BH),ti8(su));
-    pipe.addStage(1,isp::DemosaicNoscale(FW,FH),ti8(sd));
-    pipe.addStage(2,isp::Fcs(FW,FH),ti8(sf));
-    pipe.addStage(3,isp::Ee(FW,FH),ti8(se));
-    pipe.addStage(4,isp::Ldci(FW,FH),ti8(sl));
-    pipe.addStage(5,isp::Display(FW,FH),ti8(ss));
+    isp::IspPipelineBuilder pipe;
+    pipe.addStage(isp::UnpackBlc(BW,BH),ti8(su));
+    pipe.addStage(isp::DemosaicNoscale(FW,FH),ti8(sd));
+    pipe.addStage(isp::Fcs(FW,FH),ti8(sf));
+    pipe.addStage(isp::Ee(FW,FH),ti8(se));
+    pipe.addStage(isp::Ldci(FW,FH),ti8(sl));
+    pipe.addStage(isp::Display(FW,FH),ti8(ss));
     size_t ms;auto md=pipe.build(&ms);
     printf("Model: %zu bytes\n",ms);
 
@@ -51,7 +51,7 @@ int main(){
     auto hi=MNN::Tensor::create({1,1,BH,BW},in->getType(),d.data(),MNN::Tensor::CAFFE);
     in->copyFromHostTensor(hi);
     ip->runSession(sess);
-    auto ot=ip->getSessionOutput(sess,"tensor_6");
+    auto ot=ip->getSessionOutput(sess,pipe.outputTensorName().c_str());
     float* od=new float[ot->elementSize()];
     auto ho=MNN::Tensor::create(ot->shape(),ot->getType(),od,MNN::Tensor::CAFFE);
     ot->copyToHostTensor(ho);
