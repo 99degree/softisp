@@ -73,6 +73,7 @@ struct OpDesc {
     const char*      type;          // opset type string
     std::vector<int> output_shape;  // [N,C,H,W]
     std::vector<int> global_size;   // [W,H,1]
+    std::vector<int> local_size;    // [local_x, local_y, 1] workgroup size
     std::vector<float> uniforms;    // const buffer data (floats)
 };
 
@@ -84,6 +85,7 @@ inline OpDesc UnpackBlc(int w, int h) {
         kOpUnpackBlc,
         {1, 4, h/2, w/2},          // RGGB 4 channels at half res
         {w/2, h/2, 1},             // one thread per 2×2 block
+        {16, 16, 1},                // 16×16 workgroup
         {float(w), float(h),
          float(w/2), float(h/2),
          1023.0f,                   // sensor_max
@@ -97,6 +99,7 @@ inline OpDesc DemosaicCcm(int w, int h) {
         kOpDemosaic,
         {1, 3, h, w},              // RGB 3 channels at full res
         {w, h, 1},                 // one thread per pixel
+        {16, 16, 1},                // 16×16 workgroup
         {float(w/2), float(h/2),   // input dimensions (RGGB quadrants)
          float(w), float(h),       // output dimensions
          1023.0f,                   // sensor_max
@@ -115,6 +118,7 @@ inline OpDesc DemosaicNoscale(int w, int h) {
         kOpDemosaicNoscale,
         {1, 3, h, w},              // RGB 3 channels at same res
         {w, h, 1},
+        {16, 16, 1},                // 16×16 workgroup
         {float(w), float(h),
          1.0f,                      // sensor_max=1.0 (input already normalized)
          1.0f, 0.0f, 0.0f,         // identity CCM row 0
@@ -129,6 +133,7 @@ inline OpDesc Fcs(int w, int h, float strength = 1.0f) {
         kOpFcs,
         {1, 3, h, w},
         {w, h, 1},
+        {16, 16, 1},                // 16×16 workgroup
         {float(w), float(h),
          strength,                  // gain
          0.0f,                      // center_th (unused)
@@ -142,6 +147,7 @@ inline OpDesc Ee(int w, int h, float strength = 0.5f, float threshold = 0.01f) {
         kOpEe,
         {1, 3, h, w},
         {w, h, 1},
+        {16, 16, 1},                // 16×16 workgroup
         {float(w), float(h),
          strength,
          threshold,
@@ -154,6 +160,7 @@ inline OpDesc Ldci(int w, int h, float strength = 0.5f, float radius = 1.0f) {
         kOpLdci,
         {1, 3, h, w},
         {w, h, 1},
+        {16, 16, 1},                // 16×16 workgroup
         {float(w), float(h),
          strength,
          radius,
@@ -166,6 +173,7 @@ inline OpDesc Display(int w, int h, float gamma = 2.2f) {
         kOpDisplay,
         {1, 3, h, w},
         {w, h, 1},
+        {16, 16, 1},                // 16×16 workgroup
         {float(w), float(h),
          0.0f,                      // brightness
          1.0f,                      // contrast
@@ -235,11 +243,12 @@ public:
             a->tensor->dataType = MNN::DataType_DT_INT32;
             a->tensor->int32s = desc.global_size;
         });
-        // Group size + optimized dispatch
+        // Pref. workgroup size (e.g. 16×16) — used by optimized_dispatch
+        // to compute actual dispatch count: group_count = ceil(global_size / local_size)
         addA("group_size", [&](MNN::AttributeT* a) {
             a->tensor.reset(new MNN::BlobT);
             a->tensor->dataType = MNN::DataType_DT_INT32;
-            a->tensor->int32s = {1, 1, 1};
+            a->tensor->int32s = desc.local_size;  // actual local size from OpDesc
         });
         addA("optimized_dispatch", [&](MNN::AttributeT* a) {
             a->b = true;
