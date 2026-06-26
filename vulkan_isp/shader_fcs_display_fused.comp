@@ -1,0 +1,60 @@
+#version 450
+// FCS + Display fused: Color correction then sRGB gamma display
+// Matches original display shader's sRGB gamma curve exactly.
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer Uniforms {
+    float width;
+    float height;
+    float fcs_strength;    // FCS gain (applied to all channels)
+    float fcs_offset;      // FCS offset
+    float gamma;           // display gamma (2.2 = sRGB)
+    float brightness;      // display brightness
+    float pad[3];
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBuf  { float in_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+// Matching original display sRGB gamma
+float srgb_gamma(float x) {
+    if (x > 0.0031308) return 1.055 * pow(x, 1.0/2.4) - 0.055;
+    return x * 12.92;
+}
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x);
+    int y = int(gl_GlobalInvocationID.y);
+    int w = int(uint(uniforms.width));
+    int h = int(uint(uniforms.height));
+    if (x >= w || y >= h) return;
+
+    uint plane = uint(w) * uint(h);
+    uint idx = uint(y) * uint(w) + uint(x);
+
+    for (int c = 0; c < 3; c++) {
+        float val = in_data[c*plane + idx];
+
+        // ── FCS: per-channel gain ──
+        val = val * uniforms.fcs_strength + uniforms.fcs_offset;
+        val = clamp(val, 0.0, 1.0);
+
+        // ── Display: brightness + gamma ──
+        val += uniforms.brightness;
+        val = clamp(val, 0.0, 1.0);
+
+        // sRGB gamma (matches original display shader)
+        // Use hardcoded 1/2.4 for sRGB, matching original srgb_gamma()
+        if (uniforms.gamma > 1.9) {
+            if (val > 0.0031308)
+                val = 1.055 * pow(val, 1.0/2.4) - 0.055;
+            else
+                val = val * 12.92;
+        } else {
+            val = pow(max(val, 0.0), 1.0 / uniforms.gamma);
+        }
+
+        val = clamp(val, 0.0, 1.0);
+        out_data[c*plane + idx] = val;
+    }
+}

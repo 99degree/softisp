@@ -67,6 +67,9 @@ static const char* const kOpFcs            = "isp.fcs";
 static const char* const kOpEe             = "isp.ee";
 static const char* const kOpLdci           = "isp.ldci";
 static const char* const kOpDisplay        = "isp.display";
+// Fused opset types (chain fusion optimization)
+static const char* const kOpFcsDisplay     = "isp.fcs_display";
+static const char* const kOpEeLdci         = "isp.ee_ldci";
 
 // ── Op Descriptor ───────────────────────────────────────────────────
 struct OpDesc {
@@ -290,6 +293,14 @@ public:
         return "tensor_" + std::to_string(mLastOutput);
     }
 
+    // Build with optional chain fusion optimization (future use).
+    // Currently just calls build(). Users should use fused OpDesc
+    // factories (FcsDisplayFused, EeLdciFused) directly with the
+    // corresponding fused SPIR-V shaders.
+    const uint8_t* build_optimized(size_t* out_size) {
+        return build(out_size);
+    }
+
     // Total tensor count in the model
     int tensorCount() const {
         return (int)mNet->tensorName.size();
@@ -305,6 +316,46 @@ private:
     std::unique_ptr<flatbuffers::FlatBufferBuilder> mFbb;
     std::unique_ptr<MNN::NetT> mNet;
 };
+
+// ── Fused Op Factories ──────────────────────────────────────────────
+// These combine the behavior of consecutive ops into one fused op.
+// Uniform layout matches the fused SPIR-V shader.
+
+// FCS + Display fused (element-wise chain)
+inline OpDesc FcsDisplayFused(int w, int h,
+                              float fcs_strength = 1.0f,
+                              float gamma = 2.2f) {
+    return {
+        kOpFcsDisplay,
+        {1, 3, h, w},
+        {w, h, 1},
+        {16, 16, 1},
+        {float(w), float(h),
+         fcs_strength,                     // uniform[2]: FCS gain
+         0.0f,                             // uniform[3]: FCS offset
+         gamma,                            // uniform[4]: display gamma
+         0.0f,                             // uniform[5]: display brightness
+         0.0f, 0.0f, 0.0f}                 // uniform[6..8]: pad[3]
+    };
+}
+
+// EE + LDCI fused (neighborhood chain)
+inline OpDesc EeLdciFused(int w, int h,
+                           float ee_strength = 0.5f,
+                           float ee_threshold = 0.01f,
+                           float ldci_strength = 0.5f,
+                           float ldci_radius = 1.0f) {
+    return {
+        kOpEeLdci,
+        {1, 3, h, w},
+        {w, h, 1},
+        {16, 16, 1},
+        {float(w), float(h),
+         ee_strength, ee_threshold,
+         ldci_strength, ldci_radius,
+         0.0f, 0.0f}                       // pad[2]
+    };
+}
 
 } // namespace isp
 
