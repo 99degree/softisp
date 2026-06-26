@@ -51,9 +51,9 @@ int main(int argc, char** argv) {
     }
 
     // Build pipeline via IspPipelineBuilder
-    isp::IspPipelineBuilder pipe(W, H, 6);
+    isp::IspPipelineBuilder pipe;
     for (int i = 0; i < 6; i++)
-        pipe.addStage(i, stages[i].desc_fn(W, H), spv[i]);
+        pipe.addStage(stages[i].desc_fn(W, H), spv[i]);
 
     size_t model_size;
     const uint8_t* model_data = pipe.build(&model_size);
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
     double ms = std::chrono::duration<double, std::milli>(run_end - run_start).count() / 10.0;
 
     // Verify
-    auto out = interp->getSessionOutput(sess, "tensor_6");
+    auto out = interp->getSessionOutput(sess, pipe.outputTensorName().c_str());
     float* outData = new float[out->elementSize()]();
     auto hostOut = MNN::Tensor::create(out->shape(), out->getType(), outData, MNN::Tensor::CAFFE);
     out->copyToHostTensor(hostOut);

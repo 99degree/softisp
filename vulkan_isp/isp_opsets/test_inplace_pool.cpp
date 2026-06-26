@@ -1,18 +1,16 @@
-// test_4k_to_fhd.cpp — 4K Bayer → FHD RGB via 6 ISP opsets
-// Verifies full pipeline at 4K resolution with correct CHW output indexing.
+// test_inplace_pool.cpp — Verify in-place tensor pooling works
+// Stages 2 (FCS) and 5 (Display) use inplace=true → reuse input tensor buffer.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <vector>
 #include <fstream>
-#include <chrono>
 #include <functional>
 #include <dlfcn.h>
 #include <MNN/Interpreter.hpp>
 #include <MNN/Tensor.hpp>
 #include "isp_opset.h"
-
 static std::vector<uint8_t> rf(const char*p){
     std::ifstream f(p,std::ios::binary|std::ios::ate);
     if(!f.good())return{};size_t s=f.tellg();f.seekg(0);
@@ -20,7 +18,7 @@ static std::vector<uint8_t> rf(const char*p){
 }
 auto ti8=[](const std::vector<uint8_t>&r){std::vector<int8_t>v(r.size());memcpy(v.data(),r.data(),r.size());return v;};
 
-int main(){
+void test_pipeline(bool use_inplace, const char* label){
     const int BW=3840,BH=2160,FW=1920,FH=1080;
     std::string base="/data/data/com.termux/files/home/softisp/vulkan_isp/";
     auto su=rf((base+"shader1_unpack_blc.spv").c_str());
@@ -30,17 +28,17 @@ int main(){
     auto sl=rf((base+"shader5_ldci.spv").c_str());
     auto ss=rf((base+"shader6_display_simple.spv").c_str());
 
-    printf("4K Bayer -> FHD RGB pipeline (%d MP, %d stages)\n", BW*BH/1000000, 6);
-
     isp::IspPipelineBuilder pipe;
-    pipe.addStage(isp::UnpackBlc(BW,BH),ti8(su));
-    pipe.addStage(isp::DemosaicNoscale(FW,FH),ti8(sd));
-    pipe.addStage(isp::Fcs(FW,FH),ti8(sf));
-    pipe.addStage(isp::Ee(FW,FH),ti8(se));
-    pipe.addStage(isp::Ldci(FW,FH),ti8(sl));
-    pipe.addStage(isp::Display(FW,FH),ti8(ss));
+    pipe.addStage(isp::UnpackBlc(BW,BH),ti8(su),false);        // stage 0: t0→t1
+    pipe.addStage(isp::DemosaicNoscale(FW,FH),ti8(sd),false);   // stage 1: t1→t2
+    pipe.addStage(isp::Fcs(FW,FH),ti8(sf), use_inplace);        // stage 2: t2→t2 or t2→t3
+    pipe.addStage(isp::Ee(FW,FH),ti8(se), false);              // stage 3: t2→t3 or t3→t4
+    pipe.addStage(isp::Ldci(FW,FH),ti8(sl), false);             // stage 4: t3→t4 or t4→t5
+    pipe.addStage(isp::Display(FW,FH),ti8(ss), use_inplace);    // stage 5: t4→t4 or t5→t6
+
     size_t ms;auto md=pipe.build(&ms);
-    printf("Model: %zu bytes\n",ms);
+    printf("%-30s | tensors=%d | model=%zuB, output=%s | ",
+           label, pipe.tensorCount(), ms, pipe.outputTensorName().c_str());
 
     dlopen("libMNN_Vulkan.so",RTLD_NOW|RTLD_GLOBAL);
     auto rg=(void(*)(void))dlsym(RTLD_DEFAULT,"MNNVulkanRegisterAll");if(rg)rg();
@@ -56,34 +54,29 @@ int main(){
         d[y*BW+x]=(y%2==0&&x%2==0)?100:(y%2==0&&x%2==1)?200:(y%2==1&&x%2==0)?300:400;
     auto hi=MNN::Tensor::create({1,1,BH,BW},in->getType(),d.data(),MNN::Tensor::CAFFE);
     in->copyFromHostTensor(hi);
-
-    // Warmup + benchmark
     ip->runSession(sess);
-    auto rs=std::chrono::high_resolution_clock::now();
-    for(int i=0;i<10;i++) ip->runSession(sess);
-    auto re=std::chrono::high_resolution_clock::now();
-    double ms_f=std::chrono::duration<double,std::milli>(re-rs).count()/10.0;
 
     auto ot=ip->getSessionOutput(sess,pipe.outputTensorName().c_str());
     float* od=new float[ot->elementSize()];
     auto ho=MNN::Tensor::create(ot->shape(),ot->getType(),od,MNN::Tensor::CAFFE);
     ot->copyToHostTensor(ho);
 
-    // Stats using correct CHW indexing
-    int plane=FW*FH;
-    int nz=0,tot=ot->elementSize();
-    float mn=1e9,mx=-1e9;
-    for(int i=0;i<tot;i++){if(fabsf(od[i])>1e-6)nz++;if(od[i]<mn)mn=od[i];if(od[i]>mx)mx=od[i];}
-    int cx=FW/2,cy=FH/2;
-    float r=od[0*plane+cy*FW+cx];
-    float g=od[1*plane+cy*FW+cx];
-    float b=od[2*plane+cy*FW+cx];
-    
-    printf("Results: %.2f ms/frame (%.1f FPS)\n",ms_f,1000.0/ms_f);
-    printf("Output:  %d/%d valid (%.1f%%) [%.4f,%.4f]\n",nz,tot,100.0*nz/tot,mn,mx);
-    printf("Center:  (%d,%d) RGB = (%.4f, %.4f, %.4f)\n",cx,cy,r,g,b);
-    printf("Status:  %s\n",(nz==tot&&mn>0.3f)?"PASS ✅":"FAIL ❌");
-    
+    int plane=FW*FH,cx=FW/2,cy=FH/2;
+    int nz=0,tot=ot->elementSize();float mn=1e9,mx=-1e9;
+    for(int i=0;i<tot;i++){if(od[i]!=0)nz++;if(od[i]<mn)mn=od[i];if(od[i]>mx)mx=od[i];}
+    float r=od[0*plane+cy*FW+cx],g=od[1*plane+cy*FW+cx],b=od[2*plane+cy*FW+cx];
+    printf("%d/%d val [%.4f,%.4f] RGB=(%.4f,%.4f,%.4f) %s\n",
+           nz,tot,mn,mx,r,g,b,(nz==tot&&mn>0.3f)?"PASS":"FAIL");
     delete[] od;delete bc;delete ip;
+}
+
+int main(){
+    printf("Pipeline tensor pooling test (4K→FHD 6-stage)\n");
+    printf("────────────────────────────────────────────────────────────────\n");
+    test_pipeline(false, "no inplace (7 tensors)");
+    test_pipeline(true,  "inplace FCS+Display (5 tensors)");
+    printf("────────────────────────────────────────────────────────────────\n");
+    printf("Memory: 5 tensors = %.0f MB vs 7 = %.0f MB = %.0f%% of original\n",
+           5.0*33+4.0*25, 7.0*33+6.0*25, (5.0*33+4.0*25)/(7.0*33+6.0*25)*100);
     return 0;
 }

@@ -23,9 +23,9 @@ int main(){
     auto sd=rf((base+"isp_opsets/demosaic_noscale.spv").c_str());
 
     // Build: unpack(4K) -> demosaic_noscale(FHD)
-    isp::IspPipelineBuilder pipe(FW,FH,2);
-    pipe.addStage(0,isp::UnpackBlc(BW,BH),ti8(su));
-    pipe.addStage(1,isp::DemosaicNoscale(FW,FH),ti8(sd));
+    isp::IspPipelineBuilder pipe;
+    pipe.addStage(isp::UnpackBlc(BW,BH),ti8(su));
+    pipe.addStage(isp::DemosaicNoscale(FW,FH),ti8(sd));
     size_t ms;auto md=pipe.build(&ms);
     printf("Model: %zu bytes\n",ms);
 
@@ -46,7 +46,7 @@ int main(){
     ip->runSession(sess);
 
     // Read tensor_2 (demosaic output, 3ch RGB at FHD)
-    auto ot=ip->getSessionOutput(sess,"tensor_2");
+    auto ot=ip->getSessionOutput(sess,pipe.outputTensorName().c_str());
     if(!ot){printf("tensor_2 NOT FOUND\n");return 1;}
     float* od=new float[ot->elementSize()];
     auto ho=MNN::Tensor::create(ot->shape(),ot->getType(),od,MNN::Tensor::CAFFE);
