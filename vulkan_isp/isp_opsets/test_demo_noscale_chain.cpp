@@ -1,44 +1,31 @@
-// test_4k_to_fhd.cpp — 4K Bayer → FHD RGB via 6 ISP opsets
-// Verifies full pipeline at 4K resolution with correct CHW output indexing.
+// Test: unpack(4K) -> demosaic_noscale(FHD) -> readback RGGB vs RGB
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <vector>
 #include <fstream>
-#include <chrono>
 #include <functional>
 #include <dlfcn.h>
 #include <MNN/Interpreter.hpp>
 #include <MNN/Tensor.hpp>
 #include "isp_opset.h"
-
 static std::vector<uint8_t> rf(const char*p){
     std::ifstream f(p,std::ios::binary|std::ios::ate);
     if(!f.good())return{};size_t s=f.tellg();f.seekg(0);
     std::vector<uint8_t> b(s);f.read((char*)b.data(),s);return b;
 }
 auto ti8=[](const std::vector<uint8_t>&r){std::vector<int8_t>v(r.size());memcpy(v.data(),r.data(),r.size());return v;};
-
 int main(){
     const int BW=3840,BH=2160,FW=1920,FH=1080;
     std::string base="/data/data/com.termux/files/home/softisp/vulkan_isp/";
     auto su=rf((base+"shader1_unpack_blc.spv").c_str());
     auto sd=rf((base+"isp_opsets/demosaic_noscale.spv").c_str());
-    auto sf=rf((base+"shader3_fcs.spv").c_str());
-    auto se=rf((base+"shader4_ee.spv").c_str());
-    auto sl=rf((base+"shader5_ldci.spv").c_str());
-    auto ss=rf((base+"shader6_display_simple.spv").c_str());
 
-    printf("4K Bayer -> FHD RGB pipeline (%d MP, %d stages)\n", BW*BH/1000000, 6);
-
-    isp::IspPipelineBuilder pipe(FW,FH,6);
+    // Build: unpack(4K) -> demosaic_noscale(FHD)
+    isp::IspPipelineBuilder pipe(FW,FH,2);
     pipe.addStage(0,isp::UnpackBlc(BW,BH),ti8(su));
     pipe.addStage(1,isp::DemosaicNoscale(FW,FH),ti8(sd));
-    pipe.addStage(2,isp::Fcs(FW,FH),ti8(sf));
-    pipe.addStage(3,isp::Ee(FW,FH),ti8(se));
-    pipe.addStage(4,isp::Ldci(FW,FH),ti8(sl));
-    pipe.addStage(5,isp::Display(FW,FH),ti8(ss));
     size_t ms;auto md=pipe.build(&ms);
     printf("Model: %zu bytes\n",ms);
 
@@ -56,34 +43,37 @@ int main(){
         d[y*BW+x]=(y%2==0&&x%2==0)?100:(y%2==0&&x%2==1)?200:(y%2==1&&x%2==0)?300:400;
     auto hi=MNN::Tensor::create({1,1,BH,BW},in->getType(),d.data(),MNN::Tensor::CAFFE);
     in->copyFromHostTensor(hi);
-
-    // Warmup + benchmark
     ip->runSession(sess);
-    auto rs=std::chrono::high_resolution_clock::now();
-    for(int i=0;i<10;i++) ip->runSession(sess);
-    auto re=std::chrono::high_resolution_clock::now();
-    double ms_f=std::chrono::duration<double,std::milli>(re-rs).count()/10.0;
 
-    auto ot=ip->getSessionOutput(sess,"tensor_6");
+    // Read tensor_2 (demosaic output, 3ch RGB at FHD)
+    auto ot=ip->getSessionOutput(sess,"tensor_2");
+    if(!ot){printf("tensor_2 NOT FOUND\n");return 1;}
     float* od=new float[ot->elementSize()];
     auto ho=MNN::Tensor::create(ot->shape(),ot->getType(),od,MNN::Tensor::CAFFE);
     ot->copyToHostTensor(ho);
 
-    // Stats using correct CHW indexing
-    int plane=FW*FH;
+    int ow=ot->shape()[3],oh=ot->shape()[2];
+    int plane=ow*oh;
+    int cx=ow/2,cy=oh/2;
+    
+    printf("Output shape: [");
+    for(int d=0;d<ot->shape().size();d++)printf("%d%c",ot->shape()[d],d+1<ot->shape().size()?',' : ']');
+    printf("\n");
+
+    float r=od[0*plane+cy*ow+cx];
+    float g=od[1*plane+cy*ow+cx];
+    float b=od[2*plane+cy*ow+cx];
+    
     int nz=0,tot=ot->elementSize();
     float mn=1e9,mx=-1e9;
     for(int i=0;i<tot;i++){if(fabsf(od[i])>1e-6)nz++;if(od[i]<mn)mn=od[i];if(od[i]>mx)mx=od[i];}
-    int cx=FW/2,cy=FH/2;
-    float r=od[0*plane+cy*FW+cx];
-    float g=od[1*plane+cy*FW+cx];
-    float b=od[2*plane+cy*FW+cx];
     
-    printf("Results: %.2f ms/frame (%.1f FPS)\n",ms_f,1000.0/ms_f);
-    printf("Output:  %d/%d valid (%.1f%%) [%.4f,%.4f]\n",nz,tot,100.0*nz/tot,mn,mx);
-    printf("Center:  (%d,%d) RGB = (%.4f, %.4f, %.4f)\n",cx,cy,r,g,b);
-    printf("Status:  %s\n",(nz==tot&&mn>0.3f)?"PASS ✅":"FAIL ❌");
-    
+    printf("Center(%d,%d): (%.6f,%.6f,%.6f)\n",cx,cy,r,g,b);
+    printf("Range: [%.6f,%.6f] %d/%d\n",mn,mx,nz,tot);
+    printf("Expected: R=%.4f G=%.4f B=%.4f\n",100.0f/1023.0f,250.0f/1023.0f,400.0f/1023.0f);
+    bool ok = (fabsf(r-100.0f/1023.0f)<0.001f && fabsf(g-250.0f/1023.0f)<0.001f && fabsf(b-400.0f/1023.0f)<0.001f);
+    printf("Status: %s\n",ok?"PASS":"FAIL");
+
     delete[] od;delete bc;delete ip;
     return 0;
 }
