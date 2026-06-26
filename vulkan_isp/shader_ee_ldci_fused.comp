@@ -1,0 +1,67 @@
+#version 450
+// EE + LDCI fused: Edge Enhancement then Local Dynamic Contrast
+// Saves: intermediate buffer write+read (23.7MB) and EE's neighbor reads
+// No shared memory — just combined computation to reduce memory traffic
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer Uniforms {
+    float width;
+    float height;
+    float ee_strength;
+    float ee_threshold;
+    float ldci_strength;
+    float ldci_radius;
+    float pad[2];
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBuf  { float in_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x);
+    int y = int(gl_GlobalInvocationID.y);
+    int w = int(uint(uniforms.width));
+    int h = int(uint(uniforms.height));
+    if (x >= w || y >= h) return;
+    uint plane = uint(w) * uint(h);
+
+    int rad = int(uniforms.ldci_radius);
+    // Clamp bounds for neighbors
+    int sx0 = max(x - rad, 0);
+    int sx1 = min(x + rad, w - 1);
+    int sy0 = max(y - rad, 0);
+    int sy1 = min(y + rad, h - 1);
+
+    for (int c = 0; c < 3; c++) {
+        uint base = c * plane;
+        int i00 = int(base + uint(y)*uint(w) + uint(x));
+
+        // Read center pixel (shared by EE and LDCI)
+        float center = in_data[i00];
+
+        // ── EE: Laplacian (needs 4 neighbors) ──
+        int t_idx = int(base + uint(max(y-1,0))*uint(w) + uint(x));
+        int b_idx = int(base + uint(min(y+1,h-1))*uint(w) + uint(x));
+        int l_idx = int(base + uint(y)*uint(w) + uint(max(x-1,0)));
+        int r_idx = int(base + uint(y)*uint(w) + uint(min(x+1,w-1)));
+        float laplacian = 4.0*center - (in_data[t_idx] + in_data[b_idx] +
+                                        in_data[l_idx] + in_data[r_idx]);
+        if (abs(laplacian) > uniforms.ee_threshold)
+            center += uniforms.ee_strength * laplacian;
+
+        // ── LDCI: 3×3 box blur + contrast (reads up to 9 neighbors) ──
+        float sum = 0.0;
+        int cnt = 0;
+        for (int dy = sy0; dy <= sy1; dy++) {
+            for (int dx = sx0; dx <= sx1; dx++) {
+                sum += in_data[int(base + uint(dy)*uint(w) + uint(dx))];
+                cnt++;
+            }
+        }
+        float local_mean = sum / float(cnt);
+        float diff = center - local_mean;
+        center += uniforms.ldci_strength * diff;
+
+        out_data[int(base + uint(y)*uint(w) + uint(x))] = center;
+    }
+}
