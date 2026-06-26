@@ -1,0 +1,118 @@
+#version 450
+// Shader 4: Ee — Edge Enhancement / Sharpening (fast with shared memory)
+// Input:  F32[1, 3, H, W] RGB
+// Output: F32[1, 3, H, W] RGB (sharpened)
+// Uses shared memory tile to cache workgroup+1px border (18×18×3)
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer Uniforms {
+    float width;
+    float height;
+    float strength;
+    float threshold;
+    float pad[4];
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBuf  { float in_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+shared float tile[18][18][3];
+
+void main() {
+    int tx = int(gl_LocalInvocationID.x);
+    int ty = int(gl_LocalInvocationID.y);
+    int gx = int(gl_GlobalInvocationID.x);
+    int gy = int(gl_GlobalInvocationID.y);
+    int w = int(uint(uniforms.width));
+    int h = int(uint(uniforms.height));
+    uint plane = uint(w) * uint(h);
+
+    // Load center pixel (workgroup inner 16×16)
+    for (int c = 0; c < 3; c++) {
+        int sx = clamp(gx + tx, 0, w - 1);
+        int sy = clamp(gy + ty, 0, h - 1);
+        tile[ty+1][tx+1][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+
+    // Top border (ty == 0): row y-1
+    if (ty == 0) {
+        int sy = clamp(gy - 1, 0, h - 1);
+        int sx = clamp(gx + tx, 0, w - 1);
+        for (int c = 0; c < 3; c++)
+            tile[0][tx+1][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+    // Bottom border (ty == 15): row y+16
+    if (ty == 15) {
+        int sy = clamp(gy + 16, 0, h - 1);
+        int sx = clamp(gx + tx, 0, w - 1);
+        for (int c = 0; c < 3; c++)
+            tile[17][tx+1][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+    // Left border (tx == 0): col x-1
+    if (tx == 0) {
+        int sx = clamp(gx - 1, 0, w - 1);
+        int sy = clamp(gy + ty, 0, h - 1);
+        for (int c = 0; c < 3; c++)
+            tile[ty+1][0][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+    // Right border (tx == 15): col x+16
+    if (tx == 15) {
+        int sx = clamp(gx + 16, 0, w - 1);
+        int sy = clamp(gy + ty, 0, h - 1);
+        for (int c = 0; c < 3; c++)
+            tile[ty+1][17][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+
+    // Corners (loaded by the threads at edges)
+    // Top-left: thread (0,0) loads tile[0][0] (both ty==0 and tx==0 already loaded tile[0][1] and tile[1][0])
+    if (tx == 0 && ty == 0) {
+        int sy = clamp(gy - 1, 0, h - 1);
+        int sx = clamp(gx - 1, 0, w - 1);
+        for (int c = 0; c < 3; c++)
+            tile[0][0][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+    // Top-right: thread (15,0)
+    if (tx == 15 && ty == 0) {
+        int sy = clamp(gy - 1, 0, h - 1);
+        int sx = clamp(gx + 16, 0, w - 1);
+        for (int c = 0; c < 3; c++)
+            tile[0][17][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+    // Bottom-left: thread (0,15)
+    if (tx == 0 && ty == 15) {
+        int sy = clamp(gy + 16, 0, h - 1);
+        int sx = clamp(gx - 1, 0, w - 1);
+        for (int c = 0; c < 3; c++)
+            tile[17][0][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+    // Bottom-right: thread (15,15)
+    if (tx == 15 && ty == 15) {
+        int sy = clamp(gy + 16, 0, h - 1);
+        int sx = clamp(gx + 16, 0, w - 1);
+        for (int c = 0; c < 3; c++)
+            tile[17][17][c] = in_data[c*plane + uint(sy)*uint(w) + uint(sx)];
+    }
+
+    barrier();
+
+    if (gx >= w || gy >= h) return;
+
+    // Compute sharpening from shared memory
+    for (int c = 0; c < 3; c++) {
+        float center = tile[ty+1][tx+1][c];
+        float t  = tile[ty][tx+1][c];
+        float b  = tile[ty+2][tx+1][c];
+        float l  = tile[ty+1][tx][c];
+        float r  = tile[ty+1][tx+2][c];
+
+        float laplacian = 4.0 * center - (t + b + l + r);
+        float edge = abs(laplacian);
+
+        if (edge > uniforms.threshold) {
+            center += uniforms.strength * laplacian;
+        }
+
+        out_data[c*plane + uint(gy)*uint(w) + uint(gx)] = center;
+    }
+}
