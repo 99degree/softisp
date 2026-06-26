@@ -32,13 +32,13 @@ int main(){
 
     printf("4K Bayer -> FHD RGB pipeline (%d MP, %d stages)\n", BW*BH/1000000, 6);
 
-    isp::IspPipelineBuilder pipe(FW,FH,6);
-    pipe.addStage(0,isp::UnpackBlc(BW,BH),ti8(su));
-    pipe.addStage(1,isp::DemosaicNoscale(FW,FH),ti8(sd));
-    pipe.addStage(2,isp::Fcs(FW,FH),ti8(sf));
-    pipe.addStage(3,isp::Ee(FW,FH),ti8(se));
-    pipe.addStage(4,isp::Ldci(FW,FH),ti8(sl));
-    pipe.addStage(5,isp::Display(FW,FH),ti8(ss));
+    isp::IspPipelineBuilder pipe;
+    pipe.addStage(isp::UnpackBlc(BW,BH),ti8(su));
+    pipe.addStage(isp::DemosaicNoscale(FW,FH),ti8(sd));
+    pipe.addStage(isp::Fcs(FW,FH),ti8(sf));
+    pipe.addStage(isp::Ee(FW,FH),ti8(se));
+    pipe.addStage(isp::Ldci(FW,FH),ti8(sl));
+    pipe.addStage(isp::Display(FW,FH),ti8(ss));
     size_t ms;auto md=pipe.build(&ms);
     printf("Model: %zu bytes\n",ms);
 
@@ -64,7 +64,7 @@ int main(){
     auto re=std::chrono::high_resolution_clock::now();
     double ms_f=std::chrono::duration<double,std::milli>(re-rs).count()/10.0;
 
-    auto ot=ip->getSessionOutput(sess,"tensor_6");
+    auto ot=ip->getSessionOutput(sess,pipe.outputTensorName().c_str());
     float* od=new float[ot->elementSize()];
     auto ho=MNN::Tensor::create(ot->shape(),ot->getType(),od,MNN::Tensor::CAFFE);
     ot->copyToHostTensor(ho);

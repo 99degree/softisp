@@ -40,8 +40,8 @@ int test_size(int W, int H) {
         spv[i].resize(raw.size()); memcpy(spv[i].data(),raw.data(),raw.size());
     }
     
-    isp::IspPipelineBuilder pipe(W,H,6);
-    for(int i=0;i<6;i++) pipe.addStage(i,stages[i].desc(W,H),spv[i]);
+    isp::IspPipelineBuilder pipe;
+    for(int i=0;i<6;i++) pipe.addStage(stages[i].desc(W,H),spv[i]);
     
     size_t ms;auto md=pipe.build(&ms);
     
@@ -61,7 +61,7 @@ int test_size(int W, int H) {
     in->copyFromHostTensor(hi);
     ip->runSession(sess);
     
-    auto ot=ip->getSessionOutput(sess,"tensor_6");
+    auto ot=ip->getSessionOutput(sess,pipe.outputTensorName().c_str());
     float* od=new float[ot->elementSize()];
     auto ho=MNN::Tensor::create(ot->shape(),ot->getType(),od,MNN::Tensor::CAFFE);
     ot->copyToHostTensor(ho);

@@ -30,13 +30,13 @@ int main(){
     auto spv_disp=rf((base+"shader6_display_simple.spv").c_str());
 
     // Build 6-stage pipeline (standard full-res, no noscale needed at 8x8)
-    isp::IspPipelineBuilder pipe(W,H,6);
-    pipe.addStage(0,isp::UnpackBlc(W,H),ti8(su));         // Bayer->RGGB 4ch
-    pipe.addStage(1,isp::DemosaicCcm(W,H),ti8(sd));        // RGGB->RGB (upscale)
-    pipe.addStage(2,isp::Fcs(W,H),ti8(sf));
-    pipe.addStage(3,isp::Ee(W,H),ti8(se));
-    pipe.addStage(4,isp::Ldci(W,H),ti8(sl));
-    pipe.addStage(5,isp::Display(W,H),ti8(spv_disp));
+    isp::IspPipelineBuilder pipe;
+    pipe.addStage(isp::UnpackBlc(W,H),ti8(su));         // Bayer->RGGB 4ch
+    pipe.addStage(isp::DemosaicCcm(W,H),ti8(sd));        // RGGB->RGB (upscale)
+    pipe.addStage(isp::Fcs(W,H),ti8(sf));
+    pipe.addStage(isp::Ee(W,H),ti8(se));
+    pipe.addStage(isp::Ldci(W,H),ti8(sl));
+    pipe.addStage(isp::Display(W,H),ti8(spv_disp));
 
     size_t ms;auto md=pipe.build(&ms);
     printf("Model: %zu bytes\n",ms);
@@ -58,7 +58,7 @@ int main(){
     in->copyFromHostTensor(hi);
     ip->runSession(sess);
 
-    auto ot=ip->getSessionOutput(sess,"tensor_6");
+    auto ot=ip->getSessionOutput(sess,pipe.outputTensorName().c_str());
     float* od=new float[ot->elementSize()];
     auto ho=MNN::Tensor::create(ot->shape(),ot->getType(),od,MNN::Tensor::CAFFE);
     ot->copyToHostTensor(ho);
