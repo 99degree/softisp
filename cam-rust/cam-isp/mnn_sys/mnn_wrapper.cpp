@@ -56,6 +56,11 @@ MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend
         case MNN_BACKEND_NN:     config.type = MNN_FORWARD_NN; break;
         default:                 config.type = MNN_FORWARD_CPU; break;
     }
+    
+    // Use high precision for Vulkan backend to ensure correct ISP output
+    MNN::BackendConfig backendConfig;
+    backendConfig.precision = MNN::BackendConfig::Precision_High;
+    config.backendConfig = &backendConfig;
 
     auto* session = net->createSession(config);
     return reinterpret_cast<MnnSession>(session);
@@ -225,6 +230,71 @@ int mnn_interpreter_save_model(MnnInterpreter interpreter, const char* path) {
 
 // ── Host-tensor inference (copyFromHostTensor / copyToHostTensor) ──────
 
+extern "C" int mnn_run_host_tensors(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const float* in_data,
+    const int* in_shape,
+    int in_ndim,
+    float* out_data,
+    int max_out
+) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !in_data || !out_data) return -1;
+
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+
+    // Create host tensor wrapping input data as FLOAT32.
+    // MNN's copyFromHostTensor handles type conversion to the backend type.
+    std::vector<int> host_shape(in_shape, in_shape + in_ndim);
+    halide_type_t float_type(halide_type_float, 32);
+    auto* host_in = MNN::Tensor::create(
+        host_shape,
+        float_type,
+        const_cast<float*>(in_data),
+        MNN::Tensor::CAFFE);
+
+    if (!host_in) return -3;
+
+    // Copy host → backend (handles GPU transfer)
+    in_tensor->copyFromHostTensor(host_in);
+
+    // Run inference
+    auto run_ok = net->runSession(sess);
+    if (run_ok != 0) return -2;
+
+    // Get output tensor
+    auto* out_tensor = net->getSessionOutput(sess, nullptr);
+    if (!out_tensor) return -1;
+    
+    auto out_shape = out_tensor->shape();
+    
+    int out_total = 1;
+    for (auto d : out_shape) out_total *= d;
+
+    int n = out_total < max_out ? out_total : max_out;
+    if (n <= 0) return -5;
+
+    // Create host tensor wrapping output buffer as FLOAT32.
+    halide_type_t out_float_type(halide_type_float, 32);
+    auto* host_out = MNN::Tensor::create(
+        out_shape,
+        out_float_type,
+        out_data,
+        MNN::Tensor::CAFFE);
+    
+    if (!host_out) return -3;
+
+    out_tensor->copyToHostTensor(host_out);
+
+    // Clean up host tensor wrappers (actual data buffers are caller-owned)
+    delete host_in;
+    delete host_out;
+
+    return n;
+}
 
 
 // ── Express Module API (C wrapper) ──────────────────────────────────────
