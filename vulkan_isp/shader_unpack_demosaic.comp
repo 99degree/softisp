@@ -1,0 +1,94 @@
+#version 450
+// Fused: UnpackBLC + DemosaicNoscale — one dispatch instead of two
+// Eliminates the 4-channel intermediate buffer (33MB) and one pipeline barrier.
+// Input:  INT32 Bayer at 4K
+// Output: FLOAT RGB at FHD (no separate 4ch intermediate)
+// Workgroup: 16×16 (standard)
+//
+// Binding layout:
+//   0: uniforms (std430 SSBO) — 22 floats
+//   1: bayer INT32 in (readonly)
+//   2: rgb FLOAT out (writeonly, CHW planar)
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer Uniforms {
+    float u_w;            // [0]  FHD output width
+    float u_h;            // [1]  FHD output height
+    float u_bw;           // [2]  4K input width
+    float u_bh;           // [3]  4K input height
+    float u_smax;         // [4]  sensor_max
+    float u_blc_r;        // [5]
+    float u_blc_gr;       // [6]
+    float u_blc_gb;       // [7]
+    float u_blc_b;        // [8]
+    float u_wb_r;         // [9]
+    float u_wb_gr;        // [10]
+    float u_wb_gb;        // [11]
+    float u_wb_b;         // [12]
+    float u_ccm[9];       // [13..21] CCM 3×3 row-major
+    float u_pad[4];       // [22..25]
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBayer { int bayer[]; };
+layout(set = 0, binding = 2) writeonly buffer OutRGB { float out_data[]; };
+
+int read_bayer(int bx, int by) {
+    int bw = int(uint(uniforms.u_bw));
+    int bh = int(uint(uniforms.u_bh));
+    bx = clamp(bx, 0, bw-1);
+    by = clamp(by, 0, bh-1);
+    return bayer[by * bw + bx];
+}
+
+void write_rgb(uint x, uint y, float r, float g, float b) {
+    uint W = uint(uint(uniforms.u_w));
+    uint H = uint(uint(uniforms.u_h));
+    uint plane = W * H;
+    uint idx = y * W + x;
+    out_data[0u*plane + idx] = r;
+    out_data[1u*plane + idx] = g;
+    out_data[2u*plane + idx] = b;
+}
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint W = uint(uint(uniforms.u_w));
+    uint H = uint(uint(uniforms.u_h));
+    if (x >= W || y >= H) return;
+
+    // ── Unpack: read Bayer quad at 4K ──
+    uint bx = 2u * x;
+    uint by = 2u * y;
+    int r  = read_bayer(int(bx),     int(by));
+    int gr = read_bayer(int(bx + 1u), int(by));
+    int gb = read_bayer(int(bx),     int(by + 1u));
+    int b  = read_bayer(int(bx + 1u), int(by + 1u));
+
+    float smax = uniforms.u_smax;
+    float rf  = float(r)  / smax;
+    float grf = float(gr) / smax;
+    float gbf = float(gb) / smax;
+    float bf  = float(b)  / smax;
+
+    rf  = max(rf  - uniforms.u_blc_r,  0.0);
+    grf = max(grf - uniforms.u_blc_gr, 0.0);
+    gbf = max(gbf - uniforms.u_blc_gb, 0.0);
+    bf  = max(bf  - uniforms.u_blc_b,  0.0);
+
+    rf  *= uniforms.u_wb_r;
+    grf *= uniforms.u_wb_gr;
+    gbf *= uniforms.u_wb_gb;
+    bf  *= uniforms.u_wb_b;
+
+    // ── Demosaic: average G channels then CCM ──
+    float g = (grf + gbf) * 0.5;
+
+    float c0 = uniforms.u_ccm[0]*rf + uniforms.u_ccm[1]*g + uniforms.u_ccm[2]*bf;
+    float c1 = uniforms.u_ccm[3]*rf + uniforms.u_ccm[4]*g + uniforms.u_ccm[5]*bf;
+    float c2 = uniforms.u_ccm[6]*rf + uniforms.u_ccm[7]*g + uniforms.u_ccm[8]*bf;
+
+    // ── Write RGB (CHW planar) ──
+    write_rgb(x, y, c0, c1, c2);
+}
