@@ -110,10 +110,10 @@ def build_graph(BW, BH, no_unpack=False):
     #  Stage 4: EE — Edge Enhancement (Conv 3×3 unsharp)
     # ═══════════════════════════════════════════════
     # Unsharp mask kernel per channel: [[0,-.5,0],[-.5,3,-.5],[0,-.5,0]]
-    W_EE = np.zeros((3, 3, 3, 3), dtype=np.float32)
+    W_EE = np.zeros((3, 1, 3, 3), dtype=np.float32)
     k = np.array([[0, -0.5, 0], [-0.5, 3.0, -0.5], [0, -0.5, 0]], dtype=np.float32)
     for c in range(3):
-        W_EE[c, c] = k
+        W_EE[c, 0] = k
     B_EE = np.zeros(3, dtype=np.float32)
 
     init_tensor('ee_w', W_EE)
