@@ -153,14 +153,16 @@ tests/
 - ONNX model generator — 20 nodes, 2719 bytes
 - V4L2 adapter — Linux capture via rscam
 - MNN C++ wrapper — complete
+- **MNN Vulkan ISP pipeline** — 3-dispatch fused pipeline (HD 114 FPS, FHD 50 FPS, 4K 14 FPS)
+- **IspChainFusion converter pass** — ONNX→Extra op fusion with named params (blc/wb/ccm/fcs/ee/ldci/display)
+- **E2E test harness** — ONNX gen → MNN convert → Vulkan inference → verify
 - Binder HAL — AIDL-style provider/device/session/callbacks
 - Malvar demosaic, DPC, LSC, histogram, zone stats — complete
-- 127 tests, 0 warnings, 21 modules, 10 crates
+- 127+ tests, 0 warnings, 21 modules, 10 crates
 
 ### ❌ Not Yet Ported
 - HDR merge block (multi-exposure fusion)
 - ONNX Runtime inference (needs `libonnxruntime.so`)
-- MNN full inference (needs `libMNN.so`)
 - Android Camera2 NDK full implementation
 
 ## Build Requirements
