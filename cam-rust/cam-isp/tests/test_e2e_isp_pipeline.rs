@@ -12,6 +12,8 @@
 //!   LD_LIBRARY_PATH=$PWD/lib/aarch64-v8a \
 //!     cargo test --test test_e2e_isp_pipeline --features mnn -- --ignored --nocapture
 //!
+//! IMPORTANT: Run with --test-threads=1 to avoid Vulkan device queue races.
+//!
 //! Requires:
 //!   - libMNN.so in lib/aarch64-v8a/
 //!   - libMNNConvertDeps.so in lib/aarch64-v8a/
