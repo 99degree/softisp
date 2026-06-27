@@ -136,6 +136,15 @@ pub fn mnn_run_with_output(
         max_out: c_int,
     ) -> c_int;
 
+    pub fn mnn_set_input_float(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        name: *const c_char,
+        data: *const c_float,
+        shape: *const c_int,
+        ndim: c_int,
+    ) -> c_int;
+
     fn mnn_express_load_vars(path: *const c_char, out_count: *mut c_int) -> *mut *mut c_void;
     fn mnn_express_extract(inputs: *mut *mut c_void, n_inputs: c_int, outputs: *mut *mut c_void, n_outputs: c_int) -> *mut c_void;
     fn mnn_express_destroy_module(module: *mut c_void);
