@@ -219,6 +219,20 @@ int mnn_run_host_tensors(MnnInterpreter interpreter, MnnSession session,
                           float* out_data, int max_out);
 
 /**
+ * Set a named input tensor from float32 host data.
+ * For multi-input models (HEAVY profile) where extra inputs
+ * (fcs_gain, ldci_strength, ee_gain) must be set before inference.
+ * @param name  Input tensor name (e.g. "FcsBlock/fcs_gain_scaled").
+ * @param data  Float32 data to copy into the tensor.
+ * @param shape Shape of the data.
+ * @param ndim  Number of dimensions.
+ * @return 0 on success, -1 null args, -2 tensor not found, -3 alloc fail.
+ */
+int mnn_set_input_float(MnnInterpreter interpreter, MnnSession session,
+                         const char* name, const float* data,
+                         const int* shape, int ndim);
+
+/**
  * Zero-copy inference: wrap existing buffer directly as host tensor.
  * If buffer type matches model input type, no alloc/copy for input.
  * @param interpreter Interpreter handle.
