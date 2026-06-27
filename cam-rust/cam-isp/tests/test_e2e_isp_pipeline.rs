@@ -148,7 +148,7 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
         0
     };
 
-    let (out_c, out_h, out_w) = if out_ndim >= 4 {
+    let (_out_c, out_h, out_w) = if out_ndim >= 4 {
         (out_dims[1] as usize, out_dims[2] as usize, out_dims[3] as usize)
     } else {
         (1, 1, n_out as usize)
