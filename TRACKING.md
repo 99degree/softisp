@@ -34,7 +34,8 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 ## Converter Fusion Rules
 | Rule | Pattern | Result |
 |---|---|---|
-| R1 | unpack_blc | `isp.unpack_blc` |
+| R1 | unpack_blc (Python Cast→Conv + Rust Concat→Conv) | `isp.unpack_blc` |
+| R1b | Rust packed-int16 Concat→Conv | `isp.unpack_blc` (fallback) |
 | R2 | Conv1x1 4ch→3ch | `isp.demosaic_ccm` |
 | R3a | Conv3x3 group=3 | `isp.ee` |
 | R3b | Mul+Add | `isp.fcs` |
@@ -68,9 +69,10 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 - [x] Compiler warnings cleanup
 - [x] README.md updated
 - [x] R11 fused_6in1 removed (2-4× slower than 3-dispatch)
+- [x] Rust pipeline ONNX pattern support (isUnpackConv expanded for k=1×2, R1b added)
 
 ## Remaining Work
-- [ ] Rust pipeline ONNX → IspChainFusion alignment (Rust uses Mod+Div+Cast+Div+Concat+Conv for unpack, Python uses Cast+Conv)
+- [x] Rust pipeline ONNX → IspChainFusion alignment (Rust uses Mod+Div+Cast+Div+Concat+Conv for unpack, Python uses Cast+Conv)
 - [x] Display gamma LUT — attempted, 2× slower (shared memory barrier + 6 reads worse than 3 pow() calls)
 - [ ] FP16 output support
 - [ ] Bayer pattern configurability (non-uniform Gr≠Gb)
