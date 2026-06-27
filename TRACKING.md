@@ -1,61 +1,89 @@
-# SoftISP — Project Tracking & Implementation Plan
+# SoftISP — Project Tracking
 
-This document sits with the code and tracks the implementation plan, milestones, tests, and telemetry derived from the architecture and design specification. License: GPL-3.0 (see LICENSE file).
+## Current State: Vulkan ISP Pipeline (MNN backend)
 
-## Project goals (short)
-- Implement a resilient, observable ISP pipeline in C++ with:
-  - unified ProcessItem format and Envelope
-  - OwnershipToken semantics (atomic owner transitions)
-  - Scheduler fast-forward handoff and Monitor fallback
-  - SessionManager authoritative global FIFO for slot reuse
-  - Observability and operational knobs
+GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
+3-dispatch fused pipeline: unpack_demosaic_fcs → ee_ldci → display.
 
-## Repo layout (initial)
-- CMakeLists.txt
-- LICENSE
-- README.md
-- TRACKING.md
-- src/
-  - include/softisp.hpp
-  - main.cpp
-  - session_manager.{cpp,hpp}
-  - monitor.{cpp,hpp}
-  - scheduler.{cpp,hpp}
-  - worker.{cpp,hpp}
+### Performance (Vulkan, Snapdragon)
+| Resolution | Latency | FPS |
+|---|---|---|
+| HD 1280×720 | 8.77 ms | **114** |
+| FHD 1920×1080 | 20.09 ms | **50** |
+| 4K 3840×2160 | 73.25 ms | **14** |
 
-## Initial milestones (first sprint)
-1. Drop-in scaffold (this commit)
-   - basic types, skeleton modules, build
-2. Implement thread-safe FIFO and simple allocator
-3. Implement Monitor waitingq handler and token claim retries
-4. Implement Scheduler detach + fast-forward attempt + fallback to Monitor
-5. Add unit tests for token claim and epoch/publish fence
-6. Add telemetry hooks and metrics counters
-7. Stress tests and reclaim path simulation
+### Pipeline Profiles
+| Profile | Stages | Ops |
+|---|---|---|
+| LITE | unpack→display | 4 |
+| MED | unpack→ee→display | 5 |
+| HEAVY | unpack→fcs→ee→ldci→display | 7 |
+| PRO | All stages + extras | 10+ |
 
-## Tests (priority)
-- Token transfer race stress test
-- Epoch/publish fence fuzzing
-- Zero-copy handoff pointer equality test
-- FIFO fidelity test (strict-FIFO vs per-core caches)
-- Reclaim correctness with simulated FRAME_HW_DONE
+## Repo Layout
 
-## Operational knobs (configurable)
-- max_cmds_before_frame
-- DRAIN_GRACE_PERIOD
-- CANCEL_RETRY_COUNT
-- DROP_THRESHOLD
-- ESCALATION_TIMEOUT
+### `softisp/` (root)
+- `vulkan_isp/` — GLSL compute shaders, Python ONNX generators, C++ test harnesses
+- `cam-rust/cam-isp/` — Rust FFI bindings, ONNX proto encoder, E2E tests
 
-## Observability & events
-- waitingq_depth, token_transfer_fail_count
-- HANDOFF_FAST_FORWARDED, PACKET_MOVED_TO_MONITOR
-- PROCESSITEM_CONVERTED_TO_CONTROL, PACKET_RETURNED_TO_FIFO
-- FRAME_RECLAIM_TRIGGERED, FRAME_RECLAIMED
+### `MNN/` (fork)
+- `tools/converter/source/optimizer/postconvert/IspChainFusion.cpp` — ISP fusion pass
+- `tools/converter/source/optimizer/postconvert/isp_spirv_embedded.h` — Embedded SPIR-V
+- `source/backend/vulkan/` — Vulkan backend (with concurrent session mutex fix)
 
-## Next steps to get to a runnable canary
-- Implement allocator and per-core caches
-- Flesh out SessionManager to append to FIFO with free_seq
-- Implement idempotency checks in SessionManager
-- Integrate a simple telemetry emitter (prometheus or text metrics)
-- Add CI that builds, runs unit tests, and runs token race stress test
+## Converter Fusion Rules
+| Rule | Pattern | Result |
+|---|---|---|
+| R1 | unpack_blc | `isp.unpack_blc` |
+| R2 | Conv1x1 4ch→3ch | `isp.demosaic_ccm` |
+| R3a | Conv3x3 group=3 | `isp.ee` |
+| R3b | Mul+Add | `isp.fcs` |
+| R4 | AvgPool+Sub+Mul+Add | `isp.ldci` |
+| R5 | Pow+Clip | `isp.display` |
+| R6 | Pow+Clip (alt pattern) | `isp.display` |
+| R7 | fcs+display | `isp.fcs_display` |
+| R8 | fcs+display (adjacent) | `isp.fcs_display` |
+| R9 | ee+ldci → ee_ldci | `isp.ee_ldci` |
+| R10 | unpack_blc+demosaic_ccm | `isp.unpack_demosaic` |
+| R12 | unpack_demosaic+fcs | `isp.unpack_demosaic` (FCS fused in) |
+
+## Key Files
+| File | Purpose |
+|---|---|
+| `IspChainFusion.cpp` | Pass 1 (standard→Extra) + Pass 2 (chain→fused) |
+| `isp_spirv_embedded.h` | SPIR-V for each Extra op type |
+| `shader_unpack_demosaic.comp` | Bayer→RGB with BLC+WB+CCM+FCS |
+| `shader_ee_ldci_fused.comp` | Edge enhancement + local contrast |
+| `shader6_display_simple.comp` | sRGB gamma |
+| `gen_isp_onnx_standard.py` | Python ONNX generator (standard ops) |
+| `mnn_wrapper.cpp` | C FFI for MNN session/tensor ops |
+| `test_e2e_isp_pipeline.rs` | E2E: ONNX→MNN→Vulkan→verify |
+
+## Completed
+- [x] R12: FCS fused into unpack_demosaic (13→12 ops)
+- [x] Concurrent Vulkan sessions (mutex on vkQueueSubmit)
+- [x] HEAVY profile test (ONNX generation + conversion)
+- [x] Named ISP params (blc/wb/ccm/fcs/ee/ldci/display)
+- [x] VulkanFuse autoTuning bugfix
+- [x] Compiler warnings cleanup
+- [x] README.md updated
+- [x] R11 fused_6in1 removed (2-4× slower than 3-dispatch)
+
+## Remaining Work
+- [ ] Rust pipeline ONNX → IspChainFusion alignment
+- [ ] Display gamma LUT (shared-memory 256-entry)
+- [ ] FP16 output support
+- [ ] Bayer pattern configurability (non-uniform Gr≠Gb)
+- [ ] 8K support
+
+## Testing
+```bash
+# E2E (serial, requires Vulkan)
+cargo test --test test_e2e_isp_pipeline --features mnn -- --ignored --test-threads=1
+
+# Profiles
+cargo test --test test_profile_onnx --features mnn
+
+# Concurrent sessions
+./test_concurrent_vk model.mnn 4
+```
