@@ -28,22 +28,23 @@ layout(set = 0, binding = 0, std430) buffer Uniforms {
     float u_wb_gr;        // [10]
     float u_wb_gb;        // [11]
     float u_wb_b;         // [12]
-    float u_fcs_str;      // [13]
-    float u_fcs_off;      // [14]
-    float u_ee_str;       // [15]
-    float u_ee_thr;       // [16]
-    float u_ldci_str;     // [17]
-    float u_ldci_rad;     // [18]
-    float u_disp_gamma;   // [19]
-    float u_disp_bright;  // [20]
-    float u_pad[3];       // [21..23]
+    float u_ccm[9];       // [13..21] CCM 3×3 row-major
+    float u_fcs_str;      // [22]
+    float u_fcs_off;      // [23]
+    float u_ee_str;       // [24]
+    float u_ee_thr;       // [25]
+    float u_ldci_str;     // [26]
+    float u_ldci_rad;     // [27]
+    float u_disp_gamma;   // [28]
+    float u_disp_bright;  // [29]
+    float u_pad[3];       // [30..32]
 } uniforms;
 
-layout(set = 0, binding = 1) readonly buffer InBayer { int bayer[]; };
+layout(set = 0, binding = 1) readonly buffer InBayer { float bayer[]; };
 layout(set = 0, binding = 2) writeonly buffer OutRGB { float out_data[]; };
 
 // ── Edge-clamped Bayer pixel read ──
-int read_bayer(int bx, int by) {
+float read_bayer(int bx, int by) {
     int bw = int(uint(uniforms.u_bw));
     int bh = int(uint(uniforms.u_bh));
     return bayer[clamp(by, 0, bh-1) * bw + clamp(bx, 0, bw-1)];
@@ -59,16 +60,16 @@ vec3 compute_fcs(int fx, int fy) {
     int bx = 2 * fx;
     int by = 2 * fy;
 
-    int r  = read_bayer(bx,     by);
-    int gr = read_bayer(bx + 1, by);
-    int gb = read_bayer(bx,     by + 1);
-    int b  = read_bayer(bx + 1, by + 1);
+    float r  = read_bayer(bx,     by);
+    float gr = read_bayer(bx + 1, by);
+    float gb = read_bayer(bx,     by + 1);
+    float b  = read_bayer(bx + 1, by + 1);
 
     float smax = uniforms.u_smax;
-    float rf  = float(r)  / smax;
-    float grf = float(gr) / smax;
-    float gbf = float(gb) / smax;
-    float bf  = float(b)  / smax;
+    float rf  = r  / smax;
+    float grf = gr / smax;
+    float gbf = gb / smax;
+    float bf  = b  / smax;
 
     rf  = max(rf  - uniforms.u_blc_r,  0.0);
     grf = max(grf - uniforms.u_blc_gr, 0.0);
@@ -81,6 +82,12 @@ vec3 compute_fcs(int fx, int fy) {
     bf  *= uniforms.u_wb_b;
 
     float g = (grf + gbf) * 0.5;
+
+    // CCM 3×3
+    float c0 = uniforms.u_ccm[0]*rf + uniforms.u_ccm[1]*g  + uniforms.u_ccm[2]*bf;
+    float c1 = uniforms.u_ccm[3]*rf + uniforms.u_ccm[4]*g  + uniforms.u_ccm[5]*bf;
+    float c2 = uniforms.u_ccm[6]*rf + uniforms.u_ccm[7]*g  + uniforms.u_ccm[8]*bf;
+    rf = c0; g = c1; bf = c2;
 
     rf  = clamp(rf  * uniforms.u_fcs_str + uniforms.u_fcs_off, 0.0, 1.0);
     g   = clamp(g   * uniforms.u_fcs_str + uniforms.u_fcs_off, 0.0, 1.0);
