@@ -115,7 +115,7 @@ fn main() {
     println!("RAW data: {} bytes", raw_data.len());
 
     // 2. Parse black level
-    let blc_values: [f32; 4] = {
+    let _blc_values: [f32; 4] = {
         let parts: Vec<f32> = args.black_level.split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
@@ -132,7 +132,7 @@ fn main() {
     engine.build(Box::new(head), vec![], None, 21)
         .expect("Build CpuEngine failed");
 
-    let tone_params = cam_types::ToneParams {
+    let _tone_params = cam_types::ToneParams {
         contrast: 1.2,
         brightness: 0.05,
         gamma_recip: 2.2,
