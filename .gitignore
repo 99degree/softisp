@@ -56,3 +56,5 @@ frames/
 !mnn_wrapper.o
 !mnn_convert_api.o
 *.mnn
+__pycache__/
+*.pyc
