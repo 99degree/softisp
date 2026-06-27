@@ -1,7 +1,7 @@
 //! BayerProcBlock — Flexible debayer block supporting multiple modes. //! //! Replaces UnpackCfaBlock + DemosaicCcmBlock with a unified, mode-flexible block. //!
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
-use crate::blocks::RawInputBlock;
+#[cfg(test)] use crate::blocks::RawInputBlock;
 
 /// Processing mode for the Bayer pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -140,6 +140,7 @@ impl BayerProcBlock {
         }
     }
     
+    #[cfg(test)]
     /// Fused weights for FullProc mode.
     fn full_weights(&self, wb_gains: [f32; 4], blc_vals: [f32; 4]) -> (Vec<f32>, Vec<f32>) {
         let mut fused_w = self.demosaic_weights();
