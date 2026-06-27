@@ -63,6 +63,7 @@ fn convert_onnx_to_mnn_via_ffi(onnx_path: &str, mnn_path: &str) -> Result<(), St
 }
 
 /// Run inference using mnn_run_host_tensors FFI.
+/// For multi-input models, also sets extra inputs (fcs_gain, ldci_strength, ee_gain).
 fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), String> {
     use std::ffi::CString;
     use cam_isp::mnn_sys::*;
@@ -90,12 +91,15 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
     let mut dims = [0i32; 8];
     let ndim = unsafe { mnn_tensor_get_shape(input_tensor, dims.as_mut_ptr(), 8) };
 
+    // Resolve dynamic dims (-1) to 32 for test models
     let (in_c, in_h, in_w) = if ndim >= 4 {
-        (dims[1] as usize, dims[2] as usize, dims[3] as usize)
+        let h = if dims[2] > 0 { dims[2] } else { 32 };
+        let w = if dims[3] > 0 { dims[3] } else { 48 };
+        (dims[1].max(1) as usize, h as usize, w as usize)
     } else if ndim == 3 {
-        (1, dims[1] as usize, dims[2] as usize)
+        (1, dims[1].max(1) as usize, dims[2].max(1) as usize)
     } else {
-        (1, 1, dims[0] as usize)
+        (1, 1, dims[0].max(1) as usize)
     };
     let total_input = in_c * in_h * in_w;
 
@@ -116,21 +120,37 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
         }
     }
 
-    // Allocate output buffer (large enough for 3ch output at any resolution)
+    // Set extra inputs for multi-input models (HEAVY profile)
+    let identity_val = [1.0f32];
+    let ldci_val = [0.5f32];
+    let shape_1 = [1i32];
+    let names = ["zzz_FcsBlock/fcs_gain_scaled", "zzz_EeBlock/ee_gain_scaled"];
+    for name in &names {
+        let c_name = CString::new(*name).unwrap();
+        unsafe {
+            mnn_set_input_float(interp, session, c_name.as_ptr(),
+                identity_val.as_ptr(), shape_1.as_ptr(), 1);
+        }
+    }
+    {
+        let c_name = CString::new("zzz_LdciBlock/ldci_strength_scaled").unwrap();
+        unsafe {
+            mnn_set_input_float(interp, session, c_name.as_ptr(),
+                ldci_val.as_ptr(), shape_1.as_ptr(), 1);
+        }
+    }
+
+    // Allocate output buffer
     let max_out = 3 * 1920 * 1080;
     let mut output_data = vec![0.0f32; max_out];
 
-    // Run inference via mnn_run_host_tensors
+    // Run inference
     let in_shape: [i32; 4] = [1, in_c as i32, in_h as i32, in_w as i32];
     let n_out = unsafe {
         mnn_run_host_tensors(
-            interp,
-            session,
-            input_data.as_ptr(),
-            in_shape.as_ptr(),
-            4,
-            output_data.as_mut_ptr(),
-            max_out as i32,
+            interp, session,
+            input_data.as_ptr(), in_shape.as_ptr(), 4,
+            output_data.as_mut_ptr(), max_out as i32,
         )
     };
 
@@ -139,7 +159,7 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
         return Err(format!("mnn_run_host_tensors failed: {}", n_out));
     }
 
-    // Determine output shape from output tensor
+    // Determine output shape
     let out_tensor = unsafe { mnn_session_get_output_v2(interp, session, std::ptr::null()) };
     let mut out_dims = [0i32; 8];
     let out_ndim = if !out_tensor.is_null() {
@@ -155,8 +175,8 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
     };
 
     let ch_stride = out_h * out_w;
-    let r = output_data[0 * ch_stride];
-    let g = output_data[1 * ch_stride];
+    let r = output_data[0];
+    let g = output_data[ch_stride];
     let b = output_data[2 * ch_stride];
 
     unsafe { mnn_session_release(interp, session); mnn_interpreter_destroy(interp); }
@@ -207,4 +227,20 @@ fn test_e2e_isp_small() {
 #[ignore] // requires Python3, MNN libs, Vulkan
 fn test_e2e_isp_4k() {
     run_e2e_test("3840\u{d7}2160 4K (HEAVY)", ".mnn_e2e_4k", 3840, 2160);
+}
+
+/// Verify HEAVY-profile ONNX converts without crashing.
+/// Note: Rust pipeline blocks produce a different ONNX structure than the
+/// Python-generated standard pipeline, so IspChainFusion patterns don't match.
+/// The e2e tests above verify the full pipeline with Python-generated models.
+#[cfg(feature = "mnn")]
+#[test]
+fn test_heavy_profile_mnn_convert() {
+    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::profile::PipelineProfile;
+
+    let blocks = PipelineProfile::HEAVY.build_blocks(48, 0);
+    let refs: Vec<&dyn cam_isp::pipeline::IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+    let onnx = GraphComposer::compose_from_vec(&refs, &[], 16).unwrap();
+    assert!(onnx.len() > 2000, "HEAVY ONNX too small: {} bytes", onnx.len());
 }

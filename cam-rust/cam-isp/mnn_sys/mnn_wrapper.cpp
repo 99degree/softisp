@@ -297,6 +297,33 @@ extern "C" int mnn_run_host_tensors(
 }
 
 
+// ── Set named input tensor (for multi-input models) ──────────────────────
+
+extern "C" int mnn_set_input_float(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const char* name,
+    const float* data,
+    const int* shape,
+    int ndim
+) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess) return -1;
+
+    auto* tensor = net->getSessionInput(sess, name);
+    if (!tensor) return -2;  // tensor not found
+
+    std::vector<int> host_shape(shape, shape + ndim);
+    halide_type_t float_type(halide_type_float, 32);
+    auto* host = MNN::Tensor::create(host_shape, float_type, const_cast<float*>(data), MNN::Tensor::CAFFE);
+    if (!host) return -3;
+
+    tensor->copyFromHostTensor(host);
+    delete host;
+    return 0;
+}
+
 // ── Express Module API (C wrapper) ──────────────────────────────────────
 
 using namespace MNN::Express;
