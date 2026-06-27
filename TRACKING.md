@@ -70,8 +70,8 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 - [x] R11 fused_6in1 removed (2-4× slower than 3-dispatch)
 
 ## Remaining Work
-- [ ] Rust pipeline ONNX → IspChainFusion alignment
-- [ ] Display gamma LUT (shared-memory 256-entry)
+- [ ] Rust pipeline ONNX → IspChainFusion alignment (Rust uses Mod+Div+Cast+Div+Concat+Conv for unpack, Python uses Cast+Conv)
+- [x] Display gamma LUT — attempted, 2× slower (shared memory barrier + 6 reads worse than 3 pow() calls)
 - [ ] FP16 output support
 - [ ] Bayer pattern configurability (non-uniform Gr≠Gb)
 - [ ] 8K support
