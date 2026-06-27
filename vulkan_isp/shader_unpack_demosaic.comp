@@ -27,7 +27,9 @@ layout(set = 0, binding = 0, std430) buffer Uniforms {
     float u_wb_gb;        // [11]
     float u_wb_b;         // [12]
     float u_ccm[9];       // [13..21] CCM 3×3 row-major
-    float u_pad[4];       // [22..25]
+    float u_fcs_str;      // [22] FCS strength (0 = no FCS)
+    float u_fcs_off;      // [23] FCS offset
+    float u_pad[2];       // [24..25]
 } uniforms;
 
 layout(set = 0, binding = 1) readonly buffer InBayer { float bayer[]; };
@@ -88,6 +90,13 @@ void main() {
     float c0 = uniforms.u_ccm[0]*rf + uniforms.u_ccm[1]*g + uniforms.u_ccm[2]*bf;
     float c1 = uniforms.u_ccm[3]*rf + uniforms.u_ccm[4]*g + uniforms.u_ccm[5]*bf;
     float c2 = uniforms.u_ccm[6]*rf + uniforms.u_ccm[7]*g + uniforms.u_ccm[8]*bf;
+
+    // ── FCS: per-channel gain (fused from separate fcs dispatch) ──
+    float fcs_str = uniforms.u_fcs_str;
+    float fcs_off = uniforms.u_fcs_off;
+    c0 = clamp(c0 * fcs_str + fcs_off, 0.0, 1.0);
+    c1 = clamp(c1 * fcs_str + fcs_off, 0.0, 1.0);
+    c2 = clamp(c2 * fcs_str + fcs_off, 0.0, 1.0);
 
     // ── Write RGB (CHW planar) ──
     write_rgb(x, y, c0, c1, c2);
