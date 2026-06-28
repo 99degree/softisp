@@ -399,7 +399,7 @@ impl UnpackCfaBlock {
                 ]),
         ];
 
-        // Optional BLC: Sub(blc_vals) + Clip(0,1), then denormalize + Cast to INT16
+        // Optional BLC: Sub(blc_vals) + Clip(0,1), then denormalize
         if self.use_blc {
             nodes.push(Proto::node("Sub",
                 &[&cfa_out, &format!("{}/blc_vals", ns)],
@@ -409,21 +409,17 @@ impl UnpackCfaBlock {
                 &[&after_blc, &format!("{}/zero", ns), &format!("{}/one", ns)],
                 &[&format!("{}/clip_out", ns)],
                 &[]));
-            // Denormalize: Mul(sensor_max) → Cast(INT16)
+            // Denormalize: Mul(sensor_max) → output as float (Vulkan compatible)
             nodes.push(Proto::node("Mul",
                 &[&format!("{}/clip_out", ns), &format!("{}/max_val", ns)],
-                &[&format!("{}/denorm", ns)],
+                &[&self.frame_tensor],
                 &[]));
-            nodes.push(Proto::node("Cast", &[&format!("{}/denorm", ns)], &[&self.frame_tensor],
-                &[Proto::attribute_int("to", 5)]));
         } else {
-            // Denormalize: Mul(sensor_max) → Cast(INT16)
+            // Denormalize: Mul(sensor_max) → output as float (Vulkan compatible)
             nodes.push(Proto::node("Mul",
                 &[&cfa_out, &format!("{}/max_val", ns)],
-                &[&format!("{}/denorm", ns)],
+                &[&self.frame_tensor],
                 &[]));
-            nodes.push(Proto::node("Cast", &[&format!("{}/denorm", ns)], &[&self.frame_tensor],
-                &[Proto::attribute_int("to", 5)]));
         }
 
         // Extra height downscale: Resize(H/2) after CFA output
