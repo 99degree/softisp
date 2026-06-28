@@ -11,7 +11,7 @@ Bayer RAW → [unpack_demosaic] → [fcs] → [ee_ldci] → [display] → RGB ou
 ```
 
 **3-dispatch pipeline** (optimal):
-1. `unpack_demosaic` — Bayer unpack + BLC + WB + CCM demosaic
+1. `unpack_demosaic` — Bayer unpack + BLC + WB + CCM demosaic + FCS
 2. `ee_ldci` — Edge enhancement + local contrast
 3. `display` — sRGB gamma
 
@@ -40,18 +40,21 @@ Each stage is a custom SPIR-V compute shader loaded via `OpType_Extra` (VulkanFu
 ONNX → MNN fusion pass that detects ISP stage patterns and fuses them into custom `OpType_Extra` ops with embedded SPIR-V.
 
 - **Pass 1**: Standard ops → ISP Extra ops (R1-R6)
-- **Pass 2**: Extra chain → fused Extras (R8-R10)
+- **Pass 2**: Extra chain → fused Extras (R8-R10, R12)
 - Each stage stores named parameters (`blc`, `wb`, `ccm`, `fcs`, `ee`, `ldci`, `display`)
 
 ### Shaders (`vulkan_isp/`)
-- `shader_unpack_demosaic.comp` — Bayer → RGB with CCM
+- `shader_unpack_demosaic.comp` — Bayer → RGB with CCM + FCS
 - `shader_ee_ldci_fused.comp` — EE + LDCI combined
 - `shader6_display_simple.comp` — sRGB gamma
-- `shader_fused_6in1.comp` — All-in-one (disabled: 2-4× slower due to 5×5 FCS redundancy)
 
-### Rust FFI (`cam-rust/cam-isp/`)
-- `mnn_wrapper.cpp` — C wrapper for MNN session/tensor operations
-- `test_e2e_isp_pipeline.rs` — End-to-end: ONNX gen → MNN convert → Vulkan run → verify
+### Rust Pipeline (`cam-rust/`)
+10 crates, 224 tests, 0 warnings:
+- `cam-isp` — ISP engine (CpuEngine, MnnEngine, OnnxEngine)
+- `cam-hal` — Hardware abstraction (V4L2, Android HAL3)
+- `cam-binder` — Binder camera HAL + ISP integration
+- `cam-onnx` — ONNX Runtime wrapper (ort v2.0.0-rc.12)
+- SIMD backends: AVX2, SSE2, NEON, NEON-FP16, NEON-DOTPROD
 
 ## Build
 
@@ -69,11 +72,35 @@ cargo build --package cam-isp --features mnn
 ## Test
 
 ```bash
+# Run all tests (224)
+cargo test --lib
+
 # E2E (requires --test-threads=1 due to Vulkan device queue serialization)
 cargo test --test test_e2e_isp_pipeline --features mnn -- --ignored --test-threads=1
 
 # Profiles
 cargo test --test test_profile_onnx --features mnn
+
+# Binder tests
+cargo test -p cam-binder
+```
+
+## Examples
+
+```bash
+# Camera → ISP integration
+cargo run --example camera_isp --features mnn -p cam-isp -- --width 640 --height 480
+
+# Continuous streaming
+cargo run --example stream_isp --features mnn -p cam-isp -- --width 640 --height 480 --fps 30
+```
+
+## Cross-Compilation (Android)
+
+```bash
+# Android arm64
+ANDROID_NDK_HOME=~/Android/Sdk/ndk/26.1.10909125 \
+  cargo build --target aarch64-linux-android --release
 ```
 
 ## Notes
