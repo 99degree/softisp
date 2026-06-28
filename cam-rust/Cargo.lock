@@ -159,6 +159,7 @@ dependencies = [
  "cam-core",
  "cam-hal",
  "cam-hal-linux",
+ "cam-isp",
  "cam-types",
  "clap",
  "env_logger 0.11.10",

@@ -11,6 +11,7 @@ path = "src/bin/demo.rs"
 cam-types = { path = "../cam-types" }
 cam-core = { path = "../cam-core" }
 cam-hal = { path = "../cam-hal" }
+cam-isp = { path = "../cam-isp" }
 cam-hal-linux = { path = "../cam-hal-linux", optional = true }
 log = { workspace = true }
 thiserror = { workspace = true }

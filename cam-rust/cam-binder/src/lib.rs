@@ -17,8 +17,10 @@ pub mod session;
 pub mod types;
 pub mod callback;
 pub mod service;
+pub mod isp_session;
 
 pub use provider::CameraProvider;
 pub use device::CameraDevice;
 pub use session::CameraDeviceSession;
 pub use service::CameraHalService;
+pub use isp_session::IspCameraSession;
