@@ -163,17 +163,18 @@ impl IspBlock for DisplayBlock {
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         let ch = self.output_format.channel_count() as i64;
+        let elem = self.output_format.onnx_elem_type();
         match (self.in_h, self.in_w) {
             (Some(h), Some(w)) => {
                 let (oh, ow) = if self.swaps_dims() { (w, h) } else { (h, w) };
                 let packed_ow = self.packed_output_width(ow);
                 Some(Proto::value_info(&self.frame_tensor,
                     &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(ch),
-                      Proto::tensor_dim_value(oh), Proto::tensor_dim_value(packed_ow)], 1))
+                      Proto::tensor_dim_value(oh), Proto::tensor_dim_value(packed_ow)], elem))
             }
             _ => Some(Proto::value_info(&self.frame_tensor,
                 &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(ch),
-                  Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1)),
+                  Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], elem)),
         }
     }
 
@@ -245,6 +246,30 @@ impl IspBlock for DisplayBlock {
                     nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
                 }
             }
+            Float16Rgb => {
+                // Float RGB [0,1] → Cast(FLOAT→FLOAT16)
+                let f32_out = format!("{}/f32", ns);
+                nodes.push(Proto::node("Mul", &[prev, &scale], &[&f32_out], &[]));
+                tensor_pool.push(f32_out);
+                let f32_ref = tensor_pool.last().unwrap().as_str();
+                nodes.push(Proto::node("Cast", &[f32_ref], &[final_output],
+                    &[Proto::attribute_int("to", 10)])); // 10 = FLOAT16
+            }
+            Float16Bgra => {
+                // Float BGRA [0,255] → Cast(FLOAT→FLOAT16)
+                let conv_w = format!("{}/conv_w", ns);
+                let conv_b = format!("{}/conv_b", ns);
+                let conv_out = format!("{}/conv_out", ns);
+                let f32_out = format!("{}/f32", ns);
+                nodes.push(Proto::node("Conv", &[prev, &conv_w, &conv_b], &[&conv_out],
+                    &[Proto::attribute_ints("kernel_shape", &[1, 1]),
+                      Proto::attribute_int("group", 1)]));
+                tensor_pool.push(conv_out);
+                nodes.push(Proto::node("Identity", &[tensor_pool.last().unwrap()], &[&f32_out], &[]));
+                tensor_pool.push(f32_out);
+                nodes.push(Proto::node("Cast", &[tensor_pool.last().unwrap()], &[final_output],
+                    &[Proto::attribute_int("to", 10)])); // 10 = FLOAT16
+            }
             FloatBgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr => {
                 // Conv(1×1) with format-specific weight permutation + scale(255) + alpha bias.
                 // Output is always float [0,255] (u8 truncation happens in the consumer).
@@ -311,8 +336,8 @@ impl IspBlock for DisplayBlock {
         // Format-specific initializers
         use OutputFormat::*;
         match self.output_format {
-            FloatRgb => {
-                // No extra initializers needed
+            FloatRgb | Float16Rgb => {
+                // No extra initializers needed (Float16Rgb uses Mul + Cast)
             }
             PackedRgb => {
                 inits.push(Proto::tensor_proto_float_scalar(
@@ -336,11 +361,11 @@ impl IspBlock for DisplayBlock {
                         &format!("{}/pack_w", ns), &[3], &[65536.0, 256.0, 1.0]));
                 }
             }
-            fmt @ (FloatBgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
+            fmt @ (FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
                 // Conv(1×1): channel permutation + scale(255) + alpha bias
                 let oc = fmt.channel_count(); // 3 for Rgb/Bgr, 4 for others
                 let (weights, bias): (Vec<f32>, Vec<f32>) = match fmt {
-                    FloatBgra | Bgra => (
+                    FloatBgra | Float16Bgra | Bgra => (
                         // oc0(B)=255*B, oc1(G)=255*G, oc2(R)=255*R, oc3(A)=0
                         vec![0.0, 0.0, 255.0,  0.0, 255.0, 0.0,
                              255.0, 0.0, 0.0,  0.0, 0.0, 0.0],
