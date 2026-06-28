@@ -12,6 +12,7 @@ pub mod config;
 pub mod fused;
 pub mod manager;
 pub mod onnx;
+pub mod postprocess;
 // MNN-dependent modules (only compiled when `mnn` feature is enabled)
 #[cfg(feature = "mnn")]
 pub mod mnnengine;
