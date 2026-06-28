@@ -21,6 +21,7 @@ mod unpack_bayer_fp16;
 mod resize;
 mod adaptive_downscale;
 mod stats;
+mod hdr_merge;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -44,6 +45,7 @@ pub use bayer_proc::{BayerProcBlock, BayerMode, BayerPattern};
 pub use resize::ResizeBlock;
 pub use adaptive_downscale::AdaptiveDownscaleBlock;
 pub use stats::{ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock, CalibrationBlock};
+pub use hdr_merge::HdrMergeBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
