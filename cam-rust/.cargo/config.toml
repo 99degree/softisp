@@ -1,0 +1,18 @@
+# Cross-compilation targets for Android NDK.
+#
+# Usage:
+#   ANDROID_NDK_HOME=~/Android/Sdk/ndk/26.1.10909125 \
+#     cargo build --target aarch64-linux-android --release
+#
+# The linker paths below use bare names (e.g., aarch64-linux-android24-clang).
+# These are found via PATH when the NDK toolchain bin/ is exported:
+#   export PATH=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+#
+# Alternatively, set full paths here:
+#   [target.aarch64-linux-android]
+#   linker = "/path/to/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+
+# NOTE: Do NOT set default linker here — it interferes with native builds.
+# Set linker via command line or environment:
+#   cargo build --target aarch64-linux-android \
+#     --config 'target.aarch64-linux-android.linker="aarch64-linux-android24-clang"'

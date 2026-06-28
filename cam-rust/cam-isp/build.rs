@@ -1,7 +1,15 @@
 //! Build script for cam-isp.
 //!
 //! Native libraries are stored in a single canonical location:
-//!   repo-root/lib/aarch64-v8a/
+//!   repo-root/lib/<abi>/
+//!
+//! Supported ABIs:
+//!   - aarch64-v8a   (Android arm64)
+//!   - armeabi-v7a   (Android arm32)
+//!   - x86_64        (Android x86_64)
+//!   - x86            (Android x86)
+//!   - aarch64       (Linux aarch64)
+//!   - x86_64-linux  (Linux x86_64)
 //!
 //! Include priority:
 //!   1. $HOME/MNN (or MNN_DIR) when present — always used for the latest headers.
@@ -15,8 +23,18 @@
 //!   MNN_CONVERT_INCLUDE_DIR — converter headers (default: $MNN_DIR/tools/converter/include)
 //!   MNN_SCHEMA_DIR    — generated flatbuffer headers (default: $MNN_DIR/schema/current)
 //!   ORT_LIB_DIR       — path to prebuilt libonnxruntime.so directory
+//!   ANDROID_NDK_HOME  — Android NDK root (auto-detected from standard paths)
+
+use std::path::{Path, PathBuf};
 
 fn main() {
+    // Emit rerun-if-changed for all env vars that affect the build
+    println!("cargo:rerun-if-env-changed=MNN_DIR");
+    println!("cargo:rerun-if-env-changed=MNN_INCLUDE_DIR");
+    println!("cargo:rerun-if-env-changed=MNN_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=MNN_CONVERT_DIR");
+    println!("cargo:rerun-if-env-changed=ANDROID_NDK_HOME");
+
     #[cfg(feature = "ort")]
     link_onnxruntime();
 
@@ -25,7 +43,198 @@ fn main() {
 
     #[cfg(feature = "mnn")]
     link_mnnconvert();
+
+    // Emit NDK linker flags for Android targets
+    setup_ndk_linker();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  Android NDK linker setup
+// ═══════════════════════════════════════════════════════════════════
+
+/// Emit `cargo:rustc-link-lib` and `cargo:rustc-link-search` for the NDK
+/// sysroot libraries when cross-compiling for Android. This ensures the
+/// linker can find libc++, liblog, libandroid, etc.
+fn setup_ndk_linker() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "android" {
+        return;
+    }
+
+    let ndk = match find_ndk() {
+        Some(p) => p,
+        None => {
+            eprintln!("warning: Android NDK not found; linking may fail");
+            return;
+        }
+    };
+
+    let abi = abi_suffix();
+    let arch = target_ndk_arch();
+    let api_level = ndk_api_level();
+
+    // NDK r26+ uses unified toolchain under <ndk>/toolchains/llvm/prebuilt/<host>/
+    let host = ndk_host();
+    let toolchain = ndk.join("toolchains").join("llvm").join("prebuilt").join(&host);
+    let sysroot = toolchain.join("sysroot");
+
+    if sysroot.exists() {
+        // Tell cc crate about the sysroot
+        println!("cargo:rustc-link-search=native={}", sysroot.join("usr").join("lib").join(&format!("{}-linux-android", arch)).display());
+        println!("cargo:rustc-link-search=native={}", sysroot.join("usr").join("lib").display());
+    }
+
+    // Link against NDK system libraries
+    println!("cargo:rustc-link-lib=log");
+    println!("cargo:rustc-link-lib=android");
+    println!("cargo:rustc-link-lib=c++_shared");
+    println!("cargo:rustc-link-lib=mediandk");
+
+    eprintln!("NDK: abi={}, arch={}, api={}, sysroot={}", abi, arch, api_level, sysroot.display());
+}
+
+/// Find the Android NDK root directory.
+fn find_ndk() -> Option<PathBuf> {
+    // 1. Explicit env var
+    if let Ok(p) = std::env::var("ANDROID_NDK_HOME") {
+        let pb = PathBuf::from(p);
+        if pb.exists() { return Some(pb); }
+    }
+    if let Ok(p) = std::env::var("NDK_HOME") {
+        let pb = PathBuf::from(p);
+        if pb.exists() { return Some(pb); }
+    }
+
+    // 2. Standard Android SDK/NDK locations
+    let home = std::env::var("HOME").ok()?;
+    let home = PathBuf::from(home);
+
+    // Android Studio default: ~/Android/Sdk/ndk/<version>/
+    let sdk = home.join("Android").join("Sdk").join("ndk");
+    if sdk.exists() {
+        // Pick the latest version directory
+        let mut versions: Vec<PathBuf> = std::fs::read_dir(&sdk)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        versions.sort();
+        if let Some(latest) = versions.last() {
+            return Some(latest.clone());
+        }
+    }
+
+    // 3. Check if ndk-build is on PATH and infer NDK location
+    if let Ok(output) = std::process::Command::new("which").arg("ndk-build").output() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        // ndk-build lives in <ndk>/ndk-build
+        let pb = PathBuf::from(&path).parent()?.to_path_buf();
+        if pb.exists() { return Some(pb); }
+    }
+
+    // 4. ~/android-ndk (common manual install)
+    let manual = home.join("android-ndk");
+    if manual.exists() { return Some(manual); }
+
+    None
+}
+
+/// Map CARGO_CFG_TARGET_ARCH to NDK arch name.
+fn target_ndk_arch() -> &'static str {
+    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+        "aarch64" | "arm64" => "aarch64",
+        "arm" | "armv7" => "arm",
+        "x86_64" => "x86_64",
+        "x86" | "i686" => "i686",
+        "riscv64" => "riscv64",
+        _ => "aarch64",
+    }
+}
+
+/// Target triple prefix used by NDK clang (e.g., "aarch64-linux-android").
+#[allow(dead_code)]
+fn target_ndk_triple() -> String {
+    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+        "aarch64" | "arm64" => "aarch64-linux-android".to_string(),
+        "arm" | "armv7" => "armv7a-linux-androideabi".to_string(),
+        "x86_64" => "x86_64-linux-android".to_string(),
+        "x86" | "i686" => "i686-linux-android".to_string(),
+        "riscv64" => "riscv64-linux-android".to_string(),
+        _ => "aarch64-linux-android".to_string(),
+    }
+}
+
+/// NDK API level (minimum Android version). Default 24 (Android 7.0).
+fn ndk_api_level() -> u32 {
+    std::env::var("ANDROID_API_LEVEL")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(24)
+}
+
+/// Host platform directory name inside NDK prebuilt/.
+fn ndk_host() -> &'static str {
+    match std::env::var("CARGO_CFG_HOST_TRIPLE").unwrap_or_default().as_str() {
+        t if t.contains("linux") => "linux-x86_64",
+        t if t.contains("darwin") || t.contains("macos") => "darwin-x86_64",
+        t if t.contains("windows") => "windows-x86_64",
+        _ => "linux-x86_64",
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ABI directory mapping
+// ═══════════════════════════════════════════════════════════════════
+
+#[allow(dead_code)]
+fn abi_dir() -> PathBuf {
+    repo_root().join("lib").join(abi_suffix())
+}
+
+/// Map Rust target arch to Android/Linux ABI directory name.
+///
+/// Android NDK convention:
+///   aarch64     → arm64-v8a
+///   arm         → armeabi-v7a
+///   x86_64     → x86_64
+///   x86 / i686 → x86
+///   riscv64    → riscv64
+///
+/// Linux (non-Android):
+///   aarch64     → aarch64
+///   x86_64     → x86_64
+#[allow(dead_code)]
+fn abi_suffix() -> String {
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+
+    if os == "android" {
+        match arch.as_str() {
+            "aarch64" | "arm64" => "arm64-v8a".to_string(),
+            "arm" | "armv7" => "armeabi-v7a".to_string(),
+            "x86_64" => "x86_64".to_string(),
+            "x86" | "i686" => "x86".to_string(),
+            "riscv64" => "riscv64".to_string(),
+            other => {
+                eprintln!("warning: unknown Android ABI arch '{}', defaulting to arm64-v8a", other);
+                "arm64-v8a".to_string()
+            }
+        }
+    } else {
+        // Linux / macOS / other
+        match arch.as_str() {
+            "aarch64" | "arm64" => "aarch64".to_string(),
+            "x86_64" => "x86_64".to_string(),
+            "x86" | "i686" => "x86".to_string(),
+            other => other.to_string(),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  MNN / converter linking
+// ═══════════════════════════════════════════════════════════════════
 
 #[cfg(feature = "ort")]
 fn link_onnxruntime() {
@@ -53,12 +262,16 @@ fn link_mnn() {
         println!("cargo:rerun-if-changed=mnn_sys/mnn_wrapper.h");
 
         let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-        cc::Build::new()
-            .cpp(true)
+        let mut build = cc::Build::new();
+        build.cpp(true)
             .std("c++17")
             .file(wrapper_src)
-            .include(&mnn_include)
-            .compile("mnn_wrapper");
+            .include(&mnn_include);
+
+        // Android NDK cross-compilation: set compiler flags
+        setup_cc_for_android(&mut build);
+
+        build.compile("mnn_wrapper");
 
         std::fs::create_dir_all(&abi_dir).ok();
         let src = out_dir.join("libmnn_wrapper.a");
@@ -92,8 +305,8 @@ fn link_mnnconvert() {
         panic!("missing mnnconvert_shared.cpp at {}", src_dir.join("mnnconvert_shared.cpp").display());
     }
 
-    cc::Build::new()
-        .cpp(true)
+    let mut build = cc::Build::new();
+    build.cpp(true)
         .std("c++17")
         .file(src_dir.join("mnnconvert_shared.cpp"))
         .file("mnn_sys/mnn_convert_api.cpp")
@@ -101,8 +314,11 @@ fn link_mnnconvert() {
         .include(&mnnconvert_include)
         .include(&mnn_schema_include)
         .include("vendor/mnn/mnnconvert/include")
-        .define("MNN_CONVERT_API_EXPORTS", None)
-        .compile("mnnconvert");
+        .define("MNN_CONVERT_API_EXPORTS", None);
+
+    setup_cc_for_android(&mut build);
+
+    build.compile("mnnconvert");
 
     std::fs::create_dir_all(&abi_dir).ok();
 
@@ -111,19 +327,60 @@ fn link_mnnconvert() {
     println!("cargo:rustc-link-lib=MNNConvertDeps");
 }
 
-#[allow(dead_code)]
-fn abi_dir() -> PathBuf {
-    repo_root().join("lib").join(abi_suffix())
-}
+// ═══════════════════════════════════════════════════════════════════
+//  cc::Build Android cross-compilation setup
+// ═══════════════════════════════════════════════════════════════════
 
+/// Configure cc::Build for Android NDK cross-compilation.
+/// Sets the target, sysroot, and compiler flags.
 #[allow(dead_code)]
-fn abi_suffix() -> String {
-    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
-        "aarch64" | "arm64" => "aarch64-v8a".to_string(),
-        other if !other.is_empty() => other.to_string(),
-        _ => "aarch64-v8a".to_string(),
+fn setup_cc_for_android(build: &mut cc::Build) {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "android" {
+        return;
+    }
+
+    let ndk = match find_ndk() {
+        Some(p) => p,
+        None => {
+            eprintln!("warning: NDK not found for cc::Build setup");
+            return;
+        }
+    };
+
+    let host = ndk_host();
+    let toolchain = ndk.join("toolchains").join("llvm").join("prebuilt").join(host);
+    let triple = target_ndk_triple();
+    let api = ndk_api_level();
+
+    // Use NDK's clang as the C++ compiler
+    let clangpp = toolchain.join("bin").join(format!("{}{}-clang++", triple, api));
+    if clangpp.exists() {
+        build.compiler(&clangpp);
+        eprintln!("cc::Build compiler: {}", clangpp.display());
+    } else {
+        // Fallback: try without API level suffix (NDK r23+)
+        let clangpp_fallback = toolchain.join("bin").join(format!("{}-clang++", triple));
+        if clangpp_fallback.exists() {
+            build.compiler(&clangpp_fallback);
+            eprintln!("cc::Build compiler (fallback): {}", clangpp_fallback.display());
+        }
+    }
+
+    // Set target for cc crate
+    let target_triple = std::env::var("TARGET").unwrap_or_default();
+    build.target(&target_triple);
+
+    // Sysroot
+    let sysroot = toolchain.join("sysroot");
+    if sysroot.exists() {
+        build.flag(&format!("--sysroot={}", sysroot.display()));
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  Path helpers
+// ═══════════════════════════════════════════════════════════════════
 
 #[allow(dead_code)]
 fn repo_root() -> PathBuf {
@@ -225,5 +482,3 @@ fn copy_if_newer(src: &Path, dst: &Path) {
     std::fs::copy(src, dst).ok();
     println!("cargo:rerun-if-changed={}", src.display());
 }
-
-use std::path::{Path, PathBuf};
