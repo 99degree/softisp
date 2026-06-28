@@ -241,48 +241,9 @@ impl MnnEngine {
     /// Called automatically by `cam_isp::init()`.
     #[cfg(feature = "mnn")]
     pub fn register_factories() {
-        use crate::engine::register_engine;
-        use crate::engine::EngineFactory;
-
-        // Build ONE compute-heavy model (3× Conv3×3 + Relu).
-        // 160×120 is large enough for GPU compute to dominate over kernel-launch overhead,
-        // yet small enough for the ONNX→MNN conversion to finish in <1 s.
-        let bench_w = 160u32;
-        let bench_h = 120u32;
-        let mnn_path = match Self::build_bench_model(bench_w, bench_h) {
-            Ok(p) => p,
-            Err(e) => {
-                error!("Failed to build bench model: {}; using default priorities", e);
-                Self::register_with_defaults();
-                return;
-            }
-        };
-
-        let all = [MnnBackend::Vulkan, MnnBackend::Opencl, MnnBackend::OpenGl, MnnBackend::CpuNeon, MnnBackend::Cpu];
-        let mut scored: Vec<(MnnBackend, f64)> = Vec::new();
-
-        for be in &all {
-            let fps = match Self::bench_one(be, &mnn_path, bench_w, bench_h) {
-                Ok(f) => { debug!("  bench {:>8}: {:.1} fps", be.id(), f); f }
-                Err(e) => { warn!("  bench {:>8}: {} → 0 fps", be.id(), e); 0.0 }
-            };
-            scored.push((*be, fps));
-        }
-
-        let _ = std::fs::remove_file(&mnn_path);
-
-        // Sort by FPS descending; ties keep original order
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        info!("MNN backend ranking (by measured FPS @ {}×{}):", bench_w, bench_h);
-        for (i, (be, fps)) in scored.iter().enumerate() {
-            let priority = (100 - i as i32).max(1);
-            let name = be.id();
-            let b = *be;
-            let create_fn = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
-            register_engine(EngineFactory { name, priority, create_fn });
-            info!("  {:>2}. {} → {:.1} fps (pri={})", i + 1, name, fps, priority);
-        }
+        // Skip GPU benchmark — rapid-fire inference can crash Vulkan drivers
+        // on some devices. Use static priorities instead.
+        Self::register_with_defaults();
     }
 
     /// Fallback: register with static default priorities (no benchmark).
@@ -503,65 +464,55 @@ impl MnnEngine {
     fn bench_one(backend: &MnnBackend, mnn_path: &str, w: u32, h: u32) -> Result<f64, String> {
         use crate::blocks::RawInputBlock;
 
-        let be = *backend;
-        let mnn_owned = mnn_path.to_owned();
-        let (tx, rx) = std::sync::mpsc::channel();
+        let mut engine = MnnEngine::new(*backend);
+        engine.set_model_path(mnn_path);
+        let head: Box<dyn IspBlock> = Box::new(RawInputBlock::new());
+        engine.build(head, vec![], None, 16)
+            .map_err(|e| format!("build: {}", e))?;
 
-        let handle = std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<f64, String> {
-                let mut engine = MnnEngine::new(be);
-                engine.set_model_path(&mnn_owned);
-                let head: Box<dyn IspBlock> = Box::new(RawInputBlock::new());
-                engine.build(head, vec![], None, 16)
-                    .map_err(|e| format!("build: {}", e))?;
+        let frame_size = (w * h * 2) as usize;
+        let mut buf = vec![0u8; frame_size];
+        for y in 0..h {
+            for x in 0..w {
+                let off = (y * w + x) as usize * 2;
+                let val = (x ^ y) as u16;
+                buf[off] = val as u8;
+                buf[off + 1] = (val >> 8) as u8;
+            }
+        }
 
-                let frame_size = (w * h * 2) as usize;
-                let mut buf = vec![0u8; frame_size];
-                for y in 0..h {
-                    for x in 0..w {
-                        let off = (y * w + x) as usize * 2;
-                        let val = (x ^ y) as u16;
-                        buf[off] = val as u8;
-                        buf[off + 1] = (val >> 8) as u8;
-                    }
+        // Warmup (1 frame)
+        let _ = engine.process(&crate::engine::ProcessParams::new(w, h, &buf));
+
+        let budget = std::time::Duration::from_millis(300);
+        let deadline = Instant::now() + budget;
+        let mut count = 0u32;
+
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining < std::time::Duration::from_millis(10) {
+                break;
+            }
+            match engine.process(&crate::engine::ProcessParams::new(w, h, &buf)) {
+                Ok(_) => count += 1,
+                Err(e) => {
+                    warn!("bench process error: {}", e);
+                    break;
                 }
+            }
+            // Small yield to avoid GPU starvation
+            std::thread::yield_now();
+        }
 
-                let budget = std::time::Duration::from_millis(500); // 0.5 s per backend
-                let deadline = Instant::now() + budget;
-                let mut count = 0u32;
+        // Explicitly drop engine to release session before returning
+        drop(engine);
 
-                loop {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining < std::time::Duration::from_millis(10) {
-                        break;
-                    }
-                    engine.process(&crate::engine::ProcessParams::new(w, h, &buf))?;
-                    count += 1;
-                }
-
-                let elapsed = (budget - deadline.saturating_duration_since(Instant::now()))
-                    .max(std::time::Duration::from_micros(1));
-                if count == 0 {
-                    return Err("0 frames in 2 s budget".into());
-                }
-                Ok(count as f64 / elapsed.as_secs_f64())
-            }));
-            let result = match result {
-                Ok(r) => r,
-                Err(_) => Err("bench thread panicked (Vulkan segfault?)".into()),
-            };
-            let _ = tx.send(result);
-        });
-
-        let result = match rx.recv_timeout(std::time::Duration::from_millis(3000)) {
-            Ok(Ok(fps)) => Ok(fps),
-            Ok(Err(e)) => Err(e),
-            Err(_) => Err("timed out after 3 s".into()),
-        };
-        // Join the thread to ensure it's fully stopped before proceeding
-        // (prevents concurrent Vulkan access from leaked threads)
-        let _ = handle.join();
-        result
+        let elapsed = (budget - deadline.saturating_duration_since(Instant::now()))
+            .max(std::time::Duration::from_micros(1));
+        if count == 0 {
+            return Err("0 frames in budget".into());
+        }
+        Ok(count as f64 / elapsed.as_secs_f64())
     }
 
     // ── helpers ──
