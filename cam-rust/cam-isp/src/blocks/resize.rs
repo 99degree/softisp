@@ -205,11 +205,11 @@ mod tests {
     #[test]
     fn test_resize_block_scale_values() {
         let down = ResizeBlock::new(0.5);
-        assert_eq!(down.id, "resize_down");
+        assert!(down.id.starts_with("resize_down_"));
         assert!((down.scale - 0.5).abs() < 1e-6);
 
         let up = ResizeBlock::new(2.0);
-        assert_eq!(up.id, "resize_up");
+        assert!(up.id.starts_with("resize_up_"));
         assert!((up.scale - 2.0).abs() < 1e-6);
     }
 
