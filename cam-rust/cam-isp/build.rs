@@ -111,10 +111,12 @@ fn link_mnnconvert() {
     println!("cargo:rustc-link-lib=MNNConvertDeps");
 }
 
+#[allow(dead_code)]
 fn abi_dir() -> PathBuf {
     repo_root().join("lib").join(abi_suffix())
 }
 
+#[allow(dead_code)]
 fn abi_suffix() -> String {
     match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
         "aarch64" | "arm64" => "aarch64-v8a".to_string(),
@@ -123,6 +125,7 @@ fn abi_suffix() -> String {
     }
 }
 
+#[allow(dead_code)]
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -130,6 +133,7 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+#[allow(dead_code)]
 fn mnn_dir() -> PathBuf {
     if let Ok(path) = std::env::var("MNN_DIR") {
         PathBuf::from(path)
@@ -139,10 +143,12 @@ fn mnn_dir() -> PathBuf {
     }
 }
 
+#[allow(dead_code)]
 fn vendor_mnn_dir() -> PathBuf {
     Path::new("vendor/mnn").to_path_buf()
 }
 
+#[allow(dead_code)]
 fn mnn_include_dir() -> PathBuf {
     std::env::var_os("MNN_INCLUDE_DIR")
         .map(PathBuf::from)
@@ -156,6 +162,7 @@ fn mnn_include_dir() -> PathBuf {
         })
 }
 
+#[allow(dead_code)]
 fn mnn_convert_include_dir() -> PathBuf {
     std::env::var_os("MNN_CONVERT_INCLUDE_DIR")
         .map(PathBuf::from)
@@ -169,6 +176,7 @@ fn mnn_convert_include_dir() -> PathBuf {
         })
 }
 
+#[allow(dead_code)]
 fn mnn_schema_dir() -> PathBuf {
     std::env::var_os("MNN_SCHEMA_DIR")
         .map(PathBuf::from)
@@ -182,18 +190,21 @@ fn mnn_schema_dir() -> PathBuf {
         })
 }
 
+#[allow(dead_code)]
 fn mnn_lib_src() -> PathBuf {
     std::env::var_os("MNN_LIB_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| mnn_dir().join("build_vk/OFF"))
 }
 
+#[allow(dead_code)]
 fn mnn_convert_lib_src() -> PathBuf {
     std::env::var_os("MNN_CONVERT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| mnn_dir().join("build_vk/tools/converter/OFF"))
 }
 
+#[allow(dead_code)]
 fn copy_if_newer(src: &Path, dst: &Path) {
     if !src.exists() {
         eprintln!("warning: MNN artifact not found, leaving existing copy: {}", src.display());
