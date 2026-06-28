@@ -36,12 +36,17 @@ fn main() {
             .with_mode(if use_native { cam_isp::blocks::UnpackMode::NativeInt16 } else { cam_isp::blocks::UnpackMode::PackedInt32 })),
         Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
         Box::new(cam_isp::blocks::IdentityBlock::new("bayer_wb")),
-        // Resize Bayer 4K→2K: cheap nearest resize in Bayer domain
-        Box::new(cam_isp::blocks::ResizeBlock::new(0.5).with_concrete_dims(full_h, full_w)),
-        // DemosaicCcm at 2K (was 4K — 4× fewer pixels)
+        // Adaptive Bayer resize: skip at ≤2K, resize 4K→2K
+        Box::new(cam_isp::blocks::ResizeBlock::new(0.5)
+            .with_channels(4)
+            .with_skip_below(1920 * 1080)
+            .with_concrete_dims(full_h, full_w)),
+        // DemosaicCcm at 2K (or 4K if resize skipped)
         Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0).with_concrete_dims(ds_h, ds_w)),
-        // Resize RGB 2K→FHD: bilinear downscale
-        Box::new(cam_isp::blocks::ResizeBlock::new(0.5).with_concrete_dims(ds_h, ds_w)),
+        // Resize RGB 2K→FHD
+        Box::new(cam_isp::blocks::ResizeBlock::new(0.5)
+            .with_channels(3)
+            .with_concrete_dims(ds_h, ds_w)),
         Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
         Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
         Box::new(cam_isp::blocks::FcsBlock::new()),
