@@ -74,8 +74,10 @@ fn main() {
         Box::new(IdentityBlock::new("bayer_wb")),
 
         // 5. Resize Bayer 4K→2K: [1,4,2160,3840] → [1,4,1080,1920]
-        //    Cheaper than RGB resize (4ch nearest vs 3ch bilinear)
+        //    Adaptive: skip if input ≤ 2K (e.g. 1080p sensor)
         Box::new(ResizeBlock::new(0.5)
+            .with_channels(4)           // Bayer = 4 channels
+            .with_skip_below(1920 * 1080) // skip at 2K or smaller
             .with_concrete_dims(full_h, full_w)),
 
         // 6. DemosaicCcm at 2K: [1,4,1080,1920] → [1,3,1080,1920]
@@ -84,6 +86,7 @@ fn main() {
 
         // 7. Downscale RGB 2K→FHD: [1,3,1080,1920] → [1,3,540,960]
         Box::new(ResizeBlock::new(0.5)
+            .with_channels(3)           // RGB = 3 channels
             .with_concrete_dims(ds_h, ds_w)),
 
         // 8. Tone identity (fused)
