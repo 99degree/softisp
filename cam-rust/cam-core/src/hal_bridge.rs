@@ -65,6 +65,10 @@ pub fn create_isp_processor(
         let mut params = cam_isp::engine::ProcessParams::new(w, h, data);
         params.target_width = target_width;
         params.sensor_max = 65535.0;
+        params.timestamp_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
         let result = eng.process(&params)?;
         let proc_elapsed = proc_start.elapsed();
         log::trace!("ISP process: {}x{} -> {} bytes in {:.2}ms",

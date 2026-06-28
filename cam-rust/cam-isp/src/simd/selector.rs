@@ -74,10 +74,10 @@ fn detect_best() -> Box<dyn SimdEngine> {
     #[cfg(target_arch = "x86_64")]
     {
         if std::arch::is_x86_feature_detected!("avx2") {
-            // TODO: return Avx2 backend
+            return Box::new(super::avx2::Avx2::new());
         }
         if std::arch::is_x86_feature_detected!("sse2") {
-            // TODO: return Sse2 backend
+            return Box::new(super::sse2::Sse2::new());
         }
     }
 
