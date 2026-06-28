@@ -41,6 +41,9 @@ pub struct UnpackCfaBlock {
     /// Use Conv-based unpack (fast) instead of SpaceToDepth.
     /// This replaces multi-dispatch Raster with a single VulkanConvolution dispatch.
     pub use_fast_unpack: bool,
+    /// Extra height downscale after CFA Conv (1=none, 2=half height).
+    /// Fuses Resize(H/2) into the UnpackCfa output for 4K→FHD-like pipelines.
+    pub height_downscale: i64,
 }
 
 impl Default for UnpackCfaBlock {
@@ -65,6 +68,7 @@ impl UnpackCfaBlock {
             stride_w: 1,
             mode: UnpackMode::PackedInt32,
             use_fast_unpack: false,
+            height_downscale: 1,
         }
     }
 
@@ -107,6 +111,14 @@ impl UnpackCfaBlock {
     /// Output width = W/2/stride_w in actual pixels.
     pub fn with_downscale(mut self, factor: i64) -> Self {
         self.stride_w = factor.max(1);
+        self
+    }
+
+    /// Enable extra height downscale (2×) after the CFA Conv.
+    /// Fuses a Resize(H/2) node into the output, giving [1,4,H/4,W/2/stride_w].
+    /// Useful for 4K→FHD pipelines where FCS/LDCI/EE run at lower resolution.
+    pub fn with_height_downscale(mut self, factor: i64) -> Self {
+        self.height_downscale = factor.max(1);
         self
     }
 
@@ -173,11 +185,12 @@ impl IspBlock for UnpackCfaBlock {
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         let sw = self.stride_w;
+        let hd = self.height_downscale.max(1);
         let elem_type = self.output_elem_type();
         let dims = match (self.concrete_h, self.concrete_w) {
             (Some(h), Some(w)) => vec![
                 Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
-                Proto::tensor_dim_value(h / 2), Proto::tensor_dim_value(w / 2 / sw),
+                Proto::tensor_dim_value(h / 2 / hd), Proto::tensor_dim_value(w / 2 / sw),
             ],
             _ => vec![
                 Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
@@ -314,6 +327,15 @@ impl IspBlock for UnpackCfaBlock {
                 inits.push(Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0));
             }
         }
+
+        // Resize scale for height downscale
+        if self.height_downscale > 1 {
+            // Resize needs: [scales] tensor with [1, 1, 0.5, 1.0] for H/2, W unchanged
+            // Actually ONNX Resize takes scales as [N,C,H,W] = [1,1,0.5,1.0]
+            inits.push(Proto::tensor_proto_float(
+                &format!("{}/scale_h", ns), &[4], &[1.0, 1.0, 0.5, 1.0]));
+        }
+
         inits
     }
 
@@ -402,6 +424,20 @@ impl UnpackCfaBlock {
                 &[]));
             nodes.push(Proto::node("Cast", &[&format!("{}/denorm", ns)], &[&self.frame_tensor],
                 &[Proto::attribute_int("to", 5)]));
+        }
+
+        // Extra height downscale: Resize(H/2) after CFA output
+        if self.height_downscale > 1 {
+            let resized = format!("{}/resized_h", ns);
+            let scale_h = format!("{}/scale_h", ns);
+            // Replace frame_tensor with resized output
+            let prev_out = self.frame_tensor.clone();
+            nodes.push(Proto::node("Resize",
+                &[&prev_out, &"".to_string(), &scale_h],
+                &[&resized],
+                &[Proto::attribute_int("mode", 0)])); // 0 = nearest
+            // Final identity to rename to frame_tensor
+            nodes.push(Proto::node("Identity", &[&resized], &[&self.frame_tensor], &[]));
         }
 
         nodes

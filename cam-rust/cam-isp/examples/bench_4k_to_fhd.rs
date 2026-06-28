@@ -59,12 +59,13 @@ fn main() {
             .with_elem_type(6)
             .with_concrete_dims(full_h, packed_w)),
 
-        // 2. Unpack CFA: stride=2 height (2160→1080), stride=1 width
-        //    Output: [1,4,1080,1920] = FHD Bayer directly
+        // 2. Unpack CFA: stride=2 width, height_downscale=2 → [1,4,540,960]
+        //    Directly produces post-downscale Bayer — no separate downscale needed
         Box::new(UnpackCfaBlock::new()
             .with_concrete_width(full_w)
             .with_concrete_dims(full_h, full_w)
-            .with_downscale(1)
+            .with_downscale(2)       // width: 3840/4 = 960
+            .with_height_downscale(2) // height: 2160/4 = 540
             .with_sensor_max(1023.0)
             .with_blc(true)),
 
@@ -74,17 +75,11 @@ fn main() {
         // 4. White balance (identity — fused into DemosaicCcmBlock)
         Box::new(IdentityBlock::new("bayer_wb")),
 
-        // 5. Fused demosaic + WB + CCM + tone (single Conv at FHD)
+        // 5. Fused demosaic + WB + CCM + tone (at 960×540 directly)
         Box::new(DemosaicCcmBlock::new(0)
-            .with_concrete_dims(ds_h, ds_w)),
+            .with_concrete_dims(post_h_i, post_w_i)),
 
-        // 6. Adaptive downscale – ONNX block (run inside MNN)
-        //    The block generates Slice/Resize/Pad nodes that the fused ONNX model
-        //    (converted to MNN) will execute on the GPU. No CPU down‑scale occurs.
-        Box::new(AdaptiveDownscaleBlock::new(post_w_i, post_h_i, 0, "edge", "fit")
-            .with_concrete_dims(ds_h, ds_w)),
-
-        // 7. Tone (identity — already fused)
+        // 6. Tone (identity — already fused)
         Box::new(IdentityBlock::new("tone")),
 
         // 7. Aux hook out
@@ -122,8 +117,8 @@ fn main() {
     }
     result.unwrap();
 
-    println!("Pipeline: 11 blocks (main) + 4 aux (stats tap at aux_hook_src)");
-    println!("Input: {}×{} → FHD→ {}×{} post-downscale", sensor_w, sensor_h, post_w, post_h);
+    println!("Pipeline: 10 blocks (main) + 4 aux (stats tap at aux_hook_src)");
+    println!("Input: {}×{} → FHD→ {}×{} (fused downscale)", sensor_w, sensor_h, post_w, post_h);
     println!("Running {} frames...\n", n_frames);
 
     // Shared params
