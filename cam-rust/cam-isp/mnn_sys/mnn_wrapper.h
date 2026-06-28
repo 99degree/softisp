@@ -219,6 +219,16 @@ int mnn_run_host_tensors(MnnInterpreter interpreter, MnnSession session,
                           float* out_data, int max_out);
 
 /**
+ * Run inference with FP16 output support.
+ * For models with Cast(FLOAT→FLOAT16) at the end, reads raw float16 output.
+ * Output buffer must hold at least max_out * 2 bytes (uint16_t per element).
+ * @return Number of output elements written, or -1 on error.
+ */
+int mnn_run_host_tensors_fp16(MnnInterpreter interpreter, MnnSession session,
+                               const float* in_data, const int* in_shape, int in_ndim,
+                               void* out_data, int max_out);
+
+/**
  * Set a named input tensor from float32 host data.
  * For multi-input models (HEAVY profile) where extra inputs
  * (fcs_gain, ldci_strength, ee_gain) must be set before inference.

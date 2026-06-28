@@ -296,6 +296,67 @@ extern "C" int mnn_run_host_tensors(
     return n;
 }
 
+// ── FP16 output inference ────────────────────────────────────────────────
+// For models with Cast(FLOAT→FLOAT16) at the end, reads raw float16 output.
+// Output buffer must hold at least max_out * sizeof(uint16_t) bytes.
+// Returns number of float16 elements written, or negative on error.
+extern "C" int mnn_run_host_tensors_fp16(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const float* in_data,
+    const int* in_shape,
+    int in_ndim,
+    void* out_data,
+    int max_out
+) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !in_data || !out_data) return -1;
+
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+
+    std::vector<int> host_shape(in_shape, in_shape + in_ndim);
+    halide_type_t float_type(halide_type_float, 32);
+    auto* host_in = MNN::Tensor::create(
+        host_shape, float_type, const_cast<float*>(in_data), MNN::Tensor::CAFFE);
+    if (!host_in) return -3;
+
+    in_tensor->copyFromHostTensor(host_in);
+    auto run_ok = net->runSession(sess);
+    if (run_ok != 0) { delete host_in; return -2; }
+
+    auto* out_tensor = net->getSessionOutput(sess, nullptr);
+    if (!out_tensor) { delete host_in; return -1; }
+
+    auto out_shape = out_tensor->shape();
+    int out_total = 1;
+    for (auto d : out_shape) out_total *= d;
+    int n = out_total < max_out ? out_total : max_out;
+    if (n <= 0) { delete host_in; return -5; }
+
+    // Determine output type — if model outputs FLOAT16, read as-is
+    auto out_type = out_tensor->getType();
+    if (out_type.code == halide_type_float && out_type.bits == 16) {
+        // FP16 output — copy raw bytes
+        halide_type_t fp16_type(halide_type_float, 16);
+        auto* host_out = MNN::Tensor::create(out_shape, fp16_type, out_data, MNN::Tensor::CAFFE);
+        if (!host_out) { delete host_in; return -3; }
+        out_tensor->copyToHostTensor(host_out);
+        delete host_out;
+    } else {
+        // FP32 output — copy as float, caller can convert
+        halide_type_t fp32_type(halide_type_float, 32);
+        auto* host_out = MNN::Tensor::create(out_shape, fp32_type, out_data, MNN::Tensor::CAFFE);
+        if (!host_out) { delete host_in; return -3; }
+        out_tensor->copyToHostTensor(host_out);
+        delete host_out;
+    }
+
+    delete host_in;
+    return n;
+}
+
 
 // ── Set named input tensor (for multi-input models) ──────────────────────
 

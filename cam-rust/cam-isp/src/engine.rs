@@ -57,6 +57,10 @@ pub enum OutputFormat {
     Rgb,
     /// BGR u8 (3 bytes/pixel). Always converted.
     Bgr,
+    /// Float16 RGB [0,255] — return raw f16×3 planar bytes. Halves GPU→CPU bandwidth.
+    Float16Rgb,
+    /// Float16 BGRA [0,255] — return raw f16×4 planar bytes. Halves GPU→CPU bandwidth.
+    Float16Bgra,
 }
 
 impl Default for OutputFormat {
@@ -68,19 +72,29 @@ impl OutputFormat {
     pub fn channel_count(self) -> usize {
         match self {
             Self::PackedRgb => 1,
-            Self::FloatRgb | Self::Rgb | Self::Bgr => 3,
+            Self::FloatRgb | Self::Float16Rgb | Self::Rgb | Self::Bgr => 3,
             _ => 4,
         }
     }
     /// Bytes per pixel in the final output.
     pub fn bytes_per_pixel(self) -> usize {
         match self {
-            Self::FloatRgb => 12,     // f32×3
-            Self::FloatBgra => 16,    // f32×4
-            Self::PackedRgb => 2,     // INT32 per two pixels
+            Self::FloatRgb => 12,       // f32×3
+            Self::FloatBgra => 16,      // f32×4
+            Self::Float16Rgb => 6,      // f16×3
+            Self::Float16Bgra => 8,     // f16×4
+            Self::PackedRgb => 2,       // INT32 per two pixels
             Self::Rgb | Self::Bgr => 3,
             _ => 4,
         }
+    }
+    /// Whether this format outputs float16 tensors (halves GPU→CPU bandwidth).
+    pub fn is_fp16(self) -> bool {
+        matches!(self, Self::Float16Rgb | Self::Float16Bgra)
+    }
+    /// ONNX elem_type for the output tensor: 10=FLOAT16, 1=FLOAT.
+    pub fn onnx_elem_type(self) -> i32 {
+        if self.is_fp16() { 10 } else { 1 }
     }
 }
 
