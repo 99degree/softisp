@@ -20,6 +20,11 @@ pub struct ResizeBlock {
     pub scale: f32,
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
+    /// Number of channels (1=grayscale, 3=RGB, 4=Bayer).
+    pub channels: i64,
+    /// Skip resize when total pixels < threshold (0=always resize).
+    /// Useful for 4K→2K resize that should only run at high resolution.
+    pub skip_below_pixels: i64,
 }
 
 impl ResizeBlock {
@@ -37,7 +42,23 @@ impl ResizeBlock {
             scale,
             concrete_h: None,
             concrete_w: None,
+            channels: 3,
+            skip_below_pixels: 0,
         }
+    }
+
+    /// Set number of channels (default: 3 for RGB).
+    /// Use 4 for Bayer domain resize.
+    pub fn with_channels(mut self, ch: i64) -> Self {
+        self.channels = ch;
+        self
+    }
+
+    /// Skip resize when total pixels (H×W) < threshold.
+    /// Useful for 4K-only resize: skip_below_pixels(1920*1080)
+    pub fn with_skip_below(mut self, threshold_pixels: i64) -> Self {
+        self.skip_below_pixels = threshold_pixels;
+        self
     }
 
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
@@ -72,7 +93,7 @@ impl IspBlock for ResizeBlock {
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let ns = self.tensor_ns();
-        let ch: i64 = 3; // RGB
+        let ch = self.channels;
         let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
             vec![
                 Proto::tensor_dim_value(1),
@@ -93,7 +114,7 @@ impl IspBlock for ResizeBlock {
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         let ns = self.tensor_ns();
-        let ch: i64 = 3;
+        let ch = self.channels;
         let dims = if let (Some(oh), Some(ow)) = (self.out_h(), self.out_w()) {
             vec![
                 Proto::tensor_dim_value(1),
@@ -114,17 +135,38 @@ impl IspBlock for ResizeBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        vec![
-            Proto::node(
-                "Resize",
-                &[&self.input_source, "", "", &format!("{}/scales", ns)],
-                &[&self.frame_tensor],
-                &[
-                    Proto::attribute_string("mode", "nearest"),
-                    Proto::attribute_int("coordinate_transformation_mode", 0),  // half_pixel
-                ],
-            ),
-        ]
+
+        // Adaptive: skip resize when input is already small enough
+        // Check if input dimensions are close to output dimensions
+        let skip = if self.skip_below_pixels > 0 {
+            if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
+                let input_pixels = h * w;
+                input_pixels <= self.skip_below_pixels
+            } else {
+                false // unknown dims → always resize
+            }
+        } else {
+            false
+        };
+
+        if skip {
+            // Identity: pass input through unchanged
+            vec![
+                Proto::node("Identity", &[&self.input_source], &[&self.frame_tensor], &[]),
+            ]
+        } else {
+            vec![
+                Proto::node(
+                    "Resize",
+                    &[&self.input_source, "", "", &format!("{}/scales", ns)],
+                    &[&self.frame_tensor],
+                    &[
+                        Proto::attribute_string("mode", "nearest"),
+                        Proto::attribute_int("coordinate_transformation_mode", 0),  // half_pixel
+                    ],
+                ),
+            ]
+        }
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
