@@ -37,7 +37,7 @@ use crate::controller::IspController;
 /// - `PackedRgb` encodes two RGBA pixels per INT32: lower 16 bits are pixel0.R|G,
 ///   upper 16 bits are pixel1.B|A.
 /// - Per default (`PackedRgb`), every frame is `[1,1,H,W/2]` INT32.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
     /// Float RGB [0,1] — return raw f32×3 planar bytes.
     FloatRgb,
@@ -46,6 +46,7 @@ pub enum OutputFormat {
     /// INT32 packed — return raw packed bytes (R<<16|G<<8|B, 4B/pixel).
     PackedRgb,
     /// BGRA u8 (4 bytes/pixel). Always converted.
+    #[default]
     Bgra,
     /// RGBA u8 (4 bytes/pixel). Always converted.
     Rgba,
@@ -61,10 +62,6 @@ pub enum OutputFormat {
     Float16Rgb,
     /// Float16 BGRA [0,255] — return raw f16×4 planar bytes. Halves GPU→CPU bandwidth.
     Float16Bgra,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self { Self::Bgra }
 }
 
 impl OutputFormat {
