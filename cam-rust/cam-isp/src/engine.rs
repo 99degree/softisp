@@ -134,6 +134,8 @@ pub struct ProcessParams<'a> {
     pub warp_grid: Option<&'a [f32]>,
     /// Output format: PackedInt32 (raw) or Bgra (converted).
     pub output_format: OutputFormat,
+    /// Capture timestamp in nanoseconds (from HAL/framework). Passed through to IspFrame.
+    pub timestamp_ns: u64,
 }
 
 impl<'a> ProcessParams<'a> {
@@ -155,6 +157,7 @@ impl<'a> ProcessParams<'a> {
             analog_gain: 1.0,
             scene_change: 0.0,
             output_format: OutputFormat::default(),
+            timestamp_ns: 0,
             lsc_gains: None,
             blc_values: None,
             warp_grid: None,

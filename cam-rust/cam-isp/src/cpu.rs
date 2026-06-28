@@ -336,7 +336,7 @@ impl IspEngine for CpuEngine {
             data: out_bytes,
             float_data: None,
             aux,
-            timestamp_ns: 0,
+            timestamp_ns: p.timestamp_ns,
             prep_duration_ns: t_total.as_nanos() as u64,  // CPU: full pipeline is prep
             inference_duration_ns: 0,
             total_duration_ns: t_total.as_nanos() as u64,
