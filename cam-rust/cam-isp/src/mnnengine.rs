@@ -1143,7 +1143,7 @@ impl IspEngine for MnnEngine {
                 calibration_stats: calib_vals,
                 ..Default::default()
             });
-            frame.timestamp_ns = params.timestamp_ns;
+            frame.timestamp_ns = p.timestamp_ns;
             // prep = time before inference starts (setup + norm for float path)
             // infer = time for MNN inference only
             // total = prep + infer + bgra conversion
