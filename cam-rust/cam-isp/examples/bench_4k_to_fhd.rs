@@ -59,11 +59,13 @@ fn main() {
             .with_elem_type(6)
             .with_concrete_dims(full_h, packed_w)),
 
-        // 2. Unpack CFA at 4K (no downscale): [1,4,2160,3840]
+        // 2. Unpack CFA: downscale 4K→2K Bayer directly
+        //    stride_w=2 → width/2, kernel height=2 → height/2
+        //    Output: [1,4,1080,1920] 2K Bayer
         Box::new(UnpackCfaBlock::new()
             .with_concrete_width(full_w)
             .with_concrete_dims(full_h, full_w)
-            .with_downscale(1)       // no width downscale
+            .with_downscale(2)       // width: 3840/4 = 960
             .with_sensor_max(1023.0)
             .with_blc(true)),
 
@@ -73,34 +75,22 @@ fn main() {
         // 4. White balance identity (fused into DemosaicCcmBlock)
         Box::new(IdentityBlock::new("bayer_wb")),
 
-        // 5. Resize Bayer 4K→2K: [1,4,2160,3840] → [1,4,1080,1920]
-        //    Adaptive: skip if input ≤ 2K (e.g. 1080p sensor)
-        Box::new(ResizeBlock::new(0.5)
-            .with_channels(4)           // Bayer = 4 channels
-            .with_skip_below(1920 * 1080) // skip at 2K or smaller
-            .with_concrete_dims(full_h, full_w)),
-
-        // 6. DemosaicCcm at 2K: [1,4,1080,1920] → [1,3,1080,1920]
+        // 5. DemosaicCcm at 2K: [1,4,1080,960] → [1,3,1080,960]
         Box::new(DemosaicCcmBlock::new(0)
-            .with_concrete_dims(ds_h, ds_w)),
+            .with_concrete_dims(ds_h, post_w_i)),
 
-        // 7. Downscale RGB 2K→FHD: [1,3,1080,1920] → [1,3,540,960]
-        Box::new(ResizeBlock::new(0.5)
-            .with_channels(3)           // RGB = 3 channels
-            .with_concrete_dims(ds_h, ds_w)),
-
-        // 8. Tone identity (fused)
+        // 6. Tone identity (fused)
         Box::new(IdentityBlock::new("tone")),
 
-        // 9. Aux hook out
+        // 7. Aux hook out
         Box::new(IdentityBlock::new("aux_hook_out")),
 
-        // 10–12. Cosmetic post-processing at FHD
+        // 8–10. Cosmetic post-processing at FHD
         Box::new(FcsBlock::new()),
         Box::new(LdciBlock::new()),
         Box::new(EeBlock::new()),
 
-        // 13. Display output (bg4a: Conv 1×1 BGRA float [0,255])
+        // 11. Display output (bg4a: Conv 1×1 BGRA float [0,255])
         Box::new(DisplayBlock::new(post_w)
             .with_pack_rgba(false)
             .with_bg4a(true)
@@ -127,8 +117,8 @@ fn main() {
     }
     result.unwrap();
 
-    println!("Pipeline: 13 blocks (4K→2K debayer→FHD)");
-    println!("Input: {}×{} → Resize 2K → Debayer → Resize FHD → {}×{}", sensor_w, sensor_h, post_w, post_h);
+    println!("Pipeline: 11 blocks (4K→FHD via UnpackCfa downscale)");
+    println!("Input: {}×{} → UnpackCfa(stride=2,hds=2) → Debayer → {}×{}", sensor_w, sensor_h, post_w, post_h);
     println!("Running {} frames...\n", n_frames);
 
     // Shared params

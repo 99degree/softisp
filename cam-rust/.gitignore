@@ -3,3 +3,4 @@
 # Generated native build artifacts
 cam-isp/lib/
 lib/**/libmnn_wrapper.a
+.mnn_last_pipeline.onnx
