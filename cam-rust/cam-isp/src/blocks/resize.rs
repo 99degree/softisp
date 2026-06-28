@@ -10,6 +10,9 @@ use crate::onnx::proto::Proto;
 /// for 4× fewer pixels, dramatically reducing Conv cost.
 ///
 /// Uses `nearest` mode (fastest, good enough for post-processing).
+use std::sync::atomic::{AtomicUsize, Ordering};
+static RESIZE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 pub struct ResizeBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -32,9 +35,10 @@ impl ResizeBlock {
     /// - `0.5` for half-resolution downscale
     /// - `2.0` for full-resolution upscale
     pub fn new(scale: f32) -> Self {
-        let name = if scale < 1.0 { "resize_down" } else { "resize_up" };
+        let idx = RESIZE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let name = if scale < 1.0 { format!("resize_down_{}", idx) } else { format!("resize_up_{}", idx) };
         Self {
-            id: name.into(),
+            id: name.clone(),
             prev: None,
             next: None,
             frame_tensor: format!("{}/frame", name),
@@ -79,7 +83,7 @@ impl ResizeBlock {
 impl IspBlock for ResizeBlock {
     fn id(&self) -> &str { &self.id }
     fn tensor_ns(&self) -> String {
-        if self.id == "resize_down" { "ResizeDown".into() } else { "ResizeUp".into() }
+        self.id.clone()
     }
     fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
     fn input_source(&self) -> Option<&str> { Some(&self.input_source) }

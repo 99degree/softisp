@@ -686,6 +686,8 @@ impl IspEngine for MnnEngine {
                     let on = format!(".mnn_temp_{}.onnx", std::process::id());
                     let mn = on.replace(".onnx", ".mnn");
                     std::fs::write(&on, &onnx).map_err(|e| format!("write: {}", e))?;
+                    // Save a copy for inspection
+                    let _ = std::fs::copy(&on, ".mnn_last_pipeline.onnx");
                     let mut opts = MnnConvertOptions::default();
                     opts.preserve_input_type = self.preserve_input_type;
                     info!("preserve_input_type: {}, optimize_level: {}", self.preserve_input_type, opts.optimize_level);
