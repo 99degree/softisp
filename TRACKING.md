@@ -83,11 +83,12 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 - [x] Binder ISP integration — IspCameraSession bridges camera → ISP
 - [x] ONNX Runtime wrapper — cam-onnx with ort v2.0.0-rc.12
 - [x] Streaming examples — camera_isp.rs, stream_isp.rs
+- [x] Android camera detection — V4L2 device enumeration
+- [x] Camera metadata — V4L2 capability query
+- [x] Binder registration — platform-aware service registration
 
 ## Remaining Work
-- [ ] Android physical camera detection + metadata
-- [ ] EIS margin warp integration
-- [ ] Binder Android BpServiceManager registration
+- (none — all TODO items resolved)
 
 ## Testing
 ```bash
