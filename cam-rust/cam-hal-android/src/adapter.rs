@@ -414,7 +414,10 @@ impl AndroidCameraAdapter {
             width,
             height,
             format: cam_types::FrameFormat::Rgba8888, // pipeline produces RGBA
-            timestamp: 0, // TODO: get from capture request
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0),
         })
     }
 
