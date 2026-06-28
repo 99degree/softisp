@@ -760,7 +760,17 @@ impl IspEngine for MnnEngine {
 
             // Use first session to probe model input type (before building pool)
             let probe_sess = interp.create_session(self.backend.to_sys(), 4)
-                .ok_or("probe session create fail")?;
+                .or_else(|| {
+                    // Fallback: try CPU if requested backend fails
+                    if self.backend != MnnBackend::Cpu {
+                        warn!("Backend {:?} unavailable, falling back to CPU", self.backend);
+                        self.backend = MnnBackend::Cpu;
+                        interp.create_session(MnnBackendType::Cpu, 4)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or("probe session create fail (all backends exhausted)")?;
             let mut input_code = 0i32;
             let mut input_bits = 0i32;
             unsafe {
@@ -783,6 +793,7 @@ impl IspEngine for MnnEngine {
             drop(probe_sess);
 
             // Build session pool (N sessions for parallel inference)
+            // Backend was already validated by probe session above.
             let pool = SessionPool::new(
                 interp,
                 self.backend.to_sys(),
