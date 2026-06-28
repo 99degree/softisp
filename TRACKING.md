@@ -75,7 +75,7 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 - [x] Rust pipeline ONNX → IspChainFusion alignment (Rust uses Mod+Div+Cast+Div+Concat+Conv for unpack, Python uses Cast+Conv)
 - [x] Display gamma LUT — attempted, 2× slower (shared memory barrier + 6 reads worse than 3 pow() calls)
 - [x] FP16 output support — `Float16Rgb` (6 B/px) and `Float16Bgra` (8 B/px) output formats, Cast(FLOAT→FLOAT16) in ONNX graph, `mnn_run_host_tensors_fp16` FFI
-- [ ] Bayer pattern configurability (non-uniform Gr≠Gb)
+- [x] Bayer pattern configurability — `--bayer-pattern` arg for RGGB/GRBG/GBRG/BGGR in gen_isp_onnx_standard.py
 - [ ] 8K support
 
 ## Testing
