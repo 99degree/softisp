@@ -70,13 +70,24 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 - [x] README.md updated
 - [x] R11 fused_6in1 removed (2-4× slower than 3-dispatch)
 - [x] Rust pipeline ONNX pattern support (isUnpackConv expanded for k=1×2, R1b added)
+- [x] Rust pipeline ONNX → IspChainFusion alignment
+- [x] Display gamma LUT — attempted, 2× slower
+- [x] FP16 output support — Float16Rgb/Float16Bgra
+- [x] Bayer pattern configurability — RGGB/GRBG/GBRG/BGGR
+- [x] 8K support — ONNX generation + MNN conversion at 7680×4320
+- [x] HDR merge block — Multi-exposure fusion with luminance weight maps
+- [x] Vulkan→CPU auto-fallback
+- [x] Binder HAL — AIDL-style provider/device/session/callbacks
+- [x] AVX2/SSE2 SIMD backends — 8-wide/4-wide f32 ops
+- [x] Timestamp passthrough — ProcessParams.timestamp_ns → IspFrame
+- [x] Binder ISP integration — IspCameraSession bridges camera → ISP
+- [x] ONNX Runtime wrapper — cam-onnx with ort v2.0.0-rc.12
+- [x] Streaming examples — camera_isp.rs, stream_isp.rs
 
 ## Remaining Work
-- [x] Rust pipeline ONNX → IspChainFusion alignment (Rust uses Mod+Div+Cast+Div+Concat+Conv for unpack, Python uses Cast+Conv)
-- [x] Display gamma LUT — attempted, 2× slower (shared memory barrier + 6 reads worse than 3 pow() calls)
-- [x] FP16 output support — `Float16Rgb` (6 B/px) and `Float16Bgra` (8 B/px) output formats, Cast(FLOAT→FLOAT16) in ONNX graph, `mnn_run_host_tensors_fp16` FFI
-- [x] Bayer pattern configurability — `--bayer-pattern` arg for RGGB/GRBG/GBRG/BGGR in gen_isp_onnx_standard.py
-- [x] 8K support — ONNX generation + MNN conversion verified at 7680×4320, no hardcoded size limits
+- [ ] Android physical camera detection + metadata
+- [ ] EIS margin warp integration
+- [ ] Binder Android BpServiceManager registration
 
 ## Testing
 ```bash
