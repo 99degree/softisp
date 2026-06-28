@@ -31,10 +31,14 @@ fn main() {
         Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(elem_type).with_concrete_dims(full_h, pw)),
         Box::new(cam_isp::blocks::UnpackCfaBlock::new()
             .with_concrete_width(full_w).with_concrete_dims(full_h, full_w)
-            .with_downscale(1).with_sensor_max(1023.0).with_blc(true)
+            .with_downscale(2).with_height_downscale(2)  // fused: 3840→960, 2160→540
+            .with_sensor_max(1023.0).with_blc(true)
             .with_mode(if use_native { cam_isp::blocks::UnpackMode::NativeInt16 } else { cam_isp::blocks::UnpackMode::PackedInt32 })),
-        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0).with_concrete_dims(ds_h, ds_w)),
-        Box::new(cam_isp::blocks::AdaptiveDownscaleBlock::new(post_w_i, post_h_i, 0, "edge", "fit").with_concrete_dims(ds_h, ds_w)),
+        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
+        Box::new(cam_isp::blocks::IdentityBlock::new("bayer_wb")),
+        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0).with_concrete_dims(post_h_i, post_w_i)),
+        Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
+        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
         Box::new(cam_isp::blocks::FcsBlock::new()),
         Box::new(cam_isp::blocks::LdciBlock::new()),
         Box::new(cam_isp::blocks::EeBlock::new()),
