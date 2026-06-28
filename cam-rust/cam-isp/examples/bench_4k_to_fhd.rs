@@ -59,38 +59,45 @@ fn main() {
             .with_elem_type(6)
             .with_concrete_dims(full_h, packed_w)),
 
-        // 2. Unpack CFA: stride=2 width, height_downscale=2 → [1,4,540,960]
-        //    Directly produces post-downscale Bayer — no separate downscale needed
+        // 2. Unpack CFA at 4K (no downscale): [1,4,2160,3840]
         Box::new(UnpackCfaBlock::new()
             .with_concrete_width(full_w)
             .with_concrete_dims(full_h, full_w)
-            .with_downscale(2)       // width: 3840/4 = 960
-            .with_height_downscale(2) // height: 2160/4 = 540
+            .with_downscale(1)       // no width downscale
             .with_sensor_max(1023.0)
             .with_blc(true)),
 
-        // 3. Stats hook — all stats blocks tap here
+        // 3. Stats hook
         Box::new(IdentityBlock::new("aux_hook_src")),
 
-        // 4. White balance (identity — fused into DemosaicCcmBlock)
+        // 4. White balance identity (fused into DemosaicCcmBlock)
         Box::new(IdentityBlock::new("bayer_wb")),
 
-        // 5. Fused demosaic + WB + CCM + tone (at 960×540 directly)
-        Box::new(DemosaicCcmBlock::new(0)
-            .with_concrete_dims(post_h_i, post_w_i)),
+        // 5. Resize Bayer 4K→2K: [1,4,2160,3840] → [1,4,1080,1920]
+        //    Cheaper than RGB resize (4ch nearest vs 3ch bilinear)
+        Box::new(ResizeBlock::new(0.5)
+            .with_concrete_dims(full_h, full_w)),
 
-        // 6. Tone (identity — already fused)
+        // 6. DemosaicCcm at 2K: [1,4,1080,1920] → [1,3,1080,1920]
+        Box::new(DemosaicCcmBlock::new(0)
+            .with_concrete_dims(ds_h, ds_w)),
+
+        // 7. Downscale RGB 2K→FHD: [1,3,1080,1920] → [1,3,540,960]
+        Box::new(ResizeBlock::new(0.5)
+            .with_concrete_dims(ds_h, ds_w)),
+
+        // 8. Tone identity (fused)
         Box::new(IdentityBlock::new("tone")),
 
-        // 7. Aux hook out
+        // 9. Aux hook out
         Box::new(IdentityBlock::new("aux_hook_out")),
 
-        // 8–10. Cosmetic post-processing
+        // 10–12. Cosmetic post-processing at FHD
         Box::new(FcsBlock::new()),
         Box::new(LdciBlock::new()),
         Box::new(EeBlock::new()),
 
-        // 12. Display output (bg4a: Conv 1×1 BGRA float [0,255])
+        // 13. Display output (bg4a: Conv 1×1 BGRA float [0,255])
         Box::new(DisplayBlock::new(post_w)
             .with_pack_rgba(false)
             .with_bg4a(true)
@@ -117,8 +124,8 @@ fn main() {
     }
     result.unwrap();
 
-    println!("Pipeline: 10 blocks (main) + 4 aux (stats tap at aux_hook_src)");
-    println!("Input: {}×{} → FHD→ {}×{} (fused downscale)", sensor_w, sensor_h, post_w, post_h);
+    println!("Pipeline: 13 blocks (4K→2K debayer→FHD)");
+    println!("Input: {}×{} → Resize 2K → Debayer → Resize FHD → {}×{}", sensor_w, sensor_h, post_w, post_h);
     println!("Running {} frames...\n", n_frames);
 
     // Shared params
