@@ -39,6 +39,10 @@ pub struct DisplayBlock {
     /// PackedRgb stores two RGBA pixels per INT32 word:
     /// lower 16 bits = pixel0.R|G, upper 16 bits = pixel1.B|A.
     pub pack_two_pixels: bool,
+    /// Optional float output tensor name for post-processing pipeline.
+    /// When set, the block produces an additional [1,3,H,W] float32 tensor
+    /// in [0,1] range that can be consumed by PostProcessPipeline.
+    pub postprocess_output: Option<String>,
 }
 
 impl DisplayBlock {
@@ -55,6 +59,7 @@ impl DisplayBlock {
             in_w: None,
             output_format: OutputFormat::default(),
             pack_two_pixels: true,
+            postprocess_output: None,
         }
     }
 
@@ -77,7 +82,23 @@ impl DisplayBlock {
         self.output_format = fmt;
         self
     }
-    /// Enable packed RGBA output: two pixels per INT32 word.
+    /// Enable post-processing output: additional [1,3,H,W] float32 tensor in [0,1] range.
+    /// When enabled, the block produces a second output tensor named `postprocess_output`
+    /// that can be consumed directly by PostProcessPipeline.
+    pub fn with_postprocess_output(mut self, enable: bool) -> Self {
+        if enable {
+            self.postprocess_output = Some("DisplayBlock/postprocess".to_string());
+        } else {
+            self.postprocess_output = None;
+        }
+        self
+    }
+
+    /// Set custom post-process output tensor name.
+    pub fn with_postprocess_tensor(mut self, name: &str) -> Self {
+        self.postprocess_output = Some(name.to_string());
+        self
+    }
     /// Output is [1,1,H,W/2] INT32:
     /// lower 16 bits = pixel0.R|G, upper 16 bits = pixel1.B|A.
     /// Equivalent to `.with_output_format(OutputFormat::PackedRgb)`.
@@ -148,7 +169,13 @@ impl IspBlock for DisplayBlock {
     fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
     fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
     fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn output_tensors(&self) -> Vec<String> {
+        let mut tensors = vec![self.frame_tensor.clone()];
+        if let Some(ref pp) = self.postprocess_output {
+            tensors.push(pp.clone());
+        }
+        tensors
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         match (self.in_h, self.in_w) {
@@ -323,6 +350,16 @@ impl IspBlock for DisplayBlock {
             }
         }
 
+        // Add post-process output tensor if enabled
+        if let Some(ref pp_tensor) = self.postprocess_output {
+            // Post-process output is [1,3,H,W] float32 in [0,1] range
+            // Take the RGB channels from the input (before any format conversion)
+            let pp_scale = format!("{}/pp_scale", ns);
+            // Input is [1,3,H,W] float [0,1] — just multiply by 1.0 (identity)
+            // This gives us a clean float tensor for post-processing
+            nodes.push(Proto::node("Mul", &[&self.input_source, &pp_scale], &[pp_tensor], &[]));
+        }
+
         nodes
     }
 
@@ -442,6 +479,12 @@ impl IspBlock for DisplayBlock {
                 &format!("{}/vflip_axes", ns), &[2]));
             inits.push(Proto::tensor_proto_int64(
                 &format!("{}/vflip_steps", ns), &[-1]));
+        }
+
+        // Add post-process scale initializer
+        if self.postprocess_output.is_some() {
+            inits.push(Proto::tensor_proto_float_scalar(
+                &format!("{}/pp_scale", ns), 1.0));
         }
 
         inits
