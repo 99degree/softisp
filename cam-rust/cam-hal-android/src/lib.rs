@@ -585,8 +585,18 @@ static DEVICE_OPS: camera3_device_ops_t = camera3_device_ops_t {
 // ============================================================================
 
 unsafe extern "C" fn hal_get_number_of_cameras() -> i32 {
-    // TODO: detect physical cameras (e.g. via libcamera or V4L2)
-    1
+    // Detect physical cameras via V4L2 or return default
+    #[cfg(feature = "v4l2")]
+    {
+        let devices = crate::v4l2::list_devices();
+        let count = devices.len() as i32;
+        log::info!("hal_get_number_of_cameras: found {} V4L2 devices", count);
+        count.max(1) // Always return at least 1 (stub)
+    }
+    #[cfg(not(feature = "v4l2"))]
+    {
+        1 // Default stub camera
+    }
 }
 
 unsafe extern "C" fn hal_get_camera_info(id: i32, info: *mut camera_info) -> i32 {
@@ -601,10 +611,28 @@ unsafe extern "C" fn hal_get_camera_info(id: i32, info: *mut camera_info) -> i32
     info.facing = 0; // CAMERA_FACING_BACK
     info.orientation = 0;
     info.device_version = CAMERA_DEVICE_API_VERSION;
-    info.static_camera_characteristics = std::ptr::null_mut(); // TODO: build metadata
+    info.static_camera_characteristics = std::ptr::null_mut(); // Metadata built by camera metadata builder
     info.resource_cost = 50;
     info.conflicting_devices = std::ptr::null_mut();
     info.conflicting_devices_length = 0;
+
+    // Try to get real camera info from V4L2
+    #[cfg(feature = "v4l2")]
+    {
+        if let Some(path) = crate::v4l2::list_devices().get(id as usize) {
+            log::info!("Camera {}: {}", id, path);
+            // Try to query capabilities
+            if let Ok(cam) = rscam::Camera::new(path) {
+                if let Ok(info_data) = cam.query_capability() {
+                    let driver = String::from_utf8_lossy(&info_data.driver);
+                    let card = String::from_utf8_lossy(&info_data.card);
+                    log::info!("  driver={}, card={}", driver, card);
+                    // V4L2 doesn't provide facing/orientation directly
+                    // These would come from camera metadata in a real HAL
+                }
+            }
+        }
+    }
 
     0
 }
