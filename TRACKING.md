@@ -76,7 +76,7 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 - [x] Display gamma LUT — attempted, 2× slower (shared memory barrier + 6 reads worse than 3 pow() calls)
 - [x] FP16 output support — `Float16Rgb` (6 B/px) and `Float16Bgra` (8 B/px) output formats, Cast(FLOAT→FLOAT16) in ONNX graph, `mnn_run_host_tensors_fp16` FFI
 - [x] Bayer pattern configurability — `--bayer-pattern` arg for RGGB/GRBG/GBRG/BGGR in gen_isp_onnx_standard.py
-- [ ] 8K support
+- [x] 8K support — ONNX generation + MNN conversion verified at 7680×4320, no hardcoded size limits
 
 ## Testing
 ```bash
