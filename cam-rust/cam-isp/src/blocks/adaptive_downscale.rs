@@ -3,7 +3,7 @@
 //! Fuses aspect-adaptive scaling + content-aware padding into one ONNX
 //! subgraph (Slice + Resize + Pad).  No black bars, no distortion.
 //!
-//! # EIS margin (TODO)
+//! # EIS margin
 //!
 //! When EIS/deshake is active, AdaptiveDownscaleBlock should produce an
 //! output slightly larger than the target resolution, providing margin

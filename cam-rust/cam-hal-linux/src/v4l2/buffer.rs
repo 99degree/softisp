@@ -38,8 +38,8 @@ pub fn buffer_to_byte_frame(
         width,
         height,
         stride,
-        format: format.to_string(), // ByteFrame expects String
-        timestamp: 0, // TODO: get from buffer timestamp
+        format: format.to_string(),
+        timestamp: buf.get_timestamp(),
     }
 }
 
