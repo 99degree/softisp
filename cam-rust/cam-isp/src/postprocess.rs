@@ -38,7 +38,7 @@
 //! Each stage is optional and can be enabled/disabled via `PostProcessConfig`.
 //! The pipeline runs on CPU (for now) using bilinear interpolation for warps.
 
-use log::{info, debug};
+use log::debug;
 use cam_types::FrameFormat;
 
 use crate::eis::{EisEngine, GyroSample};
