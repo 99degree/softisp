@@ -514,12 +514,12 @@ mod tests {
     fn test_unpack_cfa_generates_nodes_packed() {
         let block = UnpackCfaBlock::new().with_concrete_dims(48, 64);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 10, "Packed UnpackCfaBlock (no BLC) should produce 10 nodes (+Mul+Cast to INT16)");
+        assert_eq!(nodes.len(), 9, "Packed UnpackCfaBlock (no BLC) should produce 9 nodes (no Cast to INT16)");
         let inits = block.initializers();
         assert_eq!(inits.len(), 5, "Packed UnpackCfaBlock (no BLC) should have 5 initializers");
 
         let block2 = UnpackCfaBlock::new().with_concrete_dims(48, 64).with_blc(true);
-        assert_eq!(block2.nodes().len(), 12, "Packed UnpackCfaBlock + BLC should produce 12 nodes (+Sub+Clip+Mul+Cast)");
+        assert_eq!(block2.nodes().len(), 11, "Packed UnpackCfaBlock + BLC should produce 11 nodes (+Sub+Clip+Mul)");
         assert_eq!(block2.initializers().len(), 8, "Packed UnpackCfaBlock + BLC should have 8 initializers");
         assert_eq!(block2.extra_inputs().len(), 4, "Packed UnpackCfaBlock + BLC should have 4 extra inputs");
     }
