@@ -507,8 +507,8 @@ impl MnnEngine {
         let mnn_owned = mnn_path.to_owned();
         let (tx, rx) = std::sync::mpsc::channel();
 
-        std::thread::spawn(move || {
-            let result = (|| -> Result<f64, String> {
+        let handle = std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<f64, String> {
                 let mut engine = MnnEngine::new(be);
                 engine.set_model_path(&mnn_owned);
                 let head: Box<dyn IspBlock> = Box::new(RawInputBlock::new());
@@ -545,15 +545,23 @@ impl MnnEngine {
                     return Err("0 frames in 2 s budget".into());
                 }
                 Ok(count as f64 / elapsed.as_secs_f64())
-            })();
+            }));
+            let result = match result {
+                Ok(r) => r,
+                Err(_) => Err("bench thread panicked (Vulkan segfault?)".into()),
+            };
             let _ = tx.send(result);
         });
 
-        match rx.recv_timeout(std::time::Duration::from_millis(3000)) { // 2 s budget + 1 s grace
+        let result = match rx.recv_timeout(std::time::Duration::from_millis(3000)) {
             Ok(Ok(fps)) => Ok(fps),
             Ok(Err(e)) => Err(e),
             Err(_) => Err("timed out after 3 s".into()),
-        }
+        };
+        // Join the thread to ensure it's fully stopped before proceeding
+        // (prevents concurrent Vulkan access from leaked threads)
+        let _ = handle.join();
+        result
     }
 
     // ── helpers ──
@@ -713,15 +721,16 @@ impl IspEngine for MnnEngine {
 
 
             let mnn = match &self.model_path {
-                Some(p) => p.clone(),
+                Some(p) => { info!("build [tid={:?}]: using model_path={}", std::thread::current().id(), p); p.clone() },
                 None => {
                     // Build ONNX graph: head + aux as pipeline, stats as aux_blocks
                     // But we don't know which aux are stats — pass all as pipeline for now
                     let mut all: Vec<Box<dyn IspBlock>> = vec![head];
                     all.extend(aux);
                     let refs: Vec<&dyn IspBlock> = all.iter().map(|b| b.as_ref()).collect();
+                    info!("build [tid={:?}]: composing ONNX from {} blocks", std::thread::current().id(), refs.len());
                     let onnx = crate::pipeline::GraphComposer::compose_from_vec(&refs, &[], opset)?;
-                    debug!("ONNX: {} bytes for MNN conversion", onnx.len());
+                    info!("ONNX [tid={:?}]: {} bytes for MNN conversion", std::thread::current().id(), onnx.len());
 
                     let on = format!(".mnn_temp_{}.onnx", std::process::id());
                     let mn = on.replace(".onnx", ".mnn");
