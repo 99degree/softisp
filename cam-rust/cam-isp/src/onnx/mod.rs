@@ -3,7 +3,7 @@
 
 pub mod proto;
 
-
+use proto::Proto;
 use log::info;
 #[cfg(feature = "ort")]
 use log::warn;
@@ -248,13 +248,37 @@ pub struct OnnxModelComposer;
 impl OnnxModelComposer {
     /// Create an ONNX graph from nodes and initializers.
     pub fn compose_model(
-        _nodes: Vec<Vec<u8>>,
-        _initializers: Vec<Vec<u8>>,
-        _input_value_infos: Vec<Vec<u8>>,
-        _output_value_infos: Vec<Vec<u8>>,
+        nodes: Vec<Vec<u8>>,
+        initializers: Vec<Vec<u8>>,
+        input_value_infos: Vec<Vec<u8>>,
+        output_value_infos: Vec<Vec<u8>>,
     ) -> Vec<u8> {
-        // TODO: Generate ONNX protobuf model bytes.
-        vec![]
+        // Build graph bytes
+        let mut graph = Vec::new();
+        // Nodes
+        for node in &nodes {
+            graph.extend_from_slice(&Proto::raw_bytes(1, node));
+        }
+        // Name
+        graph.extend_from_slice(&Proto::string(1, "isp_graph"));
+        // Inputs
+        for vi in &input_value_infos {
+            graph.extend_from_slice(&Proto::raw_bytes(11, vi));
+        }
+        // Outputs
+        for vi in &output_value_infos {
+            graph.extend_from_slice(&Proto::raw_bytes(11, vi));
+        }
+        // Initializers
+        for init in &initializers {
+            graph.extend_from_slice(&Proto::raw_bytes(5, init));
+        }
+
+        // Build opset
+        let opset = Proto::opset("", 13);
+
+        // Build model
+        Proto::model(8, &opset, "softisp", &graph)
     }
 }
 

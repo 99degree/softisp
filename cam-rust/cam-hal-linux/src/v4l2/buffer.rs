@@ -15,7 +15,25 @@ pub fn buffer_to_byte_frame(
         data: data.to_vec(),
         width,
         height,
-        format,
-        timestamp,
+        stride,
+        format: format.to_string(),
+        timestamp: buf.get_timestamp(),
+    }
+}
+
+#[cfg(not(feature = "v4l2"))]
+pub fn buffer_to_byte_frame(
+    _buf: &rscam::Buffer,
+    _width: u32,
+    _height: u32,
+    _format: FrameFormat,
+) -> ByteFrame {
+    ByteFrame {
+        data: Vec::new(),
+        width: 0,
+        height: 0,
+        stride: 0,
+        format: String::new(),
+        timestamp: 0,
     }
 }
