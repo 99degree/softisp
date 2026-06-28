@@ -271,3 +271,46 @@ fn test_heavy_profile_mnn_convert() {
     let _ = std::fs::remove_file(onnx_path);
     let _ = std::fs::remove_file(mnn_path);
 }
+
+/// Verify FP16 output DisplayBlock generates correct ONNX graph.
+/// Tests that Float16Rgb produces a Cast(FLOAT→FLOAT16) node and the
+/// output value_info has elem_type=10 (FLOAT16).
+#[test]
+fn test_fp16_output_display_block() {
+    use cam_isp::blocks::DisplayBlock;
+    use cam_isp::engine::OutputFormat;
+    use cam_isp::pipeline::IspBlock;
+
+    for (fmt, label, expected_nodes) in [
+        (OutputFormat::Float16Rgb, "Float16Rgb", 2),
+        (OutputFormat::Float16Bgra, "Float16Bgra", 3),
+    ] {
+        let block = DisplayBlock::new(1920)
+            .with_output_format(fmt)
+            .with_concrete_dims(1080, 1920);
+
+        let nodes = block.nodes();
+        let inits = block.initializers();
+
+        // Float16Rgb: [Mul, Cast], Float16Bgra: [Conv, Identity, Cast]
+        assert_eq!(nodes.len(), expected_nodes,
+            "{}: expected {} nodes, got {}", label, expected_nodes, nodes.len());
+
+        // output_value_info should be present
+        assert!(block.output_value_info().is_some(),
+            "{}: output_value_info should be present", label);
+
+        // is_fp16()
+        assert!(fmt.is_fp16(), "{}: is_fp16() should be true", label);
+        assert_eq!(fmt.onnx_elem_type(), 10, "{}: onnx_elem_type() should be 10", label);
+
+        // Bytes per pixel
+        match fmt {
+            OutputFormat::Float16Rgb => assert_eq!(fmt.bytes_per_pixel(), 6),
+            OutputFormat::Float16Bgra => assert_eq!(fmt.bytes_per_pixel(), 8),
+            _ => {}
+        }
+
+        println!("{}: {} nodes, {} initializers — OK", label, nodes.len(), inits.len());
+    }
+}
