@@ -42,7 +42,7 @@ use log::debug;
 use cam_types::FrameFormat;
 
 use crate::eis::{EisEngine, GyroSample};
-use crate::pipeline::IspFrame;
+use crate::pipeline::{IspFrame, IspAuxOutput};
 
 /// Configuration for the post-processing pipeline.
 #[derive(Debug, Clone)]
@@ -176,6 +176,50 @@ impl PostProcessPipeline {
     /// Takes the output of the default ISP pipeline and applies
     /// EIS → GDC → HDR → Temporal Denoise in sequence.
     pub fn process(&mut self, frame: &IspFrame) -> Result<IspFrame, String> {
+        self.process_inner(&frame.data, frame.width, frame.height, frame)
+    }
+
+    /// Process a float tensor [1,3,H,W] in [0,1] range.
+    ///
+    /// This is the preferred input for post-processing — avoids u8↔f32 conversion.
+    /// The float data is expected as RGB planar: [R0,R1,...,Rn, G0,G1,...,Gn, B0,B1,...,Bn].
+    pub fn process_float(
+        &mut self,
+        float_data: &[f32],
+        width: u32,
+        height: u32,
+        aux: Option<IspAuxOutput>,
+        timestamp_ns: u64,
+    ) -> Result<IspFrame, String> {
+        // Reinterpret float bytes as u8 slice for processing
+        let byte_data = unsafe {
+            std::slice::from_raw_parts(
+                float_data.as_ptr() as *const u8,
+                float_data.len() * 4,
+            )
+        };
+        let frame = IspFrame {
+            data: vec![],
+            width,
+            height,
+            format: FrameFormat::Rgba8888,
+            float_data: Some(float_data.to_vec()),
+            aux,
+            timestamp_ns,
+            prep_duration_ns: 0,
+            inference_duration_ns: 0,
+            total_duration_ns: 0,
+        };
+        self.process_inner(byte_data, width, height, &frame)
+    }
+
+    fn process_inner(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        frame: &IspFrame,
+    ) -> Result<IspFrame, String> {
         let t_start = std::time::Instant::now();
 
         if !self.config.eis_enabled
@@ -187,9 +231,9 @@ impl PostProcessPipeline {
             return Ok(frame.clone());
         }
 
-        let mut data = frame.data.clone();
-        let mut width = frame.width;
-        let mut height = frame.height;
+        let mut data = data.to_vec();
+        let mut width = width;
+        let mut height = height;
         let mut eis_compensation = None;
 
         // ── Stage 1: EIS Warp ──
