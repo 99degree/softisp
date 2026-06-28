@@ -156,12 +156,16 @@ tests/
 - **MNN Vulkan ISP pipeline** — 3-dispatch fused pipeline (HD 114 FPS, FHD 50 FPS, 4K 14 FPS)
 - **IspChainFusion converter pass** — ONNX→Extra op fusion with named params (blc/wb/ccm/fcs/ee/ldci/display)
 - **E2E test harness** — ONNX gen → MNN convert → Vulkan inference → verify
+- **FP16 output** — Float16Rgb/Float16Bgra (halves GPU→CPU bandwidth)
+- **Bayer pattern configurability** — RGGB/GRBG/GBRG/BGGR via --bayer-pattern
+- **8K support** — ONNX generation + MNN conversion verified at 7680×4320
+- **HDR merge block** — Multi-exposure fusion with luminance weight maps
+- **Vulkan→CPU auto-fallback** — Graceful backend degradation
 - Binder HAL — AIDL-style provider/device/session/callbacks
 - Malvar demosaic, DPC, LSC, histogram, zone stats — complete
 - 127+ tests, 0 warnings, 21 modules, 10 crates
 
 ### ❌ Not Yet Ported
-- HDR merge block (multi-exposure fusion)
 - ONNX Runtime inference (needs `libonnxruntime.so`)
 - Android Camera2 NDK full implementation
 
