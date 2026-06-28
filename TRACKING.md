@@ -24,7 +24,21 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 
 ### `softisp/` (root)
 - `vulkan_isp/` — GLSL compute shaders, Python ONNX generators, C++ test harnesses
-- `cam-rust/cam-isp/` — Rust FFI bindings, ONNX proto encoder, E2E tests
+- `cam-rust/` — Rust workspace with 10 crates
+
+### `cam-rust/` crates
+| Crate | Purpose |
+|-------|---------|
+| `cam-types` | Core types: Frame, FrameFormat, ToneParams, BlockDef |
+| `cam-isp` | ISP engine: CpuEngine, MnnEngine, OnnxEngine, blocks, ONNX proto, profiles, ML engines |
+| `cam-hal` | Hardware abstraction: ICameraAdapter trait, buffer management |
+| `cam-hal-linux` | V4L2 adapter via `rscam` |
+| `cam-hal-android` | Android Camera2 HAL3 implementation (camera3.h FFI) |
+| `cam-core` | PipelineManager, ApplicationHolder, HAL bridge |
+| `cam-onnx` | ONNX Runtime bindings (ort v2.0.0-rc.12) |
+| `cam-motion` | MotionCompensator (placeholder) |
+| `cam-binder` | Android AIDL-style binder HAL + ISP integration |
+| `cam-app` | Binary entry, ONNX model generator |
 
 ### `MNN/` (fork)
 - `tools/converter/source/optimizer/postconvert/IspChainFusion.cpp` — ISP fusion pass
@@ -61,43 +75,83 @@ GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
 | `test_e2e_isp_pipeline.rs` | E2E: ONNX→MNN→Vulkan→verify |
 
 ## Completed
-- [x] R12: FCS fused into unpack_demosaic (13→12 ops)
-- [x] Concurrent Vulkan sessions (mutex on vkQueueSubmit)
-- [x] HEAVY profile test (ONNX generation + conversion)
-- [x] Named ISP params (blc/wb/ccm/fcs/ee/ldci/display)
-- [x] VulkanFuse autoTuning bugfix
-- [x] Compiler warnings cleanup
-- [x] README.md updated
-- [x] R11 fused_6in1 removed (2-4× slower than 3-dispatch)
-- [x] Rust pipeline ONNX pattern support (isUnpackConv expanded for k=1×2, R1b added)
-- [x] Rust pipeline ONNX → IspChainFusion alignment
-- [x] Display gamma LUT — attempted, 2× slower
-- [x] FP16 output support — Float16Rgb/Float16Bgra
+
+### Core ISP Pipeline
+- [x] CpuEngine — 11-stage software ISP (RawInput→Normalize→DPC→Gaussian→AWB→BLC→LSC→Demosaic→CCM→AE→Tone→Display)
+- [x] MnnEngine — Vulkan GPU acceleration (3-dispatch fused pipeline)
+- [x] OnnxEngine — ONNX Runtime inference (ort v2.0.0-rc.12)
+- [x] Scene-adaptive ISP — Dark/Indoor/Sunset/Outdoor/Bright auto-classification
+- [x] IspController — AWB/AE/CCM/Tone/Zone stats feedback
+
+### GPU Acceleration
+- [x] Vulkan ISP pipeline — HD 114 FPS, FHD 50 FPS, 4K 14 FPS
+- [x] IspChainFusion converter pass — 12 fusion rules (R1-R12)
+- [x] Concurrent Vulkan sessions — mutex on vkQueueSubmit
+- [x] Named ISP params — blc/wb/ccm/fcs/ee/ldci/display attributes
+- [x] FP16 output — Float16Rgb/Float16Bgra (halves GPU→CPU bandwidth)
 - [x] Bayer pattern configurability — RGGB/GRBG/GBRG/BGGR
 - [x] 8K support — ONNX generation + MNN conversion at 7680×4320
 - [x] HDR merge block — Multi-exposure fusion with luminance weight maps
-- [x] Vulkan→CPU auto-fallback
+- [x] Vulkan→CPU auto-fallback — Graceful backend degradation
+
+### SIMD Optimization
+- [x] AVX2 backend — 8-wide f32 operations (normalize, CCM, AE gain, display)
+- [x] SSE2 backend — 4-wide f32 operations
+- [x] NEON/NEON-FP16/NEON-DOTPROD — ARM64 backends
+- [x] Runtime detection — automatic best backend selection
+
+### Camera HAL
+- [x] V4L2 adapter — Linux capture via rscam
+- [x] Android Camera2 HAL3 — camera3.h FFI, AHardwareBuffer
 - [x] Binder HAL — AIDL-style provider/device/session/callbacks
-- [x] AVX2/SSE2 SIMD backends — 8-wide/4-wide f32 ops
-- [x] Timestamp passthrough — ProcessParams.timestamp_ns → IspFrame
-- [x] Binder ISP integration — IspCameraSession bridges camera → ISP
+- [x] ISP integration — IspCameraSession bridges camera → ISP pipeline
+- [x] Android NDK ABI support — build.rs with NDK detection
+- [x] Camera detection — V4L2 device enumeration
+- [x] Platform-aware registration — Android/local mode
+
+### ONNX & Model
+- [x] ONNX model generator — Pure Rust proto encoder
 - [x] ONNX Runtime wrapper — cam-onnx with ort v2.0.0-rc.12
-- [x] Streaming examples — camera_isp.rs, stream_isp.rs
-- [x] Android camera detection — V4L2 device enumeration
-- [x] Camera metadata — V4L2 capability query
-- [x] Binder registration — platform-aware service registration
+- [x] E2E test harness — ONNX→MNN→Vulkan→verify
+- [x] Pipeline profiles — LITE/MED/HEAVY/PRO presets
+
+### ML & Control
+- [x] GeneticOptimizer — GA for ISP parameter calibration
+- [x] FastPredictor — Per-CCT-bin averaging
+- [x] RegressionModel — 4-feature OLS regression
+- [x] LearnerStore — Ring buffer + disk persistence
+- [x] EIS — Gyro stabilization with warp grid
+- [x] AF — Autofocus state machine
+- [x] CCM Engine — Quadratic CCT interpolation
+
+### Timestamp & Latency
+- [x] Timestamp passthrough — ProcessParams.timestamp_ns → IspFrame
+- [x] Latency tracking — prep/inference/total durations
+
+### Examples
+- [x] camera_isp.rs — Single-shot V4L2/test pattern → ISP
+- [x] stream_isp.rs — Continuous streaming with FPS stats
 
 ## Remaining Work
 - (none — all TODO items resolved)
 
 ## Testing
 ```bash
+# Run all tests (224)
+cargo test --lib
+
 # E2E (serial, requires Vulkan)
 cargo test --test test_e2e_isp_pipeline --features mnn -- --ignored --test-threads=1
 
 # Profiles
 cargo test --test test_profile_onnx --features mnn
 
-# Concurrent sessions
-./test_concurrent_vk model.mnn 4
+# Binder tests
+cargo test -p cam-binder
+
+# Camera ISP example
+cargo run --example camera_isp --features mnn -p cam-isp -- --width 640 --height 480
+
+# Streaming example
+cargo run --example stream_isp --features mnn -p cam-isp -- --width 640 --height 480 --fps 30
 ```
