@@ -28,7 +28,7 @@ except ImportError:
     raise
 
 # ── build_graph ──────────────────────────────────────────────────
-def build_graph(BW, BH, no_unpack=False):
+def build_graph(BW, BH, no_unpack=False, bayer_pattern='RGGB'):
     """Build ISP pipeline using ONLY standard ONNX ops. Returns ModelProto."""
     FW, FH = BW // 2, BH // 2
 
@@ -67,11 +67,19 @@ def build_graph(BW, BH, no_unpack=False):
         add_node('Cast', 'bayer_f32', [prev], to=TensorProto.FLOAT)
 
         # Conv(2×2, stride=2, 4ch) — extracts Bayer quadrants
+        # Bayer pattern determines which spatial position maps to R/Gr/Gb/B
+        pattern_map = {
+            'RGGB': [(0,0,'R'), (0,1,'Gr'), (1,0,'Gb'), (1,1,'B')],
+            'GRBG': [(0,1,'R'), (0,0,'Gr'), (1,1,'Gb'), (1,0,'B')],
+            'GBRG': [(1,0,'R'), (0,0,'Gr'), (1,1,'Gb'), (0,1,'B')],
+            'BGGR': [(1,1,'R'), (0,1,'Gr'), (1,0,'Gb'), (0,0,'B')],
+        }
+        if bayer_pattern not in pattern_map:
+            raise ValueError(f"Unknown Bayer pattern: {bayer_pattern}. Use RGGB, GRBG, GBRG, or BGGR.")
+
         W_UNPACK = np.zeros((4, 1, 2, 2), dtype=np.float32)
-        W_UNPACK[0, 0, 0, 0] = 1.0  # R
-        W_UNPACK[1, 0, 0, 1] = 1.0  # Gr
-        W_UNPACK[2, 0, 1, 0] = 1.0  # Gb
-        W_UNPACK[3, 0, 1, 1] = 1.0  # B
+        for ch, (r, c, _name) in enumerate(pattern_map[bayer_pattern]):
+            W_UNPACK[ch, 0, r, c] = 1.0
         B_UNPACK = np.zeros(4, dtype=np.float32)
 
         init_tensor('unpack_w', W_UNPACK)
@@ -177,11 +185,14 @@ def main():
     p.add_argument('--no-unpack', action='store_true')
     p.add_argument('--bayer-width',  type=int, default=8)
     p.add_argument('--bayer-height', type=int, default=8)
+    p.add_argument('--bayer-pattern', type=str, default='RGGB',
+                    choices=['RGGB', 'GRBG', 'GBRG', 'BGGR'],
+                    help='Bayer CFA pattern (default: RGGB)')
     p.add_argument('-o', '--output', default='isp_pipeline_standard.onnx')
     args = p.parse_args()
 
     BW, BH = args.bayer_width, args.bayer_height
-    model = build_graph(BW, BH, no_unpack=args.no_unpack)
+    model = build_graph(BW, BH, no_unpack=args.no_unpack, bayer_pattern=args.bayer_pattern)
     onnx.save(model, args.output)
     print(f"Saved: {args.output}")
 
