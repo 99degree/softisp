@@ -91,14 +91,17 @@ Our current implementation uses **pixel binning**, not interpolation.
 - Interpolation requires per-pixel neighbor access (3×3 or 5×5 kernel)
   that spans across Bayer blocks — cannot be done with stride=2 Conv
 - **TODO**: Add interpolation demosaic path for non-binned sensors
-  - Option A: Large Conv kernel (e.g., 4×4 stride=1) that reads 2×2 blocks
-    and interpolates — approximates bilinear but limited quality
-  - Option B: Custom SPIR-V shader (Extra op) that reads neighboring
-    Bayer samples and interpolates — full bilinear/Malvar quality
-  - Option C: Let ONNX Resize handle upscaling after binning demosaic
-    — but Resize is unsupported on Vulkan
-- **Current workaround**: use stride_w=1 for non-binned sensors (height
-  binning only), accepting width downscale as trade-off
+  - Shader: `shader_demosaic_interp.comp` (compiled, 11860 bytes SPIR-V)
+  - GLSL: bilinear interpolation, RGGB, 16×16 workgroup
+  - Input: INT16/INT32 [1,1,H,W] → Output: F32 [1,3,H,W]
+  - **To implement:**
+    1. Embed SPIR-V in `isp_spirv_embedded.h` (from `demosaic_interp_spv.inc`)
+    2. Add fusion rule in `IspChainFusion.cpp`:
+       `Conv(4×4,stride=1,1ch→3ch) → isp.demosaic_interp`
+    3. Add Rust block: `DemosaicInterpBlock` that generates the Conv pattern
+    4. Rebuild MNN converter
+  - **Current workaround**: use stride_w=1 for non-binned sensors (height
+    binning only), accepting width downscale as trade-off
 
 ## Repo Layout
 
