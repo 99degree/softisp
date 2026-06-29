@@ -1,0 +1,107 @@
+#version 450
+// Bilinear Demosaic — Full Resolution Interpolation
+// Input:  INT16/INT32[1, 1, H, W] Bayer raw
+// Output: F32[1, 3, H, W] RGB at full resolution
+// Dispatch: ceil(W/16) × ceil(H/16) × 1
+//
+// For each output pixel, determines its Bayer color and interpolates
+// the two missing colors from the nearest neighbors of that color.
+// This preserves full input resolution (no downscale).
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer Uniforms {
+    float input_width;
+    float input_height;
+    float sensor_max;
+    float pad0;
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBuf { int in_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+// Read Bayer sample at (x,y) with clamped border
+int readBayer(int x, int y) {
+    int w = int(uniforms.input_width);
+    int h = int(uniforms.input_height);
+    x = clamp(x, 0, w - 1);
+    y = clamp(y, 0, h - 1);
+    return in_data[y * w + x];
+}
+
+void main() {
+    uint px = gl_GlobalInvocationID.x;
+    uint py = gl_GlobalInvocationID.y;
+    uint w = uint(uniforms.input_width);
+    uint h = uint(uniforms.input_height);
+    if (px >= w || py >= h) return;
+
+    float div = uniforms.sensor_max;
+
+    // Bayer position in 2×2 grid (RGGB assumed)
+    int bx = int(px & 1u);
+    int by = int(py & 1u);
+
+    float r, g, b;
+
+    if (bx == 0 && by == 0) {
+        // ── Red pixel ──
+        float rv = float(readBayer(int(px), int(py))) / div;
+        // Green: average horizontal Gr neighbors
+        float gl = float(readBayer(int(px) - 1, int(py))) / div;
+        float gr = float(readBayer(int(px) + 1, int(py))) / div;
+        // Blue: average 4 diagonal B neighbors
+        float btl = float(readBayer(int(px) - 1, int(py) - 1)) / div;
+        float btr = float(readBayer(int(px) + 1, int(py) - 1)) / div;
+        float bbl = float(readBayer(int(px) - 1, int(py) + 1)) / div;
+        float bbr = float(readBayer(int(px) + 1, int(py) + 1)) / div;
+        r = rv;
+        g = (gl + gr) * 0.5;
+        b = (btl + btr + bbl + bbr) * 0.25;
+    } else if (bx == 1 && by == 0) {
+        // ── Gr pixel (green on red row) ──
+        float gv = float(readBayer(int(px), int(py))) / div;
+        // Red: average horizontal R neighbors
+        float rl = float(readBayer(int(px) - 1, int(py))) / div;
+        float rr = float(readBayer(int(px) + 1, int(py))) / div;
+        // Blue: average vertical B neighbors
+        float bt = float(readBayer(int(px), int(py) - 1)) / div;
+        float bb = float(readBayer(int(px), int(py) + 1)) / div;
+        r = (rl + rr) * 0.5;
+        g = gv;
+        b = (bt + bb) * 0.5;
+    } else if (bx == 0 && by == 1) {
+        // ── Gb pixel (green on blue row) ──
+        float gv = float(readBayer(int(px), int(py))) / div;
+        // Red: average vertical R neighbors
+        float rt = float(readBayer(int(px), int(py) - 1)) / div;
+        float rb = float(readBayer(int(px), int(py) + 1)) / div;
+        // Blue: average horizontal B neighbors
+        float bl = float(readBayer(int(px) - 1, int(py))) / div;
+        float br = float(readBayer(int(px) + 1, int(py))) / div;
+        r = (rt + rb) * 0.5;
+        g = gv;
+        b = (bl + br) * 0.5;
+    } else {
+        // ── Blue pixel ──
+        float bv = float(readBayer(int(px), int(py))) / div;
+        // Green: average horizontal Gb neighbors
+        float gl = float(readBayer(int(px) - 1, int(py))) / div;
+        float gr = float(readBayer(int(px) + 1, int(py))) / div;
+        // Red: average 4 diagonal R neighbors
+        float rtl = float(readBayer(int(px) - 1, int(py) - 1)) / div;
+        float rtr = float(readBayer(int(px) + 1, int(py) - 1)) / div;
+        float rbl = float(readBayer(int(px) - 1, int(py) + 1)) / div;
+        float rbr = float(readBayer(int(px) + 1, int(py) + 1)) / div;
+        r = (rtl + rtr + rbl + rbr) * 0.25;
+        g = (gl + gr) * 0.5;
+        b = bv;
+    }
+
+    // Write CHW flat: [3, H, W]
+    uint plane = h * w;
+    uint oidx = py * w + px;
+    out_data[0u * plane + oidx] = r;
+    out_data[1u * plane + oidx] = g;
+    out_data[2u * plane + oidx] = b;
+}
