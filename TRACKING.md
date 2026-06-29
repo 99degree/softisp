@@ -76,13 +76,29 @@ Our current implementation uses **pixel binning**, not interpolation.
 - **Not our target**: requires Resize(H×2, W×2) after demosaic, which
   Vulkan doesn't support (ONNX Resize op_type=74)
 
-**Why binning is correct for this pipeline**:
+**Why binning is correct for high-res sensors**:
 1. High-res sensors (4K/8K) use binning to reduce data rate
 2. The ISP pipeline target is display output (FHD/4K), not raw reconstruction
 3. Binning naturally halves resolution, matching the 4K→FHD pipeline goal
 4. Simpler shader = faster GPU execution (1 dispatch vs multi-pass interpolation)
 5. The DemosaicCcmBlock's Conv 3×4→3ch handles the G1/G2 averaging + CCM
    in a single fused operation
+
+**Limitation: normal-res sensors lose resolution**:
+- FHD Bayer (1920×1080) with binning → 960×540 output — too small
+- For normal-res sensors, interpolation demosaic preserves H×W output
+- Current Conv-based CFA extraction only supports binning (stride=2)
+- Interpolation requires per-pixel neighbor access (3×3 or 5×5 kernel)
+  that spans across Bayer blocks — cannot be done with stride=2 Conv
+- **TODO**: Add interpolation demosaic path for non-binned sensors
+  - Option A: Large Conv kernel (e.g., 4×4 stride=1) that reads 2×2 blocks
+    and interpolates — approximates bilinear but limited quality
+  - Option B: Custom SPIR-V shader (Extra op) that reads neighboring
+    Bayer samples and interpolates — full bilinear/Malvar quality
+  - Option C: Let ONNX Resize handle upscaling after binning demosaic
+    — but Resize is unsupported on Vulkan
+- **Current workaround**: use stride_w=1 for non-binned sensors (height
+  binning only), accepting width downscale as trade-off
 
 ## Repo Layout
 
@@ -273,12 +289,10 @@ Interpolation demosaic (bilinear, Malvar, etc.) would reconstruct full
 resolution H×W by interpolating between Bayer samples. This requires a
 Resize(H×2, W×2) after demosaic, which Vulkan doesn't support.
 
-Binning is correct for this pipeline because:
-1. High-res sensors (4K/8K) use binning to reduce data rate
-2. The target is display output (FHD/4K), not raw reconstruction
-3. Binning halves resolution, matching 4K→FHD pipeline goal
-4. Single dispatch shader is faster than multi-pass interpolation
-5. DemosaicCcmBlock fuses G1/G2 averaging + CCM in one Conv
+Binning is correct for high-res sensors (4K/8K) where the target is FHD
+output — the resolution reduction is intentional. For normal-res sensors
+(FHD Bayer), binning would reduce to 960×540 which is too small. The
+pipeline needs an interpolation path for non-binned sensors.
 - PackedInt32: input width = W/2, output = H/2 × W/2/sw
 - NativeInt16: input width = W, output = H/2 × W/sw
 The formula must account for the packed width halving.
