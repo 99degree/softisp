@@ -157,13 +157,11 @@ impl IspBlock for UnpackCfaBlock {
     fn input_elem_type(&self) -> i32 {
         match self.mode {
             UnpackMode::PackedInt32 => 6, // INT32
-            UnpackMode::NativeInt16 => 1, // FLOAT32 (INT16→float conversion done in Rust)
+            UnpackMode::NativeInt16 => 5, // INT16 — Cast to F32 fused by IspChainFusion
         }
     }
     fn output_elem_type(&self) -> i32 {
-        // NativeInt16 mode: input is float32 (INT16→float done in Rust), Conv outputs float32
-        // PackedInt32 mode: Cast removed, output float32 for Vulkan compatibility
-        1 // FLOAT32 — all modes output float
+        1 // FLOAT32 — Conv output is always float
     }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
@@ -499,13 +497,13 @@ impl UnpackCfaBlock {
         let has_process = self.use_blc || self.use_wb;
         let sw = self.stride_w;
 
-        // For Vulkan compatibility: no Cast nodes (Vulkan doesn't support Cast).
-        // The Rust caller must convert INT16→float before feeding to MNN.
-        // The ONNX graph always expects float32 input for NativeInt16 mode.
+        // Cast(INT16→F32) + Conv — IspChainFusion fuses into single GPU shader
         let nodes = if has_process {
             vec![
+                Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
+                    &[Proto::attribute_int("to", 1)]),
                 Proto::node("Conv",
-                    &[&self.input_source, &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
+                    &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
                     &[&self.frame_tensor],
                     &[
                         Proto::attribute_ints("kernel_shape", &[2, sw]),
@@ -516,8 +514,10 @@ impl UnpackCfaBlock {
             ]
         } else {
             vec![
+                Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
+                    &[Proto::attribute_int("to", 1)]),
                 Proto::node("Conv",
-                    &[&self.input_source, &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
+                    &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
                     &[&self.frame_tensor],
                     &[
                         Proto::attribute_ints("kernel_shape", &[2, sw]),
@@ -558,10 +558,10 @@ mod tests {
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 1, "Native no-BLC/WB: Conv only = 1 node");
+        assert_eq!(nodes.len(), 2, "Native no-BLC/WB: Cast+Conv = 2 nodes");
         let inits = block.initializers();
         assert_eq!(inits.len(), 1, "Native no-BLC/WB: just max_val = 1 initializer");
-        assert_eq!(block.input_elem_type(), 1, "Native input should be FLOAT32 (INT16→float in Rust)");
+        assert_eq!(block.input_elem_type(), 5, "Native input should be INT16");
         assert_eq!(block.output_elem_type(), 1, "Native no-BLC/WB: output F32");
         assert_eq!(block.extra_inputs().len(), 1);
 
@@ -570,7 +570,7 @@ mod tests {
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64)
             .with_blc(true);
-        assert_eq!(block2.nodes().len(), 1, "Native + BLC: Conv = 1 node");
+        assert_eq!(block2.nodes().len(), 2, "Native + BLC: Cast+Conv = 2 nodes");
         assert_eq!(block2.output_elem_type(), 1, "Native + BLC: output F32");
         // max_val + blc_vals = 2 (no zero/one for NativeInt16 PackedInt32 mode)
         assert_eq!(block2.initializers().len(), 2, "Native + BLC: max_val+blc_vals = 2");
@@ -582,7 +582,7 @@ mod tests {
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64)
             .with_wb(true);
-        assert_eq!(block3.nodes().len(), 1, "Native + WB: Conv = 1 node");
+        assert_eq!(block3.nodes().len(), 2, "Native + WB: Cast+Conv = 2 nodes");
         assert_eq!(block3.output_elem_type(), 1, "Native + WB: output F32");
         // max_val + wb_gains = 2
         assert_eq!(block3.initializers().len(), 2, "Native + WB: max_val+wb_gains = 2");
@@ -595,7 +595,7 @@ mod tests {
             .with_concrete_dims(48, 64)
             .with_blc(true)
             .with_wb(true);
-        assert_eq!(block4.nodes().len(), 1, "Native + BLC+WB: Conv = 1 node");
+        assert_eq!(block4.nodes().len(), 2, "Native + BLC+WB: Cast+Conv = 2 nodes");
         assert_eq!(block4.output_elem_type(), 1, "Native + BLC+WB: output F32");
         // max_val + blc_vals + wb_gains = 3
         assert_eq!(block4.initializers().len(), 3, "Native + BLC+WB: max_val+blc_vals+wb_gains = 3");
@@ -660,9 +660,9 @@ mod tests {
             .with_concrete_dims(48, 64)
             .with_fast_unpack(true);
         
-        // Fast path: Conv(4ch,2×sw,stride=2×sw) = 1 node (no Cast)
+        // Fast path: Cast(INT16→F32) + Conv(4ch,2×sw,stride=2×sw) = 2 nodes
         let nodes = fast.nodes();
-        assert_eq!(nodes.len(), 1, "Fast unpack: Conv = 1 node");
+        assert_eq!(nodes.len(), 2, "Fast unpack: Cast+Conv = 2 nodes");
         assert_eq!(fast.output_elem_type(), 1, "Fast unpack: FLOAT output");
         
         // Check Conv weights exist
