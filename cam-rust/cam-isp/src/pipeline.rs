@@ -133,7 +133,7 @@ pub trait IspBlock: Send {
     /// If non-None, this block produces the pipeline output.
     /// Default: tail only. Override in specific blocks (stats, aux hooks) to always output.
     fn graph_output_name(&self) -> Option<&str> {
-        None
+        if self.is_tail() { self.frame_tensor() } else { None }
     }
 
     fn input_elem_type(&self) -> i32 {

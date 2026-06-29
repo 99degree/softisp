@@ -861,10 +861,12 @@ impl IspEngine for MnnEngine {
                 )
             } else {
                 let raw_shape = [1, 1, h as i32, w as i32];
+                // Use model's input type code/bits (float32=code1/bits32, int16=code0/bits16)
+                let (code, bits) = self.model_input_type.unwrap_or((0, 16));
                 (
                     buf.as_ptr() as *const c_void,
-                    0,   // signed INT16 (Halide signed integer code)
-                    16,
+                    code,   // matches model input type
+                    bits,
                     raw_shape.to_vec(),
                     "raw_zero_copy"
                 )
