@@ -22,6 +22,7 @@ mod resize;
 mod adaptive_downscale;
 mod stats;
 mod hdr_merge;
+mod demosaic_interp;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -46,6 +47,7 @@ pub use resize::ResizeBlock;
 pub use adaptive_downscale::AdaptiveDownscaleBlock;
 pub use stats::{ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock, CalibrationBlock};
 pub use hdr_merge::HdrMergeBlock;
+pub use demosaic_interp::DemosaicInterpBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
