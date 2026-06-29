@@ -33,13 +33,13 @@ fn main() {
     let post_h   = 540u32;   // post-downscale height
     let n_frames = 20;
 
-    // Generate 4K Bayer test data inline as float32 (INT16→float conversion in Rust)
-    let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 4) as usize);
+    // Generate 4K Bayer test data as INT16 (real sensor format)
+    let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 2) as usize);
     let mut rng_state = 42u64;
     for _ in 0..sensor_w * sensor_h {
         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        let val = (rng_state >> 22) as u16 & 0x3FF;
-        raw_buf.extend_from_slice(&(val as f32).to_le_bytes());
+        let val = (rng_state >> 22) as u16 & 0x3FF;  // 10-bit
+        raw_buf.extend_from_slice(&val.to_le_bytes());
     }
     let raw = raw_buf;
 
@@ -52,9 +52,9 @@ fn main() {
     let post_h_i = post_h as i64;
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-        // 1. Float32 input: [1,1,2160,3840] — INT16→float conversion done in Rust
+        // 1. INT16 input: [1,1,2160,3840] — sensor native format
         Box::new(RawInputBlock::new()
-            .with_elem_type(1)   // FLOAT32
+            .with_elem_type(5)   // INT16
             .with_concrete_dims(full_h, full_w)),
 
         // 2. Unpack CFA via Conv: NativeInt16 + fast_unpack
