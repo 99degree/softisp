@@ -49,59 +49,109 @@ RawInput(INT16 [1,1,2160,3840])
 - **No Resize ops** — Vulkan doesn't support ONNX Resize (op_type=74)
 - **No Cast as standalone op** — fused into Conv by IspChainFusion
 
-### CFA Demosaicing: Binning vs Interpolation
+### CFA Demosaicing: Algorithm Selection Guide
 
 After the CFA (Color Filter Array) extracts raw Bayer data, the demosaicing
 algorithm converts the single-channel Bayer pattern into multi-channel RGB.
-Our current implementation uses **pixel binning**, not interpolation.
+The choice of algorithm depends on:
+1. Input resolution (sensor native)
+2. Output resolution (display/processing target)
+3. Speed budget (real-time vs offline)
+4. Quality requirement (preview vs final output)
 
-**Binning (current)**:
-- Input: INT16 `[1,1,H,W]` — raw Bayer samples
-- CFA Conv (stride=2): extracts TL/TR/BL/BR from each 2×2 block → `[1,4,H/2,W/2]`
-- Each 2×2 block = 1 pixel with 4 color channels (R, Gr, Gb, B)
-- G1/G2 averaging: `(Gr + Gb) / 2` → single Green channel
-- Output: `[1,3,H/2,W]` — **half resolution**, no pixel replication
-- **Assumption**: TL/TR/BL/BR are the same physical pixel (sensor binning mode)
-- **Correct for**: high-res sensors in binning mode, where 2×2 pixels are
-  hardware-averaged into one. The Conv extracts the 4 Bayer positions and
-  the DemosaicCcmBlock averages G1/G2 → simple RGGB→RGB conversion.
+#### Resolution Cases
 
-**Interpolation (not implemented)**:
-- Input: `[1,1,H,W]` — raw Bayer samples
-- Bilinear/Malvar/etc: reconstruct full-resolution RGB by interpolating
-  between neighboring Bayer samples
-- Output: `[1,3,H,W]` — **full resolution**, 4× more pixels than binning
-- **Assumption**: each Bayer sample is a unique spatial sample
-- **Correct for**: non-binned sensors, or when full resolution is needed
-- **Not our target**: requires Resize(H×2, W×2) after demosaic, which
-  Vulkan doesn't support (ONNX Resize op_type=74)
+| Case | Input | Output | Strategy | Notes |
+|------|-------|--------|----------|-------|
+| A | 8K (7680×4320) | 4K (3840×2160) | Binning 4×4 | 4× downscale |
+| B | 8K (7680×4320) | FHD (1920×1080) | Binning 4×4 + resize | |
+| C | 4K (3840×2160) | FHD (1920×1080) | Binning 2×2 | **Current path** |
+| D | 4K (3840×2160) | 4K (3840×2160) | Interpolation | Full-res, expensive |
+| E | FHD (1920×1080) | FHD (1920×1080) | Interpolation | **Needs new path** |
+| F | FHD (1920×1080) | HD (1280×720) | Binning + resize | |
+| G | HD (1280×720) | HD (1280×720) | Interpolation | Fast, low-res |
 
-**Why binning is correct for high-res sensors**:
-1. High-res sensors (4K/8K) use binning to reduce data rate
-2. The ISP pipeline target is display output (FHD/4K), not raw reconstruction
-3. Binning naturally halves resolution, matching the 4K→FHD pipeline goal
-4. Simpler shader = faster GPU execution (1 dispatch vs multi-pass interpolation)
-5. The DemosaicCcmBlock's Conv 3×4→3ch handles the G1/G2 averaging + CCM
-   in a single fused operation
+#### Algorithm Comparison
 
-**Limitation: normal-res sensors lose resolution**:
-- FHD Bayer (1920×1080) with binning → 960×540 output — too small
-- For normal-res sensors, interpolation demosaic preserves H×W output
-- Current Conv-based CFA extraction only supports binning (stride=2)
-- Interpolation requires per-pixel neighbor access (3×3 or 5×5 kernel)
-  that spans across Bayer blocks — cannot be done with stride=2 Conv
-- **TODO**: Add interpolation demosaic path for non-binned sensors
-  - Shader: `shader_demosaic_interp.comp` (compiled, 11860 bytes SPIR-V)
-  - GLSL: bilinear interpolation, RGGB, 16×16 workgroup
-  - Input: INT16/INT32 [1,1,H,W] → Output: F32 [1,3,H,W]
-  - **To implement:**
-    1. Embed SPIR-V in `isp_spirv_embedded.h` (from `demosaic_interp_spv.inc`)
-    2. Add fusion rule in `IspChainFusion.cpp`:
-       `Conv(4×4,stride=1,1ch→3ch) → isp.demosaic_interp`
-    3. Add Rust block: `DemosaicInterpBlock` that generates the Conv pattern
-    4. Rebuild MNN converter
-  - **Current workaround**: use stride_w=1 for non-binned sensors (height
-    binning only), accepting width downscale as trade-off
+| Algorithm | Kernel | Speed | Quality | Output | GPU Implementation |
+|-----------|--------|-------|---------|--------|--------------------|
+| **Binning** | 2×2 stride=2 | ★★★★★ | ★★ | H/2×W/2 | Conv stride=2 (1 dispatch) |
+| **Nearest** | 1×1 | ★★★★★ | ★ | H×W | Copy + channel assign |
+| **Bilinear** | 3×3 stride=1 | ★★★★ | ★★★ | H×W | SPIR-V shader (1 dispatch) |
+| **MHC** | 5×5 stride=1 | ★★★ | ★★★★ | H×W | SPIR-V shader (1 dispatch) |
+| **Malvar** | 5×5 stride=1 | ★★★ | ★★★★ | H×W | SPIR-V shader (1 dispatch) |
+| **AHD** | 7×7 adaptive | ★★ | ★★★★★ | H×W | Multi-pass, too slow for GPU |
+| **DCB** | iterative | ★ | ★★★★★ | H×W | Not suitable for real-time |
+
+#### Speed vs Quality on GPU (estimated)
+
+| Algorithm | 4K→FHD | FHD→FHD | HD→HD | Quality |
+|-----------|--------|---------|-------|---------|
+| Binning | 2ms | N/A | N/A | Low — loss of detail |
+| Bilinear | N/A | 4ms | 2ms | Medium — some color fringing |
+| MHC | N/A | 8ms | 4ms | High — edge-aware, minimal artifacts |
+| AHD | N/A | 20ms+ | 10ms+ | Excellent — but too slow for real-time |
+
+#### Algorithm Details
+
+**Binning (current implementation)**:
+- Input: `[1,1,H,W]` → Output: `[1,3,H/2,W/2]`
+- CFA Conv stride=2 extracts 4 Bayer positions per 2×2 block
+- DemosaicCcmBlock averages G1/G2, applies CCM
+- **Correct for**: sensors in binning mode (4K/8K → FHD)
+- **Limitation**: loses half resolution in each dimension
+
+**Bilinear Interpolation**:
+- Input: `[1,1,H,W]` → Output: `[1,3,H,W]`
+- For each pixel, interpolate missing colors from 2 nearest neighbors
+- Red pixel: G from horizontal Gr neighbors, B from 4 diagonal B neighbors
+- Green pixel: R from horizontal R neighbors, B from vertical B neighbors
+- **Quality**: Some color fringing at edges, acceptable for video
+- **GPU**: Single dispatch, 16×16 workgroup, ~4ms for FHD
+
+**MHC (Malvar-He-Cutler)**:
+- Input: `[1,1,H,W]` → Output: `[1,3,H,W]`
+- 5×5 kernel with adaptive weights based on edge direction
+- Computes Laplacian to detect edges, adjusts interpolation direction
+- **Quality**: Significantly better than bilinear at edges
+- **GPU**: Single dispatch, more ALU than bilinear, ~8ms for FHD
+- **Recommended**: Best speed/quality trade-off for real-time ISP
+
+**Adaptive Homogeneity-Directed (AHD)**:
+- Input: `[1,1,H,W]` → Output: `[1,3,H,W]`
+- Interpolates in both horizontal and vertical directions
+- Selects direction with higher homogeneity (less edge artifacts)
+- **Quality**: Excellent, industry standard for still photography
+- **GPU**: Too slow for real-time, requires multiple passes
+- **Use case**: Offline processing, high-quality still capture
+
+#### Recommended Implementation Order
+
+1. **Bilinear** — Quick win, covers FHD→FHD case, simple shader
+2. **MHC** — Best speed/quality for real-time, covers all cases
+3. **AHD** — Optional, for offline/high-quality mode
+
+#### Current Implementation Status
+
+| Algorithm | Status | Shader | Fusion Rule |
+|-----------|--------|--------|-------------|
+| Binning | ✅ Working | `shader_unpack_blc.comp` | R1, R10, R12 |
+| Bilinear | ✅ Shader ready | `shader_demosaic_interp.comp` | TBD |
+| MHC | 🔲 Not started | TBD | TBD |
+| AHD | 🔲 Not started | N/A (too slow for GPU) | N/A |
+
+#### TODO: Add interpolation demosaic path
+- Shader: `shader_demosaic_interp.comp` (compiled, 11860 bytes SPIR-V)
+- GLSL: bilinear interpolation, RGGB, 16×16 workgroup
+- Input: INT16/INT32 [1,1,H,W] → Output: F32 [1,3,H,W]
+- **To implement:**
+  1. Embed SPIR-V in `isp_spirv_embedded.h` (from `demosaic_interp_spv.inc`)
+  2. Add fusion rule in `IspChainFusion.cpp`:
+     `Conv(4×4,stride=1,1ch→3ch) → isp.demosaic_interp`
+  3. Add Rust block: `DemosaicInterpBlock` that generates the Conv pattern
+  4. Rebuild MNN converter
+- **Current workaround**: use stride_w=1 for non-binned sensors (height
+  binning only), accepting width downscale as trade-off
 
 ## Repo Layout
 
@@ -288,17 +338,19 @@ The CFA Conv with stride=2 treats each 2×2 Bayer block as one pixel with
 sensor data where TL/TR/BL/BR are the same physical pixel. The output is
 H/2×W/2 — half resolution, no pixel replication.
 
-Interpolation demosaic (bilinear, Malvar, etc.) would reconstruct full
+Interpolation demosaic (bilinear, MHC, Malvar, etc.) reconstructs full
 resolution H×W by interpolating between Bayer samples. This requires a
-Resize(H×2, W×2) after demosaic, which Vulkan doesn't support.
+stride=1 shader that reads overlapping neighborhoods.
 
 Binning is correct for high-res sensors (4K/8K) where the target is FHD
 output — the resolution reduction is intentional. For normal-res sensors
 (FHD Bayer), binning would reduce to 960×540 which is too small. The
-pipeline needs an interpolation path for non-binned sensors.
-- PackedInt32: input width = W/2, output = H/2 × W/2/sw
-- NativeInt16: input width = W, output = H/2 × W/sw
-The formula must account for the packed width halving.
+pipeline needs interpolation for non-binned sensors.
+
+Recommended algorithm progression:
+1. Bilinear: simple, fast (~4ms FHD), acceptable quality
+2. MHC: edge-aware (~8ms FHD), best speed/quality for real-time
+3. AHD: excellent quality but too slow for real-time GPU
 
 ### Why graph_output_name() default is is_tail()
 wire_blocks() doesn't set prev/next pointers (set_prev/set_next consume
