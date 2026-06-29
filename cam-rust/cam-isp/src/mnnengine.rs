@@ -861,15 +861,24 @@ impl IspEngine for MnnEngine {
                 )
             } else {
                 let raw_shape = [1, 1, h as i32, w as i32];
-                // Use model's input type code/bits (float32=code1/bits32, int16=code0/bits16)
                 let (code, bits) = self.model_input_type.unwrap_or((0, 16));
-                (
-                    buf.as_ptr() as *const c_void,
-                    code,   // matches model input type
-                    bits,
-                    raw_shape.to_vec(),
-                    "raw_zero_copy"
-                )
+                // If model expects float32 but input is INT16, convert in Rust
+                // (Vulkan doesn't support Cast op)
+                if code == 1 && bits == 32 && self.model_input_type.is_some() {
+                    // INT16 → float32 conversion
+                    let elem_count = buf.len() / 2;
+                    let mut f32_buf: Vec<f32> = Vec::with_capacity(elem_count);
+                    let src16: &[u16] = unsafe {
+                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, elem_count)
+                    };
+                    for &v in src16 {
+                        f32_buf.push(v as f32);
+                    }
+                    info!("pipeline stage=write_input INT16→F32 {} els -> {}B float32", elem_count, f32_buf.len() * 4);
+                    (f32_buf.as_ptr() as *const c_void, 1, 32, raw_shape.to_vec(), "int16_to_f32")
+                } else {
+                    (buf.as_ptr() as *const c_void, code, bits, raw_shape.to_vec(), "raw_zero_copy")
+                }
             };
 
             info!("pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
