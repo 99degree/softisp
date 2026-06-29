@@ -131,8 +131,9 @@ pub trait IspBlock: Send {
     }
 
     /// If non-None, this block produces the pipeline output.
+    /// Default: tail only. Override in specific blocks (stats, aux hooks) to always output.
     fn graph_output_name(&self) -> Option<&str> {
-        if self.is_tail() { self.frame_tensor() } else { None }
+        None
     }
 
     fn input_elem_type(&self) -> i32 {
@@ -330,15 +331,23 @@ impl GraphComposer {
             // Stats blocks, aux hook blocks, and the pipeline tail all register
             // their outputs so the runtime doesn't DCE them and can read them.
             // TAIL output is inserted FIRST so getSessionOutput(nullptr) returns it.
+            let is_tail = std::ptr::eq(*blk as *const _, pipeline_tail as *const _);
+            let is_head = std::ptr::eq(*blk as *const _, pipeline_head as *const _);
             if let Some(name) = blk.graph_output_name() {
                 if let Some(vi) = blk.output_value_info() {
-                    if blk.is_tail() && !blk.is_head() {
-                        // Tail first = display result (for getSessionOutput nullptr)
+                    if is_tail && !is_head {
                         all_outputs.insert(0, vi);
-                    } else {
+                    } else if !is_head {
                         all_outputs.push(vi);
                     }
                     info!("{}: graph output: {} → {}", Self::TAG, blk.id(), name);
+                }
+            } else if is_tail && !is_head {
+                // Pipeline tail is always a graph output even without explicit override
+                if let Some(vi) = blk.output_value_info() {
+                    all_outputs.insert(0, vi);
+                    info!("{}: graph output (tail): {} → {}", Self::TAG, blk.id(),
+                        blk.frame_tensor().unwrap_or("?"));
                 }
             }
 
@@ -427,7 +436,7 @@ impl GraphComposer {
     /// Must be called before `compose_from_vec`.
     pub fn wire_blocks(blocks: &mut [Box<dyn IspBlock>]) {
         for i in 1..blocks.len() {
-            let prev = blocks[i - 1].frame_tensor().unwrap_or("").to_string();
+            let prev = blocks[i - 1].frame_tensor().unwrap_or("--").to_string();
             blocks[i].set_input_source(&prev);
         }
     }
