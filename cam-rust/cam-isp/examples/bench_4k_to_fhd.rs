@@ -33,19 +33,17 @@ fn main() {
     let post_h   = 540u32;   // post-downscale height
     let n_frames = 20;
 
-    // Generate 4K Bayer test data inline
-    use std::io::Write;
-    let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 2) as usize);
+    // Generate 4K Bayer test data inline as float32 (INT16→float conversion in Rust)
+    let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 4) as usize);
     let mut rng_state = 42u64;
     for _ in 0..sensor_w * sensor_h {
         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         let val = (rng_state >> 22) as u16 & 0x3FF;
-        raw_buf.extend_from_slice(&val.to_le_bytes());
+        raw_buf.extend_from_slice(&(val as f32).to_le_bytes());
     }
     let raw = raw_buf;
 
     // ── Build main pipeline (10 blocks) ────────────────────────
-    let packed_w = (sensor_w / 2) as i64;
     let full_w   = sensor_w as i64;
     let full_h   = sensor_h as i64;
     let ds_w     = pipe_w as i64;
@@ -54,18 +52,18 @@ fn main() {
     let post_h_i = post_h as i64;
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-        // 1. Packed INT32 input
+        // 1. Float32 input: [1,1,2160,3840] — INT16→float conversion done in Rust
         Box::new(RawInputBlock::new()
-            .with_elem_type(6)
-            .with_concrete_dims(full_h, packed_w)),
+            .with_elem_type(1)   // FLOAT32
+            .with_concrete_dims(full_h, full_w)),
 
-        // 2. Unpack CFA: downscale 4K→2K Bayer directly
-        //    stride_w=2 → width/2, kernel height=2 → height/2
-        //    Output: [1,4,1080,1920] 2K Bayer
+        // 2. Unpack CFA via Conv: NativeInt16 + fast_unpack
+        //    stride_w=2 → Conv kernel 2×2, stride 2×2 → [1,4,1080,960]
         Box::new(UnpackCfaBlock::new()
-            .with_concrete_width(full_w)
+            .with_mode(UnpackMode::NativeInt16)
+            .with_fast_unpack(true)
             .with_concrete_dims(full_h, full_w)
-            .with_downscale(2)       // width: 3840/4 = 960
+            .with_downscale(4)       // width: 3840/4 = 960
             .with_sensor_max(1023.0)
             .with_blc(true)),
 
@@ -75,9 +73,9 @@ fn main() {
         // 4. White balance identity (fused into DemosaicCcmBlock)
         Box::new(IdentityBlock::new("bayer_wb")),
 
-        // 5. DemosaicCcm at 2K: [1,4,1080,960] → [1,3,1080,960]
+        // 5. DemosaicCcm at FHD: [1,4,1080,960] → [1,3,1080,960]
         Box::new(DemosaicCcmBlock::new(0)
-            .with_concrete_dims(ds_h, post_w_i)),
+            .with_concrete_dims(pipe_h as i64, post_w_i)),
 
         // 6. Tone identity (fused)
         Box::new(IdentityBlock::new("tone")),
@@ -117,8 +115,8 @@ fn main() {
     }
     result.unwrap();
 
-    println!("Pipeline: 11 blocks (4K→FHD via UnpackCfa downscale)");
-    println!("Input: {}×{} → UnpackCfa(stride=2,hds=2) → Debayer → {}×{}", sensor_w, sensor_h, post_w, post_h);
+    println!("Pipeline: 11 blocks (4K→FHD non-packed INT16)");
+    println!("Input: {}×{} INT16 → UnpackCfa(stride=2) → Debayer → {}×{}", sensor_w, sensor_h, post_w, post_h);
     println!("Running {} frames...\n", n_frames);
 
     // Shared params

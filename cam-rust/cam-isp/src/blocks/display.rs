@@ -177,6 +177,10 @@ impl IspBlock for DisplayBlock {
         tensors
     }
 
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+
     fn input_value_info(&self) -> Option<Vec<u8>> {
         match (self.in_h, self.in_w) {
             (Some(h), Some(w)) => Some(Proto::value_info(&self.input_source,

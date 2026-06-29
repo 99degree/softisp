@@ -267,7 +267,7 @@ impl Proto {
         let mut buf = Self::string(8, name);
         buf.extend_from_slice(&Self::repeated_int64s(1, dims));
         buf.extend_from_slice(&Self::int32(2, 1)); // data_type = FLOAT(1)
-        buf.extend_from_slice(&Self::raw_bytes(4, &raw));
+        buf.extend_from_slice(&Self::raw_bytes(9, &raw)); // field 9 = raw_data
         buf
     }
 
@@ -276,7 +276,7 @@ impl Proto {
         let raw = value.to_bits().to_le_bytes();
         let mut buf = Self::string(8, name);
         buf.extend_from_slice(&Self::int32(2, 1)); // data_type = FLOAT(1)
-        buf.extend_from_slice(&Self::raw_bytes(4, &raw));
+        buf.extend_from_slice(&Self::raw_bytes(9, &raw)); // field 9 = raw_data
         buf
     }
 
