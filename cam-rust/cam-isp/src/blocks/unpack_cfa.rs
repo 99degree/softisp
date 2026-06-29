@@ -34,6 +34,7 @@ pub struct UnpackCfaBlock {
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,  // FULL width (original W)
     pub sensor_max: f32,
+    pub valid_bits: i64,           // 10 or 12 valid bits in sensor data
     pub use_blc: bool,            // fuse black level correction
     pub use_wb: bool,             // fuse white balance gains
     pub stride_w: i64,            // 1=no downscale, 2=2× stride in width (PackedInt32 only)
@@ -63,6 +64,7 @@ impl UnpackCfaBlock {
             concrete_h: None,
             concrete_w: None,
             sensor_max: 65535.0,
+            valid_bits: 10,
             use_blc: false,
             use_wb: false,
             stride_w: 1,
@@ -80,6 +82,14 @@ impl UnpackCfaBlock {
 
     pub fn with_sensor_max(mut self, sm: f32) -> Self {
         self.sensor_max = sm;
+        self
+    }
+
+    /// Set valid bits: 10 or 12. If 12, values are shifted right by 2 to get
+    /// 10-bit mantissa (perfect fp16 precision). sensor_max should be 1023.0
+    /// for both 10-bit and 12-bit (the shift normalizes to 10-bit range).
+    pub fn with_valid_bits(mut self, bits: i64) -> Self {
+        self.valid_bits = bits;
         self
     }
 
@@ -147,15 +157,13 @@ impl IspBlock for UnpackCfaBlock {
     fn input_elem_type(&self) -> i32 {
         match self.mode {
             UnpackMode::PackedInt32 => 6, // INT32
-            UnpackMode::NativeInt16 => 5, // INT16
+            UnpackMode::NativeInt16 => 1, // FLOAT32 (INT16→float conversion done in Rust)
         }
     }
     fn output_elem_type(&self) -> i32 {
-        if self.use_fast_unpack || ((self.use_blc || self.use_wb) && self.mode == UnpackMode::NativeInt16) {
-            1 // FLOAT — fast Conv path or BLC/WB fused downstream
-        } else {
-            5 // INT16 — Bayer domain integer
-        }
+        // NativeInt16 mode: input is float32 (INT16→float done in Rust), Conv outputs float32
+        // PackedInt32 mode: Cast removed, output float32 for Vulkan compatibility
+        1 // FLOAT32 — all modes output float
     }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
@@ -188,10 +196,19 @@ impl IspBlock for UnpackCfaBlock {
         let hd = self.height_downscale.max(1);
         let elem_type = self.output_elem_type();
         let dims = match (self.concrete_h, self.concrete_w) {
-            (Some(h), Some(w)) => vec![
-                Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
-                Proto::tensor_dim_value(h / 2 / hd), Proto::tensor_dim_value(w / 2 / sw),
-            ],
+            (Some(h), Some(w)) => {
+                // PackedInt32: input width is W/2, Conv outputs H/2 × W/2/sw
+                // NativeInt16: input width is W, Conv outputs H/2 × W/sw
+                let (out_h, out_w) = if self.mode == UnpackMode::PackedInt32 {
+                    (h / 2 / hd, w / 2 / sw)
+                } else {
+                    (h / 2 / hd, w / sw)
+                };
+                vec![
+                    Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
+                    Proto::tensor_dim_value(out_h), Proto::tensor_dim_value(out_w),
+                ]
+            },
             _ => vec![
                 Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
                 Proto::tensor_dim_param("H2"), Proto::tensor_dim_param("W2"),
@@ -285,27 +302,48 @@ impl IspBlock for UnpackCfaBlock {
                 inits.push(Proto::tensor_proto_int32_scalar(&format!("{}/mod_65536", ns), 65536));
                 inits.push(Proto::tensor_proto_float(&format!("{}/cfa_w", ns), &w_shape, &w));
                 inits.push(Proto::tensor_proto_float(&format!("{}/cfa_b", ns), &[4], &[0f32; 4]));
+                // 12-bit mode: SHR by 2 = Div by 4.0 to get 10-bit mantissa
+                if self.valid_bits == 12 {
+                    inits.push(Proto::tensor_proto_float_scalar(&format!("{}/shr_4", ns), 4.0));
+                }
             }
             UnpackMode::NativeInt16 => {
-                // SpaceToDepth(blocksize=2) — no Conv weights needed for standard path.
-                // For fast path, Conv weights extract 4 Bayer positions from 2×2 blocks.
+                // Conv weights [4, 1, 2, sw] — 4 out_ch, 1 in_ch, kernel 2×sw
+                // sw=1: kernel=(2,1) — identity extraction, each out_ch picks one Bayer position
+                // sw=2: kernel=(2,2) — 2× width downscale, each out_ch picks one Bayer pos from 2-wide block
+                // sw=4: kernel=(2,4) — 4× width downscale, each out_ch picks one Bayer pos from 4-wide block
+                let w: Vec<f32> = if sw <= 1 {
+                    vec![
+                        1.0, 0.0, // oc=0 (R):  TL
+                        0.0, 1.0, // oc=1 (Gr): TR
+                        0.0, 0.0, // oc=2 (Gb): BL
+                        0.0, 0.0, // oc=3 (B):  BR
+                    ]
+                } else {
+                    // kernel shape [4, 1, 2, sw]: flat layout [oc, kh, kw]
+                    // flat_index = oc * 2*sw + kh * sw + kw
+                    // Each oc picks one Bayer position from a 2×sw block:
+                    //   oc=0 (R):  TL → kh=0, kw=0
+                    //   oc=1 (Gr): TR → kh=0, kw=sw/2 (center top)
+                    //   oc=2 (Gb): BL → kh=1, kw=0
+                    //   oc=3 (B):  BR → kh=1, kw=sw/2 (center bottom)
+                    let mut w2 = vec![0.0f32; 4 * 2 * sw as usize];
+                    w2[0] = 1.0;                                          // oc=0, TL
+                    w2[0 * 2 * sw as usize + sw as usize / 2] = 1.0;     // oc=1, TR
+                    w2[1 * sw as usize] = 1.0;                            // oc=2, BL
+                    w2[1 * 2 * sw as usize + sw as usize + sw as usize / 2] = 1.0; // oc=3, BR
+                    w2
+                };
+
+                let w_shape = vec![4i64, 1, 2, sw];
+
                 if self.use_fast_unpack {
-                    // Conv weights [4, 1, 2, 2] — 4 out_ch, 1 in_ch, kernel 2×2
-                    // Each out_ch picks one of 4 positions in each 2×2 block:
-                    // out_ch 0 (R):  TL → (kh=0, kw=0) = 1
-                    // out_ch 1 (Gr): TR → (kh=0, kw=1) = 1
-                    // out_ch 2 (Gb): BL → (kh=1, kw=0) = 1
-                    // out_ch 3 (B):  BR → (kh=1, kw=1) = 1
-                    let unpack_w = vec![
-                        1.0, 0.0, 0.0, 0.0, // oc=0: TL
-                        0.0, 1.0, 0.0, 0.0, // oc=1: TR
-                        0.0, 0.0, 1.0, 0.0, // oc=2: BL
-                        0.0, 0.0, 0.0, 1.0, // oc=3: BR
-                    ];
                     inits.push(Proto::tensor_proto_float(
-                        &format!("{}/unpack_w", ns), &[4, 1, 2, 2], &unpack_w));
+                        &format!("{}/unpack_w", ns), &w_shape, &w));
                     inits.push(Proto::tensor_proto_float(
                         &format!("{}/unpack_b", ns), &[4], &[0.0; 4]));
+                } else {
+                    // SpaceToDepth path — no Conv weights needed
                 }
             }
         }
@@ -370,34 +408,51 @@ impl UnpackCfaBlock {
                 &[&format!("{}/even", ns)], &[]),
             Proto::node("Cast", &[&format!("{}/even", ns)], &[&format!("{}/even_float", ns)],
                 &[Proto::attribute_int("to", 1)]),
-            Proto::node("Div", &[&format!("{}/even_float", ns), &format!("{}/max_val", ns)],
-                &[&format!("{}/even_norm", ns)], &[]),
 
             // Extract odd (high 16 bits) via integer Div by 65536, then cast to FLOAT.
             Proto::node("Div", &[&self.input_source, &format!("{}/div_65536", ns)],
                 &[&format!("{}/odd", ns)], &[]),
             Proto::node("Cast", &[&format!("{}/odd", ns)], &[&format!("{}/odd_float", ns)],
                 &[Proto::attribute_int("to", 1)]),
-            Proto::node("Div", &[&format!("{}/odd_float", ns), &format!("{}/max_val", ns)],
-                &[&format!("{}/odd_norm", ns)], &[]),
-
-            // Stack even + odd into [1,2,H,W/2]
-            Proto::node("Concat",
-                &[&format!("{}/even_norm", ns), &format!("{}/odd_norm", ns)],
-                &[&format!("{}/stacked", ns)],
-                &[Proto::attribute_int("axis", 1)]),
-
-            // Conv stride=(2, stride_w) → [1,4,H/2,W/2/stride_w]
-            Proto::node("Conv",
-                &[&format!("{}/stacked", ns), &format!("{}/cfa_w", ns), &format!("{}/cfa_b", ns)],
-                &[&cfa_out],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[2, self.stride_w]),
-                    Proto::attribute_ints("strides", &[2, self.stride_w]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                    Proto::attribute_int("group", 1),
-                ]),
         ];
+
+        // 12-bit data: shift right by 2 to get 10-bit mantissa
+        // SHR(x,2) = Div(x, 4.0) — perfect fp16 precision for [0,1] output
+        if self.valid_bits == 12 {
+            let shr_init = format!("{}/shr_4", ns);
+            nodes.push(Proto::node("Div", &[&format!("{}/even_float", ns), &shr_init],
+                &[&format!("{}/even_shr", ns)], &[]));
+            nodes.push(Proto::node("Div", &[&format!("{}/odd_float", ns), &shr_init],
+                &[&format!("{}/odd_shr", ns)], &[]));
+            // Normalize to [0,1]: sensor_max = 1023.0 (10-bit after shift)
+            nodes.push(Proto::node("Div", &[&format!("{}/even_shr", ns), &format!("{}/max_val", ns)],
+                &[&format!("{}/even_norm", ns)], &[]));
+            nodes.push(Proto::node("Div", &[&format!("{}/odd_shr", ns), &format!("{}/max_val", ns)],
+                &[&format!("{}/odd_norm", ns)], &[]));
+        } else {
+            // 10-bit data: normalize directly to [0,1]
+            nodes.push(Proto::node("Div", &[&format!("{}/even_float", ns), &format!("{}/max_val", ns)],
+                &[&format!("{}/even_norm", ns)], &[]));
+            nodes.push(Proto::node("Div", &[&format!("{}/odd_float", ns), &format!("{}/max_val", ns)],
+                &[&format!("{}/odd_norm", ns)], &[]));
+        }
+
+        // Stack even + odd into [1,2,H,W/2]
+        nodes.push(Proto::node("Concat",
+            &[&format!("{}/even_norm", ns), &format!("{}/odd_norm", ns)],
+            &[&format!("{}/stacked", ns)],
+            &[Proto::attribute_int("axis", 1)]));
+
+        // Conv stride=(2, stride_w) → [1,4,H/2,W/2/stride_w]
+        nodes.push(Proto::node("Conv",
+            &[&format!("{}/stacked", ns), &format!("{}/cfa_w", ns), &format!("{}/cfa_b", ns)],
+            &[&cfa_out],
+            &[
+                Proto::attribute_ints("kernel_shape", &[2, self.stride_w]),
+                Proto::attribute_ints("strides", &[2, self.stride_w]),
+                Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                Proto::attribute_int("group", 1),
+            ]));
 
         // Optional BLC: Sub(blc_vals) + Clip(0,1), then denormalize
         if self.use_blc {
@@ -442,66 +497,38 @@ impl UnpackCfaBlock {
     fn native_nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let has_process = self.use_blc || self.use_wb;
+        let sw = self.stride_w;
 
-        if self.use_fast_unpack {
-            // Fast path: Conv(4ch, 2x2, stride=2) replaces SpaceToDepth + Raster.
-            // Uses VulkanConvolution's optimized inner-product path instead of Raster's
-            // multi-dispatch strided access.
-            let nodes = if has_process {
-                vec![
-                    // Need Cast to F32 first, then Conv
-                    Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
-                        &[Proto::attribute_int("to", 1)]),
-                    Proto::node("Conv",
-                        &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[2, 2]),
-                            Proto::attribute_ints("strides", &[2, 2]),
-                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                            Proto::attribute_int("group", 1),
-                        ]),
-                ]
-            } else {
-                vec![
-                    // No processing needed - Cast + Conv
-                    Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
-                        &[Proto::attribute_int("to", 1)]),
-                    Proto::node("Conv",
-                        &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[2, 2]),
-                            Proto::attribute_ints("strides", &[2, 2]),
-                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                            Proto::attribute_int("group", 1),
-                        ]),
-                ]
-            };
-            
-            return nodes;
-        }
-
-        // Original SpaceToDepth path (standard Raster-based)
-        if has_process {
-            // Cast(INT16→F32) then SpaceToDepth → F32 [1,4,H/2,W/2]
-            // No BLC/WB/Clip nodes — those are fused into DemosaicCcmBlock's Conv.
+        // For Vulkan compatibility: no Cast nodes (Vulkan doesn't support Cast).
+        // The Rust caller must convert INT16→float before feeding to MNN.
+        // The ONNX graph always expects float32 input for NativeInt16 mode.
+        let nodes = if has_process {
             vec![
-                Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
-                    &[Proto::attribute_int("to", 1)]),
-                Proto::node("SpaceToDepth", &[&format!("{}/input_f32", ns)],
+                Proto::node("Conv",
+                    &[&self.input_source, &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
                     &[&self.frame_tensor],
-                    &[Proto::attribute_int("blocksize", 2)]),
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[2, sw]),
+                        Proto::attribute_ints("strides", &[2, sw]),
+                        Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                        Proto::attribute_int("group", 1),
+                    ]),
             ]
         } else {
-            // Direct SpaceToDepth → INT16 [1,4,H/2,W/2].
-            // No Cast, no processing — just pure memory rearrangement.
             vec![
-                Proto::node("SpaceToDepth", &[&self.input_source],
+                Proto::node("Conv",
+                    &[&self.input_source, &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
                     &[&self.frame_tensor],
-                    &[Proto::attribute_int("blocksize", 2)]),
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[2, sw]),
+                        Proto::attribute_ints("strides", &[2, sw]),
+                        Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                        Proto::attribute_int("group", 1),
+                    ]),
             ]
-        }
+        };
+
+        nodes
     }
 }
 
@@ -531,44 +558,44 @@ mod tests {
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 1, "Native no-BLC/WB: SpaceToDepth only = 1 node");
+        assert_eq!(nodes.len(), 1, "Native no-BLC/WB: Conv only = 1 node");
         let inits = block.initializers();
         assert_eq!(inits.len(), 1, "Native no-BLC/WB: just max_val = 1 initializer");
-        assert_eq!(block.input_elem_type(), 5);
-        assert_eq!(block.output_elem_type(), 5);
+        assert_eq!(block.input_elem_type(), 1, "Native input should be FLOAT32 (INT16→float in Rust)");
+        assert_eq!(block.output_elem_type(), 1, "Native no-BLC/WB: output F32");
         assert_eq!(block.extra_inputs().len(), 1);
 
-        // With BLC only: Cast → SpaceToDepth = 2 nodes (F32 output, no Sub/Clip/Cast)
+        // With BLC only: Conv = 1 node (F32 output, no Sub/Clip/Cast)
         let block2 = UnpackCfaBlock::new()
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64)
             .with_blc(true);
-        assert_eq!(block2.nodes().len(), 2, "Native + BLC: Cast+SpaceToDepth = 2");
+        assert_eq!(block2.nodes().len(), 1, "Native + BLC: Conv = 1 node");
         assert_eq!(block2.output_elem_type(), 1, "Native + BLC: output F32");
         // max_val + blc_vals = 2 (no zero/one for NativeInt16 PackedInt32 mode)
         assert_eq!(block2.initializers().len(), 2, "Native + BLC: max_val+blc_vals = 2");
         // max_val + blc_vals
         assert_eq!(block2.extra_inputs().len(), 2, "Native + BLC: 2 extra inputs");
 
-        // With WB only: Cast → SpaceToDepth = 2 nodes
+        // With WB only: Conv = 1 node
         let block3 = UnpackCfaBlock::new()
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64)
             .with_wb(true);
-        assert_eq!(block3.nodes().len(), 2, "Native + WB: Cast+SpaceToDepth = 2");
+        assert_eq!(block3.nodes().len(), 1, "Native + WB: Conv = 1 node");
         assert_eq!(block3.output_elem_type(), 1, "Native + WB: output F32");
         // max_val + wb_gains = 2
         assert_eq!(block3.initializers().len(), 2, "Native + WB: max_val+wb_gains = 2");
         // max_val + wb_gains
         assert_eq!(block3.extra_inputs().len(), 2, "Native + WB: 2 extra inputs");
 
-        // With BLC + WB: Cast → SpaceToDepth = 2 nodes (same)
+        // With BLC + WB: Conv = 1 node (same)
         let block4 = UnpackCfaBlock::new()
             .with_mode(UnpackMode::NativeInt16)
             .with_concrete_dims(48, 64)
             .with_blc(true)
             .with_wb(true);
-        assert_eq!(block4.nodes().len(), 2, "Native + BLC+WB: Cast+SpaceToDepth = 2");
+        assert_eq!(block4.nodes().len(), 1, "Native + BLC+WB: Conv = 1 node");
         assert_eq!(block4.output_elem_type(), 1, "Native + BLC+WB: output F32");
         // max_val + blc_vals + wb_gains = 3
         assert_eq!(block4.initializers().len(), 3, "Native + BLC+WB: max_val+blc_vals+wb_gains = 3");
@@ -633,9 +660,9 @@ mod tests {
             .with_concrete_dims(48, 64)
             .with_fast_unpack(true);
         
-        // Fast path: Cast(INT16→F32) + Conv(4ch,2×2,stride=2) = 2 nodes
+        // Fast path: Conv(4ch,2×sw,stride=2×sw) = 1 node (no Cast)
         let nodes = fast.nodes();
-        assert_eq!(nodes.len(), 2, "Fast unpack: Cast+Conv = 2 nodes");
+        assert_eq!(nodes.len(), 1, "Fast unpack: Conv = 1 node");
         assert_eq!(fast.output_elem_type(), 1, "Fast unpack: FLOAT output");
         
         // Check Conv weights exist
