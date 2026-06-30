@@ -67,23 +67,11 @@ fn main() {
             .with_sensor_max(1023.0)
             .with_blc(true)),
 
-        // 3. Stats hook
-        Box::new(IdentityBlock::new("aux_hook_src")),
-
-        // 4. White balance identity (fused into DemosaicCcmBlock)
-        Box::new(IdentityBlock::new("bayer_wb")),
-
-        // 5. DemosaicCcm at FHD: [1,4,1080,960] → [1,3,1080,960]
+        // 3. DemosaicCcm at FHD: [1,4,1080,960] → [1,3,1080,960]
         Box::new(DemosaicCcmBlock::new(0)
             .with_concrete_dims(pipe_h as i64, post_w_i)),
 
-        // 6. Tone identity (fused)
-        Box::new(IdentityBlock::new("tone")),
-
-        // 7. Aux hook out
-        Box::new(IdentityBlock::new("aux_hook_out")),
-
-        // 8–10. Cosmetic post-processing at FHD
+        // 4–7. Cosmetic post-processing at FHD
         Box::new(FcsBlock::new()),
         Box::new(LdciBlock::new()),
         Box::new(EeBlock::new()),
