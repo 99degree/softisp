@@ -1,3 +1,24 @@
+//! # FcsBlock — Flat Field / Luma Adaptive Correction
+//!
+//! ## ONNX Subgraph (Atomic)
+//! Generates 2 ops: `Mul(input, gain) → Add(result, bias)` → `corrected`
+//!
+//! ## IspChainFusion Standard Rule: R3
+//! R3b detects: `BinaryOp(MUL)` followed by `BinaryOp(ADD)` with tensor chain → `isp.fcs`
+//! * The shader does luma-based adaptive correction
+//! * gain=bias are read from the Mul/Add Const initializers and baked into shader
+//!
+//! Trade-off vs original Rust block (13-op chroma suppression):
+//! - Original: separate Y/UV, edge-attention mask → chroma noise reduction
+//! - Current: per-channel gain+bias → simpler, no chroma manipulation
+//! The isp.fcs shader (`shader3_fcs.comp`) does luma-based adaptive gain:
+//!   `luma = 0.299R + 0.587G + 0.114B`
+//!   `corr = 1.0 + gain * |luma-0.5|^2`
+//!   `out = clamp(corr, 1-suppression, 1+suppression) * input`
+//!
+//! When configured as identity (gain=1.0, bias=0.0), the shader passes through
+//! with minimal numeric change (luma deviation near 0 → corr≈1.0).
+
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
@@ -23,46 +44,30 @@ impl IspBlock for FcsBlock {
     fn input_value_info(&self) -> Option<Vec<u8>> { Some(Proto::value_info(&self.input_source, &[Proto::tensor_dim_value(1),Proto::tensor_dim_value(3),Proto::tensor_dim_param("H"),Proto::tensor_dim_param("W")], 1)) }
     fn output_value_info(&self) -> Option<Vec<u8>> { self.input_value_info() }
 
+    /// Mul(input, gain) + Add(result, bias) → R3b detects → isp.fcs
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
-            Proto::node("Conv", &[&self.input_source, &format!("{}/kernel_3ch", ns), &format!("{}/bias_3ch", ns)], &[&format!("{}/edge_3ch", ns)],
-                &[Proto::attribute_ints("kernel_shape", &[3, 5]),
-                  Proto::attribute_ints("pads", &[1, 2, 1, 2]),
-                  Proto::attribute_ints("strides", &[1, 1]),
-                  Proto::attribute_int("group", 3)]),
-            Proto::node("Abs", &[&format!("{}/edge_3ch", ns)], &[&format!("{}/edge_abs", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/edge_abs", ns), &format!("zzz_{}/fcs_gain_scaled", ns)], &[&format!("{}/fcs_raw", ns)], &[]),
-            Proto::node("Clip", &[&format!("{}/fcs_raw", ns), &format!("{}/zero", ns), &format!("{}/one", ns)], &[&format!("{}/fcs_clamped", ns)], &[]),
-            Proto::node("Sub", &[&format!("{}/one", ns), &format!("{}/fcs_clamped", ns)], &[&format!("{}/fcs_attn", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/fcs_attn", ns), &format!("{}/uv_mask", ns)], &[&format!("{}/uv_gain", ns)], &[]),
-            Proto::node("Sub", &[&self.input_source, &format!("{}/half", ns)], &[&format!("{}/centered", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/centered", ns), &format!("{}/uv_mask", ns)], &[&format!("{}/uv_centered", ns)], &[]),
-            Proto::node("Sub", &[&format!("{}/centered", ns), &format!("{}/uv_centered", ns)], &[&format!("{}/y_centered", ns)], &[]),
-            Proto::node("Mul", &[&format!("{}/uv_centered", ns), &format!("{}/uv_gain", ns)], &[&format!("{}/uv_suppressed", ns)], &[]),
-            Proto::node("Add", &[&format!("{}/y_centered", ns), &format!("{}/uv_suppressed", ns)], &[&format!("{}/recombined", ns)], &[]),
-            Proto::node("Add", &[&format!("{}/recombined", ns), &format!("{}/half", ns)], &[&format!("{}/result", ns)], &[]),
-            Proto::node("Clip", &[&format!("{}/result", ns), &format!("{}/zero", ns), &format!("{}/one", ns)], &[&self.frame_tensor], &[]),
+            // Mul: per-channel gain (broadcast over H,W)
+            Proto::node("Mul", &[&self.input_source, &format!("{}/gain", ns)],
+                &[&format!("{}/scaled", ns)], &[]),
+            // Add: per-channel bias (broadcast over H,W)
+            Proto::node("Add", &[&format!("{}/scaled", ns), &format!("{}/bias", ns)],
+                &[&self.frame_tensor], &[]),
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        let k: [f32; 15] = [-0.125,0.0,-0.125,0.0,-0.125,-0.125,0.0,1.0,0.0,-0.125,-0.125,0.0,-0.125,0.0,-0.125];
-        let mut k3 = Vec::with_capacity(45);
-        for _ in 0..3 { k3.extend_from_slice(&k); }
         vec![
-            Proto::tensor_proto_float(&format!("{}/kernel_3ch", ns), &[3, 1, 3, 5], &k3),
-            Proto::tensor_proto_float(&format!("{}/bias_3ch", ns), &[3], &[0.0; 3]),
-            Proto::tensor_proto_float(&format!("{}/uv_mask", ns), &[3, 1, 1], &[0.0, 1.0, 1.0]),
-            Proto::tensor_proto_float(&format!("{}/inv_64", ns), &[], &[1.0/64.0]),
-            Proto::tensor_proto_float(&format!("{}/half", ns), &[], &[0.5]),
-            Proto::tensor_proto_float(&format!("{}/zero", ns), &[], &[0.0]),
-            Proto::tensor_proto_float(&format!("{}/one", ns), &[], &[1.0]),
+            // Per-channel gain: [R_gain, G_gain, B_gain]
+            // Shape [3, 1, 1] broadcasts over H,W
+            Proto::tensor_proto_float(&format!("{}/gain", ns), &[3, 1, 1], &[1.0, 1.0, 1.0]),
+            // Per-channel bias: [R_bias, G_bias, B_bias]
+            Proto::tensor_proto_float(&format!("{}/bias", ns), &[3, 1, 1], &[0.0, 0.0, 0.0]),
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        // zzz_ prefix ensures alphabetical sort is AFTER the main input
-        // "RawInputBlock/frame" (R < z), avoiding MNN input selection bug.
-        vec![(format!("zzz_{}/fcs_gain_scaled", self.tensor_ns()), 1, vec![1])]
+        // No runtime inputs — gain/bias baked into model
+        vec![]
     }
 }

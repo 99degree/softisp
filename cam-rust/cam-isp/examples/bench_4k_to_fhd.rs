@@ -76,10 +76,8 @@ fn main() {
         Box::new(LdciBlock::new()),
         Box::new(EeBlock::new()),
 
-        // 11. Display output (bg4a: Conv 1×1 BGRA float [0,255])
+        // 8. Display output (FloatRgb: [1,3,H,W] f32 RGB [0,1])
         Box::new(DisplayBlock::new(post_w)
-            .with_pack_rgba(false)
-            .with_bg4a(true)
             .with_concrete_dims(post_h_i, post_w_i)),
     ];
 
@@ -112,7 +110,7 @@ fn main() {
     params.target_width = post_w;
     params.target_height = post_h;
     params.sensor_max = 1023.0;
-    params.output_format = cam_isp::engine::OutputFormat::FloatBgra;
+    params.output_format = cam_isp::engine::OutputFormat::FloatRgb;
 
     // Warmup
     for _ in 0..3 { let _ = engine.process(&params); }

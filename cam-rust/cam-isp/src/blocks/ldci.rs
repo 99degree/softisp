@@ -1,3 +1,23 @@
+//! # LdciBlock — Local Dynamic Contrast Improvement
+//!
+//! ## ONNX Subgraph (Atomic)
+//! Generates 4 ops: `Pool(AVG 3×3) → Sub → Mul → Add` → `enhanced`
+//!
+//! ## IspChainFusion Standard Rule: R5
+//! R5 detects: `Pool(AVG,kernel=3×3,stride=1) + Sub + Mul + Add` → `isp.ldci`
+//! * Pool computes per-pixel local mean in 3×3 window
+//! * Sub: `diff = original - local_mean` (extracts local deviation)
+//! * Mul: `boost = diff * strength` (scale contrast)
+//! * Add: `output = original + boost` (recombine)
+//!
+//! The isp.ldci SPIR-V shader (`shader5_ldci.comp`) does all 4 ops in one
+//! dispatch: 3×3 box blur → local_mean, diff = center - local_mean,
+//! output = center + strength * diff. Per-channel on all 3 RGB channels.
+//!
+//! Trade-off vs original Rust block (global mean + Y-only):
+//! - Original: ReduceMean(H,W) → global contrast → Y-only boost → 6 ops
+//! - Current: Pool(AVG 3×3) → local contrast → per-channel boost → 4 ops, R5 fuses
+
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
@@ -23,37 +43,36 @@ impl IspBlock for LdciBlock {
     fn input_value_info(&self) -> Option<Vec<u8>> { Some(Proto::value_info(&self.input_source, &[Proto::tensor_dim_value(1),Proto::tensor_dim_value(3),Proto::tensor_dim_param("H"),Proto::tensor_dim_param("W")], 1)) }
     fn output_value_info(&self) -> Option<Vec<u8>> { self.input_value_info() }
 
+    /// Pool(AVG 3×3) → Sub(original, blur) → Mul(diff, strength) → Add(original, boost)
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        // Local contrast: diff from per-channel mean, boost Y channel
-        // Uses ReduceMean for global mean (no Conv, MNN-friendly)
         vec![
-            // Per-channel mean via ReduceMean over H,W
-            Proto::node("ReduceMean", &[&self.input_source], &[&format!("{}/ch_mean", ns)],
-                &[Proto::attribute_ints("axes", &[2, 3]), Proto::attribute_int("keepdims", 1)]),
-            // diff = input - mean (broadcast)
-            Proto::node("Sub", &[&self.input_source, &format!("{}/ch_mean", ns)], &[&format!("{}/diff", ns)], &[]),
-            // boost = diff * y_mask (keep only Y channel)
-            Proto::node("Mul", &[&format!("{}/diff", ns), &format!("{}/y_mask", ns)], &[&format!("{}/diff_y", ns)], &[]),
-            // boost *= ldci_strength_scaled
-            Proto::node("Mul", &[&format!("{}/diff_y", ns), &format!("zzz_{}/ldci_strength_scaled", ns)], &[&format!("{}/boost", ns)], &[]),
-            // output = input + boost
-            Proto::node("Add", &[&self.input_source, &format!("{}/boost", ns)], &[&format!("{}/enhanced", ns)], &[]),
-            // clamp to [0,1]
-            Proto::node("Clip", &[&format!("{}/enhanced", ns), &format!("{}/min", ns), &format!("{}/max", ns)], &[&self.frame_tensor], &[]),
+            // Pool(AVG, kernel=3×3, stride=1, same-pad) → local mean
+            Proto::node("AveragePool", &[&self.input_source],
+                &[&format!("{}/local_mean", ns)],
+                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
+                  Proto::attribute_ints("strides", &[1, 1]),
+                  Proto::attribute_ints("pads", &[1, 1, 1, 1])]),
+            // Sub(original, local_mean) → diff (local deviation)
+            Proto::node("Sub", &[&self.input_source, &format!("{}/local_mean", ns)],
+                &[&format!("{}/diff", ns)], &[]),
+            // Mul(diff, strength) → boost (scaled contrast)
+            Proto::node("Mul", &[&format!("{}/diff", ns), &format!("{}/strength", ns)],
+                &[&format!("{}/boost", ns)], &[]),
+            // Add(original, boost) → enhanced
+            Proto::node("Add", &[&self.input_source, &format!("{}/boost", ns)],
+                &[&self.frame_tensor], &[]),
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
-            Proto::tensor_proto_float(&format!("{}/y_mask", ns), &[3, 1, 1], &[1.0, 0.0, 0.0]),
-            Proto::tensor_proto_float(&format!("{}/min", ns), &[], &[0.0]),
-            Proto::tensor_proto_float(&format!("{}/max", ns), &[], &[1.0]),
-            Proto::tensor_proto_float(&format!("{}/inv_16", ns), &[], &[1.0/16.0]),
+            // Strength scalar: controls contrast boost amount
+            Proto::tensor_proto_float_scalar(&format!("{}/strength", ns), 0.5),
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        // zzz_ prefix ensures alphabetical sort is AFTER main input
-        vec![(format!("zzz_{}/ldci_strength_scaled", self.tensor_ns()), 1, vec![1])]
+        // No runtime inputs — strength baked into model
+        vec![]
     }
 }
