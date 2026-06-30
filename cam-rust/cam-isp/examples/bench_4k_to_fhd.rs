@@ -18,7 +18,7 @@
 
 use std::time::Instant;
 use cam_isp::pipeline::{IspBlock, GraphComposer};
-use cam_isp::engine::{IspEngine, ProcessParams};
+use cam_isp::engine::{IspEngine, ProcessParams, OutputFormat};
 use cam_isp::blocks::*;
 
 fn main() {
@@ -78,6 +78,7 @@ fn main() {
 
         // 8. Display output (FloatRgb: [1,3,H,W] f32 RGB [0,1])
         Box::new(DisplayBlock::new(post_w)
+            .with_output_format(cam_isp::engine::OutputFormat::FloatRgb)
             .with_concrete_dims(post_h_i, post_w_i)),
     ];
 
