@@ -214,10 +214,17 @@ impl IspBlock for DisplayBlock {
         let scale = format!("{}/scale", ns);
         let final_output = &self.frame_tensor;
 
-        // Fast path: no rotation → scale by 1.0 (trivial, all backends)
+        // Fast path: no rotation, FloatRgb output → Pow+Clip matching R6
+        // R6 detects: BinaryOp(POW,exp≈1/2.4) + optional Clip(0,1) → isp.display
+        // The isp.display shader does gamma correction + BCS in one dispatch.
         if self.is_identity() {
+            let gamma_exp = format!("{}/gamma_exp", ns);
+            let gamma = format!("{}/gamma", ns);
+            let zero = format!("{}/zero", ns);
+            let one = format!("{}/one", ns);
             return vec![
-                Proto::node("Mul", &[&self.input_source, &scale], &[final_output], &[]),
+                Proto::node("Pow", &[&self.input_source, &gamma_exp], &[&gamma], &[]),
+                Proto::node("Clip", &[&gamma, &zero, &one], &[final_output], &[]),
             ];
         }
 
@@ -369,7 +376,7 @@ impl IspBlock for DisplayBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        // Scale 1.0 — trivial Mul for FloatRgb identity path
+        // Scale 1.0 — used by non-identity format conversion paths
         let mut inits = vec![
             Proto::tensor_proto_float_scalar(&format!("{}/scale", ns), 1.0),
         ];
@@ -378,7 +385,14 @@ impl IspBlock for DisplayBlock {
         use OutputFormat::*;
         match self.output_format {
             FloatRgb | Float16Rgb => {
-                // No extra initializers needed (Float16Rgb uses Mul + Cast)
+                // For FloatRgb identity path: Pow(1/2.4) + Clip(0,1) → R6 matches
+                // gamma_exp = 1/2.4 for sRGB gamma correction
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/gamma_exp", ns), 1.0 / 2.4));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/zero", ns), 0.0));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/one", ns), 1.0));
             }
             PackedRgb => {
                 inits.push(Proto::tensor_proto_float_scalar(
