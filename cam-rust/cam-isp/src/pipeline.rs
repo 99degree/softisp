@@ -327,10 +327,8 @@ impl GraphComposer {
                 }
             }
 
-            // Graph output: any block can declare graph outputs (→ field 12)
-            // Stats blocks, aux hook blocks, and the pipeline tail all register
-            // their outputs so the runtime doesn't DCE them and can read them.
-            // TAIL output is inserted FIRST so getSessionOutput(nullptr) returns it.
+            // Graph output: any block can declare graph outputs (→ field 12).
+            // All blocks register outputs to prevent MNN DCE from removing them.
             let is_tail = std::ptr::eq(*blk as *const _, pipeline_tail as *const _);
             let is_head = std::ptr::eq(*blk as *const _, pipeline_head as *const _);
             if let Some(name) = blk.graph_output_name() {
@@ -343,7 +341,6 @@ impl GraphComposer {
                     info!("{}: graph output: {} → {}", Self::TAG, blk.id(), name);
                 }
             } else if is_tail && !is_head {
-                // Pipeline tail is always a graph output even without explicit override
                 if let Some(vi) = blk.output_value_info() {
                     all_outputs.insert(0, vi);
                     info!("{}: graph output (tail): {} → {}", Self::TAG, blk.id(),

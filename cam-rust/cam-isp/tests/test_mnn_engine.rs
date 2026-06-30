@@ -85,6 +85,7 @@ fn test_mnn_engine_streaming() {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 });
 
         match &result {
@@ -137,6 +138,7 @@ fn test_mnn_engine_frame_difference() {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 }).expect("frame 0");
     outputs.push(f0.data);
 
@@ -152,6 +154,7 @@ fn test_mnn_engine_frame_difference() {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 }).expect("frame 1");
     outputs.push(f1.data);
 
@@ -172,6 +175,7 @@ fn test_mnn_engine_frame_difference() {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 }).expect("frame 2");
     outputs.push(f2.data);
 
@@ -244,6 +248,7 @@ fn test_mnn_engine_lite_profile() {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 });
         match &result {
             Ok(frame) => {
@@ -313,6 +318,7 @@ fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 });
     match &result {
         Ok(frame) => {
@@ -379,6 +385,7 @@ fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 });
         let elapsed = t_start.elapsed();
         total_duration += elapsed;
@@ -487,6 +494,7 @@ fn stream_mnn_backend(w: u32, h: u32, n_frames: u32, backend: &str) -> Result<f6
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 });
         let elapsed = t_start.elapsed();
         total_duration += elapsed;
@@ -596,6 +604,7 @@ fn test_mnn_packed_pipeline() {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::PackedRgb,
+    timestamp_ns: 0,
 });
 
     match &result {
@@ -632,6 +641,7 @@ fn test_mnn_engine_uninitialized() {
     bayer_pattern: 0, analog_gain: 1.0, scene_change: 0.0,
     lsc_gains: None, blc_values: None, warp_grid: None,
     output_format: cam_isp::engine::OutputFormat::default(),
+    timestamp_ns: 0,
 });
         assert!(result.is_err(), "uninitialized should fail");
         eprintln!("Uninitialized check OK: {:?}", result.err().unwrap());
