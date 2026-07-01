@@ -76,6 +76,9 @@ pub struct DeshakeEngine {
     pub downscale_target: u32,
     /// Use diamond search instead of full scan (default true).
     pub use_diamond_search: bool,
+    /// Optional GPU pipeline for grayscale+pyramid.
+    /// When Some, grayscale conversion and downscale run on GPU (Vulkan).
+    pub gpu_pipeline: Option<DeshakeGpuPipeline>,
 }
 
 impl Default for DeshakeEngine {
@@ -98,6 +101,7 @@ impl DeshakeEngine {
             smoothing_alpha: 0.0,
             downscale_target: 0,
             use_diamond_search: true,
+            gpu_pipeline: None,
         }
     }
 
@@ -107,6 +111,18 @@ impl DeshakeEngine {
         self.prev_dims = None;
         self.smooth_motion = [0.0; 2];
         self.frame_count = 0;
+    }
+
+    /// Enable GPU-accelerated grayscale+pyramid pipeline.
+    /// When enabled, uses Vulkan compute shaders (isp.grayscale + isp.pyramid)
+    /// for grayscale conversion and pyramid downscale instead of CPU.
+    pub fn with_gpu_pipeline(&mut self, use_gpu: bool) -> &mut Self {
+        if use_gpu {
+            self.gpu_pipeline = Some(DeshakeGpuPipeline::new());
+        } else {
+            self.gpu_pipeline = None;
+        }
+        self
     }
 
     /// Convert BGRA/RGBA frame to grayscale (luminance only).
@@ -148,6 +164,49 @@ impl DeshakeEngine {
             factor *= 2;
         }
         factor
+    }
+
+    /// Convert BGRA/RGBA u8 frame to planar RGB float32 [0,1].
+    /// Output layout: RRR...GGG...BBB... (CHW, H×W each channel).
+    fn bgra_to_planar_rgb_f32(data: &[u8], width: u32, height: u32) -> Vec<f32> {
+        let len = (width * height) as usize;
+        let mut out = vec![0.0f32; len * 3];
+        let inv = 1.0 / 255.0;
+        for y in 0..height {
+            for x in 0..width {
+                let src_idx = ((y * width + x) * 4) as usize;
+                let dst_r = (y * width + x) as usize;
+                let dst_g = dst_r + len;
+                let dst_b = dst_r + len * 2;
+                let r = data.get(src_idx).copied().unwrap_or(0) as f32 * inv;
+                let g = data.get(src_idx + 1).copied().unwrap_or(0) as f32 * inv;
+                let b = data.get(src_idx + 2).copied().unwrap_or(0) as f32 * inv;
+                out[dst_r] = r;
+                out[dst_g] = g;
+                out[dst_b] = b;
+            }
+        }
+        out
+    }
+
+    /// CPU grayscale + pyramid downscale (fallback path).
+    /// Used when GPU pipeline is unavailable or fails.
+    fn cpu_grayscale_pyramid(data: &[u8], width: u32, height: u32, ds_factor: u32) -> (Vec<u8>, u32, u32) {
+        if ds_factor > 1 {
+            let gray = Self::to_grayscale(data, width, height);
+            let mut g = gray;
+            let mut w = width;
+            let mut h = height;
+            for _ in 0..(ds_factor.ilog2()) {
+                let prev_w = w;
+                g = Self::downscale_gray(&g, prev_w, h);
+                w /= 2;
+                h /= 2;
+            }
+            (g, w, h)
+        } else {
+            (Self::to_grayscale(data, width, height), width, height)
+        }
     }
 
     /// Compute SAD between two blocks, normalized by block area.
@@ -407,24 +466,34 @@ impl DeshakeEngine {
         let ds_target = if self.downscale_target > 0 { self.downscale_target } else { DOWNSCALE_TARGET };
         let use_diamond = self.use_diamond_search;
 
-        // --- Pyramid downscale ---
-        // Compute downscale factor and downsample both frames for matching
+        // --- Pyramid downscale (GPU or CPU) ---
         let ds_factor = Self::compute_downscale_factor(width, height, ds_target);
-        let (curr_gray, ds_width, ds_height) = if ds_factor > 1 {
-            let gray = Self::to_grayscale(data, width, height);
-            // Apply downscale factor (powers of 2, repeated)
-            let mut g = gray;
-            let mut w = width;
-            let mut h = height;
-            for _ in 0..(ds_factor.ilog2()) {
-                let prev_w = w;
-                g = Self::downscale_gray(&g, prev_w, h);
-                w /= 2;
-                h /= 2;
+        let (curr_gray, ds_width, ds_height) = if let Some(ref gpu) = self.gpu_pipeline {
+            // GPU path: convert BGRA/RGBA u8 → planar RGB f32, run GPU pipeline
+            let rgb_f32 = Self::bgra_to_planar_rgb_f32(data, width, height);
+            match gpu.run(&rgb_f32, width, height) {
+                Ok((gray, ds_w, ds_h)) => {
+                    // GPU did grayscale + 1 level of pyramid (2x downscale)
+                    let mut g = gray;
+                    let mut w = ds_w;
+                    let mut h = ds_h;
+                    // If more downscale needed (ds_factor > 2), continue on CPU
+                    for _ in 1..(ds_factor.ilog2()) {
+                        let prev_w = w;
+                        g = Self::downscale_gray(&g, prev_w, h);
+                        w /= 2;
+                        h /= 2;
+                    }
+                    (g, w, h)
+                }
+                Err(e) => {
+                    log::warn!("GPU deshake pipeline failed: {}, falling back to CPU", e);
+                    // Fallback to CPU
+                    Self::cpu_grayscale_pyramid(data, width, height, ds_factor)
+                }
             }
-            (g, w, h)
         } else {
-            (Self::to_grayscale(data, width, height), width, height)
+            Self::cpu_grayscale_pyramid(data, width, height, ds_factor)
         };
 
         // Scale block_size and search_radius to downsampled domain
@@ -656,23 +725,24 @@ fn bilinear_sample_4(data: &[u8], width: u32, height: u32, x: f32, y: f32) -> Ve
 // Requires feature "mnn" for the MNN GPU backend.
 
 #[cfg(feature = "mnn")]
-mod gpu_pipeline {
+pub mod gpu_pipeline {
     use crate::pipeline::{IspBlock, GraphComposer};
     use crate::blocks::{GrayscaleBlock, PyramidBlock};
     use crate::mnn_sys::{MnnInterpreterSafe, MnnBackendType, MnnTensorSafe};
-    use std::sync::Mutex;
+    use std::sync::{Mutex, Arc};
 
     /// Cached GPU pipeline for grayscale+pyramid.
     /// Lazily built from ONNX at first use.
+    #[derive(Debug, Clone)]
     pub struct DeshakeGpuPipeline {
-        /// Cached MNN model bytes for current resolution.
-        mnn_cache: Mutex<Option<(u32, u32, Vec<u8>)>>,
+        /// Cached MNN model bytes for current resolution (Arc for Clone).
+        mnn_cache: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>,
     }
 
     impl DeshakeGpuPipeline {
         pub fn new() -> Self {
             Self {
-                mnn_cache: Mutex::new(None),
+                mnn_cache: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -844,7 +914,23 @@ mod gpu_pipeline {
     }
 } // mod gpu_pipeline
 
-#[cfg(feature = "mnn")]
+/// GPU-accelerated pipeline for grayscale+pyramid.
+/// Real implementation requires the `mnn` feature (uses Vulkan compute shaders
+/// for isp.grayscale + isp.pyramid Extra ops).
+/// Without `mnn`, this is a stub that returns an error.
+#[cfg(not(feature = "mnn"))]
+pub mod gpu_pipeline {
+    #[derive(Debug, Clone)]
+    pub struct DeshakeGpuPipeline;
+    impl DeshakeGpuPipeline {
+        pub fn new() -> Self { Self }
+        pub fn run(&self, _rgb: &[f32], _w: u32, _h: u32) -> Result<(Vec<u8>, u32, u32), String> {
+            Err("MNN feature not enabled — GPU deshake unavailable".to_string())
+        }
+    }
+}
+
+// Re-export for easy access
 pub use gpu_pipeline::DeshakeGpuPipeline;
 
 // ============================================================================
