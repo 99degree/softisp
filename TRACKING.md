@@ -286,6 +286,12 @@ The choice of algorithm depends on:
 
 ## Remaining Work
 - (none — all TODO items resolved)
+- ✅ All 7 pipeline blocks decomposed to atomic subgraphs, detected by standard fusion rules
+- ✅ Pipeline at 17 ops, 35.0 FPS (exceeds 30 FPS target)
+- ✅ Remaining 17 ops = 4 Extras + ConvertTensors at edges (no intermediate ConvertTensors)
+- ✅ Fusions: R1 (unpack), R2 (demosaic), R3b (FCS), R4 (EE via tryRustExtraEe), R5 (LDCI), R6 (Display), R10 (unpack+demosaic), R9 (ee+ldci)
+- ⏳ R8 (fcs+display) doesn't fire in current pipeline (non-adjacent Extras in chain)
+- ⏳ MHC demosaic shader (5×5 adaptive) — low priority, not needed for 4K binning path
 
 ## Testing
 ```bash

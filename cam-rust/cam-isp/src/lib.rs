@@ -24,6 +24,7 @@ pub mod mnn_buffer;
 
 pub mod ccm_engine;
 pub mod eis;
+pub mod deshake;
 pub mod af;
 pub mod calibration;
 pub mod scene;
