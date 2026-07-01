@@ -205,4 +205,129 @@ impl SimdEngine for Neon {
         }
         out
     }
+
+    fn bilinear_sample_4ch(
+        &self,
+        src: &[u8],
+        width: u32,
+        height: u32,
+        x: f32,
+        y: f32,
+    ) -> [u8; 4] {
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            // Fallback to scalar on non-aarch64
+            let x0 = x.floor() as i32;
+            let y0 = y.floor() as i32;
+            let x1 = x0 + 1;
+            let y1 = y0 + 1;
+            let fx = x - x0 as f32;
+            let fy = y - y0 as f32;
+            let w = width as i32 - 1;
+            let h = height as i32 - 1;
+            let x0 = x0.clamp(0, w) as u32;
+            let y0 = y0.clamp(0, h) as u32;
+            let x1 = x1.clamp(0, w) as u32;
+            let y1 = y1.clamp(0, h) as u32;
+            let idx = |sx: u32, sy: u32| -> usize { ((sy * width + sx) * 4) as usize };
+            let p00 = [src[idx(x0, y0)], src[idx(x0, y0)+1], src[idx(x0, y0)+2], src[idx(x0, y0)+3]];
+            let p10 = [src[idx(x1, y0)], src[idx(x1, y0)+1], src[idx(x1, y0)+2], src[idx(x1, y0)+3]];
+            let p01 = [src[idx(x0, y1)], src[idx(x0, y1)+1], src[idx(x0, y1)+2], src[idx(x0, y1)+3]];
+            let p11 = [src[idx(x1, y1)], src[idx(x1, y1)+1], src[idx(x1, y1)+2], src[idx(x1, y1)+3]];
+            let mut result = [0u8; 4];
+            for c in 0..4 {
+                let v = p00[c] as f32 * (1.0 - fx) * (1.0 - fy)
+                    + p10[c] as f32 * fx * (1.0 - fy)
+                    + p01[c] as f32 * (1.0 - fx) * fy
+                    + p11[c] as f32 * fx * fy;
+                result[c] = v.round().clamp(0.0, 255.0) as u8;
+            }
+            return result;
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { neon_bilinear_sample_4ch(src, width, height, x, y) }
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn neon_bilinear_sample_4ch(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    x: f32,
+    y: f32,
+) -> [u8; 4] {
+    use std::arch::aarch64::*;
+
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let x1 = x0 + 1;
+    let y1 = y0 + 1;
+
+    let w = width as i32 - 1;
+    let h = height as i32 - 1;
+    let x0c = x0.clamp(0, w) as u32;
+    let y0c = y0.clamp(0, h) as u32;
+    let x1c = x1.clamp(0, w) as u32;
+    let y1c = y1.clamp(0, h) as u32;
+
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+
+    let idx = |sx: u32, sy: u32| -> usize { ((sy * width + sx) * 4) as usize };
+
+    // Load 4 bytes from each corner using NEON
+    // vld1_u8 loads 8 bytes, we use the lower 4
+    let p00_u8 = vld1_u8(src.as_ptr().add(idx(x0c, y0c)));
+    let p10_u8 = vld1_u8(src.as_ptr().add(idx(x1c, y0c)));
+    let p01_u8 = vld1_u8(src.as_ptr().add(idx(x0c, y1c)));
+    let p11_u8 = vld1_u8(src.as_ptr().add(idx(x1c, y1c)));
+
+    // Expand u8 → u16 → u32 → f32
+    let expand_to_f32 = |v: uint8x8_t| -> float32x4_t {
+        let u16 = vmovl_u8(v);           // u8 → u16 (8 lanes)
+        let u32 = vmovl_u16(vget_low_u16(u16)); // lower 4 × u16 → u32
+        vcvtq_f32_u32(u32)               // u32 → f32
+    };
+
+    let v_p00 = expand_to_f32(p00_u8);
+    let v_p10 = expand_to_f32(p10_u8);
+    let v_p01 = expand_to_f32(p01_u8);
+    let v_p11 = expand_to_f32(p11_u8);
+
+    // Interpolate: result = w00*p00 + w10*p10 + w01*p01 + w11*p11
+    let w00 = (1.0 - fx) * (1.0 - fy);
+    let w10 = fx * (1.0 - fy);
+    let w01 = (1.0 - fx) * fy;
+    let w11 = fx * fy;
+
+    let v_w00 = vdupq_n_f32(w00);
+    let v_w10 = vdupq_n_f32(w10);
+    let v_w01 = vdupq_n_f32(w01);
+    let v_w11 = vdupq_n_f32(w11);
+
+    let mut v_result = vmulq_f32(v_p00, v_w00);
+    v_result = vmlaq_f32(v_result, v_p10, v_w10);
+    v_result = vmlaq_f32(v_result, v_p01, v_w01);
+    v_result = vmlaq_f32(v_result, v_p11, v_w11);
+
+    // Clamp to [0, 255] and convert back to u8
+    let v_255 = vdupq_n_f32(255.0);
+    let v_zero = vdupq_n_f32(0.0);
+    v_result = vmaxq_f32(vminq_f32(v_result, v_255), v_zero);
+
+    // f32 → u32 → u16 → u8
+    let u32_result = vcvtq_u32_f32(v_result);      // f32 → u32
+    let u16_result = vqmovn_u32(u32_result);        // u32 → u16 (saturating)
+    let u8_result = vqmovn_u16(vcombine_u16(u16_result, u16_result)); // u16 → u8 (saturating)
+
+    let mut result = [0u8; 4];
+    // Store the lower 4 bytes (1 u32 lane) from the 8-byte register
+    // Reinterpret uint8x8_t as uint32x2_t, store lane 0
+    let u32_2 = vreinterpret_u32_u8(u8_result);
+    vst1_lane_u32(result.as_mut_ptr() as *mut u32, u32_2, 0);
+    result
 }

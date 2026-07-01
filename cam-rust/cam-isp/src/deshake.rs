@@ -627,6 +627,10 @@ impl DeshakeEngine {
     /// Apply deshake warp (translation-only) to BGRA/RGBA frame.
     ///
     /// Returns (warped_data, new_width, new_height).
+    /// Apply warping (inverse bilinear warp) with SIMD acceleration.
+    ///
+    /// `comp[0]` = dx (positive = shift image left).
+    /// `comp[1]` = dy (positive = shift image up).
     pub fn apply_warp(
         data: &[u8],
         width: u32,
@@ -649,16 +653,98 @@ impl DeshakeEngine {
         let bpp = 4;
         let mut out = vec![0u8; (out_w * out_h * bpp as u32) as usize];
 
-        for oy in 0..out_h {
+        // Compute interior rectangle where all 4 source corners are in-bounds
+        // (no clamping needed). Covers >95% of pixels for typical small motions.
+        let sx_base = margin_x as f32 + dx;
+        let sy_base = margin_y as f32 + dy;
+        // x0 = floor(sx), x1 = x0 + 1. Safe when x0 >= 0 AND x1 < width.
+        // i.e. sx >= 0 AND sx < width as f32 - 1.0
+        let i_start_x = if sx_base >= 0.0 {
+            0u32
+        } else {
+            (-sx_base).ceil() as u32
+        };
+        let i_start_y = if sy_base >= 0.0 {
+            0u32
+        } else {
+            (-sy_base).ceil() as u32
+        };
+        let max_sx = (width as f32) - 1.0;
+        let max_sy = (height as f32) - 1.0;
+        let last_ox = sx_base + (out_w - 1) as f32;
+        let last_oy = sy_base + (out_h - 1) as f32;
+        let i_end_x = if last_ox < max_sx {
+            out_w
+        } else {
+            // ox < width - 1 - sx_base  →  ox <= floor(width - 1 - sx_base - eps)
+            let max_ox = ((width as f32) - 1.0 - sx_base - f32::EPSILON).floor() as u32;
+            (max_ox + 1).min(out_w)
+        };
+        let i_end_y = if last_oy < max_sy {
+            out_h
+        } else {
+            let max_oy = ((height as f32) - 1.0 - sy_base - f32::EPSILON).floor() as u32;
+            (max_oy + 1).min(out_h)
+        };
+
+        let simd = crate::simd::best_backend();
+
+        // Edge rows — need bounds clamping
+        for oy in 0..i_start_y {
+            let iy = oy as f32 + margin_y as f32;
+            let sy = iy + dy;
             for ox in 0..out_w {
                 let ix = ox as f32 + margin_x as f32;
-                let iy = oy as f32 + margin_y as f32;
+                let sx = ix + dx;
+                let pixel = simd.bilinear_sample_4ch(data, width, height, sx, sy);
+                let out_idx = ((oy * out_w + ox) * bpp as u32) as usize;
+                out[out_idx..out_idx + bpp].copy_from_slice(&pixel);
+            }
+        }
 
-                // Inverse warp: map output pixel to source pixel
-                let sx = ix + dx;  // positive dx = shift image LEFT
-                let sy = iy + dy;
+        for oy in i_end_y..out_h {
+            let iy = oy as f32 + margin_y as f32;
+            let sy = iy + dy;
+            for ox in 0..out_w {
+                let ix = ox as f32 + margin_x as f32;
+                let sx = ix + dx;
+                let pixel = simd.bilinear_sample_4ch(data, width, height, sx, sy);
+                let out_idx = ((oy * out_w + ox) * bpp as u32) as usize;
+                out[out_idx..out_idx + bpp].copy_from_slice(&pixel);
+            }
+        }
 
-                let pixel = bilinear_sample_4(data, width, height, sx, sy);
+        // Edge columns (interior rows) — need bounds clamping
+        for oy in i_start_y..i_end_y {
+            let iy = oy as f32 + margin_y as f32;
+            let sy = iy + dy;
+            // Left edge column
+            for ox in 0..i_start_x {
+                let ix = ox as f32 + margin_x as f32;
+                let sx = ix + dx;
+                let pixel = simd.bilinear_sample_4ch(data, width, height, sx, sy);
+                let out_idx = ((oy * out_w + ox) * bpp as u32) as usize;
+                out[out_idx..out_idx + bpp].copy_from_slice(&pixel);
+            }
+            // Right edge column
+            for ox in i_end_x..out_w {
+                let ix = ox as f32 + margin_x as f32;
+                let sx = ix + dx;
+                let pixel = simd.bilinear_sample_4ch(data, width, height, sx, sy);
+                let out_idx = ((oy * out_w + ox) * bpp as u32) as usize;
+                out[out_idx..out_idx + bpp].copy_from_slice(&pixel);
+            }
+        }
+
+        // Interior bulk — all 4 corners in-bounds, SIMD fast path
+        for oy in i_start_y..i_end_y {
+            let iy = oy as f32 + margin_y as f32;
+            let sy = iy + dy;
+            for ox in i_start_x..i_end_x {
+                let ix = ox as f32 + margin_x as f32;
+                let sx = ix + dx;
+                // All 4 corners guaranteed in-bounds
+                let pixel = simd.bilinear_sample_4ch(data, width, height, sx, sy);
                 let out_idx = ((oy * out_w + ox) * bpp as u32) as usize;
                 out[out_idx..out_idx + bpp].copy_from_slice(&pixel);
             }
@@ -676,41 +762,6 @@ impl DeshakeEngine {
 // ============================================================================
 // Bilinear interpolation (4-channel)
 // ============================================================================
-
-fn bilinear_sample_4(data: &[u8], width: u32, height: u32, x: f32, y: f32) -> Vec<u8> {
-    let x0 = x.floor() as i32;
-    let y0 = y.floor() as i32;
-    let x1 = x0 + 1;
-    let y1 = y0 + 1;
-
-    let fx = x - x0 as f32;
-    let fy = y - y0 as f32;
-
-    let sample = |sx: i32, sy: i32| -> [u8; 4] {
-        if sx < 0 || sx >= width as i32 || sy < 0 || sy >= height as i32 {
-            return [0u8; 4];
-        }
-        let idx = ((sy as u32 * width + sx as u32) * 4) as usize;
-        let mut p = [0u8; 4];
-        p.copy_from_slice(&data[idx..idx + 4]);
-        p
-    };
-
-    let p00 = sample(x0, y0);
-    let p10 = sample(x1, y0);
-    let p01 = sample(x0, y1);
-    let p11 = sample(x1, y1);
-
-    let mut result = [0u8; 4];
-    for c in 0..4 {
-        let v = p00[c] as f32 * (1.0 - fx) * (1.0 - fy)
-            + p10[c] as f32 * fx * (1.0 - fy)
-            + p01[c] as f32 * (1.0 - fx) * fy
-            + p11[c] as f32 * fx * fy;
-        result[c] = v.round().clamp(0.0, 255.0) as u8;
-    }
-    result.to_vec()
-}
 
 // ============================================================================
 // GPU-accelerated Deshake Pipeline (hybrid GPU/CPU)
@@ -845,7 +896,7 @@ pub mod gpu_pipeline {
             
             // Build ONNX graph with GrayscaleBlock → PyramidBlock
             let mut gs = GrayscaleBlock::new();
-            let mut pyr = PyramidBlock::new();
+            let pyr = PyramidBlock::new();
             let mut blocks: Vec<Box<dyn IspBlock>> = vec![
                 Box::new(gs),
                 Box::new(pyr),

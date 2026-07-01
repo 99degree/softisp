@@ -27,6 +27,18 @@ pub trait SimdEngine: Send + Sync {
 
     /// f32 RGB → u8 BGRA, optionally resized.
     fn display_output(&self, rgb: &[f32], src_w: usize, src_h: usize, target_w: usize) -> Vec<u8>;
+
+    /// Bilinear sample from a BGRA/RGBA image.
+    /// Returns 4 interpolated bytes for position (x, y) in source space.
+    /// Clamps to image bounds.
+    fn bilinear_sample_4ch(
+        &self,
+        src: &[u8],
+        width: u32,
+        height: u32,
+        x: f32,
+        y: f32,
+    ) -> [u8; 4];
 }
 
 /// Detected backend kind.
