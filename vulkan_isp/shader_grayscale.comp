@@ -1,0 +1,33 @@
+#version 450
+// isp.grayscale — Convert [1,3,H,W] f32 planar RGB → [1,1,H,W] f32 luminance
+// Dispatch: W×H×1 (one thread per pixel)
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer Uniforms {
+    float width;
+    float height;
+    float pad[6];
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBuf  { float in_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint w = uint(uniforms.width);
+    uint h = uint(uniforms.height);
+    if (x >= w || y >= h) return;
+
+    uint plane = w * h;
+    uint idx = y * w + x;
+
+    // Planar RGB [0,1] → luminance
+    float r = in_data[0 * plane + idx];
+    float g = in_data[1 * plane + idx];
+    float b = in_data[2 * plane + idx];
+    float lum = r * 0.299 + g * 0.587 + b * 0.114;
+
+    out_data[idx] = clamp(lum, 0.0, 1.0);
+}
