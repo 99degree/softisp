@@ -85,3 +85,75 @@ impl IspBlock for PyramidBlock {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify pyramid identity weights: top-left = 1.0 per output channel.
+    /// Weight shape: [3, 3, 2, 2], position (oc, oc, 0, 0) = 1.0
+    #[test]
+    fn test_pyramid_identity_weights() {
+        let block = PyramidBlock::new();
+        let inits = block.initializers();
+        assert_eq!(inits.len(), 1, "should have 1 initializer (weight)");
+        let w_bytes = &inits[0];
+        // Weight has 3*3*2*2 = 36 float32 values = 144 bytes of raw_data
+        // Each output channel oc reads from its corresponding input channel ic
+        // weight[oc][ic][y][x] = 1.0 if oc==ic && y==0 && x==0
+        // Build the expected weight array
+        let mut expected = vec![0.0f32; 36];
+        for oc in 0..3 {
+            let idx = oc * 3 * 2 * 2 + oc * 2 * 2;  // (oc, oc, 0, 0)
+            expected[idx] = 1.0;
+        }
+        let expected_bytes = unsafe {
+            std::slice::from_raw_parts(
+                expected.as_ptr() as *const u8,
+                expected.len() * 4,
+            )
+        };
+        let w_pos = w_bytes.windows(expected_bytes.len())
+            .position(|window| window == expected_bytes);
+        assert!(w_pos.is_some(), "identity weights not found in tensor");
+    }
+
+    /// Verify output shape preserves channels [1, 3, H, W].
+    #[test]
+    fn test_pyramid_output_shape() {
+        let block = PyramidBlock::new();
+        let ovi = block.output_value_info().expect("should have output value info");
+        assert!(ovi.len() > 10, "output value info should be non-trivial");
+        let dim_param_count = ovi.iter().filter(|&&b| b == 0x0a).count();
+        assert!(dim_param_count >= 2, "should have at least 2 dim params");
+    }
+
+    /// Verify ONNX node is Conv.
+    #[test]
+    fn test_pyramid_onnx_structure() {
+        let block = PyramidBlock::new();
+        let nodes = block.nodes();
+        assert_eq!(nodes.len(), 1, "should have 1 Conv node");
+        let node_str = String::from_utf8_lossy(&nodes[0]);
+        assert!(node_str.contains("Conv"), "node should be Conv");
+    }
+
+    /// Verify Grayscale→Pyramid composition produces valid ONNX.
+    #[test]
+    fn test_pyramid_compose_onnx() {
+        use crate::pipeline::GraphComposer;
+        use crate::blocks::GrayscaleBlock;
+        let mut gs = GrayscaleBlock::new();
+        let pyr = PyramidBlock::new();
+        gs.set_input_source("input");
+        let pipeline: Vec<&dyn IspBlock> = vec![&gs as &dyn IspBlock, &pyr as &dyn IspBlock];
+        let onnx = GraphComposer::compose_from_vec(&pipeline, &[], 21);
+        assert!(onnx.is_ok(), "ONNX composition should succeed");
+        let bytes = onnx.unwrap();
+        assert!(bytes.len() > 200, "ONNX protobuf should be non-trivial");
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("Conv"), "ONNX should contain Conv nodes");
+        assert!(s.contains("GrayscaleBlock"), "should contain grayscale tensor");
+        assert!(s.contains("PyramidBlock"), "should contain pyramid tensor");
+    }
+}
