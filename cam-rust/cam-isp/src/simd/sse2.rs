@@ -175,6 +175,76 @@ unsafe fn display_output_sse2(rgb: &[f32], src_w: usize, src_h: usize, target_w:
     out
 }
 
+/// SSE2 bilinear sample for 4 channels (BGRA) at position (x, y).
+/// Processes all 4 channel interpolations in parallel using SSE floats.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn bilinear_sample_4ch_sse2(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    x: f32,
+    y: f32,
+) -> [u8; 4] {
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let x1 = x0 + 1;
+    let y1 = y0 + 1;
+
+    let w = width as i32 - 1;
+    let h = height as i32 - 1;
+    let x0c = x0.clamp(0, w);
+    let y0c = y0.clamp(0, h);
+    let x1c = x1.clamp(0, w);
+    let y1c = y1.clamp(0, h);
+
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let w00 = (1.0 - fx) * (1.0 - fy);
+    let w10 = fx * (1.0 - fy);
+    let w01 = (1.0 - fx) * fy;
+    let w11 = fx * fy;
+
+    let idx = |sx: i32, sy: i32| -> usize {
+        ((sy as u32 * width + sx as u32) * 4) as usize
+    };
+
+    let load_4bytes = |i: usize| -> __m128 {
+        let bytes = _mm_cvtsi32_si128(*(src.as_ptr().add(i) as *const i32));
+        let zero = _mm_setzero_si128();
+        let u16 = _mm_unpacklo_epi8(bytes, zero);
+        let u32 = _mm_unpacklo_epi16(u16, zero);
+        _mm_cvtepi32_ps(u32)
+    };
+
+    let v_p00 = load_4bytes(idx(x0c, y0c));
+    let v_p10 = load_4bytes(idx(x1c, y0c));
+    let v_p01 = load_4bytes(idx(x0c, y1c));
+    let v_p11 = load_4bytes(idx(x1c, y1c));
+
+    let v_w00 = _mm_set1_ps(w00);
+    let v_w10 = _mm_set1_ps(w10);
+    let v_w01 = _mm_set1_ps(w01);
+    let v_w11 = _mm_set1_ps(w11);
+
+    let mut v_result = _mm_mul_ps(v_p00, v_w00);
+    v_result = _mm_add_ps(v_result, _mm_mul_ps(v_p10, v_w10));
+    v_result = _mm_add_ps(v_result, _mm_mul_ps(v_p01, v_w01));
+    v_result = _mm_add_ps(v_result, _mm_mul_ps(v_p11, v_w11));
+
+    let v_255 = _mm_set1_ps(255.0);
+    let v_zero = _mm_setzero_ps();
+    v_result = _mm_min_ps(_mm_max_ps(v_result, v_zero), v_255);
+    let i32_result = _mm_cvtps_epi32(v_result);
+
+    let zero_i16 = _mm_setzero_si128();
+    let u16_lo = _mm_packus_epi32(i32_result, zero_i16);
+    let u8_all = _mm_packus_epi16(u16_lo, zero_i16);
+
+    let mut result = [0u8; 4];
+    _mm_storel_epi64(&mut result as *mut _ as *mut __m128i, u8_all);
+    result
+}
+
 impl SimdEngine for Sse2 {
     fn name(&self) -> &'static str { "sse2" }
 
@@ -192,5 +262,16 @@ impl SimdEngine for Sse2 {
 
     fn display_output(&self, rgb: &[f32], src_w: usize, src_h: usize, target_w: usize) -> Vec<u8> {
         unsafe { display_output_sse2(rgb, src_w, src_h, target_w) }
+    }
+
+    fn bilinear_sample_4ch(
+        &self,
+        src: &[u8],
+        width: u32,
+        height: u32,
+        x: f32,
+        y: f32,
+    ) -> [u8; 4] {
+        unsafe { bilinear_sample_4ch_sse2(src, width, height, x, y) }
     }
 }

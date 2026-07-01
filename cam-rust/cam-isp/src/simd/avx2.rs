@@ -205,4 +205,15 @@ impl SimdEngine for Avx2 {
     fn display_output(&self, rgb: &[f32], src_w: usize, src_h: usize, target_w: usize) -> Vec<u8> {
         unsafe { display_output_avx2(rgb, src_w, src_h, target_w) }
     }
+
+    fn bilinear_sample_4ch(
+        &self,
+        src: &[u8],
+        width: u32,
+        height: u32,
+        x: f32,
+        y: f32,
+    ) -> [u8; 4] {
+        unsafe { super::sse2::bilinear_sample_4ch_sse2(src, width, height, x, y) }
+    }
 }

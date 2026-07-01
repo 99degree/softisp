@@ -72,6 +72,48 @@ impl SimdEngine for Scalar {
         }
         out
     }
+
+    fn bilinear_sample_4ch(
+        &self,
+        src: &[u8],
+        width: u32,
+        height: u32,
+        x: f32,
+        y: f32,
+    ) -> [u8; 4] {
+        let x0 = x.floor() as i32;
+        let y0 = y.floor() as i32;
+        let x1 = x0 + 1;
+        let y1 = y0 + 1;
+
+        let fx = x - x0 as f32;
+        let fy = y - y0 as f32;
+
+        let sample = |sx: i32, sy: i32| -> [u8; 4] {
+            if sx < 0 || sx >= width as i32 || sy < 0 || sy >= height as i32 {
+                return [0u8; 4];
+            }
+            let idx = ((sy as u32 * width + sx as u32) * 4) as usize;
+            let mut p = [0u8; 4];
+            p.copy_from_slice(&src[idx..idx + 4]);
+            p
+        };
+
+        let p00 = sample(x0, y0);
+        let p10 = sample(x1, y0);
+        let p01 = sample(x0, y1);
+        let p11 = sample(x1, y1);
+
+        let mut result = [0u8; 4];
+        for c in 0..4 {
+            let v = p00[c] as f32 * (1.0 - fx) * (1.0 - fy)
+                + p10[c] as f32 * fx * (1.0 - fy)
+                + p01[c] as f32 * (1.0 - fx) * fy
+                + p11[c] as f32 * fx * fy;
+            result[c] = v.round().clamp(0.0, 255.0) as u8;
+        }
+        result
+    }
 }
 
 #[cfg(test)]
