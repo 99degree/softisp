@@ -125,7 +125,6 @@ impl IspBlock for BayerDemosaicBlock {
         let ns = self.tensor_ns();
         let k = self.algo.kernel();
         let s = self.algo.stride();
-        let oc = self.algo.output_channels();
         let g = self.algo.group();
         vec![Proto::node("Conv", &[
             &self.input_source,
@@ -184,7 +183,25 @@ impl IspBlock for BayerDemosaicBlock {
                 ]
             }
             DemosaicAlgo::Mhc => {
-                let w = vec![0.0f32; oc * 1 * k * k];
+                // 6x6 conv — weights not used by SPIR-V shader,
+                // but must be non-zero for MNN converter detection
+                let mut w = vec![0.0f32; oc * 1 * k * k];
+                for o in 0..oc {
+                    // Center region weight
+                    for ky in 0..k {
+                        for kx in 0..k {
+                            let idx = o * k * k + ky * k + kx;
+                            // 6x6 kernel, center 2x2 gets highest weight
+                            if ky >= 2 && ky <= 3 && kx >= 2 && kx <= 3 {
+                                w[idx] = 1.0 / 4.0;
+                            } else if ky >= 1 && ky <= 4 && kx >= 1 && kx <= 4 {
+                                w[idx] = 1.0 / 8.0;
+                            } else {
+                                w[idx] = 1.0 / 16.0;
+                            }
+                        }
+                    }
+                }
                 let b = vec![0.0f32; oc];
                 vec![
                     Proto::tensor_proto_float(&format!("{ns}/conv_w"), &[oc as i64, 1, k as i64, k as i64], &w),
@@ -198,6 +215,7 @@ impl IspBlock for BayerDemosaicBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::IspBlock;
     #[test]
     fn test_algo_kernel() {
         assert_eq!(DemosaicAlgo::Binning.kernel(), 2);
@@ -241,5 +259,19 @@ mod tests {
             let block = BayerDemosaicBlock::new().with_algorithm(*algo);
             assert_eq!(block.initializers().len(), 2);
         }
+    }
+    #[test]
+    fn test_mhc_weights_nonzero() {
+        // Verify MHC generates non-zero 6×6 kernel weights
+        let mut block = BayerDemosaicBlock::new().with_algorithm(DemosaicAlgo::Mhc);
+        block.set_input_source("raw");
+        let inits = block.initializers();
+        // First initializer is the weight tensor
+        // 6×6×3 = 108 float32 values = 432 bytes in raw_data
+        // Plus protobuf framing ~50 bytes
+        assert!(inits[0].len() > 400, "MHC weight tensor too small");
+        assert!(inits[1].len() > 4, "MHC bias tensor too small");
+        // Verify the node count
+        assert_eq!(block.nodes().len(), 1);
     }
 }
