@@ -779,7 +779,7 @@ impl DeshakeEngine {
 pub mod gpu_pipeline {
     use crate::pipeline::{IspBlock, GraphComposer};
     use crate::blocks::{GrayscaleBlock, PyramidBlock};
-    use crate::mnn_sys::{MnnInterpreterSafe, MnnBackendType, MnnTensorSafe};
+    use crate::mnn_sys::{MnnInterpreterSafe, MnnBackendType};
     use std::sync::{Mutex, Arc};
 
     /// Cached GPU pipeline for grayscale+pyramid.
@@ -846,7 +846,7 @@ pub mod gpu_pipeline {
             // Write input data via mutable byte slice
             let input_size = (width * height * 3) as usize;
             {
-                let mut input_bytes = input.as_bytes_mut()
+                let input_bytes = input.as_bytes_mut()
                     .ok_or_else(|| "Failed to get input tensor data".to_string())?;
                 if input_bytes.len() < input_size * 4 {
                     return Err(format!("Input tensor too small: {} bytes, need {}",
@@ -895,7 +895,7 @@ pub mod gpu_pipeline {
             use std::io::Write;
             
             // Build ONNX graph with GrayscaleBlock → PyramidBlock
-            let mut gs = GrayscaleBlock::new();
+            let gs = GrayscaleBlock::new();
             let pyr = PyramidBlock::new();
             let mut blocks: Vec<Box<dyn IspBlock>> = vec![
                 Box::new(gs),
