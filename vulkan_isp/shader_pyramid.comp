@@ -1,0 +1,44 @@
+#version 450
+// isp.pyramid — Nearest-neighbor 2× downscale
+// Input:  [1,C,H,W] f32
+// Output: [1,C,H/2,W/2] f32
+// Dispatch: ceil(W/2) × ceil(H/2) × 1
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer Uniforms {
+    float in_width;
+    float in_height;
+    float out_width;
+    float out_height;
+    float channels;
+    float pad[3];
+} uniforms;
+
+layout(set = 0, binding = 1) readonly buffer InBuf  { float in_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint ow = uint(uniforms.out_width);
+    uint oh = uint(uniforms.out_height);
+    uint ch = uint(uniforms.channels);
+    if (x >= ow || y >= oh) return;
+
+    uint iw = uint(uniforms.in_width);
+    uint ih = uint(uniforms.in_height);
+
+    // Nearest-neighbor: sample at 2*y, 2*x
+    uint sx = min(x * 2, iw - 1);
+    uint sy = min(y * 2, ih - 1);
+
+    uint in_plane = iw * ih;
+    uint out_plane = ow * oh;
+    uint out_idx = y * ow + x;
+
+    for (uint c = 0; c < ch; c++) {
+        uint in_idx = sy * iw + sx;
+        out_data[c * out_plane + out_idx] = in_data[c * in_plane + in_idx];
+    }
+}
