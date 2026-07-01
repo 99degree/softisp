@@ -224,10 +224,11 @@ impl PostProcessPipeline {
         self.process_inner(&frame.data, frame.width, frame.height, frame)
     }
 
-    /// Process a float tensor [1,3,H,W] in [0,1] range.
+    /// Process a float tensor [1,3,H,W] in [0,1] range (FloatRgb planar format).
     ///
-    /// This is the preferred input for post-processing — avoids u8↔f32 conversion.
+    /// This is the preferred input for post-processing — avoids format conversion.
     /// The float data is expected as RGB planar: [R0,R1,...,Rn, G0,G1,...,Gn, B0,B1,...,Bn].
+    /// Values are in [0,1] range (matching FloatRgb ISP output).
     pub fn process_float(
         &mut self,
         float_data: &[f32],
@@ -236,15 +237,31 @@ impl PostProcessPipeline {
         aux: Option<IspAuxOutput>,
         timestamp_ns: u64,
     ) -> Result<IspFrame, String> {
-        // Reinterpret float bytes as u8 slice for processing
-        let byte_data = unsafe {
-            std::slice::from_raw_parts(
-                float_data.as_ptr() as *const u8,
-                float_data.len() * 4,
-            )
-        };
+        let n = (width * height) as usize;
+        let mut u8_rgba = vec![0u8; n * 4];
+        if float_data.len() >= n * 3 {
+            // Convert planar [0,1] f32 → packed u8 RGBA
+            let r_plane = &float_data[0..n];
+            let g_plane = &float_data[n..n * 2];
+            let b_plane = &float_data[n * 2..n * 3];
+            for i in 0..n {
+                u8_rgba[i * 4] = (r_plane[i].clamp(0.0, 1.0) * 255.0) as u8;
+                u8_rgba[i * 4 + 1] = (g_plane[i].clamp(0.0, 1.0) * 255.0) as u8;
+                u8_rgba[i * 4 + 2] = (b_plane[i].clamp(0.0, 1.0) * 255.0) as u8;
+                u8_rgba[i * 4 + 3] = 255;
+            }
+        } else {
+            return Err(format!(
+                "process_float: expected {} float values (3×{}×{}), got {}",
+                n * 3,
+                height,
+                width,
+                float_data.len()
+            ));
+        }
+
         let frame = IspFrame {
-            data: vec![],
+            data: vec![], // u8 data is passed separately to process_inner
             width,
             height,
             format: FrameFormat::Rgba8888,
@@ -255,7 +272,7 @@ impl PostProcessPipeline {
             inference_duration_ns: 0,
             total_duration_ns: 0,
         };
-        self.process_inner(byte_data, width, height, &frame)
+        self.process_inner(&u8_rgba, width, height, &frame)
     }
 
     fn process_inner(
