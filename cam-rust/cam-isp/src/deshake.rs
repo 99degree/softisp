@@ -644,6 +644,210 @@ fn bilinear_sample_4(data: &[u8], width: u32, height: u32, x: f32, y: f32) -> Ve
 }
 
 // ============================================================================
+// GPU-accelerated Deshake Pipeline (hybrid GPU/CPU)
+// ============================================================================
+// Uses GrayscaleBlock + PyramidBlock as a lightweight MNN model that runs
+// on Vulkan GPU. The GPU produces a downscaled grayscale image, then the
+// CPU block-matching engine runs on the much smaller resolution.
+//
+// Pipeline: Input[1,3,H,W] → GrayscaleBlock[1,1,H,W] → PyramidBlock[1,1,H/2,W/2]
+// IspChainFusion detects R7+R8 fusing into isp.grayscale + isp.pyramid Extra ops.
+//
+// Requires feature "mnn" for the MNN GPU backend.
+
+#[cfg(feature = "mnn")]
+mod gpu_pipeline {
+    use crate::pipeline::{IspBlock, GraphComposer};
+    use crate::blocks::{GrayscaleBlock, PyramidBlock};
+    use crate::mnn_sys::{MnnInterpreterSafe, MnnBackendType, MnnTensorSafe};
+    use std::sync::Mutex;
+
+    /// Cached GPU pipeline for grayscale+pyramid.
+    /// Lazily built from ONNX at first use.
+    pub struct DeshakeGpuPipeline {
+        /// Cached MNN model bytes for current resolution.
+        mnn_cache: Mutex<Option<(u32, u32, Vec<u8>)>>,
+    }
+
+    impl DeshakeGpuPipeline {
+        pub fn new() -> Self {
+            Self {
+                mnn_cache: Mutex::new(None),
+            }
+        }
+
+        /// Build ONNX for given resolution, convert to MNN, and run inference.
+        /// Returns (downscaled_grayscale, ds_width, ds_height).
+        pub fn run(
+            &self,
+            rgb_data: &[f32],  // [1,3,H,W] planar float32
+            width: u32,
+            height: u32,
+        ) -> Result<(Vec<u8>, u32, u32), String> {
+            let ds_w = width / 2;
+            let ds_h = height / 2;
+            let out_len = (ds_w * ds_h) as usize;
+
+            // Check cache
+            let mnn_bytes = {
+                let mut cache = self.mnn_cache.lock().unwrap();
+                if let Some((cw, ch, ref data)) = *cache {
+                    if cw == width && ch == height {
+                        data.clone()
+                    } else {
+                        // Resolution changed — rebuild
+                        *cache = None;
+                        drop(cache);
+                        let data = Self::build_mnn_model(width, height)?;
+                        let mut cache = self.mnn_cache.lock().unwrap();
+                        *cache = Some((width, height, data.clone()));
+                        data
+                    }
+                } else {
+                    drop(cache);
+                    let data = Self::build_mnn_model(width, height)?;
+                    let mut cache = self.mnn_cache.lock().unwrap();
+                    *cache = Some((width, height, data.clone()));
+                    data
+                }
+            };
+
+            // Create interpreter and run
+            let interpreter = MnnInterpreterSafe::from_buffer(&mnn_bytes)
+                .ok_or_else(|| "Failed to create MNN interpreter".to_string())?;
+            let session = interpreter.create_session(MnnBackendType::Vulkan, 1)
+                .ok_or_else(|| "Failed to create MNN session".to_string())?;
+
+            // Get input tensor
+            let input = interpreter.get_first_input(&session)
+                .ok_or_else(|| "Failed to get input tensor".to_string())?;
+            
+            // Write input data via mutable byte slice
+            let input_size = (width * height * 3) as usize;
+            {
+                let mut input_bytes = input.as_bytes_mut()
+                    .ok_or_else(|| "Failed to get input tensor data".to_string())?;
+                if input_bytes.len() < input_size * 4 {
+                    return Err(format!("Input tensor too small: {} bytes, need {}",
+                        input_bytes.len(), input_size * 4));
+                }
+                // Cast byte slice to float slice and copy
+                unsafe {
+                    let dst = input_bytes.as_mut_ptr() as *mut f32;
+                    std::ptr::copy_nonoverlapping(rgb_data.as_ptr(), dst, input_size);
+                }
+            }
+
+            // Resize and run
+            session.resize().map_err(|e| format!("Session resize failed: {}", e))?;
+            session.run().map_err(|e| format!("Session run failed: {}", e))?;
+
+            // Get output
+            let output = interpreter.get_first_output(&session)
+                .ok_or_else(|| "Failed to get output tensor".to_string())?;
+
+            // Read output data as float32 (luminance, single channel)
+            let output_size = out_len;  // [1,1,H/2,W/2]
+            let mut out_data = vec![0u8; output_size];
+            {
+                let output_bytes = output.as_bytes()
+                    .ok_or_else(|| "Failed to get output tensor data".to_string())?;
+                if output_bytes.len() < output_size * 4 {
+                    return Err(format!("Output tensor too small: {} bytes, need {}",
+                        output_bytes.len(), output_size * 4));
+                }
+                // Cast byte slice to float slice and convert to u8
+                unsafe {
+                    let src = output_bytes.as_ptr() as *const f32;
+                    for i in 0..output_size {
+                        let v = (*src.add(i)) * 255.0;
+                        out_data[i] = v.round().clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+
+            Ok((out_data, ds_w, ds_h))
+        }
+
+        /// Build ONNX model and convert to MNN.
+        fn build_mnn_model(width: u32, height: u32) -> Result<Vec<u8>, String> {
+            use std::io::Write;
+            
+            // Build ONNX graph with GrayscaleBlock → PyramidBlock
+            let mut gs = GrayscaleBlock::new();
+            let mut pyr = PyramidBlock::new();
+            let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+                Box::new(gs),
+                Box::new(pyr),
+            ];
+            GraphComposer::wire_blocks(&mut blocks);
+            let onnx_proto = GraphComposer::compose(
+                blocks[0].as_ref(), &[], 21
+            )?;
+
+            // Write ONNX to temp file
+            let tmp_dir = std::env::temp_dir();
+            let onnx_path = tmp_dir.join(format!("deshake_gpu_{}x{}.onnx", width, height));
+            let mnn_path = tmp_dir.join(format!("deshake_gpu_{}x{}.mnn", width, height));
+
+            let mut f = std::fs::File::create(&onnx_path)
+                .map_err(|e| format!("Failed to create ONNX temp file: {}", e))?;
+            f.write_all(&onnx_proto)
+                .map_err(|e| format!("Failed to write ONNX: {}", e))?;
+            drop(f);
+
+            // Convert ONNX to MNN
+            let onnx_cstr = std::ffi::CString::new(onnx_path.to_string_lossy().as_ref())
+                .map_err(|_| "CString conversion failed".to_string())?;
+            let mnn_cstr = std::ffi::CString::new(mnn_path.to_string_lossy().as_ref())
+                .map_err(|_| "CString conversion failed".to_string())?;
+            let biz = std::ffi::CString::new("deshake")
+                .map_err(|_| "CString conversion failed".to_string())?;
+
+            let mut result = crate::mnn_sys::MnnConvertResult {
+                success: 0,
+                error_msg: [0u8; 1024],
+            };
+
+            unsafe {
+                crate::mnn_sys::mnn_convert_onnx_to_mnn(
+                    onnx_cstr.as_ptr(),
+                    mnn_cstr.as_ptr(),
+                    biz.as_ptr(),
+                    2,   // optimize level
+                    0,   // no weight quant
+                    0,   // no fp16
+                    0,   // don't preserve input type
+                    &mut result,
+                );
+            }
+
+            if result.success != 0 {
+                let err = unsafe {
+                    std::ffi::CStr::from_ptr(result.error_msg.as_ptr())
+                        .to_string_lossy().into_owned()
+                };
+                let _ = std::fs::remove_file(&onnx_path);
+                return Err(format!("MNN conversion failed: {}", err));
+            }
+
+            // Read MNN file
+            let mnn_bytes = std::fs::read(&mnn_path)
+                .map_err(|e| format!("Failed to read MNN file: {}", e))?;
+
+            // Cleanup temp files
+            let _ = std::fs::remove_file(&onnx_path);
+            let _ = std::fs::remove_file(&mnn_path);
+
+            Ok(mnn_bytes)
+        }
+    }
+} // mod gpu_pipeline
+
+#[cfg(feature = "mnn")]
+pub use gpu_pipeline::DeshakeGpuPipeline;
+
+// ============================================================================
 // Tests
 // ============================================================================
 
