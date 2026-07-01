@@ -2,6 +2,7 @@
 //!
 //! Chains post-ISP operations that work on the output of the default pipeline:
 //! - **EIS** (Electronic Image Stabilization) — gyro-based jitter removal
+//! - **Deshake** (Software Stabilization) — block-matching motion estimation
 //! - **GDC** (Geometric Distortion Correction) — lens distortion correction
 //! - **HDR** (Multi-exposure merge) — under/neutral/over exposure fusion
 //! - **Temporal Denoise** — frame-to-frame noise reduction
@@ -14,6 +15,11 @@
 //!         ▼
 //!   ┌─────────────┐
 //!   │  EIS Warp   │ ← gyro samples
+//!   └──────┬──────┘
+//!          │
+//!          ▼
+//!   ┌─────────────┐
+//!   │ Deshake     │ ← block-matching motion estimation
 //!   └──────┬──────┘
 //!          │
 //!          ▼
@@ -42,17 +48,29 @@ use log::debug;
 use cam_types::FrameFormat;
 
 use crate::eis::{EisEngine, GyroSample};
+use crate::deshake::DeshakeEngine;
 use crate::pipeline::{IspFrame, IspAuxOutput};
 
 /// Configuration for the post-processing pipeline.
 #[derive(Debug, Clone)]
 pub struct PostProcessConfig {
-    /// Enable EIS stabilization.
+    /// Enable EIS stabilization (gyro-based).
     pub eis_enabled: bool,
     /// EIS crop fraction (0.0-0.2). Default 0.1 = 10% each side.
     pub eis_crop_fraction: f32,
     /// EIS smoothing alpha (0.0-1.0). Lower = smoother but more lag.
     pub eis_smoothing_alpha: f32,
+
+    /// Enable Deshake (software-based, no gyro needed).
+    pub deshake_enabled: bool,
+    /// Deshake block size (pixels). Default 32.
+    pub deshake_block_size: u32,
+    /// Deshake search radius (pixels). Default 16.
+    pub deshake_search_radius: i32,
+    /// Deshake crop fraction (0.0-0.2). Default 0.08.
+    pub deshake_crop_fraction: f32,
+    /// Deshake smoothing alpha (0.0-1.0). Default 0.08.
+    pub deshake_smoothing_alpha: f32,
 
     /// Enable GDC (lens distortion correction).
     pub gdc_enabled: bool,
@@ -77,6 +95,11 @@ impl Default for PostProcessConfig {
             eis_enabled: false,
             eis_crop_fraction: 0.10,
             eis_smoothing_alpha: 0.15,
+            deshake_enabled: false,
+            deshake_block_size: 32,
+            deshake_search_radius: 16,
+            deshake_crop_fraction: 0.08,
+            deshake_smoothing_alpha: 0.08,
             gdc_enabled: false,
             gdc_strength: 1.0,
             hdr_enabled: false,
@@ -91,6 +114,7 @@ impl Default for PostProcessConfig {
 pub struct PostProcessPipeline {
     config: PostProcessConfig,
     eis: EisEngine,
+    deshake: DeshakeEngine,
     /// Previous frame for temporal denoise.
     prev_frame: Option<Vec<u8>>,
     /// Previous frame dimensions.
@@ -109,9 +133,16 @@ impl PostProcessPipeline {
         let mut eis = EisEngine::new();
         eis.enabled = config.eis_enabled;
 
+        let mut deshake = DeshakeEngine::new();
+        deshake.enabled = config.deshake_enabled;
+        deshake.block_size = config.deshake_block_size;
+        deshake.search_radius = config.deshake_search_radius;
+        deshake.smoothing_alpha = config.deshake_smoothing_alpha;
+
         Self {
             config,
             eis,
+            deshake,
             prev_frame: None,
             prev_dims: None,
             gdc_coefficients: [0.0; 5], // No distortion by default
@@ -171,10 +202,24 @@ impl PostProcessPipeline {
         self.eis.push_sample(sample);
     }
 
+    /// Enable software deshake with specified parameters.
+    pub fn with_deshake(mut self, block_size: u32, search_radius: i32, crop_fraction: f32, smoothing_alpha: f32) -> Self {
+        self.config.deshake_enabled = true;
+        self.config.deshake_block_size = block_size;
+        self.config.deshake_search_radius = search_radius;
+        self.config.deshake_crop_fraction = crop_fraction;
+        self.config.deshake_smoothing_alpha = smoothing_alpha;
+        self.deshake.enabled = true;
+        self.deshake.block_size = block_size;
+        self.deshake.search_radius = search_radius;
+        self.deshake.smoothing_alpha = smoothing_alpha;
+        self
+    }
+
     /// Process a frame through the post-processing pipeline.
     ///
     /// Takes the output of the default ISP pipeline and applies
-    /// EIS → GDC → HDR → Temporal Denoise in sequence.
+    /// EIS → Deshake → GDC → Temporal Denoise in sequence.
     pub fn process(&mut self, frame: &IspFrame) -> Result<IspFrame, String> {
         self.process_inner(&frame.data, frame.width, frame.height, frame)
     }
@@ -223,6 +268,7 @@ impl PostProcessPipeline {
         let t_start = std::time::Instant::now();
 
         if !self.config.eis_enabled
+            && !self.config.deshake_enabled
             && !self.config.gdc_enabled
             && !self.config.hdr_enabled
             && !self.config.temporal_denoise_enabled
@@ -267,7 +313,26 @@ impl PostProcessPipeline {
             }
         }
 
-        // ── Stage 2: GDC (Lens Distortion Correction) ──
+        // ── Stage 2: Deshake (software stabilization) ──
+        if self.config.deshake_enabled {
+            let t_deshake = std::time::Instant::now();
+
+            if let Some(comp) = self.deshake.update(&data, width, height) {
+                let crop = self.config.deshake_crop_fraction;
+                let (new_data, new_w, new_h) = DeshakeEngine::apply_warp(
+                    &data, width, height, &comp, crop,
+                )?;
+                data = new_data;
+                width = new_w;
+                height = new_h;
+
+                debug!("Deshake: dx={:.1} dy={:.1} ({:.2}ms)",
+                    comp[0], comp[1],
+                    t_deshake.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+
+        // ── Stage 3: GDC (Lens Distortion Correction) ──
         if self.config.gdc_enabled {
             let t_gdc = std::time::Instant::now();
 
@@ -288,7 +353,7 @@ impl PostProcessPipeline {
                 t_gdc.elapsed().as_secs_f64() * 1000.0);
         }
 
-        // ── Stage 3: Temporal Denoise ──
+        // ── Stage 4: Temporal Denoise ──
         if self.config.temporal_denoise_enabled {
             if let Some(ref prev) = self.prev_frame {
                 if let Some((pw, ph)) = self.prev_dims {
@@ -344,6 +409,7 @@ impl PostProcessPipeline {
     /// Reset pipeline state (e.g., on camera switch).
     pub fn reset(&mut self) {
         self.eis.reset();
+        self.deshake.reset();
         self.prev_frame = None;
         self.prev_dims = None;
         self.frame_count = 0;
@@ -357,6 +423,16 @@ impl PostProcessPipeline {
     /// Get mutable EIS state.
     pub fn eis_mut(&mut self) -> &mut EisEngine {
         &mut self.eis
+    }
+
+    /// Get current Deshake state.
+    pub fn deshake(&self) -> &DeshakeEngine {
+        &self.deshake
+    }
+
+    /// Get mutable Deshake state.
+    pub fn deshake_mut(&mut self) -> &mut DeshakeEngine {
+        &mut self.deshake
     }
 
     /// Get frame count.
