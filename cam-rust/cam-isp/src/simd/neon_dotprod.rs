@@ -179,4 +179,16 @@ impl SimdEngine for NeonDotprod {
         }
         out
     }
+
+    fn bilinear_sample_4ch(
+        &self,
+        src: &[u8],
+        width: u32,
+        height: u32,
+        x: f32,
+        y: f32,
+    ) -> [u8; 4] {
+        // Delegate to NEON backend
+        super::neon::Neon.bilinear_sample_4ch(src, width, height, x, y)
+    }
 }
