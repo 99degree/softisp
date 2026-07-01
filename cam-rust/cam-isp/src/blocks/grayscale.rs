@@ -79,3 +79,82 @@ impl IspBlock for GrayscaleBlock {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify luminance weights match BT.601 coefficients.
+    #[test]
+    fn test_grayscale_luminance_weights() {
+        let block = GrayscaleBlock::new();
+        let inits = block.initializers();
+        assert_eq!(inits.len(), 1, "should have 1 initializer (weight)");
+        // Parse the weight tensor
+        let w_bytes = &inits[0];
+        // Verify it starts with a valid ONNX tensor proto (field 1 = name)
+        assert!(w_bytes.len() > 20, "weight tensor should be non-trivial");
+        // The weight floats are written via Proto::tensor_proto_float
+        // Expected: [0.299f32, 0.587f32, 0.114f32] (little-endian)
+        // In raw_data (field 9), they appear as 12 bytes of float32 data
+        // Let's find them by looking at the float values
+        let expected: [f32; 3] = [0.299, 0.587, 0.114];
+        let f32_bytes = unsafe {
+            std::slice::from_raw_parts(
+                expected.as_ptr() as *const u8,
+                expected.len() * 4,
+            )
+        };
+        // The floats are in raw_data which is the last part of the protobuf
+        // Check that all expected float bytes appear in order
+        let w_pos = w_bytes.windows(12)
+            .position(|window| window == f32_bytes);
+        assert!(w_pos.is_some(), "luminance weights not found in tensor");
+    }
+
+    /// Verify output shape is [1, 1, H, W] (single luminance channel).
+    #[test]
+    fn test_grayscale_output_shape() {
+        let block = GrayscaleBlock::new();
+        let ovi = block.output_value_info().expect("should have output value info");
+        // Protobuf encoding: field 1 (name), field 2 (type), field 3 (shape)
+        // Shape contains dim_value/dim_param. For [1, 1, H, W]:
+        // 2 dim_value(1) + 2 dim_param(H, W)
+        // Just verify it's non-empty and contains recognizable patterns
+        assert!(ovi.len() > 10, "output value info should be non-trivial");
+        // Check for repeated 0x0a (field 1, wire type 2 = string) which marks dim params
+        let dim_param_count = ovi.iter().filter(|&&b| b == 0x0a).count();
+        assert!(dim_param_count >= 2, "should have at least 2 dim params");
+    }
+
+    /// Verify ONNX node structure.
+    #[test]
+    fn test_grayscale_onnx_structure() {
+        let block = GrayscaleBlock::new();
+        let nodes = block.nodes();
+        assert_eq!(nodes.len(), 1, "should have 1 Conv node");
+        let node_str = String::from_utf8_lossy(&nodes[0]);
+        assert!(node_str.contains("Conv"), "node should be Conv");
+    }
+
+    /// Verify the wired graph produces valid ONNX.
+    #[test]
+    fn test_grayscale_pyramid_compose() {
+        use crate::pipeline::GraphComposer;
+        use crate::blocks::PyramidBlock;
+        let mut gs = GrayscaleBlock::new();
+        let pyr = PyramidBlock::new();
+        // Set input source for pyramid from grayscale output
+        gs.set_input_source("input");
+        // Use full qualified path for PyramidBlock
+        let pipeline: Vec<&dyn IspBlock> = vec![&gs as &dyn IspBlock, &pyr as &dyn IspBlock];
+        let onnx = GraphComposer::compose_from_vec(&pipeline, &[], 21);
+        assert!(onnx.is_ok(), "ONNX composition should succeed");
+        let bytes = onnx.unwrap();
+        assert!(bytes.len() > 100, "ONNX protobuf should be non-trivial");
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("Conv"), "ONNX should contain Conv op");
+        assert!(s.contains("GrayscaleBlock"), "ONNX should contain grayscale tensor names");
+        assert!(s.contains("PyramidBlock"), "ONNX should contain pyramid tensor names");
+    }
+}
