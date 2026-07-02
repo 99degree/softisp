@@ -239,6 +239,7 @@ The choice of algorithm depends on:
 - [x] **Dynamic Tile Workgroup** — GpuWorkgroupProfile lookup (Mali/Adreno/Apple)
 - [x] **Early-Z Rejection** — valid_bounds dispatch culling for VulkanFuse
 - [x] **Profile-Based Tuning** — GPU auto-detect + session workgroup override
+- [x] **Runtime Hot-Swap** — live 3A const buffer updates without model rebuild
 
 ### UnpackCfaBlock Modes
 | Mode | Input | Graph | Notes |
