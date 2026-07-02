@@ -336,7 +336,7 @@ impl PostProcessPipeline {
 
             if let Some(comp) = self.deshake.update(&data, width, height) {
                 let crop = self.config.deshake_crop_fraction;
-                let (new_data, new_w, new_h) = DeshakeEngine::apply_warp(
+                let (new_data, new_w, new_h) = self.deshake.apply_warp_gpu(
                     &data, width, height, &comp, crop,
                 )?;
                 data = new_data;
