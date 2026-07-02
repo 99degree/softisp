@@ -241,6 +241,7 @@ The choice of algorithm depends on:
 - [x] **Profile-Based Tuning** — GPU auto-detect + session workgroup override
 - [x] **Runtime Hot-Swap** — live 3A const buffer updates without model rebuild
 - [x] **LensShading** — vignetting correction fused into WarpGridBlock (Mul node)
+- [x] **GDC** — Geometric Distortion Correction via radial grid (with_gdc, with_gdc_and_eis)
 - [x] **ChromaticAberrationBlock** — per-channel radial offset correction (Split+GridSample+Concat)
 - [x] **AutoContrastBlock** — parametric S-curve contrast enhancement with shadow lift
 
