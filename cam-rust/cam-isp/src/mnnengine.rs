@@ -251,6 +251,20 @@ impl MnnEngine {
         }
     }
 
+    /// Hot-swap a const buffer at runtime for live 3A adjustments.
+    /// Updates GPU const buffer with new float32 data without rebuilding the model.
+    pub fn hot_swap_const_buffer(&self, session: *mut std::ffi::c_void, binding: i32, data: &[f32]) {
+        use crate::mnn_sys::MNNVulkanHotSwapConstBuffer;
+        unsafe {
+            MNNVulkanHotSwapConstBuffer(
+                session,
+                binding,
+                data.as_ptr() as *const std::ffi::c_void,
+                (data.len() * 4) as i32,
+            );
+        }
+    }
+
     /// Set whether to preserve input type (int16/uint16/float16) instead of widening to int32.
     /// Used by NativeInt16 mode to avoid Cast(int32→int16) in UnpackCfaBlock.
     pub fn set_preserve_input_type(&mut self, preserve: bool) {
