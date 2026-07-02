@@ -223,6 +223,34 @@ impl MnnEngine {
     /// Point to pre-converted .mnn file (skips on-the-fly conversion).
     pub fn set_model_path(&mut self, path: impl Into<String>) { self.model_path = Some(path.into()); }
 
+    /// Set preferred workgroup size for Vulkan dispatch.
+    /// Call after creating session and before inference.
+    pub fn set_workgroup_size(&self, session: *mut std::ffi::c_void, size_x: u32, size_y: u32) {
+        use crate::mnn_sys::MNNVulkanSetSessionWorkgroup;
+        unsafe {
+            MNNVulkanSetSessionWorkgroup(session, size_x as i32, size_y as i32);
+        }
+    }
+
+    /// Query optimal workgroup size for current GPU.
+    pub fn query_optimal_workgroup() -> (u32, u32) {
+        use crate::mnn_sys::MNNVulkanQueryOptimalWorkgroup;
+        let mut wx: i32 = 16;
+        let mut wy: i32 = 16;
+        unsafe { MNNVulkanQueryOptimalWorkgroup(&mut wx, &mut wy); }
+        (wx as u32, wy as u32)
+    }
+
+    /// Set workgroup by preset name ("fast_4k", "low_power", "portrait", "universal").
+    pub fn set_workgroup_preset(&self, preset: &str) {
+        use crate::mnn_sys::MNNVulkanSetWorkgroupPreset;
+        use std::ffi::CString;
+        let c_name = CString::new(preset).unwrap();
+        unsafe {
+            MNNVulkanSetWorkgroupPreset(c_name.as_ptr());
+        }
+    }
+
     /// Set whether to preserve input type (int16/uint16/float16) instead of widening to int32.
     /// Used by NativeInt16 mode to avoid Cast(int32→int16) in UnpackCfaBlock.
     pub fn set_preserve_input_type(&mut self, preserve: bool) {

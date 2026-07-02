@@ -11,6 +11,14 @@ pub mod profile;
 pub mod config;
 pub mod fused;
 pub mod manager;
+pub mod warp;
+#[cfg(feature = "mnn")]
+pub mod mnn {
+    pub use super::engine::IspEngine;
+    pub use super::mnnengine::*;
+    pub use super::mnn_sys;
+    pub use super::mnn_converter;
+}
 pub mod onnx;
 pub mod postprocess;
 // MNN-dependent modules (only compiled when `mnn` feature is enabled)
@@ -35,7 +43,6 @@ pub mod store;
 pub mod genetic;
 pub mod demosaic;
 pub mod isp_ops;
-pub mod warp;
 pub mod stats;
 pub mod simd;
 

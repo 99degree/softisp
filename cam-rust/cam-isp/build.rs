@@ -286,6 +286,8 @@ fn link_mnn() {
     println!("cargo:rustc-link-lib=static=mnn_wrapper");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=c++_shared");
+    // Embed rpath so binary finds libMNN.so at runtime
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
 }
 
 #[cfg(feature = "mnn")]

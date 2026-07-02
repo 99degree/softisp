@@ -640,6 +640,7 @@ impl DeshakeEngine {
         comp: &[f32; 2],
         crop_fraction: f32,
     ) -> Result<(Vec<u8>, u32, u32), String> {
+        #[cfg(feature = "mnn")]
         if let Some(ref gpu) = self.gpu_pipeline {
             let rgb_f32 = Self::bgra_to_planar_rgb_f32(data, width, height);
             let (warped, ow, oh) = gpu.warp_frame(
@@ -661,10 +662,9 @@ impl DeshakeEngine {
                     out[di + 3] = 255;
                 }
             }
-            Ok((out, ow, oh))
-        } else {
-            Self::apply_warp(data, width, height, comp, crop_fraction)
+            return Ok((out, ow, oh));
         }
+        Self::apply_warp(data, width, height, comp, crop_fraction)
     }
 
     /// `comp[0]` = dx (positive = shift image left).
