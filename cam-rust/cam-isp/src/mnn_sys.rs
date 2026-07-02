@@ -685,3 +685,27 @@ extern "C" {
     /// Get last GPU execution time in milliseconds.
     pub fn mnn_executor_get_last_gpu_time_ms(executor: MnnExecutor) -> f32;
 }
+
+// ── Vulkan Workgroup Configuration ────────────────────────────────────────
+
+extern "C" {
+    /// Set preferred workgroup size for a Vulkan session.
+    /// Called from Rust to tune dispatch groups per-device.
+    pub fn MNNVulkanSetSessionWorkgroup(
+        session: *mut c_void,
+        size_x: i32,
+        size_y: i32,
+    );
+
+    /// Query optimal workgroup size for current GPU.
+    pub fn MNNVulkanQueryOptimalWorkgroup(
+        out_x: *mut i32,
+        out_y: *mut i32,
+    );
+
+    /// Set workgroup by preset name.
+    /// Presets: "fast_4k" (32×8), "low_power" (8×32), "portrait" (4×64), "universal" (16×16).
+    pub fn MNNVulkanSetWorkgroupPreset(
+        preset_name: *const c_char,
+    );
+}

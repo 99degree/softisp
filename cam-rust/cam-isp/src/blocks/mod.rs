@@ -39,7 +39,7 @@ pub use display::DisplayBlock;
 pub use ee::EeBlock;
 pub use fcs::FcsBlock;
 pub use ldci::LdciBlock;
-pub use warp::WarpBlock;
+pub use warp::*;
 pub use identity::{IdentityBlock, FastDemosaicBlock};
 pub use grayscale::GrayscaleBlock;
 pub use pyramid::PyramidBlock;
@@ -72,3 +72,5 @@ pub(crate) fn nchw_value_info(name: &str, c: i64, elem_type: i32) -> Vec<u8> {
     ], elem_type)
 }
 pub mod bayer_proc;
+pub use warp::*;
+pub use warp::*;
