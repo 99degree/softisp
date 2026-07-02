@@ -27,6 +27,7 @@ mod hdr_merge;
 mod demosaic_interp;
 mod bayer_demosaic;
 mod lens_shading;
+mod chromatic_aberration;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -56,6 +57,7 @@ pub use hdr_merge::HdrMergeBlock;
 pub use demosaic_interp::DemosaicInterpBlock;
 pub use bayer_demosaic::{BayerDemosaicBlock, DemosaicAlgo};
 pub use lens_shading::LensShadingBlock;
+pub use chromatic_aberration::ChromaticAberrationBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
