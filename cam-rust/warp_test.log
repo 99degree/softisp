@@ -1,0 +1,55 @@
+warning: unused import: `warp::*`
+  --> cam-isp/src/blocks/mod.rs:75:9
+   |
+75 | pub use warp::*;
+   |         ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `warp::*`
+  --> cam-isp/src/blocks/mod.rs:76:9
+   |
+76 | pub use warp::*;
+   |         ^^^^^^^
+
+warning: `cam-isp` (lib) generated 2 warnings (run `cargo fix --lib -p cam-isp` to apply 2 suggestions)
+   Compiling cam-isp v0.1.0 (/data/data/com.termux/files/home/softisp/cam-rust/cam-isp)
+error[E0432]: unresolved import `cam_isp::BayerPattern`
+ --> cam-isp/examples/warp_onnx_fix.rs:1:65
+  |
+1 | use cam_isp::{blocks::*, pipeline::{PipelineBuilder, IspBlock}, BayerPattern};
+  |                                                                 ^^^^^^^^^^^^ no `BayerPattern` in the root
+
+error[E0425]: cannot find function `wire_blocks` in module `cam_isp::pipeline`
+  --> cam-isp/examples/warp_onnx_fix.rs:13:24
+   |
+13 |     cam_isp::pipeline::wire_blocks(&mut pipeline.blocks);
+   |                        ^^^^^^^^^^^ not found in `cam_isp::pipeline`
+
+error[E0599]: no variant or associated item named `RGGB` found for enum `cam_isp::blocks::BayerPattern` in the current scope
+ --> cam-isp/examples/warp_onnx_fix.rs:6:72
+  |
+6 |     let bayer = BayerProcBlock::new().with_bayer_pattern(BayerPattern::RGGB);
+  |                                                                        ^^^^ variant or associated item not found in `cam_isp::blocks::BayerPattern`
+  |
+help: there is a variant with a similar name
+  |
+6 -     let bayer = BayerProcBlock::new().with_bayer_pattern(BayerPattern::RGGB);
+6 +     let bayer = BayerProcBlock::new().with_bayer_pattern(BayerPattern::Rggb);
+  |
+
+error[E0599]: no function or associated item named `compose_onnx` found for struct `PipelineBuilder` in the current scope
+   --> cam-isp/examples/warp_onnx_fix.rs:17:34
+    |
+ 17 |     let model = PipelineBuilder::compose_onnx(blocks.as_slice(), &[], 8, "WarpTest");
+    |                                  ^^^^^^^^^^^^ function or associated item not found in `PipelineBuilder`
+    |
+note: if you're trying to build a new `PipelineBuilder`, consider using `PipelineBuilder::new` which returns `PipelineBuilder`
+   --> cam-isp/src/pipeline.rs:178:5
+    |
+178 |     pub fn new() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+Some errors have detailed explanations: E0425, E0432, E0599.
+For more information about an error, try `rustc --explain E0425`.
+error: could not compile `cam-isp` (example "warp_onnx_fix") due to 4 previous errors
