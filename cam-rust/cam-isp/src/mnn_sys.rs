@@ -708,4 +708,12 @@ extern "C" {
     pub fn MNNVulkanSetWorkgroupPreset(
         preset_name: *const c_char,
     );
+
+    /// Hot-swap a const buffer at runtime for live 3A adjustments.
+    pub fn MNNVulkanHotSwapConstBuffer(
+        session_ptr: *mut c_void,
+        binding_index: c_int,
+        data: *const c_void,
+        byte_size: c_int,
+    ) -> c_int;
 }
