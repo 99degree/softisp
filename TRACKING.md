@@ -244,6 +244,7 @@ The choice of algorithm depends on:
 - [x] **GDC** — Geometric Distortion Correction via radial grid (with_gdc, with_gdc_and_eis)
 - [x] **TemporalDenoiseBlock** — multi-frame noise reduction with motion-adaptive blending
 - [x] **AutoContrastBlock** — parametric S-curve contrast enhancement with shadow lift
+- [x] **FP16 const buffers** — halved GPU→shader bandwidth via f32→f16 packing
 - [x] **ChromaticAberrationBlock** — per-channel radial offset correction (Split+GridSample+Concat)
 - [x] **AutoContrastBlock** — parametric S-curve contrast enhancement with shadow lift
 
