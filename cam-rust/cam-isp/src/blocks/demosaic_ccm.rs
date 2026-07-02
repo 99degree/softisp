@@ -279,8 +279,8 @@ mod tests {
         assert_eq!(inits.len(), 4, "Should have 4 initializers (w, b, zero, one)");
         // w should be demosaic/sensor_max
         let raw_w = block.demosaic_weights();
-        let sm = block.sensor_max; // 1023.0
-        for (f, r) in inits[0].iter().zip(raw_w.iter()) {
+        let _sm = block.sensor_max; // 1023.0
+        for (_f, _r) in inits[0].iter().zip(raw_w.iter()) {
             // Can't easily compare protobuf bytes, just check count
         }
     }

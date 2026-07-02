@@ -461,6 +461,7 @@ impl MnnEngine {
     /// Runs as many frames as possible within the budget, returns measured FPS.
     /// If the thread panics or times out, returns 0 fps.
     #[cfg(feature = "mnn")]
+    #[allow(dead_code)]
     fn bench_one(backend: &MnnBackend, mnn_path: &str, w: u32, h: u32) -> Result<f64, String> {
         use crate::blocks::RawInputBlock;
 
