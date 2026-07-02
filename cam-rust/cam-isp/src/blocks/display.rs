@@ -43,6 +43,9 @@ pub struct DisplayBlock {
     /// When set, the block produces an additional [1,3,H,W] float32 tensor
     /// in [0,1] range that can be consumed by PostProcessPipeline.
     pub postprocess_output: Option<String>,
+    /// Workgroup tuning for Vulkan dispatch: (size_x, size_y).
+    /// Default (0,0) = MNN auto-tune; recommended: (32,8) for 4K.
+    pub workgroup_size: (u32, u32),
 }
 
 impl DisplayBlock {
@@ -60,6 +63,7 @@ impl DisplayBlock {
             output_format: OutputFormat::default(),
             pack_two_pixels: true,
             postprocess_output: None,
+            workgroup_size: (0, 0), // auto-tune
         }
     }
 
@@ -155,6 +159,29 @@ impl DisplayBlock {
 
     fn can_pack_two_pixels(&self) -> bool {
         self.output_format == OutputFormat::PackedRgb && self.pack_two_pixels && self.in_h.is_some() && self.in_w.is_some()
+    }
+}
+
+impl DisplayBlock {
+    /// Set Vulkan shader workgroup size: (size_x, size_y).
+    pub fn workgroup(mut self, size_x: u32, size_y: u32) -> Self {
+        self.workgroup_size = (size_x, size_y);
+        self
+    }
+
+    /// RGBA output: [1,4,H,W] float32 [0,255].
+    pub fn rgba(self) -> Self {
+        self.with_output_format(OutputFormat::Rgba)
+    }
+
+    /// ARGB output: [1,4,H,W] float32 [0,255].
+    pub fn argb(self) -> Self {
+        self.with_output_format(OutputFormat::Argb)
+    }
+
+    /// AGRB (ABGR) output: [1,4,H,W] float32 [0,255].
+    pub fn agbr(self) -> Self {
+        self.with_output_format(OutputFormat::Abgr)
     }
 }
 

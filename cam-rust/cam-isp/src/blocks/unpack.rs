@@ -17,7 +17,9 @@ pub struct UnpackBlock {
     pub frame_tensor: String,
     pub input_source: String,
     pub concrete_h: Option<i64>,
-    pub concrete_w: Option<i64>,  // FULL width (original W, NOT packed)
+    pub concrete_w: Option<i64>,
+    /// Workgroup tuning for Vulkan dispatch: (size_x, size_y).
+    pub workgroup_size: (u32, u32),
 }
 
 impl UnpackBlock {
@@ -30,6 +32,7 @@ impl UnpackBlock {
             input_source: String::new(),
             concrete_h: None,
             concrete_w: None,
+            workgroup_size: (0, 0), // auto-tune
         }
     }
 
@@ -250,5 +253,13 @@ mod tests {
         assert!(result.is_ok(), "UnpackBlock pipeline should compose: {:?}", result.err());
         let model = result.unwrap();
         assert!(!model.is_empty(), "Model should not be empty");
+    }
+}
+
+impl UnpackBlock {
+    /// Set custom workgroup size for Vulkan dispatch.
+    pub fn workgroup(mut self, size_x: u32, size_y: u32) -> Self {
+        self.workgroup_size = (size_x, size_y);
+        self
     }
 }
