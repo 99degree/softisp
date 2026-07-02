@@ -236,6 +236,9 @@ The choice of algorithm depends on:
 - [x] **ONNX proto fix** — raw_data uses field 9 (not field 4) in TensorProto
 - [x] **Graph output fix** — pointer comparison, not is_tail()
 - [x] **write_input type detection** — uses model_input_type from probe session
+- [x] **Dynamic Tile Workgroup** — GpuWorkgroupProfile lookup (Mali/Adreno/Apple)
+- [x] **Early-Z Rejection** — valid_bounds dispatch culling for VulkanFuse
+- [x] **Profile-Based Tuning** — GPU auto-detect + session workgroup override
 
 ### UnpackCfaBlock Modes
 | Mode | Input | Graph | Notes |
