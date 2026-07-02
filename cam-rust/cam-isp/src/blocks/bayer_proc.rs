@@ -475,7 +475,7 @@ mod tests {
     
     #[test]
     fn test_pipeline_integration() {
-        let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
+        let _b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
             .with_elem_type(5) // INT16
             .with_concrete_dims(48, 64));
         
@@ -485,7 +485,7 @@ mod tests {
             BayerMode::BuiltinDemosaic,
             BayerMode::FullProc,
         ] {
-            let b2: Box<dyn IspBlock> = Box::new(BayerProcBlock::new()
+            let _b2: Box<dyn IspBlock> = Box::new(BayerProcBlock::new()
                 .with_mode(mode)
                 .with_concrete_dims(48, 64));
             
