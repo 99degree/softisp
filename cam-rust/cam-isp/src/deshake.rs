@@ -630,6 +630,43 @@ impl DeshakeEngine {
     /// Returns (warped_data, new_width, new_height).
     /// Apply warping (inverse bilinear warp) with SIMD acceleration.
     ///
+    /// GPU-accelerated warp: uses GridSampler on Vulkan when gpu_pipeline is set.
+    /// Falls back to SIMD bilinear warp when GPU is unavailable.
+    pub fn apply_warp_gpu(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        comp: &[f32; 2],
+        crop_fraction: f32,
+    ) -> Result<(Vec<u8>, u32, u32), String> {
+        if let Some(ref gpu) = self.gpu_pipeline {
+            let rgb_f32 = Self::bgra_to_planar_rgb_f32(data, width, height);
+            let (warped, ow, oh) = gpu.warp_frame(
+                &rgb_f32, width, height, comp[0], comp[1], crop_fraction)?;
+            // Convert planar RGB f32 → interleaved BGRA u8
+            let bpp = 4u32;
+            let mut out = vec![0u8; (ow * oh * bpp) as usize];
+            let plane = (ow * oh) as usize;
+            for y in 0..oh as usize {
+                for x in 0..ow as usize {
+                    let si = y * ow as usize + x;
+                    let di = (y * ow as usize + x) * bpp as usize;
+                    let r = (warped[0 * plane + si] * 255.0).round().clamp(0.0, 255.0) as u8;
+                    let g = (warped[1 * plane + si] * 255.0).round().clamp(0.0, 255.0) as u8;
+                    let b = (warped[2 * plane + si] * 255.0).round().clamp(0.0, 255.0) as u8;
+                    out[di] = b;
+                    out[di + 1] = g;
+                    out[di + 2] = r;
+                    out[di + 3] = 255;
+                }
+            }
+            Ok((out, ow, oh))
+        } else {
+            Self::apply_warp(data, width, height, comp, crop_fraction)
+        }
+    }
+
     /// `comp[0]` = dx (positive = shift image left).
     /// `comp[1]` = dy (positive = shift image up).
     pub fn apply_warp(
