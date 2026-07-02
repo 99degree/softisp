@@ -242,6 +242,7 @@ The choice of algorithm depends on:
 - [x] **Runtime Hot-Swap** — live 3A const buffer updates without model rebuild
 - [x] **LensShadingBlock** — vignetting correction via radial LUT (Mul node)
 - [x] **ChromaticAberrationBlock** — per-channel radial offset correction (Split+GridSample+Concat)
+- [x] **AutoContrastBlock** — parametric S-curve contrast enhancement with shadow lift
 
 ### UnpackCfaBlock Modes
 | Mode | Input | Graph | Notes |
