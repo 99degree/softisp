@@ -1,0 +1,88 @@
+#version 450
+// Shader 7: Warp — Motion Compensation / Video Stabilization via Block-Matching
+// Supports per-frame motion vectors and optional cropping
+// Input: RGBA texture + motion vector + crop parameters  
+// Output: Warped RGBA texture via bilinear sampling
+// Uses SSBO for output to ensure compatibility across Vulkan implementations
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Uniform parameters for warp operation
+layout(set = 0, binding = 0) uniform WarpParams {
+    float input_width;
+    float input_height;
+    float output_width; 
+    float output_height;
+    float motion_x;     // horizontal shift in input pixels
+    float motion_y;     // vertical shift in input pixels
+    float crop_left;    // normalized crop (-1.0 to 1.0)
+    float crop_right;   // normalized crop (-1.0 to 1.0)
+    float crop_top;     // normalized crop (-1.0 to 1.0)
+    float crop_bottom;  // normalized crop (-1.0 to 1.0)
+    int apply_crop;     // boolean: 0 or 1
+    float padding[2];   // for alignment
+} params;
+
+// Input texture (RGBA float32)  
+layout(set = 0, binding = 1) uniform sampler2D input_tex;
+
+// Output buffer (RGBA float32 in CHW planar format)
+layout(set = 0, binding = 2, std430) buffer OutputBuf {
+    float out_data[];
+} output_buf;
+
+// Helper: bilinear texture sampling
+vec4 bilinear_sample(sampler2D tex, vec2 uv) {
+    vec2 texel_size = 1.0 / textureSize(tex, 0);
+    
+    vec4 a = texture(tex, uv);
+    vec4 b = texture(tex, uv + vec2(texel_size.x, 0.0));
+    vec4 c = texture(tex, uv + vec2(0.0, texel_size.y));
+    vec4 d = texture(tex, uv + texel_size);
+    
+    vec2 frac = fract(uv * textureSize(tex, 0));
+    
+    return mix(mix(a, c, frac.y), mix(b, d, frac.y), frac.x);
+}
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    
+    // Skip out-of-bounds pixels
+    if (x >= uint(params.output_width) || y >= uint(params.output_height)) {
+        return;
+    }
+    
+    // Convert output pixel coordinates to input coordinates
+    vec2 src_coord = vec2(float(x), float(y));
+    src_coord = src_coord / vec2(params.output_width, params.output_height);
+    src_coord = src_coord * vec2(params.input_width, params.input_height);
+    
+    // Apply motion compensation (in input pixel coordinates)
+    src_coord += vec2(params.motion_x, params.motion_y);
+    
+    // Apply cropping if requested
+    if (params.apply_crop > 0.5) {
+        float crop_l = (params.crop_left + 1.0) * 0.5 * params.input_width;
+        float crop_r = (params.crop_right + 1.0) * 0.5 * params.input_width;
+        float crop_t = (params.crop_top + 1.0) * 0.5 * params.input_height;
+        float crop_b = (params.crop_bottom + 1.0) * 0.5 * params.input_height;
+        
+        src_coord.x = clamp(src_coord.x, crop_l, crop_r);
+        src_coord.y = clamp(src_coord.y, crop_t, crop_b);
+    }
+    
+    // Convert back to normalized coordinates for sampling
+    vec2 tex_uv = src_coord / vec2(params.input_width, params.input_height);
+    
+    // Sample with bilinear interpolation
+    vec4 color = bilinear_sample(input_tex, tex_uv);
+    
+    // Write to output buffer (CHW planar format)
+    uint plane = uint(params.output_width) * uint(params.output_height);
+    uint out_idx = y * uint(params.output_width) + x;
+    output_buf.out_data[0 * plane + out_idx] = color.r;
+    output_buf.out_data[1 * plane + out_idx] = color.g;
+    output_buf.out_data[2 * plane + out_idx] = color.b;
+}
