@@ -58,3 +58,5 @@ frames/
 *.mnn
 __pycache__/
 *.pyc
+.mnn_last_pipeline.onnx
+.mnn_temp_*.onnx

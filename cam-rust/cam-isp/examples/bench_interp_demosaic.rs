@@ -47,7 +47,7 @@ fn main() {
 
     eprintln!("  Engine: {}", engine.backend_name());
 
-    let result = engine.build(head, all, None, 21);
+    let result = engine.build(head, all, None, 17);
     if let Err(ref e) = result {
         eprintln!("  Build FAILED: {}", e);
         return;
