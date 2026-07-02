@@ -81,6 +81,97 @@ impl WarpGridBlock {
         self
     }
 
+    // ── GDC: Geometric Distortion Correction ─────────────────────
+
+    /// Generate a GDC grid from radial distortion coefficients.
+    /// Uses the standard OpenCV model: r' = r * (1 + k1*r² + k2*r⁴ + k3*r⁶).
+    /// The grid maps each output pixel back to its source position,
+    /// undoing barrel (k1<0) or pincushion (k1>0) distortion.
+    pub fn with_gdc(mut self, k1: f32, k2: f32, k3: f32) -> Self {
+        let h = self.output_height;
+        let w = self.output_width;
+        let grid = Self::generate_gdc_grid(h, w, k1, k2, k3);
+        self.grid_initializer = Some(Proto::tensor_proto_float(
+            &format!("{}/grid", self.tensor_ns()),
+            &[1, h as i64, w as i64, 2],
+            &grid,
+        ));
+        self
+    }
+
+    /// Generate a combined GDC + EIS grid.
+    /// `gdc_k1..k3`: radial distortion coefficients.
+    /// `eis_grid`: per-frame EIS sampling grid [1,H,W,2] (identity if no EIS).
+    /// The two grids are composed: for each output pixel, first apply EIS warp,
+    /// then apply GDC correction at the EIS-sampled position.
+    pub fn with_gdc_and_eis(mut self, k1: f32, k2: f32, k3: f32, eis_grid: Vec<f32>) -> Self {
+        let h = self.output_height as usize;
+        let w = self.output_width as usize;
+        let gdc_grid = Self::generate_gdc_grid(self.output_height, self.output_width, k1, k2, k3);
+        // Compose: for each output pixel, EIS gives a source position in normalized coords,
+        // then GDC undoes lens distortion at that position.
+        let mut composed = Vec::with_capacity(h * w * 2);
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) * 2;
+                // EIS gives normalized [-1,1] source coords
+                let eis_sx = eis_grid[idx];
+                let eis_sy = eis_grid[idx + 1];
+                // Convert to pixel coords
+                let px = (eis_sx + 1.0) * 0.5 * (w as f32 - 1.0);
+                let py = (eis_sy + 1.0) * 0.5 * (h as f32 - 1.0);
+                // Apply GDC inverse at that pixel position
+                let cx = (w as f32 - 1.0) * 0.5;
+                let cy = (h as f32 - 1.0) * 0.5;
+                let dx = (px - cx) / cx;
+                let dy = (py - cy) / cy;
+                let r2 = dx * dx + dy * dy;
+                let r4 = r2 * r2;
+                let r6 = r4 * r2;
+                let denom = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+                let inv = if denom.abs() > 1e-6 { 1.0 / denom } else { 1.0 };
+                let gx = (dx * inv * cx + cx) / (cx * 2.0) * 2.0 - 1.0;
+                let gy = (dy * inv * cy + cy) / (cy * 2.0) * 2.0 - 1.0;
+                composed.push(gx.max(-1.0).min(1.0));
+                composed.push(gy.max(-1.0).min(1.0));
+            }
+        }
+        self.grid_initializer = Some(Proto::tensor_proto_float(
+            &format!("{}/grid", self.tensor_ns()),
+            &[1, h as i64, w as i64, 2],
+            &composed,
+        ));
+        self
+    }
+
+    /// Generate a GDC grid: for each output pixel, compute where to sample
+    /// from the input to undo radial distortion.
+    /// OpenCV model: r_distorted = r * (1 + k1*r² + k2*r⁴ + k3*r⁶)
+    /// Inverse (for grid): r_source = r / (1 + k1*r² + k2*r⁴ + k3*r⁶)
+    fn generate_gdc_grid(h: u32, w: u32, k1: f32, k2: f32, k3: f32) -> Vec<f32> {
+        let cx = (w as f32 - 1.0) * 0.5;
+        let cy = (h as f32 - 1.0) * 0.5;
+        let mut grid = Vec::with_capacity((h * w * 2) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                // Normalized coords [-1, 1]
+                let nx = (x as f32 - cx) / cx;
+                let ny = (y as f32 - cy) / cy;
+                let r2 = nx * nx + ny * ny;
+                let r4 = r2 * r2;
+                let r6 = r4 * r2;
+                // Inverse distortion: sample from r/(1 + k*r² + ...)
+                let denom = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+                let inv = if denom.abs() > 1e-6 { 1.0 / denom } else { 1.0 };
+                let ux = nx * inv;
+                let uy = ny * inv;
+                grid.push(ux.max(-1.0).min(1.0));
+                grid.push(uy.max(-1.0).min(1.0));
+            }
+        }
+        grid
+    }
+
     // ── Lens shading ──────────────────────────────────────────────
 
     /// Fuse lens shading correction into the warp output.
@@ -375,5 +466,79 @@ mod tests {
         let nodes = block.nodes();
         // GridSample + Identity = 2 nodes
         assert_eq!(nodes.len(), 2);
+    }
+
+    // ── GDC tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_gdc_identity_when_no_distortion() {
+        let grid = WarpGridBlock::generate_gdc_grid(64, 64, 0.0, 0.0, 0.0);
+        // With k1=k2=k3=0, grid should be identity: each pixel maps to itself
+        // Check a few pixels: grid value should equal normalized position
+        for y in [0u32, 16, 32, 48, 63] {
+            for x in [0u32, 16, 32, 48, 63] {
+                let idx = (y * 64 + x) as usize * 2;
+                let cx = 31.5_f32;
+                let expected_x = (x as f32 - cx) / cx;
+                let expected_y = (y as f32 - cx) / cx;
+                let gx = grid[idx];
+                let gy = grid[idx + 1];
+                assert!((gx - expected_x).abs() < 0.01,
+                    "GDC identity ({}): expected x={}, got {}", x, expected_x, gx);
+                assert!((gy - expected_y).abs() < 0.01,
+                    "GDC identity ({}): expected y={}, got {}", y, expected_y, gy);
+            }
+        }
+    }
+
+    #[test]
+    fn test_gdc_barrel_correction() {
+        // Barrel distortion (k1 < 0): image pushed inward
+        // GDC should sample from further out to correct it
+        let grid_neg = WarpGridBlock::generate_gdc_grid(64, 64, -0.3, 0.0, 0.0);
+        let grid_zero = WarpGridBlock::generate_gdc_grid(64, 64, 0.0, 0.0, 0.0);
+        // Use pixel at (48, 48) — not at extreme corner where values clamp
+        let idx = (48 * 64 + 48) * 2;
+        let r_neg = (grid_neg[idx].powi(2) + grid_neg[idx + 1].powi(2)).sqrt();
+        let r_zero = (grid_zero[idx].powi(2) + grid_zero[idx + 1].powi(2)).sqrt();
+        assert!(r_neg > r_zero,
+            "barrel GDC: radius {} > identity {}", r_neg, r_zero);
+    }
+
+    #[test]
+    fn test_gdc_pincushion_correction() {
+        // Pincushion (k1 > 0): image pulled outward
+        // GDC should sample from closer in to correct it
+        let grid_pos = WarpGridBlock::generate_gdc_grid(64, 64, 0.3, 0.0, 0.0);
+        let grid_zero = WarpGridBlock::generate_gdc_grid(64, 64, 0.0, 0.0, 0.0);
+        let idx = (48 * 64 + 48) * 2;
+        let r_pos = (grid_pos[idx].powi(2) + grid_pos[idx + 1].powi(2)).sqrt();
+        let r_zero = (grid_zero[idx].powi(2) + grid_zero[idx + 1].powi(2)).sqrt();
+        assert!(r_pos < r_zero,
+            "pincushion GDC: radius {} < identity {}", r_pos, r_zero);
+    }
+
+    #[test]
+    fn test_gdc_onnx_emission() {
+        let block = WarpGridBlock::new(32, 32)
+            .with_gdc(-0.3, 0.1, 0.0);
+        let nodes = block.nodes();
+        // GridSample + Identity = 2 nodes
+        assert_eq!(nodes.len(), 2, "GDC should emit GridSample + Identity");
+        let inits = block.initializers();
+        assert_eq!(inits.len(), 1, "should have GDC grid initializer");
+    }
+
+    #[test]
+    fn test_gdc_combined_with_lens_shading() {
+        let block = WarpGridBlock::new(32, 32)
+            .with_gdc(-0.2, 0.05, 0.0)
+            .with_lens_shading(1.3, 1.0);
+        let nodes = block.nodes();
+        // GridSample + Mul(shading) + Identity = 3 nodes
+        assert_eq!(nodes.len(), 3, "GDC + lens shading = 3 nodes");
+        let inits = block.initializers();
+        // grid + shading_lut = 2
+        assert_eq!(inits.len(), 2, "should have grid + shading_lut");
     }
 }
