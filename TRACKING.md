@@ -241,6 +241,7 @@ The choice of algorithm depends on:
 - [x] **Profile-Based Tuning** — GPU auto-detect + session workgroup override
 - [x] **Runtime Hot-Swap** — live 3A const buffer updates without model rebuild
 - [x] **LensShadingBlock** — vignetting correction via radial LUT (Mul node)
+- [x] **ChromaticAberrationBlock** — per-channel radial offset correction (Split+GridSample+Concat)
 
 ### UnpackCfaBlock Modes
 | Mode | Input | Graph | Notes |
