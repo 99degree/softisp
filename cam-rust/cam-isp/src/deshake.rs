@@ -468,6 +468,7 @@ impl DeshakeEngine {
 
         // --- Pyramid downscale (GPU or CPU) ---
         let ds_factor = Self::compute_downscale_factor(width, height, ds_target);
+        // --- Grayscale → Pyramid (GPU) ---
         let (curr_gray, ds_width, ds_height) = if let Some(ref gpu) = self.gpu_pipeline {
             // GPU path: convert BGRA/RGBA u8 → planar RGB f32, run GPU pipeline
             let rgb_f32 = Self::bgra_to_planar_rgb_f32(data, width, height);
@@ -961,6 +962,160 @@ pub mod gpu_pipeline {
             let _ = std::fs::remove_file(&mnn_path);
 
             Ok(mnn_bytes)
+        }
+
+        /// Build a GridSampler warp model and run on GPU.
+        /// Takes RGB planar f32 [1,3,H,W] + motion (dx,dy) + crop → warped output.
+        pub fn warp_frame(
+            &self,
+            rgb_data: &[f32],
+            width: u32,
+            height: u32,
+            dx: f32,
+            dy: f32,
+            crop_fraction: f32,
+        ) -> Result<(Vec<f32>, u32, u32), String> {
+            use std::io::Write;
+
+            let margin_x = (width as f32 * crop_fraction).round() as u32;
+            let margin_y = (height as f32 * crop_fraction).round() as u32;
+            let out_w = width - 2 * margin_x;
+            let out_h = height - 2 * margin_y;
+
+            // Build grid + ONNX
+            let grid = Self::build_warp_grid(width, height, dx, dy, margin_x, margin_y);
+            let onnx_path = std::env::temp_dir().join(format!("warp_gpu_{}x{}.onnx", width, height));
+            let mnn_path = std::env::temp_dir().join(format!("warp_gpu_{}x{}.mnn", width, height));
+            Self::write_warp_onnx(&onnx_path, width, height, &grid, out_w, out_h)?;
+
+            // Convert ONNX → MNN
+            crate::mnn_converter::convert_onnx_to_mnn(
+                onnx_path.to_str().unwrap(),
+                mnn_path.to_str().unwrap(),
+                None,
+            )?;
+
+            let onnx_bytes = std::fs::read(&onnx_path).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(&onnx_path);
+            let mnn_bytes = std::fs::read(&mnn_path).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(&mnn_path);
+
+            // Run on Vulkan
+            let interpreter = MnnInterpreterSafe::from_buffer(&mnn_bytes)
+                .ok_or_else(|| "Failed to create warp MNN interpreter".to_string())?;
+            let session = interpreter.create_session(MnnBackendType::Vulkan, 1)
+                .ok_or_else(|| "Failed to create warp MNN session".to_string())?;
+
+            let input = interpreter.get_first_input(&session)
+                .ok_or_else(|| "Failed to get warp input".to_string())?;
+            {
+                let input_bytes = input.as_bytes_mut()
+                    .ok_or_else(|| "Failed to get warp input data".to_string())?;
+                let needed = rgb_data.len() * 4;
+                if input_bytes.len() < needed {
+                    return Err(format!("Warp input too small: {} need {}", input_bytes.len(), needed));
+                }
+                unsafe {
+                    let dst = input_bytes.as_mut_ptr() as *mut f32;
+                    std::ptr::copy_nonoverlapping(rgb_data.as_ptr(), dst, rgb_data.len());
+                }
+            }
+
+            session.resize().map_err(|e| format!("Warp resize: {}", e))?;
+            session.run().map_err(|e| format!("Warp run: {}", e))?;
+
+            let output = interpreter.get_first_output(&session)
+                .ok_or_else(|| "Failed to get warp output".to_string())?;
+            let out_len = (out_w * out_h * 3) as usize;
+            let mut out_data = vec![0.0f32; out_len];
+            {
+                let output_bytes = output.as_bytes()
+                    .ok_or_else(|| "Failed to get warp output data".to_string())?;
+                let needed = out_len * 4;
+                if output_bytes.len() < needed {
+                    return Err(format!("Warp output too small: {} need {}", output_bytes.len(), needed));
+                }
+                unsafe {
+                    let src = output_bytes.as_ptr() as *const f32;
+                    std::ptr::copy_nonoverlapping(src, out_data.as_mut_ptr(), out_len);
+                }
+            }
+
+            Ok((out_data, out_w, out_h))
+        }
+
+        /// Write GridSampler ONNX model to file.
+        fn write_warp_onnx(
+            path: &std::path::Path,
+            in_w: u32, in_h: u32,
+            grid: &[f32],
+            out_w: u32, out_h: u32,
+        ) -> Result<(), String> {
+            use std::io::Write;
+            use crate::onnx::proto::Proto;
+
+            let input_name = "input";
+            let grid_name = "grid";
+            let output_name = "output";
+
+            let input_vi = Proto::value_info(input_name, &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(in_h as i64),
+                Proto::tensor_dim_value(in_w as i64),
+            ], 1);
+
+            let output_vi = Proto::value_info(output_name, &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(out_h as i64),
+                Proto::tensor_dim_value(out_w as i64),
+            ], 1);
+
+            let node = Proto::node("GridSampler",
+                &[input_name, grid_name],
+                &[output_name],
+                &[
+                    Proto::attribute_int("mode", 1),           // bilinear
+                    Proto::attribute_int("padding_mode", 0),    // zeros
+                    Proto::attribute_int("align_corners", 0),
+                ]);
+
+            let grid_init = Proto::tensor_proto_float(grid_name,
+                &[1, out_h as i64, out_w as i64, 2], grid);
+
+            let graph = Proto::graph("warp_graph",
+                &[node], &[input_vi], &[output_vi], &[grid_init], &[]);
+            let opset = Proto::opset("", 16);
+            let model = Proto::model(8, &opset, "deshake_gpu", &graph);
+
+            let mut f = std::fs::File::create(path).map_err(|e| e.to_string())?;
+            f.write_all(&model).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+
+        /// Build identity grid + motion offset for GridSampler.
+        /// Returns [1, outH, outW, 2] with (x,y) in [-1,1].
+        fn build_warp_grid(
+            in_w: u32, in_h: u32,
+            dx: f32, dy: f32,
+            margin_x: u32, margin_y: u32,
+        ) -> Vec<f32> {
+            let out_w = in_w - 2 * margin_x;
+            let out_h = in_h - 2 * margin_y;
+            let mut grid = vec![0.0f32; (out_h * out_w * 2) as usize];
+            for y in 0..out_h {
+                for x in 0..out_w {
+                    let sx = (x + margin_x) as f32 + dx;
+                    let sy = (y + margin_y) as f32 + dy;
+                    let gx = 2.0 * sx / (in_w - 1) as f32 - 1.0;
+                    let gy = 2.0 * sy / (in_h - 1) as f32 - 1.0;
+                    let idx = ((y * out_w + x) * 2) as usize;
+                    grid[idx] = gx;
+                    grid[idx + 1] = gy;
+                }
+            }
+            grid
         }
     }
 } // mod gpu_pipeline
