@@ -163,6 +163,37 @@ impl PipelineBuilder {
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
+
+    /// Create a pipeline from an OptProfile — one-liner pipeline generation.
+    ///
+    /// ```ignore
+    /// let onnx = PipelineBuilder::from_profile(1920, 1080, PerfTier::High)
+    ///     .compose().unwrap();
+    /// ```
+    pub fn from_profile(w: u32, h: u32, tier: crate::optimizer::PerfTier) -> Self {
+        use crate::optimizer::OptProfile;
+        let p = OptProfile::auto_select(w, h, tier);
+        let mut builder = Self::new(w, h)
+            .unpack()
+            .demosaic(p.demosaic_algo);
+
+        if p.sharpen_strength > 0.0 {
+            builder = builder.sharpen(p.sharpen_strength);
+        }
+        if p.contrast_strength > 1.0 {
+            builder = builder.contrast(p.contrast_strength);
+        }
+        if p.denoise_threshold < 0.5 {
+            builder = builder.denoise(p.denoise_threshold);
+        }
+        if p.needs_warp() {
+            builder = builder.warp(p.warp_grid_size);
+        }
+        if p.needs_ca() {
+            builder = builder.chromatic_aberration();
+        }
+        builder.display()
+    }
 }
 
 #[cfg(test)]
@@ -264,5 +295,34 @@ mod tests {
             .unwrap();
         assert!(stats.block_count >= 10);
         println!("Full 10-stage: {} bytes", onnx.len());
+    }
+
+    #[test]
+    fn test_from_profile_high_4k() {
+        use crate::optimizer::PerfTier;
+        let (onnx, stats, _) = PipelineBuilder::from_profile(3840, 2160, PerfTier::High)
+            .compose_full()
+            .unwrap();
+        assert!(!onnx.is_empty());
+        assert!(stats.block_count >= 3);
+        println!("High 4K: {} blocks, {} bytes", stats.block_count, onnx.len());
+    }
+
+    #[test]
+    fn test_from_profile_medium_fhd() {
+        use crate::optimizer::PerfTier;
+        let onnx = PipelineBuilder::from_profile(1920, 1080, PerfTier::Medium)
+            .compose()
+            .unwrap();
+        assert!(!onnx.is_empty());
+    }
+
+    #[test]
+    fn test_from_profile_low_vga() {
+        use crate::optimizer::PerfTier;
+        let onnx = PipelineBuilder::from_profile(640, 480, PerfTier::Low)
+            .compose()
+            .unwrap();
+        assert!(!onnx.is_empty());
     }
 }
