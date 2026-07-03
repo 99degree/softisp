@@ -170,6 +170,24 @@ impl PipelineBuilder {
         self.blocks.len()
     }
 
+    /// Compose and convert to MNN in one call.
+    pub fn to_mnn(self, output_path: &str) -> Result<(Vec<u8>, String), String> {
+        let mut blocks = self.blocks;
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let onnx = GraphComposer::compose_from_vec(&refs, &[], 16)?;
+        let mnn_path = if output_path.ends_with(".mnn") {
+            output_path.to_string()
+        } else {
+            format!("{}.mnn", output_path)
+        };
+        let onnx_path = format!("{}.onnx", mnn_path.trim_end_matches(".mnn"));
+        std::fs::write(&onnx_path, &onnx).map_err(|e| format!("write onnx: {}", e))?;
+        crate::mnn_converter::convert_onnx_to_mnn(
+            &onnx_path, &mnn_path, None).map_err(|e| format!("convert: {}", e))?;
+        Ok((onnx, mnn_path))
+    }
+
     /// Create a pipeline from an OptProfile — one-liner pipeline generation.
     ///
     /// ```ignore
