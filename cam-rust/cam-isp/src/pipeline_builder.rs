@@ -155,6 +155,31 @@ impl PipelineBuilder {
         if issues.is_empty() { Ok(()) } else { Err(issues) }
     }
 
+    /// Get list of block IDs in order (for inspection).
+    pub fn block_ids(&self) -> Vec<String> {
+        self.blocks.iter().map(|b| b.id().to_string()).collect()
+    }
+
+    /// Remove a block by ID. Returns true if found and removed.
+    pub fn remove_block(&mut self, id: &str) -> bool {
+        if let Some(pos) = self.blocks.iter().position(|b| b.id() == id) {
+            self.blocks.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Replace a block by ID. Returns true if found and replaced.
+    pub fn replace_block(&mut self, id: &str, new_block: Box<dyn crate::pipeline::IspBlock>) -> bool {
+        if let Some(pos) = self.blocks.iter().position(|b| b.id() == id) {
+            self.blocks[pos] = new_block;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Wire and compose the pipeline, returning raw ONNX bytes.
     pub fn compose(self) -> Result<Vec<u8>, String> {
         let mut blocks = self.blocks;
@@ -552,5 +577,43 @@ mod tests {
     fn test_minimal_preset() {
         let onnx = PipelineBuilder::minimal_preset(640, 480).compose().unwrap();
         assert!(!onnx.is_empty());
+    }
+
+    #[test]
+    fn test_block_ids() {
+        let ids = PipelineBuilder::new(640, 480)
+            .unpack()
+            .demosaic(0)
+            .gamma(2.2)
+            .display()
+            .block_ids();
+        assert_eq!(ids, vec!["unpack", "demosaic_ccm", "gamma", "display"]);
+    }
+
+    #[test]
+    fn test_block_count() {
+        let b = PipelineBuilder::new(640, 480).unpack().demosaic(0).display();
+        assert_eq!(b.block_count(), 3);
+    }
+
+    #[test]
+    fn test_remove_block() {
+        let mut b = PipelineBuilder::new(640, 480)
+            .unpack().demosaic(0).gamma(2.2).display();
+        assert!(b.remove_block("gamma"));
+        assert!(!b.remove_block("gamma"));
+        assert_eq!(b.block_ids(), vec!["unpack", "demosaic_ccm", "display"]);
+    }
+
+    #[test]
+    fn test_validate_empty() {
+        let b = PipelineBuilder::new(0, 0);
+        assert!(b.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_valid() {
+        let b = PipelineBuilder::new(640, 480).unpack().display();
+        assert!(b.validate().is_ok());
     }
 }
