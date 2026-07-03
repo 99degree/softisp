@@ -76,3 +76,22 @@ impl IspBlock for LdciBlock {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ldci_id() {
+        assert_eq!(LdciBlock::new().id(), "ldci");
+    }
+
+    #[test]
+    fn test_ldci_emit_onnx() {
+        let mut b = LdciBlock::new();
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        // AvgPool + Sub + Mul + Add = 4 nodes
+        assert_eq!(nodes.len(), 4);
+    }
+}

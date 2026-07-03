@@ -55,3 +55,28 @@ impl IspBlock for ToneBlock {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tone_id() {
+        assert_eq!(ToneBlock::new().id(), "tone");
+    }
+
+    #[test]
+    fn test_tone_emit_onnx() {
+        let mut b = ToneBlock::new();
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        // Mul + Add + Clip = 3 nodes
+        assert_eq!(nodes.len(), 3);
+    }
+
+    #[test]
+    fn test_tone_signals_aux() {
+        let b = ToneBlock::new();
+        assert_eq!(b.signals_aux(), vec!["fcs", "ldci", "ee"]);
+    }
+}
+

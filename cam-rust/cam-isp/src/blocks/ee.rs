@@ -84,3 +84,39 @@ impl IspBlock for EeBlock {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ee_id() {
+        let b = EeBlock::new();
+        assert_eq!(b.id(), "ee");
+    }
+
+    #[test]
+    fn test_ee_tensors() {
+        let mut b = EeBlock::new();
+        b.set_input_source("prev/frame");
+        assert_eq!(b.input_tensors(), vec!["prev/frame".to_string()]);
+        assert_eq!(b.output_tensors(), vec!["EeBlock/frame".to_string()]);
+    }
+
+    #[test]
+    fn test_ee_emit_onnx() {
+        let mut b = EeBlock::new();
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        // Conv(3x3 unsharp) = 1 node
+        assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_ee_kernel_shape() {
+        let b = EeBlock::new();
+        let inits = b.initializers();
+        // kernel + bias = 2
+        assert_eq!(inits.len(), 2);
+    }
+}
