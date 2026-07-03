@@ -22,6 +22,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// FcsBlock — Film Contrast Stretch (S-curve).
+///
+/// ONNX subgraph: Mul(scale) → Add(bias) → Clip(min, max).
+/// Parametric S-curve for shadow/highlight adjustment.
+/// Fuse target R3b (Mul+Add).
 pub struct FcsBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,

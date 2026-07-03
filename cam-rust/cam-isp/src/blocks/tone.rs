@@ -1,6 +1,10 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// ToneBlock — Mul+Add+Clip tone mapping.
+///
+/// Simple per-pixel tone curve: `clip(x * mul + add)`. All parameters
+/// are hot-swappable at runtime via `hot_swap_const_buffer()`.
 pub struct ToneBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
