@@ -86,6 +86,47 @@ impl PipelineConfig {
     pub fn block_count(&self) -> usize {
         self.block_ids.len()
     }
+
+    /// Migrate a config from an older version to the current version.
+    /// Currently handles:
+    /// - v1→v1: rename `demosaic` to `demosaic_ccm` if present
+    pub fn migrate(config: &PipelineConfig) -> Self {
+        let mut migrated = config.clone();
+        migrated.version = 1; // current version
+        for id in &mut migrated.block_ids {
+            // v0 used 'demosaic', current is 'demosaic_ccm'
+            if id == "demosaic" {
+                *id = "demosaic_ccm".into();
+            }
+        }
+        migrated
+    }
+
+    /// Validate config: check for known block IDs and basic constraints.
+    pub fn validate(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        if self.block_ids.is_empty() {
+            issues.push("Pipeline has no blocks".into());
+        }
+        if self.width == 0 || self.height == 0 {
+            issues.push(format!("Invalid resolution: {}x{}", self.width, self.height));
+        }
+        // Check for known block IDs
+        let known: &[&str] = &[
+            "unpack", "demosaic_ccm", "display", "gamma", "sharpen",
+            "auto_contrast", "warp_grid", "chromatic_aberration",
+            "temporal_denoise", "noise_estimate", "dyn_resize",
+            "tone", "normalize", "grayscale", "aspect_crop",
+            "ee_ldci", "fcs", "hdr_merge", "stereo_depth",
+            "coarse_histogram", "channel_means", "tone_stats",
+        ];
+        for id in &self.block_ids {
+            if !known.contains(&id.as_str()) {
+                issues.push(format!("Unknown block ID: '{}'", id));
+            }
+        }
+        issues
+    }
 }
 
 #[cfg(test)]
@@ -146,5 +187,38 @@ mod tests {
         assert!(text.contains("v1"));
         let loaded = PipelineConfig::from_text(&text).unwrap();
         assert_eq!(loaded.version, 1);
+    }
+
+    #[test]
+    fn test_migrate_demosaic_to_demosaic_ccm() {
+        let mut cfg = PipelineConfig::new(640, 480);
+        cfg.block_ids = vec!["unpack".into(), "demosaic".into(), "display".into()];
+        let migrated = PipelineConfig::migrate(&cfg);
+        assert_eq!(migrated.block_ids[1], "demosaic_ccm");
+        assert_eq!(migrated.version, 1);
+    }
+
+    #[test]
+    fn test_validate_empty_config() {
+        let cfg = PipelineConfig::new(0, 0);
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("no blocks")));
+        assert!(issues.iter().any(|i| i.contains("resolution")));
+    }
+
+    #[test]
+    fn test_validate_known_blocks() {
+        let mut cfg = PipelineConfig::new(640, 480);
+        cfg.block_ids = vec!["unpack".into(), "demosaic_ccm".into(), "display".into()];
+        let issues = cfg.validate();
+        assert!(issues.is_empty(), "known blocks should pass: {:?}", issues);
+    }
+
+    #[test]
+    fn test_validate_unknown_block() {
+        let mut cfg = PipelineConfig::new(640, 480);
+        cfg.block_ids = vec!["unpack".into(), "unknown_block".into(), "display".into()];
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("Unknown block ID")));
     }
 }
