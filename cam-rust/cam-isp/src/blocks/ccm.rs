@@ -87,3 +87,36 @@ impl IspBlock for CcmBlock {
         vec![(format!("{}/matrix", self.tensor_ns()), 1, vec![self.out_ch, self.in_ch, 1, 1])]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ccm_id() {
+        assert_eq!(CcmBlock::new().id(), "ccm");
+    }
+
+    #[test]
+    fn test_ccm_instance_id() {
+        let b = CcmBlock::with_instance("lsc");
+        assert_eq!(b.id(), "ccm_lsc");
+    }
+
+    #[test]
+    fn test_ccm_nodes() {
+        let mut b = CcmBlock::new();
+        b.set_input_source("in/rgb");
+        let nodes = b.nodes();
+        // Conv + Clip = 2 nodes
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_ccm_with_channels() {
+        let b = CcmBlock::new().with_channels(4);
+        let inits = b.initializers();
+        // matrix is [4,4,1,1] = 16 floats for identity
+        assert_eq!(inits.len(), 4); // matrix + bias + zero + one
+    }
+}

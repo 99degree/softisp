@@ -142,6 +142,19 @@ impl PipelineBuilder {
         self
     }
 
+    /// Validate the pipeline configuration before composing.
+    /// Returns Ok(()) if valid, or Err with a list of issues.
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut issues = Vec::new();
+        if self.blocks.is_empty() {
+            issues.push("Pipeline has no blocks".into());
+        }
+        if self.width == 0 || self.height == 0 {
+            issues.push(format!("Invalid resolution: {}x{}", self.width, self.height));
+        }
+        if issues.is_empty() { Ok(()) } else { Err(issues) }
+    }
+
     /// Wire and compose the pipeline, returning raw ONNX bytes.
     pub fn compose(self) -> Result<Vec<u8>, String> {
         let mut blocks = self.blocks;
