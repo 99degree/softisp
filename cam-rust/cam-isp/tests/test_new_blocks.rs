@@ -206,6 +206,31 @@ fn temporal_denoise_threshold_in_init() {
     assert_eq!(inits.len(), 4, "need threshold + one + blend_w + curr_weight");
 }
 
+// ── HdrMergeBlock ─────────────────────────────────────────
+
+#[test]
+fn hdr_merge_has_three_inputs() {
+    let block = HdrMergeBlock::new();
+    let inputs = block.input_tensors();
+    assert_eq!(inputs.len(), 3, "must have 3 inputs (neutral + under + over)");
+}
+
+#[test]
+fn hdr_merge_emits_weight_map_nodes() {
+    let block = HdrMergeBlock::new();
+    let nodes = block.nodes();
+    let has_clip = nodes.iter().any(|n| {
+        let s = String::from_utf8_lossy(n);
+        s.contains("Clip")
+    });
+    let has_mul = nodes.iter().any(|n| {
+        let s = String::from_utf8_lossy(n);
+        s.contains("Mul")
+    });
+    assert!(has_clip, "must emit Clip for weight clamping");
+    assert!(has_mul, "must emit Mul for exposure blending");
+}
+
 // ── Composition tests ─────────────────────────────────────
 
 #[test]
