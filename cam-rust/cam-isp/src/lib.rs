@@ -47,6 +47,7 @@ pub mod isp_ops;
 pub mod stats;
 pub mod simd;
 pub mod serializer;
+pub mod pipeline_builder;
 
 use std::sync::Once;
 use log::info;
