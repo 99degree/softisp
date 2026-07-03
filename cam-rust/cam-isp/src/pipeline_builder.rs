@@ -101,6 +101,26 @@ impl PipelineBuilder {
         format!("{}×{}: {}", self.width, self.height, ids.join(" → "))
     }
 
+    /// Add an arbitrary block to the pipeline.
+    ///
+    /// Use this to add blocks that don't have dedicated convenience methods,
+    /// or to configure a block before adding it.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use cam_isp::blocks::*;
+    /// let onnx = PipelineBuilder::new(640, 480)
+    ///     .add(Box::new(UnpackBlock::new()))
+    ///     .add(Box::new(DemosaicCcmBlock::new(2)))
+    ///     .add(Box::new(DisplayBlock::new(640).rgba()))
+    ///     .compose().unwrap();
+    /// ```
+    pub fn add(mut self, block: Box<dyn IspBlock>) -> Self {
+        self.blocks.push(block);
+        self
+    }
+
     /// Add `UnpackBlock` — Bayer packed-INT32 or native-INT16 unpack.
     /// Sized for the builder's input resolution.
     ///
@@ -1063,5 +1083,16 @@ mod tests {
             .compose_and_time().unwrap();
         assert!(onnx.len() > 100);
         assert!(elapsed.as_secs_f64() > 0.0);
+    }
+
+    #[test]
+    fn test_add_block() {
+        use crate::blocks::*;
+        let onnx = PipelineBuilder::new(640, 480)
+            .add(Box::new(UnpackBlock::new()))
+            .add(Box::new(DemosaicCcmBlock::new(1)))
+            .add(Box::new(DisplayBlock::new(640).rgba()))
+            .compose().unwrap();
+        assert!(onnx.len() > 100);
     }
 }
