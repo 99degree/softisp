@@ -41,3 +41,38 @@ impl IspBlock for BayerWbBlock {
         vec![(format!("{}/gains", self.tensor_ns()), 1, vec![1, 4, 1, 1])]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bayer_wb_id() {
+        assert_eq!(BayerWbBlock::new().id(), "bayer_wb");
+    }
+
+    #[test]
+    fn test_bayer_wb_nodes() {
+        let mut b = BayerWbBlock::new();
+        b.set_input_source("in/bayer");
+        let nodes = b.nodes();
+        // Mul + Clip = 2 nodes
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_bayer_wb_initializers() {
+        let b = BayerWbBlock::new();
+        let inits = b.initializers();
+        // gains + zero + one = 3
+        assert_eq!(inits.len(), 3);
+    }
+
+    #[test]
+    fn test_bayer_wb_extra_inputs() {
+        let b = BayerWbBlock::new();
+        let extra = b.extra_inputs();
+        assert_eq!(extra.len(), 1);
+        assert_eq!(extra[0].2, vec![1, 4, 1, 1]);
+    }
+}
