@@ -225,4 +225,63 @@ mod tests {
         println!("HdrMergeBlock: {} nodes, {} initializers, {} extra inputs",
             nodes.len(), inits.len(), extra.len());
     }
+
+    #[test]
+    fn test_hdr_merge_has_three_inputs() {
+        let block = HdrMergeBlock::new();
+        // neutral + under + over
+        assert_eq!(block.input_tensors().len(), 3, "must have 3 inputs");
+    }
+
+    #[test]
+    fn test_hdr_merge_has_one_output() {
+        let block = HdrMergeBlock::new();
+        assert_eq!(block.output_tensors().len(), 1, "must have 1 output");
+    }
+
+    #[test]
+    fn test_hdr_merge_emits_conv_for_luminance() {
+        let block = HdrMergeBlock::new();
+        let nodes = block.nodes();
+        let has_conv = nodes.iter().any(|n| {
+            let s = String::from_utf8_lossy(n);
+            s.contains("Conv")
+        });
+        assert!(has_conv, "must emit Conv for luminance extraction");
+    }
+
+    #[test]
+    fn test_hdr_merge_weight_computation() {
+        let block = HdrMergeBlock::new();
+        let nodes = block.nodes();
+        // Weight computation: Clip, Sub, Abs, Mul
+        let has_clip = nodes.iter().any(|n| {
+            let s = String::from_utf8_lossy(n);
+            s.contains("Clip")
+        });
+        let has_abs = nodes.iter().any(|n| {
+            let s = String::from_utf8_lossy(n);
+            s.contains("Abs")
+        });
+        assert!(has_clip, "must emit Clip for weight clamping");
+        assert!(has_abs, "must emit Abs for neutral weight");
+    }
+
+    #[test]
+    fn test_hdr_merge_blends_three_exposures() {
+        let block = HdrMergeBlock::new();
+        let nodes = block.nodes();
+        // 3× Mul for exposure blending + 2× Add for combining
+        let mul_count = nodes.iter().filter(|n| {
+            let s = String::from_utf8_lossy(n);
+            s.contains("Mul")
+        }).count();
+        let add_count = nodes.iter().filter(|n| {
+            let s = String::from_utf8_lossy(n);
+            s.contains("Add")
+        }).count();
+        assert!(mul_count >= 3, "must have 3+ Mul for blending, got {}", mul_count);
+        assert!(add_count >= 2, "must have 2+ Add for combining, got {}", add_count);
+    }
 }
+
