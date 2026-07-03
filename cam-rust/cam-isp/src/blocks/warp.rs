@@ -107,7 +107,7 @@ impl WarpGridBlock {
     pub fn with_gdc_and_eis(mut self, k1: f32, k2: f32, k3: f32, eis_grid: Vec<f32>) -> Self {
         let h = self.output_height as usize;
         let w = self.output_width as usize;
-        let gdc_grid = Self::generate_gdc_grid(self.output_height, self.output_width, k1, k2, k3);
+        let _gdc_grid = Self::generate_gdc_grid(self.output_height, self.output_width, k1, k2, k3);
         // Compose: for each output pixel, EIS gives a source position in normalized coords,
         // then GDC undoes lens distortion at that position.
         let mut composed = Vec::with_capacity(h * w * 2);
