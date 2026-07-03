@@ -1,16 +1,27 @@
 //! PipelineBuilder — fluent API for constructing ISP pipelines.
 //!
-//! Instead of manually boxing blocks and calling wire_blocks:
+//! # Example
 //!
 //! ```ignore
 //! let onnx = PipelineBuilder::new(1920, 1080)
 //!     .unpack()
-//!     .demosaic(0)       // 0=binning, 1=bilinear, 2=mhc
+//!     .demosaic(2)       // 0=binning, 1=bilinear, 2=MHC
 //!     .gamma(2.2)
-//!     .sharpen(0.5)
+//!     .sharpen(0.6)
+//!     .contrast(1.3)
 //!     .display()
 //!     .compose()
 //!     .unwrap();
+//! ```
+//!
+//! # Named presets
+//!
+//! ```ignore
+//! // One-liner for common scenarios:
+//! let onnx = PipelineBuilder::photo_preset(1920, 1080).compose().unwrap();  // high quality
+//! let onnx = PipelineBuilder::video_preset(1920, 1080).compose().unwrap();  // balanced
+//! let onnx = PipelineBuilder::night_preset(1920, 1080).compose().unwrap(); // low-light
+//! let onnx = PipelineBuilder::minimal_preset(640, 480).compose().unwrap();  // preview
 //! ```
 
 use crate::blocks::*;
@@ -25,12 +36,33 @@ pub struct PipelineBuilder {
 }
 
 impl PipelineBuilder {
+    /// Create a new pipeline builder with the given input resolution.
+    ///
+    /// The resolution is used by blocks that need to know output dimensions
+    /// (e.g., `display()`, `warp()`, `resize()`).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let b = PipelineBuilder::new(3840, 2160);  // 4K pipeline
+    /// ```
     pub fn new(w: u32, h: u32) -> Self {
         Self { blocks: Vec::new(), width: w, height: h }
     }
 
-    /// Reconstruct a PipelineBuilder from a serialized PipelineConfig.
-    /// Blocks are created by their ID string.
+    /// Reconstruct a PipelineBuilder from a serialized [`PipelineConfig`].
+    ///
+    /// Maps block ID strings to their corresponding builder methods.
+    /// Unknown block IDs are silently skipped.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use softisp_camera_isp::serializer::PipelineConfig;
+    /// let cfg = PipelineConfig::from_text("# softisp pipeline v1\nW=1920 H=1080\nunpack\ndisplay").unwrap();
+    /// let b = PipelineBuilder::from_config(&cfg);
+    /// let ids = b.block_ids();  // ["unpack", "display"]
+    /// ```
     pub fn from_config(cfg: &crate::serializer::PipelineConfig) -> Self {
         let mut builder = Self::new(cfg.width, cfg.height);
         for id in &cfg.block_ids {
@@ -56,56 +88,124 @@ impl PipelineBuilder {
         builder
     }
 
-    /// One-line summary: "w×h: block1 → block2 → ..."
+    /// One-line summary: `"w×h: block1 → block2 → ..."`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let s = PipelineBuilder::new(640, 480).unpack().display().summary();
+    /// assert_eq!(s, "640×480: unpack → display");
+    /// ```
     pub fn summary(&self) -> String {
         let ids: Vec<&str> = self.blocks.iter().map(|b| b.id()).collect();
         format!("{}×{}: {}", self.width, self.height, ids.join(" → "))
     }
 
-    /// Add unpack block for Bayer input.
+    /// Add `UnpackBlock` — Bayer packed-INT32 or native-INT16 unpack.
+    /// Sized for the builder's input resolution.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack().display().compose();
+    /// ```
     pub fn unpack(mut self) -> Self {
         self.blocks.push(Box::new(UnpackBlock::new()));
         self
     }
 
-    /// Add unpack block with concrete dimensions.
+    /// Add `UnpackBlock` with explicit input dimensions.
+    /// Use when the input resolution differs from the builder's default.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack_dims(2160, 3840).display().compose();
+    /// ```
     pub fn unpack_dims(mut self, h: i64, w: i64) -> Self {
         self.blocks.push(Box::new(UnpackBlock::new().with_concrete_dims(h, w)));
         self
     }
 
-    /// Add demosaic + CCM block.
-    /// `bayer_pattern`: 0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR
+    /// Add `DemosaicCcmBlock` — Bayer demosaic + color correction.
+    ///
+    /// `bayer_pattern`: `0`=RGGB, `1`=GRBG, `2`=GBRG, `3`=BGGR
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack().demosaic(2).display().compose();  // MHC
+    /// ```
     pub fn demosaic(mut self, bayer_pattern: i32) -> Self {
         self.blocks.push(Box::new(DemosaicCcmBlock::new(bayer_pattern)));
         self
     }
 
-    /// Add gamma block.
+    /// Add `GammaBlock` — sRGB gamma correction.
+    ///
+    /// `g` is the gamma value (typical: 2.2 for sRGB).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().gamma(2.2).display().compose();
+    /// ```
     pub fn gamma(mut self, g: f32) -> Self {
         self.blocks.push(Box::new(GammaBlock::new(g)));
         self
     }
 
-    /// Add sharpen block.
+    /// Add `SharpenBlock` — unsharp mask with configurable strength.
+    ///
+    /// `strength`: `0.0`=no effect, `0.5`=moderate, `1.0`=aggressive
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().gamma(2.2).sharpen(0.5).display().compose();
+    /// ```
     pub fn sharpen(mut self, strength: f32) -> Self {
         self.blocks.push(Box::new(SharpenBlock::new(strength)));
         self
     }
 
-    /// Add auto-contrast block.
+    /// Add `AutoContrastBlock` — parametric S-curve contrast enhancement.
+    ///
+    /// `strength`: `1.0`=no effect, `1.3`=moderate, `2.0`=aggressive
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().gamma(2.2).contrast(1.3).display().compose();
+    /// ```
     pub fn contrast(mut self, strength: f32) -> Self {
         self.blocks.push(Box::new(AutoContrastBlock::new(strength)));
         self
     }
 
-    /// Add warp block (EIS/GDC).
+    /// Add `WarpGridBlock` — EIS/GDC warp with configurable grid resolution.
+    ///
+    /// `grid_w`: grid width (e.g., `16` for 16×12 control grid)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack().warp(32).display().compose();
+    /// ```
     pub fn warp(mut self, grid_w: u32) -> Self {
         self.blocks.push(Box::new(WarpGridBlock::new(grid_w, grid_w * 3 / 4)));
         self
     }
 
-    /// Add warp block with GDC distortion correction.
+    /// Add `WarpGridBlock` with GDC (geometric distortion correction).
+    ///
+    /// `grid_w`: grid width. `k1`: radial distortion coefficient (Brown model).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack().warp_gdc(32, -0.1).display().compose();
+    /// ```
     pub fn warp_gdc(mut self, grid_w: u32, k1: f32) -> Self {
         self.blocks.push(Box::new(
             WarpGridBlock::new(grid_w, grid_w * 3 / 4).with_gdc(k1, 0.0, 0.0)
@@ -113,7 +213,13 @@ impl PipelineBuilder {
         self
     }
 
-    /// Add chromatic aberration correction.
+    /// Add `ChromaticAberrationBlock` — per-channel radial offset correction.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack().chromatic_aberration().display().compose();
+    /// ```
     pub fn chromatic_aberration(mut self) -> Self {
         self.blocks.push(Box::new(
             ChromaticAberrationBlock::new().with_radial_correction(self.height, self.width, 1.0)
@@ -121,55 +227,117 @@ impl PipelineBuilder {
         self
     }
 
-    /// Add temporal denoise.
+    /// Add `TemporalDenoiseBlock` — multi-frame noise reduction.
+    ///
+    /// `threshold`: noise reduction strength, lower = more aggressive
+    /// (typical: `0.02`–`0.05`)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().gamma(2.2).denoise(0.03).display().compose();
+    /// ```
     pub fn denoise(mut self, threshold: f32) -> Self {
         self.blocks.push(Box::new(TemporalDenoiseBlock::new().with_threshold(threshold)));
         self
     }
 
-    /// Add noise estimation.
+    /// Add `NoiseEstimateBlock` — Laplacian-based per-pixel noise level.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().noise_estimate().display().compose();
+    /// ```
     pub fn noise_estimate(mut self) -> Self {
         self.blocks.push(Box::new(NoiseEstimateBlock::new()));
         self
     }
 
-    /// Add display output (RGB).
+    /// Add `DisplayBlock` — final format conversion to RGBA output.
+    /// Output width matches the builder's input width.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let onnx = PipelineBuilder::new(1920, 1080)
+    ///     .unpack().demosaic(1).display()
+    ///     .compose().unwrap();
+    /// ```
     pub fn display(mut self) -> Self {
         self.blocks.push(Box::new(DisplayBlock::new(self.width)));
         self
     }
 
-    /// Add display with explicit output width.
+    /// Add `DisplayBlock` with explicit output width (for downscaled output).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // 4K input → FHD output
+    /// PipelineBuilder::new(3840, 2160).unpack().display_w(1920).compose();
+    /// ```
     pub fn display_w(mut self, w: u32) -> Self {
         self.blocks.push(Box::new(DisplayBlock::new(w)));
         self
     }
 
-    /// Add dynamic resize.
+    /// Add `DynResizeBlock` — dynamic resize with hot-swappable scale factors.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Scale factors can be updated at runtime via hot_swap_const_buffer()
+    /// PipelineBuilder::new(1920, 1080).unpack().resize(1280, 720).display().compose();
+    /// ```
     pub fn resize(mut self, target_w: u32, target_h: u32) -> Self {
         self.blocks.push(Box::new(DynResizeBlock::new(target_w, target_h)));
         self
     }
 
-    /// Add aspect-ratio crop.
+    /// Add `AspectCropBlock` — center-crop to 16:9 aspect ratio.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack().crop_16_9().display().compose();
+    /// ```
     pub fn crop_16_9(mut self) -> Self {
         self.blocks.push(Box::new(AspectCropBlock::ratio_16_9()));
         self
     }
 
-    /// Add tone block.
+    /// Add `ToneBlock` — Mul+Add+Clip tone mapping with hot-swappable params.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().tone().display().compose();
+    /// ```
     pub fn tone(mut self) -> Self {
         self.blocks.push(Box::new(ToneBlock::new()));
         self
     }
 
-    /// Add normalize block.
+    /// Add `NormalizeBlock` — Cast INT32→FLOAT + Div by sensor max.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).normalize().unpack().display().compose();
+    /// ```
     pub fn normalize(mut self) -> Self {
         self.blocks.push(Box::new(NormalizeBlock::new()));
         self
     }
 
-    /// Add grayscale block.
+    /// Add `GrayscaleBlock` — RGB→Luminance via weighted channel mix.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().grayscale().display().compose();
+    /// ```
     pub fn grayscale(mut self) -> Self {
         self.blocks.push(Box::new(GrayscaleBlock::new()));
         self
@@ -214,6 +382,17 @@ impl PipelineBuilder {
     }
 
     /// Wire and compose the pipeline, returning raw ONNX bytes.
+    ///
+    /// This is the simplest entry point — calls `wire_blocks()` then `compose_from_vec()`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let onnx = PipelineBuilder::new(1920, 1080)
+    ///     .unpack().demosaic(1).display()
+    ///     .compose().unwrap();
+    /// println!("ONNX model: {} bytes", onnx.len());
+    /// ```
     pub fn compose(self) -> Result<Vec<u8>, String> {
         let mut blocks = self.blocks;
         GraphComposer::wire_blocks(&mut blocks);
@@ -225,6 +404,17 @@ impl PipelineBuilder {
     }
 
     /// Compose and save ONNX to a file.
+    ///
+    /// Returns number of bytes written.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let bytes = PipelineBuilder::new(640, 480)
+    ///     .unpack().display()
+    ///     .compose_to_file("pipeline.onnx").unwrap();
+    /// println!("Wrote {} bytes", bytes);
+    /// ```
     pub fn compose_to_file(self, path: &str) -> Result<usize, String> {
         let onnx = self.compose()?;
         let len = onnx.len();
@@ -307,6 +497,13 @@ impl PipelineBuilder {
     }
 
     /// Add a histogram block for AE feedback.
+    /// Add `CoarseHistogramBlock` — 16-bin luminance histogram for AE feedback.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().demosaic(1).histogram().display().compose();
+    /// ```
     pub fn histogram(mut self) -> Self {
         self.blocks.push(Box::new(CoarseHistogramBlock::new(16)));
         self
@@ -330,6 +527,12 @@ impl PipelineBuilder {
 
     /// Photo preset: high quality still capture pipeline.
     /// Unpack → Demosaic(MHC) → Gamma → Sharpen → Contrast → Denoise → Display
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let onnx = PipelineBuilder::photo_preset(3840, 2160).compose().unwrap();  // 4K photo
+    /// ```
     pub fn photo_preset(w: u32, h: u32) -> Self {
         Self::new(w, h)
             .unpack()
@@ -343,6 +546,12 @@ impl PipelineBuilder {
 
     /// Video preset: balanced quality for 30/60fps capture.
     /// Unpack → Demosaic(Bilinear) → Gamma → Sharpen → Display
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let onnx = PipelineBuilder::video_preset(1920, 1080).compose().unwrap();
+    /// ```
     pub fn video_preset(w: u32, h: u32) -> Self {
         Self::new(w, h)
             .unpack()
@@ -354,6 +563,12 @@ impl PipelineBuilder {
 
     /// Night preset: aggressive denoising for low-light.
     /// Unpack → Demosaic(Binning) → Gamma → Denoise → Sharpen → Display
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let onnx = PipelineBuilder::night_preset(1920, 1080).compose().unwrap();
+    /// ```
     pub fn night_preset(w: u32, h: u32) -> Self {
         Self::new(w, h)
             .unpack()
