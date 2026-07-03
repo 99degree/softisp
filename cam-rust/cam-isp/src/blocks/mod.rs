@@ -35,7 +35,6 @@ mod stereo_depth;
 mod sharpen;
 mod colorspace;
 mod aspect_crop;
-mod flip;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -73,7 +72,6 @@ pub use stereo_depth::StereoDepthBlock;
 pub use sharpen::SharpenBlock;
 pub use colorspace::{ColorSpaceBlock, ColorSpace};
 pub use aspect_crop::AspectCropBlock;
-pub use flip::{FlipBlock, FlipMode};
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
