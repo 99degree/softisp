@@ -422,3 +422,31 @@ fn mega_pipeline_all_blocks() {
     std::fs::write("target/mega_pipeline.onnx", &onnx).ok();
     println!("Mega pipeline: {} stages, {} bytes", blocks.len(), onnx.len());
 }
+
+// ── DynResizeBlock ───────────────────────────────────────
+
+#[test]
+fn dyn_resize_produces_valid_onnx() {
+    use cam_isp::pipeline::GraphComposer;
+    let unpack = UnpackBlock::new().with_concrete_dims(1080, 1920);
+    let resize = DynResizeBlock::new(960, 540).with_source_size(1920, 1080);
+    let display = DisplayBlock::new(960);
+    let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &resize, &display];
+    let onnx = GraphComposer::compose_from_vec(&blocks, &[], 10).unwrap();
+    assert!(onnx.len() > 200);
+}
+
+#[test]
+fn dyn_resize_emits_resize_op() {
+    let block = DynResizeBlock::new(640, 480).with_source_size(1280, 720);
+    let nodes = block.nodes();
+    assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Resize")));
+}
+
+#[test]
+fn dyn_resize_scales_are_correct() {
+    let block = DynResizeBlock::new(960, 540).with_source_size(1920, 1080);
+    let (sh, sw) = block.scale_factors();
+    assert!((sh - 0.5).abs() < 0.01);
+    assert!((sw - 0.5).abs() < 0.01);
+}
