@@ -168,3 +168,36 @@ impl IspBlock for UnpackBayerToFp16Block {
     fn set_next(&mut self, _: Box<dyn IspBlock>) {}
     fn graph_input_name(&self) -> Option<&str> { None }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unpack_bayer_fp16_id() {
+        assert_eq!(UnpackBayerToFp16Block::new().id(), "unpack_bayer_fp16");
+    }
+
+    #[test]
+    fn test_unpack_bayer_fp16_types() {
+        let b = UnpackBayerToFp16Block::new();
+        assert_eq!(b.input_elem_type(), 6); // INT32
+        assert_eq!(b.output_elem_type(), 10); // FLOAT16
+    }
+
+    #[test]
+    fn test_unpack_bayer_fp16_nodes() {
+        let mut b = UnpackBayerToFp16Block::new();
+        b.set_input_source("in/packed");
+        let nodes = b.nodes();
+        // Multiple nodes for unpack: ShiftLeft, ShiftRight, BitwiseAnd, Cast, Div, Concat
+        assert!(nodes.len() >= 6);
+    }
+
+    #[test]
+    fn test_unpack_bayer_fp16_tensors() {
+        let mut b = UnpackBayerToFp16Block::new();
+        b.set_input_source("in/packed");
+        assert_eq!(b.output_tensors(), vec!["UnpackBayerToFp16Block/frame_fp16".to_string()]);
+    }
+}
