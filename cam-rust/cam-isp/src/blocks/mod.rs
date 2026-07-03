@@ -29,6 +29,8 @@ mod bayer_demosaic;
 mod chromatic_aberration;
 mod auto_contrast;
 mod temporal_denoise;
+mod noise_estimate;
+mod gamma;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -60,6 +62,8 @@ pub use bayer_demosaic::{BayerDemosaicBlock, DemosaicAlgo};
 pub use chromatic_aberration::ChromaticAberrationBlock;
 pub use auto_contrast::AutoContrastBlock;
 pub use temporal_denoise::TemporalDenoiseBlock;
+pub use noise_estimate::NoiseEstimateBlock;
+pub use gamma::GammaBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
