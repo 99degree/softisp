@@ -1,7 +1,7 @@
 # Rust Camera ISP Pipeline
 
 A complete Rust ISP pipeline: ONNX generation → MNN conversion → Vulkan GPU inference.
-Compiles with **0 warnings** and **458 tests pass** (421 lib + 35 integration + 2 e2e).
+Compiles with **0 warnings** and **488 tests pass** (432 lib + 54 integration + 2 e2e).
 
 ## Performance (Vulkan, Snapdragon 8 Gen 2)
 
@@ -37,7 +37,7 @@ RawInput(INT16 [1,1,H,W])
 
 ## Key Features
 
-- **458 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
+- **488 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
 - **MnnEngine** — Vulkan GPU acceleration (4K→FHD 57.7 FPS)
 - **IspChainFusion** — 12 fusion rules (R1–R12b), 32+ ops → 12 dispatches
 - **PipelineBuilder** — Fluent API: `.unpack().demosaic().gamma().sharpen().display().compose()`
@@ -65,11 +65,11 @@ RawInput(INT16 [1,1,H,W])
 ```bash
 cd cam-rust
 
-# Run all lib tests (421)
+# Run all lib tests (432)
 cargo test --lib -p cam-isp --features mnn
 
-# Integration tests (35)
-cargo test --test test_new_blocks -p cam-isp --features mnn
+# Integration tests (54)
+cargo test --tests -p cam-isp --features mnn
 
 # Generate ONNX model
 cargo run --example gen_onnx -p cam-isp --features mnn
@@ -81,12 +81,12 @@ cargo run --example camera_isp --features mnn -p cam-isp -- --width 640 --height
 cargo run --example bench_4k_to_fhd -p cam-isp --features mnn
 ```
 
-## Test Coverage (458 tests)
+## Test Coverage (488 tests)
 
 | Suite | Count | Command |
 |-------|------:|--------|
-| Lib unit tests | 421 | `cargo test --lib -p cam-isp --features mnn` |
-| Integration (new_blocks) | 35 | `cargo test --test test_new_blocks -p cam-isp --features mnn` |
+| Lib unit tests | 432 | `cargo test --lib -p cam-isp --features mnn` |
+| Integration (new_blocks + builder_methods) | 54 | `cargo test --tests -p cam-isp --features mnn` |
 | E2E (isp_pipeline) | 2 | `cargo test --test test_e2e_isp_pipeline -p cam-isp --features mnn -- --ignored --test-threads=1` |
 
 ## Module Map (cam-isp, 21 modules)
@@ -184,7 +184,7 @@ tests/
 ## Status
 
 ### ✅ Completed (All Items)
-- 44 ISP blocks, 458 tests, 36 examples, 0 warnings
+- 44 ISP blocks, 488 tests, 36 examples, 0 warnings
 - Full GPU ISP pipeline (MNN Vulkan): 4K→FHD 57.7 FPS
 - 12 fusion rules (IspChainFusion.cpp): R1–R12b
 - PipelineBuilder fluent API + 5 presets + config roundtrip
