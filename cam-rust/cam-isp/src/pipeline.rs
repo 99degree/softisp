@@ -705,6 +705,18 @@ impl GraphComposer {
         (total, per_block)
     }
 
+    /// Full pipeline benchmark: validate + auto-wire + compose + measure time.
+    pub fn compose_full_benchmark(
+        blocks: &mut [Box<dyn IspBlock>],
+        aux_blocks: &[&dyn IspBlock],
+        opset_version: i64,
+    ) -> Result<(Vec<u8>, PipelineStats, Vec<String>, f64), String> {
+        let t0 = std::time::Instant::now();
+        let (onnx, stats, issues) = Self::compose_full(blocks, aux_blocks, opset_version)?;
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        Ok((onnx, stats, issues, elapsed_ms))
+    }
+
     /// Generate a complete pipeline analysis report.
     pub fn compose_report(
         blocks: &[&dyn IspBlock],
@@ -955,5 +967,21 @@ mod tests {
         assert!(report.contains("Compute:"));
         assert!(report.contains("Memory:"));
         println!("{}", report);
+    }
+
+    #[test]
+    fn test_compose_full_benchmark() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(640)),
+        ];
+        let (onnx, stats, issues, elapsed) = GraphComposer::compose_full_benchmark(
+            &mut blocks, &[], 16).unwrap();
+        assert!(!onnx.is_empty());
+        assert_eq!(stats.block_count, 3);
+        assert!(issues.is_empty());
+        assert!(elapsed >= 0.0);
+        println!("Full benchmark: {:.2} ms, {} bytes", elapsed, onnx.len());
     }
 }
