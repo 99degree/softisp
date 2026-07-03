@@ -80,14 +80,14 @@ RawInput(INT16 [1,1,2160,3840])
 | **Display** | DisplayBlock |
 | **Other** | IdentityBlock, FastDemosaicBlock, BlcBlock, FlipBlock, LensShadingBlock (merged), NormalizeBlock, MbAlignBlock, SmartPadBlock |
 
-### 456 Tests
+### 458 Tests
 
 | Suite | Count |
 |-------|-------|
-| Lib unit tests | 419 |
+| Lib unit tests | 421 |
 | Integration (new_blocks) | 35 |
 | E2E (isp_pipeline) | 2 |
-| **Total** | **456** |
+| **Total** | **458** |
 
 All 36 examples compile, 0 warnings.
 
@@ -168,7 +168,7 @@ are continuous without ConvertTensor.
 
 ## Testing
 ```bash
-# Run all lib tests (419)
+# Run all lib tests (421)
 cargo test --lib -p cam-isp --features mnn
 
 # E2E (serial, requires Vulkan)
