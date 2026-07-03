@@ -673,6 +673,76 @@ impl GraphComposer {
 
         (total, per_block)
     }
+
+    /// Estimate memory usage (bytes) for the pipeline at given resolution.
+    /// Returns (total_bytes, per_block_bytes).
+    pub fn pipeline_memory_estimate(
+        blocks: &[&dyn IspBlock],
+        w: u32,
+        h: u32,
+    ) -> (u64, Vec<(String, u64)>) {
+        let f32_size = 4u64;
+        let pixels = (w as u64) * (h as u64);
+        let mut total = 0u64;
+        let mut per_block = Vec::new();
+
+        for blk in blocks {
+            // Each block typically has one [1,3,H,W] output = 3*H*W*4 bytes
+            // Some blocks (unpack) produce 4ch, some (demosaic) produce 3ch
+            let channels: u64 = match blk.id() {
+                id if id.starts_with("display") => 4,  // RGBA
+                id if id.starts_with("noise") => 1,    // noise map
+                _ => 3,                                 // RGB
+            };
+            let output_bytes = channels * pixels * f32_size;
+            // Initializer data
+            let init_bytes: u64 = blk.initializers().iter().map(|i| i.len() as u64).sum();
+            let block_total = output_bytes + init_bytes;
+            total += block_total;
+            per_block.push((blk.id().to_string(), block_total));
+        }
+
+        (total, per_block)
+    }
+
+    /// Generate a complete pipeline analysis report.
+    pub fn compose_report(
+        blocks: &[&dyn IspBlock],
+        w: u32,
+        h: u32,
+    ) -> String {
+        let mut lines = Vec::new();
+        lines.push(format!("Pipeline Analysis ({}×{})", w, h));
+        lines.push("═".repeat(60));
+        lines.push("".to_string());
+
+        // Structure
+        lines.push("Structure:".into());
+        lines.push(Self::pipeline_report(blocks));
+        lines.push("".into());
+
+        // Summary
+        lines.push("Summary:".into());
+        lines.push(format!("  {}", Self::pipeline_summary(blocks)));
+        lines.push("".into());
+
+        // FLOPs
+        let (flops, flops_detail) = Self::pipeline_flops_estimate(blocks, w, h);
+        lines.push(format!("Compute: {:.1} MFLOPs", flops as f64 / 1e6));
+        for (name, f) in &flops_detail {
+            lines.push(format!("  {:<20} {:.1} MFLOPs", name, *f as f64 / 1e6));
+        }
+        lines.push("".into());
+
+        // Memory
+        let (mem, mem_detail) = Self::pipeline_memory_estimate(blocks, w, h);
+        lines.push(format!("Memory:  {:.1} KB output", mem as f64 / 1024.0));
+        for (name, m) in &mem_detail {
+            lines.push(format!("  {:<20} {:.1} KB", name, *m as f64 / 1024.0));
+        }
+
+        lines.join("\n")
+    }
 }
 
 #[cfg(test)]
@@ -853,5 +923,37 @@ mod tests {
         assert!(total > 0);
         assert_eq!(per_block.len(), 3);
         println!("FHD FLOPs: {} ({:.1} MFLOPs)", total, total as f64 / 1e6);
+    }
+
+    #[test]
+    fn test_pipeline_memory_estimate() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(1080, 1920)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(1920)),
+        ];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let (total, per_block) = GraphComposer::pipeline_memory_estimate(&refs, 1920, 1080);
+        assert!(total > 0);
+        assert_eq!(per_block.len(), 3);
+        println!("FHD memory: {} ({:.1} KB)", total, total as f64 / 1024.0);
+    }
+
+    #[test]
+    fn test_compose_report() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(1080, 1920)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(1920)),
+        ];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let report = GraphComposer::compose_report(&refs, 1920, 1080);
+        assert!(report.contains("Pipeline Analysis"));
+        assert!(report.contains("1920×1080"));
+        assert!(report.contains("Compute:"));
+        assert!(report.contains("Memory:"));
+        println!("{}", report);
     }
 }
