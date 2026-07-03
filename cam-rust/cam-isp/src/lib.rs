@@ -46,6 +46,7 @@ pub mod demosaic;
 pub mod isp_ops;
 pub mod stats;
 pub mod simd;
+pub mod serializer;
 
 use std::sync::Once;
 use log::info;
