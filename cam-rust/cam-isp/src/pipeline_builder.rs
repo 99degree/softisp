@@ -377,6 +377,42 @@ impl PipelineBuilder {
         self
     }
 
+    /// Add `DisplayBlock` with RGBA8888 output at explicit width.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(3840, 2160).unpack().display_rgba_w(1920).compose();
+    /// ```
+    pub fn display_rgba_w(mut self, w: u32) -> Self {
+        self.blocks.push(Box::new(DisplayBlock::new(w).rgba()));
+        self
+    }
+
+    /// Add `DisplayBlock` with ARGB8888 output at explicit width.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(3840, 2160).unpack().display_argb_w(1920).compose();
+    /// ```
+    pub fn display_argb_w(mut self, w: u32) -> Self {
+        self.blocks.push(Box::new(DisplayBlock::new(w).argb()));
+        self
+    }
+
+    /// Add `DisplayBlock` with AGBR (ABGR) 8888 output at explicit width.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(3840, 2160).unpack().display_agbr_w(1920).compose();
+    /// ```
+    pub fn display_agbr_w(mut self, w: u32) -> Self {
+        self.blocks.push(Box::new(DisplayBlock::new(w).agbr()));
+        self
+    }
+
     /// Add `DynResizeBlock` — dynamic resize with hot-swappable scale factors.
     ///
     /// # Example
@@ -496,6 +532,25 @@ impl PipelineBuilder {
             &[],
             16,
         )
+    }
+
+    /// Validate, then wire and compose the pipeline.
+    ///
+    /// Returns `Err` with validation issues if pipeline is invalid.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let onnx = PipelineBuilder::new(640, 480)
+    ///     .unpack().display()
+    ///     .compose_and_validate().unwrap();
+    /// ```
+    pub fn compose_and_validate(self) -> Result<Vec<u8>, String> {
+        let validation = self.validate();
+        if let Err(issues) = validation {
+            return Err(format!("Pipeline validation failed: {}", issues.join(", ")));
+        }
+        self.compose()
     }
 
     /// Compose and save ONNX to a file.
@@ -1095,4 +1150,39 @@ mod tests {
             .compose().unwrap();
         assert!(onnx.len() > 100);
     }
+
+    #[test]
+    fn test_display_format_width_methods() {
+        let rgba = PipelineBuilder::new(640, 480).unpack().display_rgba_w(320);
+        assert_eq!(rgba.block_ids(), vec!["unpack", "display"]);
+
+        let argb = PipelineBuilder::new(640, 480).unpack().display_argb_w(320);
+        assert_eq!(argb.block_ids(), vec!["unpack", "display"]);
+
+        let agbr = PipelineBuilder::new(640, 480).unpack().display_agbr_w(320);
+        assert_eq!(agbr.block_ids(), vec!["unpack", "display"]);
+    }
+
+    #[test]
+    fn test_compose_and_validate() {
+        let onnx = PipelineBuilder::new(640, 480)
+            .unpack().display()
+            .compose_and_validate().unwrap();
+        assert!(onnx.len() > 100);
+    }
+
+    #[test]
+    fn test_compose_and_validate_empty_fails() {
+        let err = PipelineBuilder::new(640, 480).compose_and_validate();
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("Pipeline has no blocks"));
+    }
+
+    #[test]
+    fn test_compose_and_validate_zero_res_fails() {
+        let err = PipelineBuilder::new(0, 0).unpack().display().compose_and_validate();
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("Invalid resolution"));
+    }
+
 }
