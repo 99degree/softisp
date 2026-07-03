@@ -194,6 +194,16 @@ impl PipelineBuilder {
         }
         builder.display()
     }
+
+    /// Wire, compose, and generate a full analysis report.
+    pub fn compose_and_report(self) -> Result<(Vec<u8>, String), String> {
+        let mut blocks = self.blocks;
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let onnx = GraphComposer::compose_from_vec(&refs, &[], 16)?;
+        let report = GraphComposer::pipeline_report(&refs);
+        Ok((onnx, report))
+    }
 }
 
 #[cfg(test)]
@@ -324,5 +334,20 @@ mod tests {
             .compose()
             .unwrap();
         assert!(!onnx.is_empty());
+    }
+
+    #[test]
+    fn test_compose_and_report() {
+        let (onnx, report) = PipelineBuilder::new(640, 480)
+            .unpack()
+            .demosaic(0)
+            .display()
+            .compose_and_report()
+            .unwrap();
+        assert!(!onnx.is_empty());
+        assert!(report.contains("Pipeline Report"));
+        assert!(report.contains("unpack"));
+        assert!(report.contains("demosaic"));
+        println!("{}", report);
     }
 }
