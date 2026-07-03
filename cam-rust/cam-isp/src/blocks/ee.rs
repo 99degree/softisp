@@ -29,6 +29,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// EeBlock — Edge Enhancement via separable 3×3 convolution.
+///
+/// ONNX subgraph: Conv(3×3, groups=3) → Add(input).
+/// Enhances local contrast while avoiding overshoot artifacts.
+/// Fuse target R3a (Conv 3×3 group=3).
 pub struct EeBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,

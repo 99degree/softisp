@@ -1,6 +1,15 @@
+//! CcmBlock — Color Correction Matrix via Conv(1×1).
+//!
+//! Applies 3×3 color matrix to RGB channels. Supports instance-aware
+//! naming for multiple CCM stages (LSC, CCM, LDCI placeholders).
+
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// CcmBlock — Color Correction Matrix via per-channel Conv(1×1).
+///
+/// Applies user-configurable 3×3 color correction matrix to transform
+/// sensor RGB → sRGB. Parameters hot-swappable at runtime.
 pub struct CcmBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,

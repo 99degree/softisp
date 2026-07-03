@@ -20,6 +20,10 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// HdrMergeBlock — multi-exposure HDR fusion.
+///
+/// Merges multiple exposures using exposure-weighted blending.
+/// Inputs: [overexposed, normal, underexposed] as separate channels.
 pub struct HdrMergeBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

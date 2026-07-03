@@ -14,6 +14,10 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// AutoContrastBlock — parametric S-curve contrast enhancement.
+///
+/// Applies: `clip((x - 0.5) * contrast + 0.5, 0, 1)`.
+/// Strength 1.0 = no change, 1.3 = moderate, 2.0 = aggressive.
 pub struct AutoContrastBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
