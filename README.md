@@ -1,110 +1,112 @@
-# SoftISP — Vulkan ISP Pipeline
+# SoftISP — ISP Pipeline (MNN Vulkan)
 
-GPU-accelerated camera ISP pipeline running on MNN's Vulkan backend.
+GPU-accelerated camera ISP pipeline. Rust → ONNX → MNN → Vulkan SPIR-V.
 
 ## Architecture
 
 ```
-Bayer RAW → [unpack_demosaic] → [fcs] → [ee_ldci] → [display] → RGB output
-              BLC+WB+CCM+       linear    Laplacian    sRGB
-              demosaic           transform  + LDCI      gamma
+Bayer RAW → [Extra(isp.unpack_demosaic)] → [Extra(isp.ee_ldci)] → [Extra(isp.display)] → RGB
+              BLC+WB+CCM+demosaic+FCS      EE + LDCI fused          sRGB gamma + format
 ```
 
-**3-dispatch pipeline** (optimal):
-1. `unpack_demosaic` — Bayer unpack + BLC + WB + CCM demosaic + FCS
-2. `ee_ldci` — Edge enhancement + local contrast
-3. `display` — sRGB gamma
+**12 GPU dispatches** (minimum after all fusions), 456 tests, 0 warnings.
 
-Each stage is a custom SPIR-V compute shader loaded via `OpType_Extra` (VulkanFuse).
+## Performance (Vulkan, Snapdragon 8 Gen 2)
 
-## Performance (Vulkan, Snapdragon)
+| Resolution | Latency | FPS | Notes |
+|---|---|---|---|
+| HD 1280×720 | ~5 ms | **200** | Minimal preset |
+| 4K→FHD 3840→1920 | 17.3 ms | **57.7** | Full pipeline, all fusions |
+| 4K→FHD 3840→1920 | 9.0 ms | **111** | LITE profile (unpack→display) |
 
-| Resolution | Latency | FPS |
-|---|---|---|
-| HD 1280×720 | 8.77 ms | **114** |
-| FHD 1920×1080 | 20.09 ms | **50** |
-| 4K 3840×2160 | 73.25 ms | **14** |
+## Features
+
+- **44 ISP blocks**: input, demosaic, color, enhance, warp, denoise, effects, stats, display
+- **456 tests**: 419 lib + 35 integration + 2 e2e
+- **36 examples** compile, 0 warnings
+- **12 fusion rules**: R1–R12b (IspChainFusion.cpp)
+- **Runtime 3A**: hot-swap const buffers, workgroup presets
+- **GDC + EIS**: WarpGridBlock with radial lens shading
+- **E2E**: ONNX → MNN → Vulkan → verify
 
 ## Pipeline Profiles
 
-| Profile | Stages | Ops |
+| Profile | Builder Method | Use Case |
 |---|---|---|
-| LITE | unpack→display | 4 |
-| MED | unpack→ee→display | 5 |
-| HEAVY | unpack→fcs→ee→ldci→display | 7 |
-| PRO | All stages + extras | 10+ |
+| LITE | `minimal_preset(w, h)` | Preview/focus |
+| MED | demosaic → ee → display | Edge enhancement |
+| HEAVY | fcs → ee → ldci → display | Full cosmetic |
+| PRO | `photo_preset(w, h)` | Photo capture |
+| TEST | Identity op | Validation |
 
-## Key Components
+## PipelineBuilder (Fluent API)
 
-### Converter (`IspChainFusion.cpp`)
-ONNX → MNN fusion pass that detects ISP stage patterns and fuses them into custom `OpType_Extra` ops with embedded SPIR-V.
+```rust
+let onnx = PipelineBuilder::new(1920, 1080)
+    .unpack()
+    .demosaic(2)         // 0=binning, 1=bilinear, 2=MHC
+    .gamma(2.2)
+    .sharpen(0.6)
+    .contrast(1.3)
+    .denoise(0.03)
+    .display()
+    .compose()
+    .unwrap();
+```
 
-- **Pass 1**: Standard ops → ISP Extra ops (R1-R6)
-- **Pass 2**: Extra chain → fused Extras (R8-R10, R12)
-- Each stage stores named parameters (`blc`, `wb`, `ccm`, `fcs`, `ee`, `ldci`, `display`)
+One-liner: `PipelineBuilder::photo_preset(1920, 1080).compose()`
 
-### Shaders (`vulkan_isp/`)
-- `shader_unpack_demosaic.comp` — Bayer → RGB with CCM + FCS
-- `shader_ee_ldci_fused.comp` — EE + LDCI combined
-- `shader6_display_simple.comp` — sRGB gamma
+## Blocks (44 total)
 
-### Rust Pipeline (`cam-rust/`)
-10 crates, 224 tests, 0 warnings:
-- `cam-isp` — ISP engine (CpuEngine, MnnEngine, OnnxEngine)
-- `cam-hal` — Hardware abstraction (V4L2, Android HAL3)
-- `cam-binder` — Binder camera HAL + ISP integration
-- `cam-onnx` — ONNX Runtime wrapper (ort v2.0.0-rc.12)
-- SIMD backends: AVX2, SSE2, NEON, NEON-FP16, NEON-DOTPROD
+| Category | Blocks |
+|----------|--------|
+| **Input** | RawInputBlock, UnpackBlock, UnpackCfaBlock, NormalizeBlock, UnpackBayerToFp16Block |
+| **Demosaic** | BayerDemosaicBlock, BayerWbBlock, DemosaicBlock, DemosaicCcmBlock, DemosaicInterpBlock, CfaBlock, FastDemosaicBlock |
+| **Color** | CcmBlock, ColorSpaceBlock, GammaBlock, ToneBlock |
+| **Enhance** | EeBlock, LdciBlock, FcsBlock, SharpenBlock, AutoContrastBlock |
+| **Warp** | WarpGridBlock (GDC+EIS+LensShading+Rotation), ChromaticAberrationBlock |
+| **Denoise** | TemporalDenoiseBlock, NoiseEstimateBlock |
+| **Effects** | HdrMergeBlock, StereoDepthBlock, GrayscaleBlock, PyramidBlock |
+| **Resize** | DynResizeBlock, AspectCropBlock, AdaptiveDownscaleBlock, ResizeBlock |
+| **Stats** | CoarseHistogramBlock, ChannelMeansBlock, ToneStatsBlock |
+| **Display** | DisplayBlock (RGBA/ARGB/AGBR/FloatRgb) |
+| **Other** | IdentityBlock, BlcBlock (instance-aware), MbAlignBlock, SmartPadBlock |
 
 ## Build
 
 ```bash
-# MNN converter
-cd ~/MNN/build_vk
-make MNNConvert -j$(nproc)
-cp tools/converter/OFF/libMNNConvertDeps.so ~/softisp/cam-rust/lib/aarch64-v8a/
-
-# Rust FFI
-cd ~/softisp/cam-rust
-cargo build --package cam-isp --features mnn
+cd ~/MNN/build_vk && make MNNConvert -j$(nproc)
+cp tools/converter/OFF/libMNNConvertDeps.so ../cam-rust/lib/aarch64-v8a/
+cd ~/softisp/cam-rust && cargo build -p cam-isp --features mnn
 ```
 
 ## Test
 
 ```bash
-# Run all tests (224)
-cargo test --lib
-
-# E2E (requires --test-threads=1 due to Vulkan device queue serialization)
-cargo test --test test_e2e_isp_pipeline --features mnn -- --ignored --test-threads=1
-
-# Profiles
-cargo test --test test_profile_onnx --features mnn
-
-# Binder tests
-cargo test -p cam-binder
+cargo test --lib -p cam-isp --features mnn               # 419 lib tests
+cargo test --test test_new_blocks -p cam-isp --features mnn # 35 integration
 ```
 
-## Examples
+## Fusion Rules (IspChainFusion.cpp)
 
-```bash
-# Camera → ISP integration
-cargo run --example camera_isp --features mnn -p cam-isp -- --width 640 --height 480
+| Rule | Pattern | → | Status |
+|---|---|---|---|
+| R1 | unpack_blc | `isp.unpack_blc` | ✅ |
+| R2 | Conv 1×1 4ch→3ch | `isp.demosaic_ccm` | ✅ |
+| R3a | Conv 3×3 group=3 | `isp.ee` | ✅ |
+| R3b | Mul+Add | `isp.fcs` | ✅ |
+| R4 | AvgPool+Sub+Mul+Add | `isp.ldci` | ✅ |
+| R5 | Pow+Clip | `isp.display` | ✅ |
+| R9 | ee+ldci | `isp.ee_ldci` | ✅ |
+| R10 | unpack+demosaic | `isp.unpack_demosaic` | ✅ |
+| R11b | unpack_demosaic+display | unpack absorbs display gamma | ✅ |
+| R12b | unpack_demosaic+fcs (MHC) | `isp.unpack_demosaic` | ✅ |
 
-# Continuous streaming
-cargo run --example stream_isp --features mnn -p cam-isp -- --width 640 --height 480 --fps 30
-```
+## Key Design Decisions
 
-## Cross-Compilation (Android)
-
-```bash
-# Android arm64
-ANDROID_NDK_HOME=~/Android/Sdk/ndk/26.1.10909125 \
-  cargo build --target aarch64-linux-android --release
-```
-
-## Notes
-
-- Vulkan backend requires `Precision_High` for correct fp32 output
-- Concurrent Vulkan sessions need `--test-threads=1` (device queue race)
-- R11 (fused_6in1) disabled — each thread recomputes 5×5 FCS grid, overwhelming buffer savings
+- **Fused Cast**: INT16→F32 fused into unpack Conv shader (no CPU roundtrip)
+- **No intermediate ConvertTensor**: Extra→Extra tensor chains avoid CHW data corruption
+- **Binning stride**: Conv stride=4 for 4K→FHD downscale (not Resize — Vulkan unsupported)
+- **FP16 const buffers**: f32→f16 packing halves GPU→shader bandwidth
+- **Precision_High**: Vulkan backend requires this for correct fp32 output
+- **Rpath**: Embedded in binary for `libMNN.so` runtime linking
