@@ -205,17 +205,21 @@ pub struct PipelineStats {
     pub total_nodes: usize,
     pub total_initializers: usize,
     pub onnx_bytes: usize,
+    pub estimated_flops: u64,
+    pub estimated_memory_bytes: u64,
 }
 
 impl std::fmt::Display for PipelineStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f,
-            "Pipeline: {} blocks ({}), {} ops, {} params, {} bytes ONNX",
+            "Pipeline: {} blocks ({}), {} ops, {} params, {} bytes ONNX, {:.1} MFLOPs, {:.1} KB",
             self.block_count,
             self.block_names.join(" → "),
             self.total_nodes,
             self.total_initializers,
             self.onnx_bytes,
+            self.estimated_flops as f64 / 1e6,
+            self.estimated_memory_bytes as f64 / 1024.0,
         )
     }
 }
@@ -542,6 +546,8 @@ impl GraphComposer {
             total_nodes,
             total_initializers: total_inits,
             onnx_bytes: onnx.len(),
+            estimated_flops: 0,
+            estimated_memory_bytes: 0,
         };
 
         Ok((onnx, stats))
@@ -855,11 +861,15 @@ mod tests {
             total_nodes: 10,
             total_initializers: 5,
             onnx_bytes: 1024,
+            estimated_flops: 5_000_000,
+            estimated_memory_bytes: 2048 * 1024,
         };
         let s = format!("{}", stats);
         assert!(s.contains("2 blocks"));
         assert!(s.contains("10 ops"));
         assert!(s.contains("1024 bytes"));
+        assert!(s.contains("5.0 MFLOPs"));
+        assert!(s.contains("2048.0 KB"));
     }
 
     #[test]
