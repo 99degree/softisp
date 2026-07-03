@@ -590,6 +590,44 @@ impl GraphComposer {
 
         lines.join("\n")
     }
+
+    /// One-line pipeline summary.
+    pub fn pipeline_summary(blocks: &[&dyn IspBlock]) -> String {
+        let total_nodes: usize = blocks.iter().map(|b| b.nodes().len()).sum();
+        let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
+        format!("{} blocks ({} ops): {}", blocks.len(), total_nodes, names.join(" → "))
+    }
+
+    /// Compose ONNX + convert to MNN in one call.
+    /// Returns (onnx_bytes, mnn_path, stats).
+    pub fn compose_and_convert(
+        blocks: &mut [Box<dyn IspBlock>],
+        aux_blocks: &[&dyn IspBlock],
+        opset_version: i64,
+        mnn_dir: &std::path::Path,
+        name: &str,
+    ) -> Result<(Vec<u8>, std::path::PathBuf, PipelineStats), String> {
+        let (onnx, stats, issues) = Self::compose_full(blocks, aux_blocks, opset_version)?;
+        if !issues.is_empty() {
+            eprintln!("Warning: {} validation issues", issues.len());
+            for issue in &issues {
+                eprintln!("  - {}", issue);
+            }
+        }
+
+        let onnx_path = mnn_dir.join(format!("{}.onnx", name));
+        let mnn_path = mnn_dir.join(format!("{}.mnn", name));
+        std::fs::write(&onnx_path, &onnx)
+            .map_err(|e| format!("write onnx: {}", e))?;
+
+        crate::mnn_converter::convert_onnx_to_mnn(
+            &onnx_path.to_string_lossy(),
+            &mnn_path.to_string_lossy(),
+            None,
+        )?;
+
+        Ok((onnx, mnn_path, stats))
+    }
 }
 
 #[cfg(test)]
@@ -725,5 +763,21 @@ mod tests {
         assert!(report.contains("unpack"));
         assert!(report.contains("display"));
         println!("{}", report);
+    }
+
+    #[test]
+    fn test_pipeline_summary() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(640)),
+        ];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let summary = GraphComposer::pipeline_summary(&refs);
+        assert!(summary.contains("3 blocks"));
+        assert!(summary.contains("unpack"));
+        assert!(summary.contains("display"));
+        println!("Summary: {}", summary);
     }
 }
