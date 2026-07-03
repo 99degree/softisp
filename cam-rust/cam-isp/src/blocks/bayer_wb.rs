@@ -10,7 +10,6 @@ use crate::onnx::proto::Proto;
 ///
 /// Applies WB gains: `out_ch = in_ch * gain[ch]` for each of 4 Bayer
 /// positions (R, G1, G2, B). Gains are hot-swappable at runtime.
-
 pub struct BayerWbBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,

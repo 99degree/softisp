@@ -324,7 +324,7 @@ impl IspEngine for CpuEngine {
             scene_category,
             af_phase,
             vcm_position,
-            eis_compensation: eis_compensation,
+            eis_compensation,
         });
 
         info!("CpuEngine: frame processed ({} bytes) total={:?}", out_bytes.len(), t_total);
