@@ -136,7 +136,7 @@ impl IspBlock for AutoContrastBlock {
 
         // Phase 3: Highlight compression (soft knee)
         if self.highlight_compress > 0.01 {
-            let comp_name = format!("{}/compress", ns);
+            let _comp_name = format!("{}/compress", ns);
             // Simple compress: Mul(x, 1-compress) for values > 0.5
             // More sophisticated: x * (1 - compress * max(0, x - 0.5))
             // Simplified: just clip to [0, 1]
