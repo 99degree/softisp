@@ -31,6 +31,7 @@ mod auto_contrast;
 mod temporal_denoise;
 mod noise_estimate;
 mod gamma;
+mod stereo_depth;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -64,6 +65,7 @@ pub use auto_contrast::AutoContrastBlock;
 pub use temporal_denoise::TemporalDenoiseBlock;
 pub use noise_estimate::NoiseEstimateBlock;
 pub use gamma::GammaBlock;
+pub use stereo_depth::StereoDepthBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
