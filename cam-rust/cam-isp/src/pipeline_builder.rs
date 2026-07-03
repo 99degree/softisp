@@ -224,7 +224,23 @@ impl PipelineBuilder {
         )
     }
 
-    /// Wire and compose with full stats + validation.
+    /// Compose and save ONNX to a file.
+    pub fn compose_to_file(self, path: &str) -> Result<usize, String> {
+        let onnx = self.compose()?;
+        let len = onnx.len();
+        std::fs::write(path, &onnx).map_err(|e| format!("Failed to write ONNX: {}", e))?;
+        Ok(len)
+    }
+
+    /// Compose at a specific resolution and save ONNX to a file.
+    pub fn compose_to_file_at(self, w: u32, h: u32, path: &str) -> Result<usize, String> {
+        let (onnx, _stats, _) = self.compose_full_at(w, h)?;
+        let len = onnx.len();
+        std::fs::write(path, &onnx).map_err(|e| format!("Failed to write ONNX: {}", e))?;
+        Ok(len)
+    }
+
+    /// Wire, compose, and return full stats + validation issues.
     pub fn compose_full(self) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
         let mut blocks = self.blocks;
         GraphComposer::compose_full(&mut blocks, &[], 16)
@@ -666,5 +682,33 @@ mod tests {
         assert!(s.contains("640×480"));
         assert!(s.contains("unpack"));
         assert!(s.contains("display"));
+    }
+
+    #[test]
+    fn test_compose_to_file() {
+        let path = "test_pipeline.onnx";
+        let len = PipelineBuilder::new(640, 480)
+            .unpack()
+            .demosaic(0)
+            .display()
+            .compose_to_file(path)
+            .unwrap();
+        assert!(len > 0);
+        assert!(std::path::Path::new(path).exists());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_compose_to_file_at() {
+        let path = "test_pipeline_4k.onnx";
+        let len = PipelineBuilder::new(640, 480)
+            .unpack()
+            .demosaic(0)
+            .display()
+            .compose_to_file_at(3840, 2160, path)
+            .unwrap();
+        assert!(len > 0);
+        assert!(std::path::Path::new(path).exists());
+        let _ = std::fs::remove_file(path);
     }
 }
