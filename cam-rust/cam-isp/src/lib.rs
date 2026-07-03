@@ -3,6 +3,7 @@
 
 pub mod engine;
 pub mod pipeline;
+pub mod pipeline_snapshot;
 pub mod blocks;
 pub mod cpu;
 pub mod controller;
