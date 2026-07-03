@@ -65,3 +65,36 @@ impl IspBlock for BlcBlock {
         vec![(format!("{}/blc_vals", self.tensor_ns()), 1, vec![1, 4, 1, 1])]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_blc_id() {
+        assert_eq!(BlcBlock::new().id(), "blc");
+    }
+
+    #[test]
+    fn test_blc_instance_id() {
+        let b = BlcBlock::with_instance("dpc");
+        assert_eq!(b.id(), "blc_dpc");
+    }
+
+    #[test]
+    fn test_blc_emit_onnx() {
+        let mut b = BlcBlock::new();
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        // Sub + Clip = 2 nodes
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_blc_extra_inputs() {
+        let b = BlcBlock::new();
+        let extra = b.extra_inputs();
+        assert_eq!(extra.len(), 1);
+        assert_eq!(extra[0].2, vec![1, 4, 1, 1]);
+    }
+}

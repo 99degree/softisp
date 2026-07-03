@@ -71,3 +71,30 @@ impl IspBlock for FcsBlock {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fcs_id() {
+        assert_eq!(FcsBlock::new().id(), "fcs");
+    }
+
+    #[test]
+    fn test_fcs_emit_onnx() {
+        let mut b = FcsBlock::new();
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        // Mul + Add = 2 nodes
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_fcs_initializers() {
+        let b = FcsBlock::new();
+        let inits = b.initializers();
+        // gain + bias = 2
+        assert_eq!(inits.len(), 2);
+    }
+}
