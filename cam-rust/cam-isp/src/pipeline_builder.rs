@@ -673,6 +673,28 @@ impl PipelineBuilder {
         Ok((onnx, report))
     }
 
+    /// Compose and measure elapsed time.
+    ///
+    /// Returns `(onnx_bytes, elapsed)` where elapsed is the wall-clock
+    /// duration of `wire_blocks` + `compose_from_vec`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (onnx, elapsed) = PipelineBuilder::new(1920, 1080)
+    ///     .unpack().demosaic(2).display()
+    ///     .compose_and_time().unwrap();
+    /// println!("Pipeline composed in {:?}", elapsed);
+    /// ```
+    pub fn compose_and_time(self) -> Result<(Vec<u8>, std::time::Duration), String> {
+        let start = std::time::Instant::now();
+        let mut blocks = self.blocks;
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let onnx = GraphComposer::compose_from_vec(&refs, &[], 16)?;
+        Ok((onnx, start.elapsed()))
+    }
+
     /// Convert builder state to a PipelineConfig for serialization.
     pub fn to_config(&self) -> crate::serializer::PipelineConfig {
         let mut cfg = crate::serializer::PipelineConfig::new(self.width, self.height);
@@ -1032,5 +1054,14 @@ mod tests {
             .unpack().demosaic_binning().display()
             .compose().unwrap();
         assert!(onnx.len() > 100);
+    }
+
+    #[test]
+    fn test_compose_and_time() {
+        let (onnx, elapsed) = PipelineBuilder::new(640, 480)
+            .unpack().demosaic_binning().display()
+            .compose_and_time().unwrap();
+        assert!(onnx.len() > 100);
+        assert!(elapsed.as_secs_f64() > 0.0);
     }
 }
