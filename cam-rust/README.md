@@ -1,14 +1,23 @@
 # Rust Camera ISP Pipeline
 
-A complete Rust port of the `cam_app` Java/Kotlin camera ISP pipeline — plus significant enhancements.
-Compiles with **0 warnings** and **224 tests pass** (218 unit + 6 integration).
+A complete Rust ISP pipeline: ONNX generation → MNN conversion → Vulkan GPU inference.
+Compiles with **0 warnings** and **456 tests pass** (419 lib + 35 integration + 2 e2e).
 
-## Pipeline (11 stages in CpuEngine)
+## Performance (Vulkan, Snapdragon 8 Gen 2)
+
+| Resolution | Latency | FPS | Notes |
+|---|---|---|---|
+| 4K→FHD | 17.3 ms | **57.7** | Full pipeline, all fusions |
+| HD→HD | ~5 ms | **200** | Minimal preset |
+| FHD→FHD | ~8 ms | **125** | Photo preset (MHC) |
+
+## Pipeline (Fused, 12 GPU dispatches)
 
 ```
-RawInput(INT16) → Normalize(FLOAT) → DPC(median) → Gaussian Denoise → AWB(controller)
-→ BLC/WB → LSC(radial) → Malvar Demosaic(RGB) → [IspController stats feedback]
-→ CCM(3×3) → AE(gain) → Tone(gamma+contrast+sat+unsharp) → Display(UINT8 BGRA)
+RawInput(INT16 [1,1,H,W])
+  → [Extra(isp.unpack_demosaic)] BLC+WB+CCM+demosaic+FCS
+  → [Extra(isp.ee_ldci)] Edge enhancement + local contrast
+  → [Extra(isp.display)] sRGB gamma + format (RGBA/ARGB/AGBR)
 ```
 
 ## Architecture (10 crates)
@@ -28,80 +37,57 @@ RawInput(INT16) → Normalize(FLOAT) → DPC(median) → Gaussian Denoise → AW
 
 ## Key Features
 
-- **CpuEngine** — Full 11-stage software ISP in pure Rust (no external ML deps)
-- **MnnEngine** — Vulkan GPU acceleration (HD 114 FPS, FHD 50 FPS, 4K 14 FPS)
-- **OnnxEngine** — ONNX Runtime inference (ort v2.0.0-rc.12)
+- **456 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
+- **MnnEngine** — Vulkan GPU acceleration (4K→FHD 57.7 FPS)
+- **IspChainFusion** — 12 fusion rules (R1–R12b), 32+ ops → 12 dispatches
+- **PipelineBuilder** — Fluent API: `.unpack().demosaic().gamma().sharpen().display().compose()`
+- **5 named presets**: photo, video, night, minimal, from_profile
+- **Runtime 3A**: hot-swap const buffers, workgroup presets, FP16 const packing
+- **Dynamic Tile Workgroup**: Mali (32×8), Adreno (64×4), Apple (16×16)
+- **WarpGridBlock**: unified GDC + EIS + LensShading + Rotation
+- **12 ISP correction blocks**: ChromaticAberration, AutoContrast, TemporalDenoise, HdrMerge, Sharpen, ColorSpace, StereoDepth, Gamma, NoiseEstimate, AspectCrop, DynResize, CoarseHistogram
+- **GraphComposer**: compose_auto, compose_full, compose_full_at, compose_and_convert, compose_report, pipeline_flops_estimate, pipeline_memory_estimate, validate_pipeline, validate_with_fixes
+- **PipelineSerializer**: text-based save/load, version migration, block validation
+- **PipelineDiff**: compare two pipeline configs
+- **PipelineBuilder 20+ methods**: block_ids, remove_block, replace_block, all_stats, from_config, summary, validate
+- **E2E test harness**: ONNX→MNN→Vulkan→verify
+- **CpuEngine** — Full 11-stage software ISP in pure Rust
 - **IspController** — AWB (gray world + CCT clamp + zone-weighted), AE (luminance + histogram), CCM (quadratic CCT interpolation + scale/offset + EMA), tone (S-curve + shadow lift + highlight roll), scene-adaptive ISP
-- **Scene-adaptive ISP** — Automatically classifies scene (Dark/Indoor/Sunset/Outdoor/Bright) and adjusts AWB, exposure, contrast, saturation, gamma per frame
-- **AVX2/SSE2 SIMD** — 8-wide/4-wide f32 operations (normalize, CCM, AE gain, display)
+- **Scene-adaptive ISP** — Automatically classifies scene (Dark/Indoor/Sunset/Outdoor/Bright)
+- **AVX2/SSE2 SIMD** — x86_64 backends
 - **NEON/NEON-FP16/NEON-DOTPROD** — ARM64 SIMD backends
-- **AutoExposureEngine** — Computes exposure time + ISO from scene stats
-- **GeneticOptimizer** — Genetic algorithm for ISP parameter calibration (8 genes, tournament selection, blend crossover, elitism)
-- **FastPredictor** — Per-CCT-bin averaging, O(1) update/predict
-- **RegressionModel** — 4-feature OLS regression for 10 ISP targets
-- **LearnerStore** — In-memory ring buffer + disk persistence (CSV, 1 MB auto-trim)
-- **EisEngine** — Gyro stabilization with warp grid (7 tests)
-- **AfEngine** — Autofocus state machine (13 tests)
-- **CalibrationStats** — Quad-level sensor metadata (6 tests)
-- **CcmEngine** — Quadratic CCT-based CCM interpolation (8 tests)
-- **Malvar demosaic** — Gradient-based directional interpolation
-- **Defective pixel correction** — 3×3 median hot pixel removal
-- **Lens shading correction** — Radial gain vignetting removal
-- **ONNX model generator** — Pure Rust proto encoder, 20 nodes (2719 bytes)
-- **PipelineProfile** — LITE/MED/HEAVY/PRO presets with feature flags
-- **PipelineManager** — Build/process lifecycle orchestrator
-- **Binder HAL** — AIDL-style provider/device/session/callbacks + ISP integration
+- **GeneticOptimizer** — GA for ISP parameter calibration
+- **Binder HAL** — Android AIDL-style provider/device/session/callbacks
 - **Android Camera2 HAL3** — camera3.h FFI, AHardwareBuffer, V4L2 detection
-- **Vulkan→CPU auto-fallback** — Graceful backend degradation
-- **FP16 output** — Float16Rgb/Float16Bgra (halves GPU→CPU bandwidth)
-- **Bayer pattern configurability** — RGGB/GRBG/GBRG/BGGR
-- **8K support** — ONNX generation + MNN conversion at 7680×4320
-- **HDR merge block** — Multi-exposure fusion with luminance weight maps
 
 ## Quick Start
 
 ```bash
 cd cam-rust
 
-# Run all tests (224)
-cargo test --lib
+# Run all lib tests (419)
+cargo test --lib -p cam-isp --features mnn
 
-# Single frame through ISP pipeline
-cargo run --example pipeline -p cam-isp -- --out out.png
+# Integration tests (35)
+cargo test --test test_new_blocks -p cam-isp --features mnn
+
+# Generate ONNX model
+cargo run --example gen_onnx -p cam-isp --features mnn
 
 # Camera → ISP integration
 cargo run --example camera_isp --features mnn -p cam-isp -- --width 640 --height 480
 
-# Continuous streaming
-cargo run --example stream_isp --features mnn -p cam-isp -- --width 640 --height 480 --fps 30
-
-# Generate ONNX model
-RUST_LOG=info cargo run -p cam-app -- --width 1280
+# Streaming benchmark
+cargo run --example bench_4k_to_fhd -p cam-isp --features mnn
 ```
 
-## Test Coverage (224 tests)
+## Test Coverage (456 tests)
 
-| Module | Tests | Description |
-|--------|------:|-------------|
-| `controller.rs` | 12 | AWB, AE, CCM, tone, zone stats, scene classification |
-| `store.rs` | 15 | LearnerStore ring buffer, CCT indexing, CSV, disk persistence |
-| `predictor.rs` | 9 | Per-CCT-bin averaging, confidence |
-| `regression.rs` | 7 | OLS, Gauss-Jordan, 4-feature predictions |
-| `scene.rs` | 9 | Dark/Indoor/Sunset/Outdoor/Bright classification |
-| `calibration.rs` | 6 | Quad-level CFA stats |
-| `af.rs` | 13 | State machine, VCM↔diopter, peak detection |
-| `eis.rs` | 7 | Gyro integration, warp grid |
-| `ccm_engine.rs` | 8 | Quadratic CCT, sanitize |
-| `ae.rs` | 6 | Exposure time, ISO |
-| `genetic.rs` | 8 | GA optimization convergence |
-| `onnx/proto.rs` | 8 | Pure-Rust ONNX protobuf encoder |
-| `pipeline_test.rs` (integration) | 6 | Gray, gradient, color, convergence, edge |
-| `profile.rs` | 4 | Pipeline presets |
-| `config.rs` | 5 | Config builder |
-| `manager.rs` | 2 | Build/process lifecycle |
-| `fused.rs` | 1 | Engine wrapper |
-| `binder/` | 7 | Binder HAL + ISP integration tests |
-| `cam-onnx/` | 2 | ONNX Runtime wrapper tests |
+| Suite | Count | Command |
+|-------|------:|--------|
+| Lib unit tests | 419 | `cargo test --lib -p cam-isp --features mnn` |
+| Integration (new_blocks) | 35 | `cargo test --test test_new_blocks -p cam-isp --features mnn` |
+| E2E (isp_pipeline) | 2 | `cargo test --test test_e2e_isp_pipeline -p cam-isp --features mnn -- --ignored --test-threads=1` |
 
 ## Module Map (cam-isp, 21 modules)
 
@@ -197,36 +183,26 @@ tests/
 
 ## Status
 
-### ✅ Completed
-- Base ISP pipeline (CpuEngine + IspController) — 11 stages, feedback loop
-- Scene-adaptive ISP (Dark/Indoor/Sunset/Outdoor/Bright adjustments)
-- GeneticOptimizer — GA for ISP parameter calibration
-- LearnerStore disk persistence (CSV, 1 MB auto-trim)
-- Pipeline profile/config/manager/fused — complete
-- AutoExposureEngine + BrightnessEngine — complete
-- CcmEngine (quadratic CCT) + CcmComposer (scale/offset/EMA) — complete
-- ONNX model generator — 20 nodes, 2719 bytes
-- V4L2 adapter — Linux capture via rscam
-- MNN C++ wrapper — complete
-- **MNN Vulkan ISP pipeline** — 3-dispatch fused pipeline (HD 114 FPS, FHD 50 FPS, 4K 14 FPS)
-- **IspChainFusion converter pass** — ONNX→Extra op fusion with named params (blc/wb/ccm/fcs/ee/ldci/display)
-- **E2E test harness** — ONNX gen → MNN convert → Vulkan inference → verify
-- **FP16 output** — Float16Rgb/Float16Bgra (halves GPU→CPU bandwidth)
-- **Bayer pattern configurability** — RGGB/GRBG/GBRG/BGGR via --bayer-pattern
-- **8K support** — ONNX generation + MNN conversion verified at 7680×4320
-- **HDR merge block** — Multi-exposure fusion with luminance weight maps
-- **Vulkan→CPU auto-fallback** — Graceful backend degradation
-- **AVX2/SSE2 SIMD backends** — 8-wide/4-wide f32 operations
-- **NEON/NEON-FP16/NEON-DOTPROD** — ARM64 SIMD backends
-- **ONNX Runtime wrapper** — cam-onnx with ort v2.0.0-rc.12
-- **Binder HAL** — AIDL-style provider/device/session/callbacks
-- **Binder ISP integration** — IspCameraSession bridges camera → ISP
-- **Android Camera2 HAL3** — camera3.h FFI, AHardwareBuffer, V4L2 detection
-- **Android NDK ABI support** — build.rs with NDK detection
-- **Timestamp passthrough** — ProcessParams.timestamp_ns → IspFrame
-- **Streaming examples** — camera_isp.rs, stream_isp.rs
-- Malvar demosaic, DPC, LSC, histogram, zone stats — complete
-- **224 tests, 0 warnings, 21 modules, 10 crates**
+### ✅ Completed (All Items)
+- 44 ISP blocks, 456 tests, 36 examples, 0 warnings
+- Full GPU ISP pipeline (MNN Vulkan): 4K→FHD 57.7 FPS
+- 12 fusion rules (IspChainFusion.cpp): R1–R12b
+- PipelineBuilder fluent API + 5 presets + config roundtrip
+- 12 correction blocks: WarpGrid(GDC+EIS+LensShading+Rotation), ChromaticAberration, AutoContrast, TemporalDenoise, HdrMerge, Sharpen, ColorSpace, StereoDepth, Gamma, NoiseEstimate, AspectCrop, DynResize
+- Runtime 3A: hot-swap const buffers, workgroup presets, FP16 const packing
+- GraphComposer: compose, compose_full, compose_full_at, compose_and_convert, compose_report, compose_benchmark, pipeline_flops_estimate, pipeline_memory_estimate, validate_pipeline, validate_with_fixes
+- PipelineSerializer: save/load, version migration, block validation
+- PipelineDiff: compare two pipeline configs
+- PipelineSnapshot: capture/restore pipeline state
+- PipelineStats: block_count, block_names, total_nodes, estimated_flops/memory
+- Scene-adaptive ISP (Dark/Indoor/Sunset/Outdoor/Bright)
+- CpuEngine (11-stage software ISP) + IspController (AWB/AE/CCM/Tone)
+- SIMD backends: AVX2, SSE2, NEON, NEON-FP16, NEON-DOTPROD
+- MNN Vulkan with dynamic tile workgroup, early-Z rejection
+- V4L2 adapter, Android Camera2 HAL3, Binder HAL
+- ONNX model generator (pure Rust proto encoder)
+- GeneticOptimizer, FastPredictor, RegressionModel, LearnerStore
+- 36 examples all compile
 
 ## Build Requirements
 
