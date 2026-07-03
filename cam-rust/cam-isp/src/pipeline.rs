@@ -523,6 +523,29 @@ impl GraphComposer {
         issues
     }
 
+    /// Validate pipeline and generate auto-fix suggestions.
+    pub fn validate_with_fixes(pipeline: &[&dyn IspBlock]) -> (Vec<String>, Vec<String>) {
+        let issues = Self::validate_pipeline(pipeline);
+        let mut fixes = Vec::new();
+
+        for issue in &issues {
+            if issue.contains("empty input_source") {
+                fixes.push("Set input_source to predecessor's frame_tensor via wire_blocks()".into());
+            }
+            if issue.contains("not produced by any predecessor") {
+                fixes.push("Add missing block before this one to produce the required tensor".into());
+            }
+            if issue.contains("Duplicate block ID") {
+                fixes.push("Remove duplicate block or give it a unique ID".into());
+            }
+            if issue.contains("Pipeline is empty") {
+                fixes.push("Add at least an UnpackBlock and DisplayBlock".into());
+            }
+        }
+
+        (issues, fixes)
+    }
+
     /// Compose with auto-wiring and return pipeline stats.
     pub fn compose_auto(
         blocks: &mut [Box<dyn IspBlock>],
@@ -841,6 +864,27 @@ mod tests {
         let issues = GraphComposer::validate_pipeline(&[]);
         assert_eq!(issues.len(), 1);
         assert!(issues[0].contains("empty"));
+    }
+
+    #[test]
+    fn test_validate_with_fixes_empty() {
+        let (issues, fixes) = GraphComposer::validate_with_fixes(&[]);
+        assert_eq!(issues.len(), 1);
+        assert!(!fixes.is_empty());
+        assert!(fixes[0].contains("UnpackBlock"));
+    }
+
+    #[test]
+    fn test_validate_with_fixes_duplicate() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+        ];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let (issues, fixes) = GraphComposer::validate_with_fixes(&refs);
+        assert!(issues.iter().any(|i| i.contains("Duplicate")));
+        assert!(!fixes.is_empty());
     }
 
     #[test]
