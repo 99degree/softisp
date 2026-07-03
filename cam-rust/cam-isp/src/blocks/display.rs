@@ -537,3 +537,37 @@ impl IspBlock for DisplayBlock {
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_display_id() {
+        assert_eq!(DisplayBlock::new(1920).id(), "display");
+    }
+
+    #[test]
+    fn test_display_with_output_format() {
+        let b = DisplayBlock::new(1920).with_output_format(OutputFormat::Rgba);
+        assert_eq!(b.target_width, 1920);
+    }
+
+    #[test]
+    fn test_display_emit_onnx_rgb() {
+        let mut b = DisplayBlock::new(1920).with_output_format(OutputFormat::FloatRgb);
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        // FloatRgb emits at least one node
+        assert!(!nodes.is_empty());
+    }
+
+    #[test]
+    fn test_display_emit_onnx_rgba() {
+        let mut b = DisplayBlock::new(1920).with_output_format(OutputFormat::Rgba);
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        // Rgba uses Conv(1x1) for channel permutation
+        assert!(!nodes.is_empty());
+    }
+}
