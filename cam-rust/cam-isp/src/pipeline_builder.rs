@@ -241,6 +241,51 @@ impl PipelineBuilder {
         Ok(result)
     }
 
+    /// Photo preset: high quality still capture pipeline.
+    /// Unpack → Demosaic(MHC) → Gamma → Sharpen → Contrast → Denoise → Display
+    pub fn photo_preset(w: u32, h: u32) -> Self {
+        Self::new(w, h)
+            .unpack()
+            .demosaic(2)  // MHC
+            .gamma(2.2)
+            .sharpen(0.6)
+            .contrast(1.3)
+            .denoise(0.03)
+            .display()
+    }
+
+    /// Video preset: balanced quality for 30/60fps capture.
+    /// Unpack → Demosaic(Bilinear) → Gamma → Sharpen → Display
+    pub fn video_preset(w: u32, h: u32) -> Self {
+        Self::new(w, h)
+            .unpack()
+            .demosaic(1)  // Bilinear
+            .gamma(2.2)
+            .sharpen(0.4)
+            .display()
+    }
+
+    /// Night preset: aggressive denoising for low-light.
+    /// Unpack → Demosaic(Binning) → Gamma → Denoise → Sharpen → Display
+    pub fn night_preset(w: u32, h: u32) -> Self {
+        Self::new(w, h)
+            .unpack()
+            .demosaic(0)  // Binning
+            .gamma(2.2)
+            .denoise(0.02)
+            .sharpen(0.3)
+            .display()
+    }
+
+    /// Minimal preset: minimal processing for preview/focus.
+    /// Unpack → Demosaic(Binning) → Display
+    pub fn minimal_preset(w: u32, h: u32) -> Self {
+        Self::new(w, h)
+            .unpack()
+            .demosaic(0)  // Binning
+            .display()
+    }
+
     /// Wire, compose, and generate a full analysis report.
     pub fn compose_and_report(self) -> Result<(Vec<u8>, String), String> {
         let mut blocks = self.blocks;
@@ -467,5 +512,32 @@ mod tests {
         }
         // All blocks should have non-zero FLOPs
         assert!(stats.iter().all(|(_, f, _)| *f > 0));
+    }
+
+    #[test]
+    fn test_photo_preset() {
+        let (onnx, stats, _) = PipelineBuilder::photo_preset(1920, 1080)
+            .compose_full().unwrap();
+        assert!(!onnx.is_empty());
+        assert!(stats.block_count >= 6);
+        println!("Photo: {} blocks, {} bytes", stats.block_count, onnx.len());
+    }
+
+    #[test]
+    fn test_video_preset() {
+        let onnx = PipelineBuilder::video_preset(1920, 1080).compose().unwrap();
+        assert!(!onnx.is_empty());
+    }
+
+    #[test]
+    fn test_night_preset() {
+        let onnx = PipelineBuilder::night_preset(1920, 1080).compose().unwrap();
+        assert!(!onnx.is_empty());
+    }
+
+    #[test]
+    fn test_minimal_preset() {
+        let onnx = PipelineBuilder::minimal_preset(640, 480).compose().unwrap();
+        assert!(!onnx.is_empty());
     }
 }
