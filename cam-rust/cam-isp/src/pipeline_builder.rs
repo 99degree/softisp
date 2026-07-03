@@ -141,6 +141,45 @@ impl PipelineBuilder {
         self
     }
 
+    /// Add `DemosaicCcmBlock` with binning demosaic (fast, 4K→FHD downscale).
+    /// Equivalent to `demosaic(0)`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(3840, 2160).unpack().demosaic_binning().display().compose();
+    /// ```
+    pub fn demosaic_binning(mut self) -> Self {
+        self.blocks.push(Box::new(DemosaicCcmBlock::new(0)));
+        self
+    }
+
+    /// Add `DemosaicCcmBlock` with bilinear interpolation (balanced).
+    /// Equivalent to `demosaic(1)`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack().demosaic_bilinear().display().compose();
+    /// ```
+    pub fn demosaic_bilinear(mut self) -> Self {
+        self.blocks.push(Box::new(DemosaicCcmBlock::new(1)));
+        self
+    }
+
+    /// Add `DemosaicCcmBlock` with MHC edge-directed demosaic (highest quality).
+    /// Equivalent to `demosaic(2)`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080).unpack().demosaic_mhc().display().compose();
+    /// ```
+    pub fn demosaic_mhc(mut self) -> Self {
+        self.blocks.push(Box::new(DemosaicCcmBlock::new(2)));
+        self
+    }
+
     /// Add `GammaBlock` — sRGB gamma correction.
     ///
     /// `g` is the gamma value (typical: 2.2 for sRGB).
@@ -279,6 +318,42 @@ impl PipelineBuilder {
     /// ```
     pub fn display_w(mut self, w: u32) -> Self {
         self.blocks.push(Box::new(DisplayBlock::new(w)));
+        self
+    }
+
+    /// Add `DisplayBlock` with RGBA8888 output format.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().display_rgba().compose();
+    /// ```
+    pub fn display_rgba(mut self) -> Self {
+        self.blocks.push(Box::new(DisplayBlock::new(self.width).rgba()));
+        self
+    }
+
+    /// Add `DisplayBlock` with ARGB8888 output format.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().display_argb().compose();
+    /// ```
+    pub fn display_argb(mut self) -> Self {
+        self.blocks.push(Box::new(DisplayBlock::new(self.width).argb()));
+        self
+    }
+
+    /// Add `DisplayBlock` with AGBR (ABGR) 8888 output format.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(640, 480).unpack().display_agbr().compose();
+    /// ```
+    pub fn display_agbr(mut self) -> Self {
+        self.blocks.push(Box::new(DisplayBlock::new(self.width).agbr()));
         self
     }
 
@@ -925,5 +1000,37 @@ mod tests {
         assert!(len > 0);
         assert!(std::path::Path::new(path).exists());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_demosaic_convenience_methods() {
+        let binning = PipelineBuilder::new(640, 480).unpack().demosaic_binning();
+        assert_eq!(binning.block_ids(), vec!["unpack", "demosaic_ccm"]);
+
+        let bilin = PipelineBuilder::new(640, 480).unpack().demosaic_bilinear();
+        assert_eq!(bilin.block_ids(), vec!["unpack", "demosaic_ccm"]);
+
+        let mhc = PipelineBuilder::new(640, 480).unpack().demosaic_mhc();
+        assert_eq!(mhc.block_ids(), vec!["unpack", "demosaic_ccm"]);
+    }
+
+    #[test]
+    fn test_display_format_methods() {
+        let rgba = PipelineBuilder::new(640, 480).unpack().display_rgba();
+        assert_eq!(rgba.block_ids(), vec!["unpack", "display"]);
+
+        let argb = PipelineBuilder::new(640, 480).unpack().display_argb();
+        assert_eq!(argb.block_ids(), vec!["unpack", "display"]);
+
+        let agbr = PipelineBuilder::new(640, 480).unpack().display_agbr();
+        assert_eq!(agbr.block_ids(), vec!["unpack", "display"]);
+    }
+
+    #[test]
+    fn test_demosaic_binning_compose() {
+        let onnx = PipelineBuilder::new(640, 480)
+            .unpack().demosaic_binning().display()
+            .compose().unwrap();
+        assert!(onnx.len() > 100);
     }
 }
