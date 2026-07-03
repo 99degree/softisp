@@ -567,8 +567,17 @@ impl GraphComposer {
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let issues = Self::validate_pipeline(&refs);
 
+        // Compute FLOPs/memory estimates before mutable borrow
+        let (flops, _) = Self::pipeline_flops_estimate(&refs, 1920, 1080);
+        let (mem, _) = Self::pipeline_memory_estimate(&refs, 1920, 1080);
+        drop(refs);
+
         // Compose
-        let (onnx, stats) = Self::compose_auto(blocks, aux_blocks, opset_version)?;
+        let (onnx, mut stats) = Self::compose_auto(blocks, aux_blocks, opset_version)?;
+
+        // Auto-populate estimates
+        stats.estimated_flops = flops;
+        stats.estimated_memory_bytes = mem;
 
         Ok((onnx, stats, issues))
     }
