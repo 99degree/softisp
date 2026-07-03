@@ -269,3 +269,156 @@ fn warp_and_ca_compose() {
     let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
     assert!(onnx.len() > 200);
 }
+
+// ── SharpenBlock ──────────────────────────────────────────
+
+#[test]
+fn sharpen_emits_avgpool_sub_mul_add() {
+    let block = SharpenBlock::new(0.5);
+    let nodes = block.nodes();
+    let tags = ["AveragePool", "Sub", "Mul", "Add"];
+    for tag in &tags {
+        assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains(tag)),
+            "must emit {}", tag);
+    }
+}
+
+#[test]
+fn sharpen_produces_valid_onnx() {
+    use cam_isp::pipeline::GraphComposer;
+    let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
+    let sharpen = SharpenBlock::new(0.5);
+    let display = DisplayBlock::new(640);
+    let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &sharpen, &display];
+    let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
+    assert!(onnx.len() > 200);
+}
+
+// ── ColorSpaceBlock ───────────────────────────────────────
+
+#[test]
+fn colorspace_rgb_to_yuv_produces_onnx() {
+    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::blocks::ColorSpace;
+    let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
+    let cs = ColorSpaceBlock::new(ColorSpace::RgbToYuv601);
+    let display = DisplayBlock::new(640);
+    let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &cs, &display];
+    let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
+    assert!(onnx.len() > 200);
+}
+
+#[test]
+fn colorspace_roundtrip_601() {
+    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::blocks::ColorSpace;
+    let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
+    let fwd = ColorSpaceBlock::new(ColorSpace::RgbToYuv601);
+    let rev = ColorSpaceBlock::new(ColorSpace::Yuv601ToRgb);
+    let display = DisplayBlock::new(640);
+    let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &fwd, &rev, &display];
+    let onnx = GraphComposer::compose_from_vec(&blocks, &[], 8).unwrap();
+    assert!(onnx.len() > 200);
+}
+
+// ── AspectCropBlock ───────────────────────────────────────
+
+#[test]
+fn aspect_crop_16_9_produces_onnx() {
+    use cam_isp::pipeline::GraphComposer;
+    let unpack = UnpackBlock::new().with_concrete_dims(1080, 1920);
+    let crop = AspectCropBlock::ratio_16_9();
+    let display = DisplayBlock::new(1920);
+    let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &crop, &display];
+    let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
+    assert!(onnx.len() > 200);
+}
+
+#[test]
+fn aspect_crop_has_slice_op() {
+    let block = AspectCropBlock::new(16, 9);
+    let nodes = block.nodes();
+    assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Slice")));
+}
+
+// ── GammaBlock ────────────────────────────────────────────
+
+#[test]
+fn gamma_2_2_produces_onnx() {
+    use cam_isp::pipeline::GraphComposer;
+    let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
+    let gamma = GammaBlock::new(2.2).with_shadow_lift(0.03);
+    let display = DisplayBlock::new(640);
+    let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &gamma, &display];
+    let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
+    assert!(onnx.len() > 200);
+}
+
+#[test]
+fn gamma_emits_log_mul_exp() {
+    let block = GammaBlock::new(2.2);
+    let nodes = block.nodes();
+    let tags = ["Log", "Mul", "Exp"];
+    for tag in &tags {
+        assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains(tag)),
+            "must emit {}", tag);
+    }
+}
+
+// ── NoiseEstimateBlock ────────────────────────────────────
+
+#[test]
+fn noise_estimate_produces_onnx() {
+    use cam_isp::pipeline::GraphComposer;
+    let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
+    let ne = NoiseEstimateBlock::new().with_scale(1.2);
+    let display = DisplayBlock::new(640);
+    let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &ne, &display];
+    let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
+    assert!(onnx.len() > 200);
+}
+
+// ── StereoDepthBlock ──────────────────────────────────────
+
+#[test]
+fn stereo_depth_has_two_inputs() {
+    let block = StereoDepthBlock::new();
+    assert_eq!(block.input_tensors().len(), 2);
+}
+
+#[test]
+fn stereo_depth_emits_conv_sub() {
+    let block = StereoDepthBlock::new();
+    let nodes = block.nodes();
+    assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Conv")));
+    assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Sub")));
+}
+
+// ── Full pipeline with all new blocks ─────────────────────
+
+#[test]
+fn mega_pipeline_all_blocks() {
+    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::blocks::ColorSpace;
+    let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
+    let demosaic = DemosaicCcmBlock::new(0);
+    let gamma = GammaBlock::new(2.2).with_shadow_lift(0.02);
+    let sharpen = SharpenBlock::new(0.4);
+    let contrast = AutoContrastBlock::new(1.3).with_shadow_lift(0.02);
+    let cs_fwd = ColorSpaceBlock::new(ColorSpace::RgbToYuv601);
+    let cs_rev = ColorSpaceBlock::new(ColorSpace::Yuv601ToRgb);
+    let warp = WarpGridBlock::new(640, 480).with_gdc(-0.1, 0.0, 0.0);
+    let ca = ChromaticAberrationBlock::new().with_radial_correction(480, 640, 1.0);
+    let ne = NoiseEstimateBlock::new();
+    let denoise = TemporalDenoiseBlock::new().with_threshold(0.05);
+    let crop = AspectCropBlock::ratio_16_9();
+    let display = DisplayBlock::new(640);
+    let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![
+        &unpack, &demosaic, &gamma, &sharpen, &contrast,
+        &cs_fwd, &cs_rev, &warp, &ca, &ne, &denoise, &crop, &display,
+    ];
+    let onnx = GraphComposer::compose_from_vec(&blocks, &[], 16).unwrap();
+    assert!(onnx.len() > 1000, "mega pipeline ONNX: {} bytes", onnx.len());
+    std::fs::write("target/mega_pipeline.onnx", &onnx).ok();
+    println!("Mega pipeline: {} stages, {} bytes", blocks.len(), onnx.len());
+}

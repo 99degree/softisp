@@ -437,6 +437,64 @@ impl GraphComposer {
             blocks[i].set_input_source(&prev);
         }
     }
+
+    /// Validate pipeline before ONNX emission.
+    /// Returns list of warnings/errors.
+    pub fn validate_pipeline(pipeline: &[&dyn IspBlock]) -> Vec<String> {
+        let mut issues = Vec::new();
+
+        if pipeline.is_empty() {
+            issues.push("Pipeline is empty".into());
+            return issues;
+        }
+
+        // Check for duplicate block IDs
+        let mut seen_ids = std::collections::HashSet::new();
+        for blk in pipeline {
+            if !seen_ids.insert(blk.id()) {
+                issues.push(format!("Duplicate block ID: '{}'", blk.id()));
+            }
+        }
+
+        // Check input_source is set for all blocks except the first
+        for (i, blk) in pipeline.iter().enumerate() {
+            if i > 0 {
+                if let Some(src) = blk.input_source() {
+                    if src.is_empty() {
+                        issues.push(format!("Block '{}' has empty input_source", blk.id()));
+                    }
+                } else {
+                    issues.push(format!("Block '{}' has no input_source", blk.id()));
+                }
+            }
+        }
+
+        // Check tensor connectivity: each block's input should be produced by a predecessor
+        let mut produced: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (i, blk) in pipeline.iter().enumerate() {
+            if i > 0 {
+                if let Some(src) = blk.input_source() {
+                    if !produced.contains(src) && !src.is_empty() {
+                        issues.push(format!(
+                            "Block '{}' input '{}' not produced by any predecessor",
+                            blk.id(), src));
+                    }
+                }
+            }
+            for t in blk.output_tensors() {
+                produced.insert(t);
+            }
+        }
+
+        // Check for empty output tensors
+        for blk in pipeline {
+            if blk.output_tensors().is_empty() {
+                issues.push(format!("Block '{}' has no output tensors", blk.id()));
+            }
+        }
+
+        issues
+    }
 }
 
 #[cfg(test)]
@@ -471,5 +529,45 @@ mod tests {
         let model = GraphComposer::compose_from_vec(&pipeline, &[], 16).expect("Compose failed");
         assert!(!model.is_empty());
         assert!(model.len() > 2000); // Expected ~2719 bytes
+    }
+
+    #[test]
+    fn test_validate_empty_pipeline() {
+        let issues = GraphComposer::validate_pipeline(&[]);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("empty"));
+    }
+
+    #[test]
+    fn test_validate_good_pipeline() {
+        let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
+        let demosaic = DemosaicCcmBlock::new(0);
+        let display = DisplayBlock::new(640);
+        // Wire them
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(640)),
+        ];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let issues = GraphComposer::validate_pipeline(&refs);
+        assert!(issues.is_empty(), "good pipeline should have no issues: {:?}", issues);
+    }
+
+    #[test]
+    fn test_validate_empty_input_source() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(DemosaicCcmBlock::new(0)), // input_source not set
+            Box::new(DisplayBlock::new(640)),
+        ];
+        // Only wire first->second, skip second->third
+        let first_tensor = blocks[0].frame_tensor().unwrap().to_string();
+        blocks[1].set_input_source(&first_tensor);
+        // blocks[2] input_source is empty by default
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let issues = GraphComposer::validate_pipeline(&refs);
+        assert!(!issues.is_empty(), "should detect empty input_source");
     }
 }
