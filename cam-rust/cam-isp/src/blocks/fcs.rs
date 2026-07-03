@@ -11,6 +11,7 @@
 //! Trade-off vs original Rust block (13-op chroma suppression):
 //! - Original: separate Y/UV, edge-attention mask → chroma noise reduction
 //! - Current: per-channel gain+bias → simpler, no chroma manipulation
+//!
 //! The isp.fcs shader (`shader3_fcs.comp`) does luma-based adaptive gain:
 //!   `luma = 0.299R + 0.587G + 0.114B`
 //!   `corr = 1.0 + gain * |luma-0.5|^2`

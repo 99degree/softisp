@@ -23,6 +23,7 @@
 //! Trade-off vs original Rust block:
 //! - Original: 3×5 laplacian + Y-only + per-frame gain → more flexible but 6 ops
 //! - Current: 3×3 per-channel laplacian + baked strength → 1 op, fused by R4
+//!
 //! Run-time parameterized strength requires modifying the shader's const buffer
 //! through MNN's session input API (not currently implemented).
 

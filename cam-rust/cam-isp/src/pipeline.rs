@@ -71,6 +71,7 @@ impl IspFrame {
 ///
 /// Blocks form a linked list via [next]/[prev], defining the frame buffer flow.
 /// GraphComposer takes the head block and traverses via [next].
+#[allow(clippy::borrowed_box)]
 pub trait IspBlock: Send {
     /// Unique block identifier.
     fn id(&self) -> &str;
@@ -286,7 +287,7 @@ impl GraphComposer {
         // 5. Collect nodes, initializers, value infos
         let all_blocks: Vec<&dyn IspBlock> = {
             let mut v: Vec<&dyn IspBlock> = pipeline.to_vec();
-            v.extend(aux_blocks.iter().map(|b| *b));
+            v.extend(aux_blocks.iter().copied());
             v
         };
 
@@ -317,7 +318,7 @@ impl GraphComposer {
             if !is_identity {
                 // Add value_info for all output tensors (except graph input/output)
                 for tname in blk.output_tensors() {
-                    let is_input = pipeline_head.graph_input_name().map_or(false, |n| n == tname);
+                    let is_input = pipeline_head.graph_input_name().is_some_and(|n| n == tname);
                     let is_output = graph_output_names.contains(&tname);
                     if !is_input && !is_output {
                         value_infos.push(Proto::value_info(&tname, &[
@@ -331,7 +332,7 @@ impl GraphComposer {
                 // Add value_info for all input tensors that have a producer
                 for tname in blk.input_tensors() {
                     if produced_by.contains_key(&tname) && !tname.is_empty() {
-                        let is_input = pipeline_head.graph_input_name().map_or(false, |n| n == tname);
+                        let is_input = pipeline_head.graph_input_name().is_some_and(|n| n == tname);
                         if !is_input {
                             value_infos.push(Proto::value_info(&tname, &[
                                 Proto::tensor_dim_param("N"),

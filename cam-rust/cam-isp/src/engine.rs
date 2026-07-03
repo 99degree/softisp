@@ -193,12 +193,8 @@ impl BackendCapabilities {
         let lower = backend_name.to_lowercase();
         let (native_int16, fp16, gpu) = if lower.contains("cpu") || lower.contains("neon") {
             (true, false, false)
-        } else if lower.contains("vulkan") {
+        } else if lower.contains("vulkan") || lower.contains("opencl") || lower.contains("cl") {
             (true, true, true)
-        } else if lower.contains("opencl") || lower.contains("cl") {
-            (true, true, true)
-        } else if lower.contains("opengl") || lower.contains("gl") {
-            (false, false, false)
         } else {
             (false, false, false)
         };
@@ -275,7 +271,8 @@ pub fn register_engine(factory: EngineFactory) {
     let mut registry = REGISTRY.lock().unwrap();
     registry.push(factory);
     // Sort by priority descending
-    registry.sort_by(|a, b| b.priority.cmp(&a.priority));
+    use std::cmp::Reverse;
+    registry.sort_by_key(|b| Reverse(b.priority));
     info!("Registered engine: {} (priority={})", name, priority);
 }
 
