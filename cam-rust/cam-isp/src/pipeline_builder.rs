@@ -29,6 +29,39 @@ impl PipelineBuilder {
         Self { blocks: Vec::new(), width: w, height: h }
     }
 
+    /// Reconstruct a PipelineBuilder from a serialized PipelineConfig.
+    /// Blocks are created by their ID string.
+    pub fn from_config(cfg: &crate::serializer::PipelineConfig) -> Self {
+        let mut builder = Self::new(cfg.width, cfg.height);
+        for id in &cfg.block_ids {
+            match id.as_str() {
+                "unpack" => builder = builder.unpack(),
+                "demosaic" | "demosaic_ccm" => builder = builder.demosaic(1),
+                "gamma" => builder = builder.gamma(2.2),
+                "sharpen" => builder = builder.sharpen(0.5),
+                "auto_contrast" => builder = builder.contrast(1.2),
+                "warp_grid" => builder = builder.warp(16),
+                "chromatic_aberration" => builder = builder.chromatic_aberration(),
+                "temporal_denoise" => builder = builder.denoise(0.03),
+                "noise_estimate" => builder = builder.noise_estimate(),
+                "display" => builder = builder.display(),
+                "grayscale" => builder = builder.grayscale(),
+                "tone" => builder = builder.tone(),
+                "normalize" => builder = builder.normalize(),
+                "histogram" | "coarse_histogram" => builder = builder.histogram(),
+                "dyn_resize" => builder = builder.resize(1920, 1080),
+                _ => { /* unknown block, skip */ }
+            }
+        }
+        builder
+    }
+
+    /// One-line summary: "w×h: block1 → block2 → ..."
+    pub fn summary(&self) -> String {
+        let ids: Vec<&str> = self.blocks.iter().map(|b| b.id()).collect();
+        format!("{}×{}: {}", self.width, self.height, ids.join(" → "))
+    }
+
     /// Add unpack block for Bayer input.
     pub fn unpack(mut self) -> Self {
         self.blocks.push(Box::new(UnpackBlock::new()));
@@ -615,5 +648,23 @@ mod tests {
     fn test_validate_valid() {
         let b = PipelineBuilder::new(640, 480).unpack().display();
         assert!(b.validate().is_ok());
+    }
+
+    #[test]
+    fn test_from_config_roundtrip() {
+        use crate::serializer::PipelineConfig;
+        let mut cfg = PipelineConfig::new(1920, 1080);
+        cfg.block_ids = vec!["unpack".into(), "demosaic_ccm".into(), "gamma".into(), "display".into()];
+        let b = PipelineBuilder::from_config(&cfg);
+        assert_eq!(b.block_ids(), vec!["unpack", "demosaic_ccm", "gamma", "display"]);
+    }
+
+    #[test]
+    fn test_summary() {
+        let b = PipelineBuilder::new(640, 480).unpack().demosaic(0).display();
+        let s = b.summary();
+        assert!(s.contains("640×480"));
+        assert!(s.contains("unpack"));
+        assert!(s.contains("display"));
     }
 }
