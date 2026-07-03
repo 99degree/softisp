@@ -20,6 +20,10 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// StereoDepthBlock — SAD block-matching stereo disparity.
+///
+/// Computes disparity map from left/right stereo pair using sum-of-absolute-
+/// differences with configurable search range and block window size.
 pub struct StereoDepthBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

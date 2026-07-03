@@ -22,6 +22,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// TemporalDenoiseBlock — multi-frame noise reduction.
+///
+/// Blends current frame with previous denoised frame using motion-adaptive
+/// weighting. Higher threshold = less denoising, lower = more aggressive.
+/// Typical range: 0.02–0.05.
 pub struct TemporalDenoiseBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

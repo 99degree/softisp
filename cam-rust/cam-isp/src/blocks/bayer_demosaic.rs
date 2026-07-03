@@ -1,5 +1,15 @@
+//! BayerDemosaicBlock — flexible Bayer demosaic with multiple algorithms.
+//!
+//! Supports Binning, Bilinear, and MHC (edge-directed) interpolation.
+//! The DemosaicAlgo enum selects the algorithm at build time.
+
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
+
+/// BayerDemosaicBlock — configurable Bayer demosaic with Binning/Bilinear/MHC.
+///
+/// Select algorithm via `DemosaicAlgo` at build time.
+/// Wraps a single ONNX Extra op with the chosen algorithm baked in.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DemosaicAlgo {

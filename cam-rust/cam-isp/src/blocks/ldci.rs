@@ -21,6 +21,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// LdciBlock — Local Detail and Contrast Enhancement.
+///
+/// ONNX subgraph: AvgPool → Sub → Mul → Add + Mul+Add for contrast.
+/// Enhances local texture independently of global exposure.
+/// Fuse target R4 (AvgPool+Sub+Mul+Add).
 pub struct LdciBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
