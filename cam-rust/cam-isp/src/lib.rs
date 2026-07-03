@@ -49,6 +49,7 @@ pub mod simd;
 pub mod serializer;
 pub mod pipeline_builder;
 pub mod optimizer;
+pub mod pipeline_diff;
 
 use std::sync::Once;
 use log::info;
