@@ -582,6 +582,36 @@ impl GraphComposer {
         Ok((onnx, stats, issues))
     }
 
+    /// Full pipeline composition with specific resolution for accurate estimates.
+    /// FLOPs and memory estimates use the given width/height instead of default 1080p.
+    pub fn compose_full_at(
+        blocks: &mut [Box<dyn IspBlock>],
+        aux_blocks: &[&dyn IspBlock],
+        opset_version: i64,
+        w: u32,
+        h: u32,
+    ) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
+        // Auto-wire
+        Self::wire_blocks(blocks);
+
+        // Validate
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let issues = Self::validate_pipeline(&refs);
+
+        // Compute FLOPs/memory at requested resolution
+        let (flops, _) = Self::pipeline_flops_estimate(&refs, w, h);
+        let (mem, _) = Self::pipeline_memory_estimate(&refs, w, h);
+        drop(refs);
+
+        // Compose
+        let (onnx, mut stats) = Self::compose_auto(blocks, aux_blocks, opset_version)?;
+
+        stats.estimated_flops = flops;
+        stats.estimated_memory_bytes = mem;
+
+        Ok((onnx, stats, issues))
+    }
+
     /// Generate a text report of the pipeline.
     pub fn pipeline_report(blocks: &[&dyn IspBlock]) -> String {
         let mut lines = Vec::new();
@@ -892,6 +922,22 @@ mod tests {
         assert!(!onnx.is_empty());
         assert_eq!(stats.block_count, 3);
         assert!(issues.is_empty(), "wired pipeline should have no issues: {:?}", issues);
+        assert!(stats.estimated_flops > 0, "FLOPs should be auto-populated");
+        assert!(stats.estimated_memory_bytes > 0, "memory should be auto-populated");
+    }
+
+    #[test]
+    fn test_compose_full_at_4k() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(2160, 3840)),
+            Box::new(DemosaicCcmBlock::new(2)),
+            Box::new(DisplayBlock::new(3840)),
+        ];
+        let (onnx, stats, _) = GraphComposer::compose_full_at(
+            &mut blocks, &[], 16, 3840, 2160).unwrap();
+        assert!(!onnx.is_empty());
+        assert!(stats.estimated_flops > 0);
+        println!("4K: {} MFLOPs, {} KB", stats.estimated_flops / 1_000_000, stats.estimated_memory_bytes / 1024);
     }
 
     #[test]
