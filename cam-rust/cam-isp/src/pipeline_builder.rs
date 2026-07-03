@@ -204,6 +204,13 @@ impl PipelineBuilder {
         let report = GraphComposer::pipeline_report(&refs);
         Ok((onnx, report))
     }
+
+    /// Convert builder state to a PipelineConfig for serialization.
+    pub fn to_config(&self) -> crate::serializer::PipelineConfig {
+        let mut cfg = crate::serializer::PipelineConfig::new(self.width, self.height);
+        cfg.block_ids = self.blocks.iter().map(|b| b.id().to_string()).collect();
+        cfg
+    }
 }
 
 #[cfg(test)]
@@ -349,5 +356,22 @@ mod tests {
         assert!(report.contains("unpack"));
         assert!(report.contains("demosaic"));
         println!("{}", report);
+    }
+
+    #[test]
+    fn test_to_config_roundtrip() {
+        let builder = PipelineBuilder::new(1920, 1080)
+            .unpack()
+            .demosaic(0)
+            .gamma(2.2)
+            .sharpen(0.5)
+            .display();
+        let cfg = builder.to_config();
+        assert_eq!(cfg.width, 1920);
+        assert_eq!(cfg.height, 1080);
+        assert_eq!(cfg.block_count(), 5);
+        let text = cfg.to_text();
+        let loaded = crate::serializer::PipelineConfig::from_text(&text).unwrap();
+        assert_eq!(loaded.block_ids, vec!["unpack", "demosaic_ccm", "gamma", "sharpen", "display"]);
     }
 }
