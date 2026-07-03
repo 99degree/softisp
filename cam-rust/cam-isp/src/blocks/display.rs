@@ -430,8 +430,8 @@ impl IspBlock for DisplayBlock {
                 inits.push(Proto::tensor_proto_float_scalar(
                     &format!("{}/scale_255", ns), 255.0));
                 if self.can_pack_two_pixels() {
-                    let _ = match (self.in_h, self.in_w) {
-                        (Some(_), Some(_)) => (),
+                    match (self.in_h, self.in_w) {
+                        (Some(_), Some(_)) => {},
                         _ => return inits,
                     };
                     inits.push(Proto::tensor_proto_float(
