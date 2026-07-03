@@ -628,6 +628,51 @@ impl GraphComposer {
 
         Ok((onnx, mnn_path, stats))
     }
+
+    /// Benchmark ONNX emission: generate + measure time.
+    pub fn compose_benchmark(
+        blocks: &mut [Box<dyn IspBlock>],
+        aux_blocks: &[&dyn IspBlock],
+        opset_version: i64,
+    ) -> Result<(Vec<u8>, PipelineStats, f64), String> {
+        let t0 = std::time::Instant::now();
+        let (onnx, stats, _issues) = Self::compose_full(blocks, aux_blocks, opset_version)?;
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        Ok((onnx, stats, elapsed_ms))
+    }
+
+    /// Estimate FLOPs for the pipeline at given resolution.
+    /// Returns (total_flops, per_block_flops).
+    pub fn pipeline_flops_estimate(
+        blocks: &[&dyn IspBlock],
+        w: u32,
+        h: u32,
+    ) -> (u64, Vec<(String, u64)>) {
+        let pixels = (w as u64) * (h as u64);
+        let mut total = 0u64;
+        let mut per_block = Vec::new();
+
+        for blk in blocks {
+            let flops = match blk.id() {
+                // Conv: 2 * out_ch * in_ch * kH * kW * pixels
+                id if id.starts_with("demosaic") => 9 * pixels,       // 3x3 conv per channel
+                id if id.starts_with("ccm") => 18 * pixels,          // 3x3 matrix * 3 channels
+                id if id.starts_with("warp") => 5 * pixels,          // bilinear sample + grid
+                id if id.starts_with("chromatic") => 15 * pixels,     // 3x GridSample
+                id if id.starts_with("sharpen") => 8 * pixels,       // AvgPool + Sub + Add
+                id if id.starts_with("colorspace") => 18 * pixels,    // 3x3 matrix
+                id if id.starts_with("gamma") => 6 * pixels,         // Log + Mul + Exp
+                id if id.starts_with("auto_contrast") => 4 * pixels,  // Sub + Mul + Add
+                id if id.starts_with("display") => 3 * pixels,        // scale + clamp
+                id if id.starts_with("unpack") => 2 * pixels,         // scale + channel extract
+                _ => pixels,                                           // default: 1 flop/pixel
+            };
+            total += flops;
+            per_block.push((blk.id().to_string(), flops));
+        }
+
+        (total, per_block)
+    }
 }
 
 #[cfg(test)]
@@ -779,5 +824,34 @@ mod tests {
         assert!(summary.contains("unpack"));
         assert!(summary.contains("display"));
         println!("Summary: {}", summary);
+    }
+
+    #[test]
+    fn test_compose_benchmark_returns_time() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(640)),
+        ];
+        let (onnx, stats, elapsed_ms) = GraphComposer::compose_benchmark(&mut blocks, &[], 16).unwrap();
+        assert!(!onnx.is_empty());
+        assert!(elapsed_ms >= 0.0);
+        assert!(stats.block_count == 3);
+        println!("Emission: {:.2} ms, {} bytes", elapsed_ms, onnx.len());
+    }
+
+    #[test]
+    fn test_pipeline_flops_estimate() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(1080, 1920)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(1920)),
+        ];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let (total, per_block) = GraphComposer::pipeline_flops_estimate(&refs, 1920, 1080);
+        assert!(total > 0);
+        assert_eq!(per_block.len(), 3);
+        println!("FHD FLOPs: {} ({:.1} MFLOPs)", total, total as f64 / 1e6);
     }
 }
