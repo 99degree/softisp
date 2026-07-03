@@ -75,12 +75,12 @@ fn setup_ndk_linker() {
 
     // NDK r26+ uses unified toolchain under <ndk>/toolchains/llvm/prebuilt/<host>/
     let host = ndk_host();
-    let toolchain = ndk.join("toolchains").join("llvm").join("prebuilt").join(&host);
+    let toolchain = ndk.join("toolchains").join("llvm").join("prebuilt").join(host);
     let sysroot = toolchain.join("sysroot");
 
     if sysroot.exists() {
         // Tell cc crate about the sysroot
-        println!("cargo:rustc-link-search=native={}", sysroot.join("usr").join("lib").join(&format!("{}-linux-android", arch)).display());
+        println!("cargo:rustc-link-search=native={}", sysroot.join("usr").join("lib").join(format!("{}-linux-android", arch)).display());
         println!("cargo:rustc-link-search=native={}", sysroot.join("usr").join("lib").display());
     }
 
@@ -377,7 +377,7 @@ fn setup_cc_for_android(build: &mut cc::Build) {
     // Sysroot
     let sysroot = toolchain.join("sysroot");
     if sysroot.exists() {
-        build.flag(&format!("--sysroot={}", sysroot.display()));
+        build.flag(format!("--sysroot={}", sysroot.display()));
     }
 }
 
