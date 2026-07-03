@@ -32,6 +32,8 @@ mod temporal_denoise;
 mod noise_estimate;
 mod gamma;
 mod stereo_depth;
+mod sharpen;
+mod colorspace;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -66,6 +68,8 @@ pub use temporal_denoise::TemporalDenoiseBlock;
 pub use noise_estimate::NoiseEstimateBlock;
 pub use gamma::GammaBlock;
 pub use stereo_depth::StereoDepthBlock;
+pub use sharpen::SharpenBlock;
+pub use colorspace::{ColorSpaceBlock, ColorSpace};
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
