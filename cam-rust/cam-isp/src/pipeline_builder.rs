@@ -159,6 +159,12 @@ impl PipelineBuilder {
         GraphComposer::compose_full(&mut blocks, &[], 16)
     }
 
+    /// Wire and compose with specific resolution for accurate FLOPs/memory estimates.
+    pub fn compose_full_at(self, w: u32, h: u32) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
+        let mut blocks = self.blocks;
+        GraphComposer::compose_full_at(&mut blocks, &[], 16, w, h)
+    }
+
     /// Get block count.
     pub fn block_count(&self) -> usize {
         self.blocks.len()
@@ -373,5 +379,21 @@ mod tests {
         let text = cfg.to_text();
         let loaded = crate::serializer::PipelineConfig::from_text(&text).unwrap();
         assert_eq!(loaded.block_ids, vec!["unpack", "demosaic_ccm", "gamma", "sharpen", "display"]);
+    }
+
+    #[test]
+    fn test_compose_full_at_resolution() {
+        let (onnx, stats, _) = PipelineBuilder::new(1920, 3840)
+            .unpack()
+            .demosaic(2)
+            .display()
+            .compose_full_at(3840, 2160)
+            .unwrap();
+        assert!(!onnx.is_empty());
+        assert!(stats.estimated_flops > 0);
+        assert!(stats.estimated_memory_bytes > 0);
+        println!("4K: {:.1} MFLOPs, {:.1} KB",
+            stats.estimated_flops as f64 / 1e6,
+            stats.estimated_memory_bytes as f64 / 1024.0);
     }
 }
