@@ -64,3 +64,34 @@ impl IspBlock for NormalizeBlock {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_id() {
+        assert_eq!(NormalizeBlock::new().id(), "normalize");
+    }
+
+    #[test]
+    fn test_normalize_emit_onnx() {
+        let mut b = NormalizeBlock::new();
+        b.set_input_source("raw/int32");
+        let nodes = b.nodes();
+        // Cast + Div = 2 nodes
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_normalize_tensor_types() {
+        let mut b = NormalizeBlock::new();
+        b.set_input_source("in");
+        // input is INT32 (elem_type=6), output is FLOAT (elem_type=1)
+        let input_vi = b.input_value_info().unwrap();
+        let output_vi = b.output_value_info().unwrap();
+        // Both should exist
+        assert!(!input_vi.is_empty());
+        assert!(!output_vi.is_empty());
+    }
+}

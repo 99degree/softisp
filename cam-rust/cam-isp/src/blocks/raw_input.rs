@@ -82,3 +82,42 @@ impl IspBlock for RawInputBlock {
     }
     fn output_value_info(&self) -> Option<Vec<u8>> { self.input_value_info() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_raw_input_id() {
+        assert_eq!(RawInputBlock::new().id(), "raw_input");
+    }
+
+    #[test]
+    fn test_raw_input_graph_input() {
+        let b = RawInputBlock::new();
+        assert_eq!(b.graph_input_name(), Some("RawInputBlock/frame"));
+    }
+
+    #[test]
+    fn test_raw_input_concrete_dims() {
+        let b = RawInputBlock::new().with_concrete_dims(1080, 1920);
+        assert_eq!(b.concrete_h, Some(1080));
+        assert_eq!(b.concrete_w, Some(1920));
+    }
+
+    #[test]
+    fn test_raw_input_elem_type() {
+        let b = RawInputBlock::new();
+        assert_eq!(b.elem_type, 6); // INT32
+        let b = RawInputBlock::new().with_elem_type(1);
+        assert_eq!(b.elem_type, 1); // FLOAT
+    }
+
+    #[test]
+    fn test_raw_input_emit_onnx() {
+        let b = RawInputBlock::new();
+        let nodes = b.nodes();
+        // RawInput has no nodes, only the graph input
+        assert!(nodes.is_empty());
+    }
+}
