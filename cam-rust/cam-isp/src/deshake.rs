@@ -1012,8 +1012,6 @@ pub mod gpu_pipeline {
             dy: f32,
             crop_fraction: f32,
         ) -> Result<(Vec<f32>, u32, u32), String> {
-            use std::io::Write;
-
             let margin_x = (width as f32 * crop_fraction).round() as u32;
             let margin_y = (height as f32 * crop_fraction).round() as u32;
             let out_w = width - 2 * margin_x;
@@ -1032,7 +1030,7 @@ pub mod gpu_pipeline {
                 None,
             )?;
 
-            let onnx_bytes = std::fs::read(&onnx_path).map_err(|e| e.to_string())?;
+            let _onnx_bytes = std::fs::read(&onnx_path).map_err(|e| e.to_string())?;
             let _ = std::fs::remove_file(&onnx_path);
             let mnn_bytes = std::fs::read(&mnn_path).map_err(|e| e.to_string())?;
             let _ = std::fs::remove_file(&mnn_path);
