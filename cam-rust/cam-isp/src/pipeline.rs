@@ -197,6 +197,29 @@ impl PipelineBuilder {
 /// Merges block graph fragments into a single ONNX model.
 pub struct GraphComposer;
 
+/// Statistics about a pipeline.
+#[derive(Debug, Clone)]
+pub struct PipelineStats {
+    pub block_count: usize,
+    pub block_names: Vec<String>,
+    pub total_nodes: usize,
+    pub total_initializers: usize,
+    pub onnx_bytes: usize,
+}
+
+impl std::fmt::Display for PipelineStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f,
+            "Pipeline: {} blocks ({}), {} ops, {} params, {} bytes ONNX",
+            self.block_count,
+            self.block_names.join(" → "),
+            self.total_nodes,
+            self.total_initializers,
+            self.onnx_bytes,
+        )
+    }
+}
+
 impl GraphComposer {
     const TAG: &'static str = "GraphComposer";
 
@@ -495,6 +518,34 @@ impl GraphComposer {
 
         issues
     }
+
+    /// Compose with auto-wiring and return pipeline stats.
+    pub fn compose_auto(
+        blocks: &mut [Box<dyn IspBlock>],
+        aux_blocks: &[&dyn IspBlock],
+        opset_version: i64,
+    ) -> Result<(Vec<u8>, PipelineStats), String> {
+        // Auto-wire input sources
+        Self::wire_blocks(blocks);
+
+        // Collect stats before composing
+        let block_names: Vec<String> = blocks.iter().map(|b| b.id().to_string()).collect();
+        let total_nodes: usize = blocks.iter().map(|b| b.nodes().len()).sum();
+        let total_inits: usize = blocks.iter().map(|b| b.initializers().len()).sum();
+
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let onnx = Self::compose_from_vec(&refs, aux_blocks, opset_version)?;
+
+        let stats = PipelineStats {
+            block_count: blocks.len(),
+            block_names,
+            total_nodes,
+            total_initializers: total_inits,
+            onnx_bytes: onnx.len(),
+        };
+
+        Ok((onnx, stats))
+    }
 }
 
 #[cfg(test)]
@@ -569,5 +620,36 @@ mod tests {
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let issues = GraphComposer::validate_pipeline(&refs);
         assert!(!issues.is_empty(), "should detect empty input_source");
+    }
+
+    #[test]
+    fn test_compose_auto_wires_and_composes() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(640)),
+        ];
+        let (onnx, stats) = GraphComposer::compose_auto(&mut blocks, &[], 16).unwrap();
+        assert!(!onnx.is_empty());
+        assert_eq!(stats.block_count, 3);
+        assert_eq!(stats.block_names, vec!["unpack", "demosaic_ccm", "display"]);
+        assert!(stats.total_nodes > 0);
+        assert!(stats.onnx_bytes > 200);
+        println!("Stats: {}", stats);
+    }
+
+    #[test]
+    fn test_pipeline_stats_display() {
+        let stats = PipelineStats {
+            block_count: 2,
+            block_names: vec!["a".into(), "b".into()],
+            total_nodes: 10,
+            total_initializers: 5,
+            onnx_bytes: 1024,
+        };
+        let s = format!("{}", stats);
+        assert!(s.contains("2 blocks"));
+        assert!(s.contains("10 ops"));
+        assert!(s.contains("1024 bytes"));
     }
 }
