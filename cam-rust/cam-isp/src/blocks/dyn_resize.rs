@@ -13,6 +13,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// DynResizeBlock — dynamic resolution scaling with hot-swappable params.
+///
+/// ONNX Resize with bilinear interpolation. Scale factors stored as
+/// initializers can be updated at runtime via `hot_swap_const_buffer()`
+/// without rebuilding the MNN model.
 pub struct DynResizeBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

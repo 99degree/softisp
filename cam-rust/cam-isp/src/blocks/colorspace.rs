@@ -20,6 +20,10 @@ pub enum ColorSpace {
     Yuv709ToRgb,
 }
 
+/// ColorSpaceBlock — RGB↔YUV conversion via 3×3 Conv.
+///
+/// Supports BT.601 and BT.709 primaries with configurable direction
+/// (RGB→YUV or YUV→RGB). Uses Conv(kernel=1, groups=3) for channel mixing.
 pub struct ColorSpaceBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

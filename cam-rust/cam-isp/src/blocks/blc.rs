@@ -1,6 +1,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// BlcBlock — Black Level Correction with instance-aware naming.
+///
+/// Subtracts black level offset per Bayer channel.
+/// Supports multiple instances via `with_instance()` for pipeline stages
+/// like DPC + black level in a single model.
 pub struct BlcBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,

@@ -24,6 +24,10 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// GammaBlock — sRGB gamma correction via Log→Mul→Exp.
+///
+/// Applies gamma curve with optional shadow lift.
+/// Formula: `exp(gamma * log(x))` with configurable gamma value (2.2 typical).
 pub struct GammaBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,
