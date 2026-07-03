@@ -18,6 +18,10 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// NoiseEstimateBlock — Laplacian-based per-pixel noise level estimation.
+///
+/// Computes local variance via Laplacian filter for noise-aware processing
+/// downstream. Outputs a single-channel noise map matching input dimensions.
 pub struct NoiseEstimateBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

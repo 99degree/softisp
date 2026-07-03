@@ -22,6 +22,11 @@ use crate::engine::OutputFormat;
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// DisplayBlock — final format conversion + tone mapping.
+///
+/// Converts float32 RGB [0,1] → RGBA/ARGB/AGBR [0,255] via Conv(1×1)
+/// with channel permutation weights. Supports sRGB gamma encoding.
+/// Output format selected at build time via `.rgba()`, `.argb()`, `.agbr()`.
 pub struct DisplayBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

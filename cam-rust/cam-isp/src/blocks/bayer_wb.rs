@@ -1,5 +1,15 @@
+//! BayerWbBlock — Bayer-domain white balance gain.
+//!
+//! Multiplies each Bayer channel by its white balance gain.
+//! 4-channel multiplication (RGGB pattern order).
+
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+
+/// BayerWbBlock — per-channel white balance gain for Bayer data.
+///
+/// Applies WB gains: `out_ch = in_ch * gain[ch]` for each of 4 Bayer
+/// positions (R, G1, G2, B). Gains are hot-swappable at runtime.
 
 pub struct BayerWbBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,

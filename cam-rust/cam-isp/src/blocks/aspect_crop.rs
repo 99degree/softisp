@@ -12,6 +12,10 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// AspectCropBlock — center-crop to target aspect ratio.
+///
+/// Crops input to 16:9, 4:3, 1:1, or custom ratio via ONNX Slice op.
+/// Center-aligned with maximum area preservation.
 pub struct AspectCropBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

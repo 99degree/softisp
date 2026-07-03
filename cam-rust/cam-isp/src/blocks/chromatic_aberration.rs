@@ -16,6 +16,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// ChromaticAberrationBlock — corrects lateral chromatic aberration.
+///
+/// Splits RGB channels, applies per-channel radial offset via GridSample,
+/// then re-concatenates. Corrects color fringing at image edges caused
+/// by lens design.
 pub struct ChromaticAberrationBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

@@ -10,6 +10,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// UnpackBlock — Bayer packed-INT32 or native-INT16 unpack.
+///
+/// Converts packed 4-pixel Bayer data from INT32→float32 or INT16→float32.
+/// Supports 4 Bayer patterns (RGGB/GRBG/GBRG/BGGR) via const buffer.
+/// Optional concrete dimensions for static shape inference.
 pub struct UnpackBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

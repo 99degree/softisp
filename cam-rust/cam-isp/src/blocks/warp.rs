@@ -17,6 +17,11 @@
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
+/// WarpGridBlock — unified EIS/GDC + lens shading + rotation.
+///
+/// Fuses GridSample (spatial warp) with optional radial lens shading
+/// correction (Mul) and rotate/flip (Transpose+Slice) in a single
+/// ONNX subgraph. Supports GDC inverse formula, bilinear interpolation.
 pub struct WarpGridBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
