@@ -546,6 +546,50 @@ impl GraphComposer {
 
         Ok((onnx, stats))
     }
+
+    /// Full pipeline composition: validate → auto-wire → compose → stats.
+    /// Returns (onnx_bytes, stats, validation_issues).
+    pub fn compose_full(
+        blocks: &mut [Box<dyn IspBlock>],
+        aux_blocks: &[&dyn IspBlock],
+        opset_version: i64,
+    ) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
+        // Auto-wire
+        Self::wire_blocks(blocks);
+
+        // Validate
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let issues = Self::validate_pipeline(&refs);
+
+        // Compose
+        let (onnx, stats) = Self::compose_auto(blocks, aux_blocks, opset_version)?;
+
+        Ok((onnx, stats, issues))
+    }
+
+    /// Generate a text report of the pipeline.
+    pub fn pipeline_report(blocks: &[&dyn IspBlock]) -> String {
+        let mut lines = Vec::new();
+        lines.push(format!("Pipeline Report ({} blocks)", blocks.len()));
+        lines.push("─".repeat(60));
+
+        for (i, blk) in blocks.iter().enumerate() {
+            let nodes = blk.nodes().len();
+            let inits = blk.initializers().len();
+            let inputs = blk.input_tensors().join(", ");
+            let outputs = blk.output_tensors().join(", ");
+            lines.push(format!(
+                "  {:2}. {:<20} nodes={:<3} inits={:<2} [{}] → [{}]",
+                i + 1, blk.id(), nodes, inits, inputs, outputs));
+        }
+
+        lines.push("─".repeat(60));
+        let total_nodes: usize = blocks.iter().map(|b| b.nodes().len()).sum();
+        let total_inits: usize = blocks.iter().map(|b| b.initializers().len()).sum();
+        lines.push(format!("  Total: {} ops, {} initializers", total_nodes, total_inits));
+
+        lines.join("\n")
+    }
 }
 
 #[cfg(test)]
@@ -651,5 +695,35 @@ mod tests {
         assert!(s.contains("2 blocks"));
         assert!(s.contains("10 ops"));
         assert!(s.contains("1024 bytes"));
+    }
+
+    #[test]
+    fn test_compose_full_validates_and_composes() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(640)),
+        ];
+        let (onnx, stats, issues) = GraphComposer::compose_full(&mut blocks, &[], 16).unwrap();
+        assert!(!onnx.is_empty());
+        assert_eq!(stats.block_count, 3);
+        assert!(issues.is_empty(), "wired pipeline should have no issues: {:?}", issues);
+    }
+
+    #[test]
+    fn test_pipeline_report() {
+        let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(640)),
+        ];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let report = GraphComposer::pipeline_report(&refs);
+        assert!(report.contains("Pipeline Report"));
+        assert!(report.contains("3 blocks"));
+        assert!(report.contains("unpack"));
+        assert!(report.contains("display"));
+        println!("{}", report);
     }
 }
