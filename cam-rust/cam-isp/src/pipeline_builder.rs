@@ -219,6 +219,28 @@ impl PipelineBuilder {
         builder.display()
     }
 
+    /// Add a histogram block for AE feedback.
+    pub fn histogram(mut self) -> Self {
+        self.blocks.push(Box::new(CoarseHistogramBlock::new(16)));
+        self
+    }
+
+    /// Compose and return comprehensive per-block statistics.
+    pub fn all_stats(self, w: u32, h: u32) -> Result<Vec<(String, u64, u64)>, String> {
+        let mut blocks = self.blocks;
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        let (_, flops_detail) = GraphComposer::pipeline_flops_estimate(&refs, w, h);
+        let (_, mem_detail) = GraphComposer::pipeline_memory_estimate(&refs, w, h);
+        // Merge by block name
+        let mut result = Vec::new();
+        for (i, (name, flops)) in flops_detail.iter().enumerate() {
+            let mem = mem_detail.get(i).map(|m| m.1).unwrap_or(0);
+            result.push((name.clone(), *flops, mem));
+        }
+        Ok(result)
+    }
+
     /// Wire, compose, and generate a full analysis report.
     pub fn compose_and_report(self) -> Result<(Vec<u8>, String), String> {
         let mut blocks = self.blocks;
@@ -413,5 +435,37 @@ mod tests {
         println!("4K: {:.1} MFLOPs, {:.1} KB",
             stats.estimated_flops as f64 / 1e6,
             stats.estimated_memory_bytes as f64 / 1024.0);
+    }
+
+    #[test]
+    fn test_histogram_block() {
+        let (onnx, stats, _) = PipelineBuilder::new(640, 480)
+            .unpack()
+            .demosaic(0)
+            .histogram()
+            .display()
+            .compose_full()
+            .unwrap();
+        assert!(!onnx.is_empty());
+        assert!(stats.block_count >= 4);
+        assert!(stats.block_names.iter().any(|n| n.contains("histogram")));
+    }
+
+    #[test]
+    fn test_all_stats() {
+        let stats = PipelineBuilder::new(1920, 1080)
+            .unpack()
+            .demosaic(1)
+            .gamma(2.2)
+            .sharpen(0.5)
+            .display()
+            .all_stats(1920, 1080)
+            .unwrap();
+        assert!(stats.len() >= 5);
+        for (name, flops, mem) in &stats {
+            println!("  {:<20} {:.1} MFLOPs  {:.1} KB", name, *flops as f64 / 1e6, *mem as f64 / 1024.0);
+        }
+        // All blocks should have non-zero FLOPs
+        assert!(stats.iter().all(|(_, f, _)| *f > 0));
     }
 }
