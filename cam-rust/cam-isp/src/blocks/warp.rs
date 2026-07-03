@@ -28,6 +28,7 @@ pub struct WarpGridBlock {
     pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String,
     pub input_source: String,
+    pub workgroup_size: (u32, u32),
     pub target_width: u32,
     pub target_height: u32,
     pub output_width: u32,
@@ -47,6 +48,7 @@ impl WarpGridBlock {
             next: None,
             frame_tensor: "WarpGrid/frame".into(),
             input_source: String::new(),
+            workgroup_size: (0, 0),
             target_width,
             target_height,
             output_width: target_width,
@@ -56,6 +58,13 @@ impl WarpGridBlock {
             bcs: None,
             shading_lut: None,
         }
+    }
+
+    /// Set compute workgroup size (default: auto-tuned by MNN).
+    /// Common presets: `0,0`=auto, `16,16`=Apple, `32,8`=Mali, `64,4`=Adreno.
+    pub fn workgroup(mut self, size_x: u32, size_y: u32) -> Self {
+        self.workgroup_size = (size_x, size_y);
+        self
     }
 
     pub fn with_output_resolution(mut self, width: u32, height: u32) -> Self {
@@ -545,5 +554,17 @@ mod tests {
         let inits = block.initializers();
         // grid + shading_lut = 2
         assert_eq!(inits.len(), 2, "should have grid + shading_lut");
+    }
+
+    #[test]
+    fn test_workgroup_default() {
+        let block = WarpGridBlock::new(32, 32);
+        assert_eq!(block.workgroup_size, (0, 0), "default should auto-tune");
+    }
+
+    #[test]
+    fn test_workgroup_setter() {
+        let block = WarpGridBlock::new(32, 32).workgroup(32, 8);
+        assert_eq!(block.workgroup_size, (32, 8), "should set Mali preset");
     }
 }
