@@ -152,3 +152,51 @@ impl IspBlock for FastDemosaicBlock {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_identity_id() {
+        let b = IdentityBlock::new("test_id");
+        assert_eq!(b.id(), "test_id");
+    }
+
+    #[test]
+    fn test_identity_default_channels() {
+        let b = IdentityBlock::default();
+        assert_eq!(b.channels, 4);
+    }
+
+    #[test]
+    fn test_identity_with_channels() {
+        let b = IdentityBlock::new("id").with_channels(3);
+        assert_eq!(b.channels, 3);
+    }
+
+    #[test]
+    fn test_identity_empty_source_no_nodes() {
+        let b = IdentityBlock::new("id");
+        assert!(b.nodes().is_empty());
+    }
+
+    #[test]
+    fn test_identity_with_source_one_node() {
+        let mut b = IdentityBlock::new("id");
+        b.set_input_source("in/frame");
+        assert_eq!(b.nodes().len(), 1);
+    }
+
+    #[test]
+    fn test_fast_demosaic_id() {
+        let b = FastDemosaicBlock::new("fd");
+        assert_eq!(b.id(), "fd");
+    }
+
+    #[test]
+    fn test_fast_demosaic_with_pattern() {
+        let b = FastDemosaicBlock::new("fd").with_pattern(0);
+        assert_eq!(b.bayer_pattern, 0);
+    }
+}
