@@ -251,4 +251,15 @@ mod tests {
         let inits = block.initializers();
         assert_eq!(inits.len(), 3, "should have 3 grid initializers (R, G, B)");
     }
+
+    #[test]
+    fn test_ca_id() {
+        assert_eq!(ChromaticAberrationBlock::new().id(), "chromatic_aberration");
+    }
+
+    #[test]
+    fn test_ca_tensor_ns() {
+        let b = ChromaticAberrationBlock::new();
+        assert!(!b.tensor_ns().is_empty());
+    }
 }

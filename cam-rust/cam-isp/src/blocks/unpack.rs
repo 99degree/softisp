@@ -265,6 +265,17 @@ mod tests {
         let model = result.unwrap();
         assert!(!model.is_empty(), "Model should not be empty");
     }
+
+    #[test]
+    fn test_unpack_id() {
+        assert_eq!(UnpackBlock::new().id(), "unpack");
+    }
+
+    #[test]
+    fn test_unpack_tensor_ns() {
+        let b = UnpackBlock::new();
+        assert!(!b.tensor_ns().is_empty());
+    }
 }
 
 impl UnpackBlock {
