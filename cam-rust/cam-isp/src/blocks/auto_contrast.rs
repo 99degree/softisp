@@ -207,4 +207,15 @@ mod tests {
         let inits = block.initializers();
         assert!(inits.len() >= 3, "should have half, contrast_w, zero, one inits");
     }
+
+    #[test]
+    fn test_auto_contrast_id() {
+        assert_eq!(AutoContrastBlock::new(1.5).id(), "auto_contrast");
+    }
+
+    #[test]
+    fn test_auto_contrast_tensor_ns() {
+        let b = AutoContrastBlock::new(1.5);
+        assert!(!b.tensor_ns().is_empty());
+    }
 }
