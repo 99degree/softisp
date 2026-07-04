@@ -122,4 +122,22 @@ mod tests {
         assert!(pipe.is_loaded());
         assert_eq!(pipe.backend_name(), "CPU");
     }
+
+    #[test]
+    fn test_fused_pipeline_from_engine() {
+        crate::init();
+        let engine = Box::new(crate::cpu::CpuEngine::new());
+        let pipe = FusedPipeline::from_engine(engine);
+        // from_engine wraps an existing engine, so is_loaded depends on engine state
+        assert_eq!(pipe.backend_name(), "CPU");
+    }
+
+    #[test]
+    fn test_fused_pipeline_into_engine() {
+        crate::init();
+        let profile = PipelineProfile::LITE;
+        let blocks = profile.build_blocks(32, 0);
+        let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new())).unwrap();
+        let _engine = pipe.into_engine();
+    }
 }
