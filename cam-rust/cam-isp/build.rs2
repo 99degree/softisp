@@ -1,0 +1,8 @@
+fn main() {
+    cc::Build::new()
+        .file("mnn_sys/mnn_express_workaround.cpp")
+        .cpp(true)
+        .flag("-std=c++14")
+        .include("vendor/mnn/include")
+        .compile("mnn_express_workaround");
+}
