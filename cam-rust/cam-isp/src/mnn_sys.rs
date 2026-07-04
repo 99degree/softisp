@@ -138,16 +138,6 @@ pub fn mnn_run_with_output(
 
     /// FP16 output inference: reads raw float16 output from models with
     /// Cast(FLOAT→FLOAT16) at the end. Output buffer is raw bytes (uint16_t[]).
-    pub fn mnn_run_host_tensors_fp16(
-        interpreter: *mut c_void,
-        session: *mut c_void,
-        in_data: *const c_float,
-        in_shape: *const c_int,
-        in_ndim: c_int,
-        out_data: *mut c_void,
-        max_out: c_int,
-    ) -> c_int;
-
     pub fn mnn_set_input_float(
         interpreter: *mut c_void,
         session: *mut c_void,
