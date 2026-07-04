@@ -338,3 +338,27 @@ pub(crate) fn bayer_to_quads(bayer: &[f32], w: usize, h: usize) -> Vec<f32> {
 
     quads
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bayer_to_quads_basic() {
+        // 4x4 Bayer RGGB
+        let bayer = vec![0.8, 0.2, 0.3, 0.9,
+                         0.1, 0.7, 0.6, 0.4,
+                         0.5, 0.3, 0.4, 0.6,
+                         0.2, 0.8, 0.7, 0.1];
+        let quads = bayer_to_quads(&bayer, 4, 4);
+        // 4 channels * (2 * 2) = 16 elements
+        assert_eq!(quads.len(), 16);
+    }
+
+    #[test]
+    fn test_bayer_to_quads_2x2() {
+        let bayer = vec![0.5, 0.3, 0.4, 0.6];
+        let quads = bayer_to_quads(&bayer, 2, 2);
+        assert_eq!(quads.len(), 4); // 4 quads
+    }
+}
