@@ -26,6 +26,47 @@
 
 use crate::blocks::*;
 use crate::pipeline::{GraphComposer, IspBlock, PipelineStats};
+use std::fmt;
+
+/// Error type for pipeline builder operations.
+#[derive(Debug, Clone)]
+pub enum PipelineError {
+    /// Pipeline has no blocks.
+    EmptyPipeline,
+    /// Invalid resolution (zero width or height).
+    InvalidResolution(u32, u32),
+    /// Validation failed with specific issues.
+    ValidationFailed(Vec<String>),
+    /// ONNX composition failed.
+    ComposeFailed(String),
+    /// MNN conversion failed.
+    ConvertFailed(String),
+    /// File I/O error.
+    IoError(String),
+}
+
+impl fmt::Display for PipelineError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PipelineError::EmptyPipeline => write!(f, "Pipeline has no blocks"),
+            PipelineError::InvalidResolution(w, h) => write!(f, "Invalid resolution: {}x{}", w, h),
+            PipelineError::ValidationFailed(issues) => {
+                write!(f, "Validation failed: {}", issues.join("; "))
+            }
+            PipelineError::ComposeFailed(msg) => write!(f, "Compose failed: {}", msg),
+            PipelineError::ConvertFailed(msg) => write!(f, "Convert failed: {}", msg),
+            PipelineError::IoError(msg) => write!(f, "IO error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for PipelineError {}
+
+impl From<String> for PipelineError {
+    fn from(s: String) -> Self {
+        PipelineError::ComposeFailed(s)
+    }
+}
 
 pub struct PipelineBuilder {
     blocks: Vec<Box<dyn IspBlock>>,
@@ -473,15 +514,14 @@ impl PipelineBuilder {
 
     /// Validate the pipeline configuration before composing.
     /// Returns Ok(()) if valid, or Err with a list of issues.
-    pub fn validate(&self) -> Result<(), Vec<String>> {
-        let mut issues = Vec::new();
+    pub fn validate(&self) -> Result<(), PipelineError> {
         if self.blocks.is_empty() {
-            issues.push("Pipeline has no blocks".into());
+            return Err(PipelineError::EmptyPipeline);
         }
         if self.width == 0 || self.height == 0 {
-            issues.push(format!("Invalid resolution: {}x{}", self.width, self.height));
+            return Err(PipelineError::InvalidResolution(self.width, self.height));
         }
-        if issues.is_empty() { Ok(()) } else { Err(issues) }
+        Ok(())
     }
 
     /// Get list of block IDs in order (for inspection).
@@ -542,12 +582,9 @@ impl PipelineBuilder {
     ///     .unpack().display()
     ///     .compose_and_validate().unwrap();
     /// ```
-    pub fn compose_and_validate(self) -> Result<Vec<u8>, String> {
-        let validation = self.validate();
-        if let Err(issues) = validation {
-            return Err(format!("Pipeline validation failed: {}", issues.join(", ")));
-        }
-        self.compose()
+    pub fn compose_and_validate(self) -> Result<Vec<u8>, PipelineError> {
+        self.validate()?;
+        self.compose().map_err(PipelineError::from)
     }
 
     /// Compose and save ONNX to a file.
@@ -1172,14 +1209,20 @@ mod tests {
     fn test_compose_and_validate_empty_fails() {
         let err = PipelineBuilder::new(640, 480).compose_and_validate();
         assert!(err.is_err());
-        assert!(err.unwrap_err().contains("Pipeline has no blocks"));
+        match err.unwrap_err() {
+            PipelineError::EmptyPipeline => (),
+            other => panic!("expected EmptyPipeline, got {:?}", other),
+        }
     }
 
     #[test]
     fn test_compose_and_validate_zero_res_fails() {
         let err = PipelineBuilder::new(0, 0).unpack().display().compose_and_validate();
         assert!(err.is_err());
-        assert!(err.unwrap_err().contains("Invalid resolution"));
+        match err.unwrap_err() {
+            PipelineError::InvalidResolution(0, 0) => (),
+            other => panic!("expected InvalidResolution, got {:?}", other),
+        }
     }
 
 }

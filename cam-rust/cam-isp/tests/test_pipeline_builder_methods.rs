@@ -68,12 +68,10 @@ fn test_builder_compose_and_validate_valid() {
 fn test_builder_compose_and_validate_empty() {
     let result = PipelineBuilder::new(640, 480).compose_and_validate();
     assert!(result.is_err(), "empty pipeline should fail validation");
-    let err = result.unwrap_err();
-    assert!(
-        err.contains("Pipeline has no blocks"),
-        "error message should mention empty pipeline: {}",
-        err
-    );
+    match result.unwrap_err() {
+        cam_isp::pipeline_builder::PipelineError::EmptyPipeline => (),
+        other => panic!("expected EmptyPipeline, got {:?}", other),
+    }
 }
 
 #[test]
@@ -83,12 +81,10 @@ fn test_builder_compose_and_validate_zero_res() {
         .display()
         .compose_and_validate();
     assert!(result.is_err(), "zero resolution should fail validation");
-    let err = result.unwrap_err();
-    assert!(
-        err.contains("Invalid resolution"),
-        "error should mention invalid resolution: {}",
-        err
-    );
+    match result.unwrap_err() {
+        cam_isp::pipeline_builder::PipelineError::InvalidResolution(0, 0) => (),
+        other => panic!("expected InvalidResolution, got {:?}", other),
+    }
 }
 
 #[test]
