@@ -444,3 +444,98 @@ pub(crate) fn apply_ldci(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_gamma_lut() {
+        let lut = build_gamma_lut(2.2);
+        assert_eq!(lut.len(), 4096);
+        assert!((lut[0] - 0.0).abs() < 0.001);
+        // At i=4095, x=1.0, so 1.0^2.2 = 1.0
+        assert!((lut[4095] - 1.0).abs() < 0.001);
+        // Monotonically increasing
+        for i in 1..4096 {
+            assert!(lut[i] >= lut[i - 1]);
+        }
+    }
+
+    #[test]
+    fn test_apply_ccm_identity() {
+        let identity = [1.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0,
+                        0.0, 0.0, 1.0];
+        let rgb = vec![0.5, 0.3, 0.8, 0.1, 0.9, 0.2];
+        let result = apply_ccm(&rgb, &identity);
+        assert!((result[0] - 0.5).abs() < 0.001);
+        assert!((result[1] - 0.3).abs() < 0.001);
+        assert!((result[2] - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_apply_ae_gain() {
+        let rgb = vec![0.1, 0.2, 0.3];
+        let result = apply_ae_gain(&rgb, 2.0);
+        assert!((result[0] - 0.2).abs() < 0.001);
+        assert!((result[1] - 0.4).abs() < 0.001);
+        assert!((result[2] - 0.6).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_apply_ae_gain_noop() {
+        let rgb = vec![0.1, 0.2, 0.3];
+        let result = apply_ae_gain(&rgb, 1.0);
+        assert_eq!(result, rgb);
+    }
+
+    #[test]
+    fn test_apply_blc_wb_raw() {
+        // Small values within [0,1] range
+        let raw = vec![0.5, 0.3, 0.4, 0.6]; // 2x2 Bayer RGGB
+        let blc = [0.05, 0.02, 0.02, 0.05];
+        let wb = [1.0, 1.0, 1.0, 1.0];
+        let result = apply_blc_wb_raw(&raw, 2, 2, &blc, &wb);
+        // R at (0,0): (0.5 - 0.05) * 1.0 = 0.45
+        assert!((result[0] - 0.45).abs() < 0.001);
+        // Gr at (0,1): (0.3 - 0.02) * 1.0 = 0.28
+        assert!((result[1] - 0.28).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_generate_simulated_raw() {
+        // 2 pixels RGBA = 8 bytes, width=2, height=1
+        let rgba = vec![255u8, 128, 64, 255, 0, 200, 100, 255];
+        let raw = generate_simulated_raw(2, 1, &rgba);
+        assert_eq!(raw.len(), 2); // width * height pixels
+        assert!(raw[0] > 0);
+    }
+
+    #[test]
+    fn test_apply_lsc_center() {
+        let w = 4;
+        let h = 4;
+        let raw = vec![1.0f32; w * h];
+        let result = apply_lsc(&raw, w, h, 0.1);
+        assert!(result[w * 2 + 2] > 0.95);
+    }
+
+    #[test]
+    fn test_display_output() {
+        let rgb = vec![0.5f32; 3 * 10 * 10]; // 10x10 RGB
+        let out = display_output(&rgb, 10, 10, 10);
+        // Output is RGBA (4 channels)
+        assert_eq!(out.len(), 10 * 10 * 4);
+        assert!(out[0] > 120 && out[0] < 140);
+    }
+
+    #[test]
+    fn test_calculate_awb_gains_uniform() {
+        // Uniform CFA should give equal gains
+        let cfa = vec![100.0, 100.0, 100.0, 100.0];
+        let gains = calculate_awb_gains(&cfa, 2, 2);
+        // All gains should be ~1.0 for uniform input
+        assert!(gains[0] > 0.9 && gains[0] < 1.1, "R gain={}", gains[0]);
+    }
+}
