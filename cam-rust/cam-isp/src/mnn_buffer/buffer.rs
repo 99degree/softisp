@@ -256,6 +256,10 @@ pub struct FrameBufferManager {
     current_frame_id: Option<BufferId>,
 }
 
+impl Default for FrameBufferManager {
+    fn default() -> Self { Self::new() }
+}
+
 impl FrameBufferManager {
     /// Create new frame buffer manager
     pub fn new() -> Self {
@@ -341,6 +345,10 @@ pub unsafe fn set_mnn_tensor_device(
 }
 
 /// Helper to get MNN tensor host pointer
+///
+/// # Safety
+///
+/// `tensor` must be a valid pointer to an MNN tensor buffer.
 pub unsafe fn get_mnn_tensor_host(tensor: *mut std::ffi::c_void) -> *mut u8 {
     const HOST_OFFSET: usize = 8;
     let tensor_ptr = tensor as *mut u8;
