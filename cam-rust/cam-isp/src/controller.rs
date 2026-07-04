@@ -26,11 +26,11 @@ pub enum SmoothingMode {
 /// can write frame N's stats while the controller reads frame N-1's.
 #[derive(Debug, Clone)]
 pub struct RollingStats {
-    /// RGB channel means [R, G, B]
+    /// RGB channel means `[R, G, B]`
     pub channel_means: [f32; 3],
     /// Tone stats: [mean_lum, min_lum, max_lum, clip_frac, shadow_frac, total_px]
     pub tone_stats: [f32; 6],
-    /// Coarse histogram bins [16]
+    /// Coarse histogram bins `[16]`
     pub histogram: [f32; 16],
     /// Whether histogram has valid data
     pub histogram_valid: bool,
@@ -78,7 +78,7 @@ pub struct IspController {
     pub target_r: f32,
     pub target_g: f32,
     pub target_b: f32,
-    /// Smoothed AWB gains [R, G, B].
+    /// Smoothed AWB gains `[R, G, B]`.
     pub awb_gains: [f32; 3],
     /// Running averages of channel means.
     pub avg_r: f32,
@@ -177,7 +177,7 @@ pub struct IspController {
     pub zone_rows: usize,
     /// Number of zone columns.
     pub zone_cols: usize,
-    /// Per-zone RGB means [row][col] = [R, G, B].
+    /// Per-zone RGB means `[row]``[col]` = `[R, G, B]`.
     pub zone_rgb: Vec<Vec<[f32; 3]>>,
     /// Per-zone luminance.
     pub zone_lum: Vec<Vec<f32>>,
@@ -620,7 +620,7 @@ impl IspController {
 
     // ── Getters ──
 
-    /// Get smoothed AWB gains as [R, G, B].
+    /// Get smoothed AWB gains as `[R, G, B]`.
     /// Rotate the triple-buffered stats slots after inference.
     /// Called by the engine after writing frame N's stats to `write_idx`.
     /// Rotates: write → process → ready → write.
@@ -812,7 +812,7 @@ impl IspController {
 
     /// Update zone stats from per-zone RGB means.
     /// `zone_stats` should have length zone_rows * zone_cols * 3,
-    /// with RGB values in [0, 1] interleaved per zone (row-major).
+    /// with RGB values in `[0, 1]` interleaved per zone (row-major).
     pub fn update_zone_stats(&mut self, zone_stats: &[f32]) {
         if !self.zone_stats_enabled { return; }
         let expected = self.zone_rows * self.zone_cols * 3;

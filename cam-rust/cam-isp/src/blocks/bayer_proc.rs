@@ -120,7 +120,7 @@ impl BayerProcBlock {
         self
     }
     
-    /// Demosaic weights [3, 4, 1, 1] for the selected pattern.
+    /// Demosaic weights `[3, 4, 1, 1]` for the selected pattern.
     fn demosaic_weights(&self) -> Vec<f32> {
         match self.bayer_pattern {
             BayerPattern::Rggb => vec![

@@ -4,10 +4,10 @@
 //! Output channels: Y, U, V (or inverse to R, G, B).
 //!
 //! ONNX subgraph:
-//!   1. Conv(input, matrix) → [1, 3, H, W] (YUV or RGB)
+//!   1. Conv(input, matrix) → `[1, 3, H, W]` (YUV or RGB)
 //!
-//! Conv kernel: [3, 3, 3, 3] with group=3 and per-channel weights,
-//! or [1, 3, 3, 3] for full matrix multiplication.
+//! Conv kernel: `[3, 3, 3, 3]` with group=3 and per-channel weights,
+//! or `[1, 3, 3, 3]` for full matrix multiplication.
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;

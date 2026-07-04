@@ -2,7 +2,7 @@
 //!
 //! Ported from `GeneticOptimizer.kt` (Java, 230 lines).
 //!
-//! Evolves a population of [Chromosome]s toward lower fitness (error vs.
+//! Evolves a population of `[Chromosome]`s toward lower fitness (error vs.
 //! Camera2 HW ISP observations). Uses tournament selection, blend crossover,
 //! bounded mutation, and elitism.
 

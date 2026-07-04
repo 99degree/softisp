@@ -5,7 +5,7 @@
 //! which runs a SPIR-V compute shader computing Y = 0.299R + 0.587G + 0.114B.
 //!
 //! This feeds the pyramid downscale for GPU-accelerated deshake pipeline.
-//! The resulting [1,1,H,W] f32 luminance tensor is used by the block-matching
+//! The resulting `[1,1,H,W]` f32 luminance tensor is used by the block-matching
 //! motion estimation engine (DeshakeEngine).
 
 use crate::pipeline::IspBlock;
@@ -118,7 +118,7 @@ mod tests {
         assert!(w_pos.is_some(), "luminance weights not found in tensor");
     }
 
-    /// Verify output shape is [1, 1, H, W] (single luminance channel).
+    /// Verify output shape is `[1, 1, H, W]` (single luminance channel).
     #[test]
     fn test_grayscale_output_shape() {
         let block = GrayscaleBlock::new();

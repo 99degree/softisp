@@ -4,7 +4,7 @@ use crate::onnx::proto::Proto;
 
 /// NormalizeBlock — Cast INT32→FLOAT + divide by sensor max.
 ///
-/// Normalizes packed Bayer data from integer domain to [0,1] float.
+/// Normalizes packed Bayer data from integer domain to `[0,1]` float.
 /// Uses Div with sensor max value to scale to unit range.
 pub struct NormalizeBlock {
     pub id: String,

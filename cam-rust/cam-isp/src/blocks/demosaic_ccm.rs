@@ -3,17 +3,17 @@ use crate::onnx::proto::Proto;
 
 /// Fused Demosaic + CCM block — single Conv1×1 with runtime‑fused weights.
 ///
-/// Input:  F32[1, 4, H, W]   (CFA 4‑channel from UnpackCfaBlock)
-/// Output: F32[1, 3, H, W]   (RGB after demosaic + CCM)
+/// Input:  F32`[1, 4, H, W]`   (CFA 4‑channel from UnpackCfaBlock)
+/// Output: F32`[1, 3, H, W]`   (RGB after demosaic + CCM)
 ///
 /// Graph:  Conv1×1 → Clip(0, 1)   — **2 nodes** (fused sensor_max norm)
 ///
-/// The Conv weight tensor `DemosaicCcm/w` [3, 4, 1, 1] is exposed as an
+/// The Conv weight tensor `DemosaicCcm/w` `[3, 4, 1, 1]` is exposed as an
 /// extra input.  At build time it is initialised to the demosaic weights
 /// divided by sensor_max.  At runtime, the controller pre‑multiplies:
 ///
-///   fused_w[i, j] = Σₖ ccm[i, k] · demosaic[k, j] / sensor_max
-///   fused_bias[i] = bias[i] / sensor_max - Σⱼ fused_w[i,j] · wbⱼ · blcⱼ
+///   fused_w`[i, j]` = Σₖ ccm`[i, k]` · demosaic`[k, j]` / sensor_max
+///   fused_bias`[i]` = bias`[i]` / sensor_max - Σⱼ fused_w`[i,j]` · wbⱼ · blcⱼ
 ///
 /// This absorbs INT16→F32 Cast, Div(sensor_max), BLC Sub, WB Mul into
 /// the Conv — 1 Conv does the work of 4 ops.
@@ -66,7 +66,7 @@ impl DemosaicCcmBlock {
         self
     }
 
-    /// Demosaic weights [3, 4, 1, 1] — same as DemosaicBlock.
+    /// Demosaic weights `[3, 4, 1, 1]` — same as DemosaicBlock.
     pub fn demosaic_weights(&self) -> Vec<f32> {
         match self.bayer_pattern {
             0 => vec![ // RGGB
@@ -93,15 +93,15 @@ impl DemosaicCcmBlock {
     }
 
     /// Compute fused weights = CCM × demosaic (3×3 @ 3×4 = 3×4).
-    /// Returns a 12‑element vector in CHW order [3, 4, 1, 1].
+    /// Returns a 12‑element vector in CHW order `[3, 4, 1, 1]`.
     ///
     /// Call this at runtime when the CCM matrix changes, then set the
     /// result as the value of the `DemosaicCcm/w` extra input tensor.
     /// Compute fused weights = CCM × demosaic × WB / sensor_max (3×3 @ 3×4 = 3×4).
     /// Also returns adjusted bias that incorporates BLC offset.
     ///
-    /// fused_w[i,j] = Σₖ ccm[i,k] · demosaic[k,j] · wbⱼ / sensor_max
-    /// fused_bias[i] = - Σⱼ fused_w[i,j] · blcⱼ
+    /// fused_w`[i,j]` = Σₖ ccm`[i,k]` · demosaic`[k,j]` · wbⱼ / sensor_max
+    /// fused_bias`[i]` = - Σⱼ fused_w`[i,j]` · blcⱼ
     ///
     /// Call at runtime when CCM, WB gains, or BLC offsets change.
     pub fn fuse_weights_ext(&self, ccm_matrix: &[f32; 9], wb_gains: &[f32; 4], blc_vals: &[f32; 4], sensor_max: f32) -> (Vec<f32>, Vec<f32>) {

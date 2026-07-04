@@ -2,7 +2,7 @@
 //!
 //! Computes a disparity map from left + right camera images using
 //! Sum of Absolute Differences (SAD) block matching.
-//! Output is a [1,1,H,W] disparity map (0=no match, 255=close).
+//! Output is a `[1,1,H,W]` disparity map (0=no match, 255=close).
 //!
 //! ONNX subgraph:
 //!   1. Grayscale left: Conv(3→1, group=3)
@@ -11,8 +11,8 @@
 //!      a. Pad right by d pixels on the left (Slice or Pad)
 //!      b. Compute |left - shifted_right| (Sub + Abs)
 //!      c. SAD kernel: Conv(1, 1→1, kernel=block_size×block_size)
-//!   4. ArgMin across disparity dimension → [1,1,H,W]
-//!   5. Scale to [0, 255]
+//!   4. ArgMin across disparity dimension → `[1,1,H,W]`
+//!   5. Scale to `[0, 255]`
 //!
 //! Simplified ONNX: uses sliding window with fixed block size.
 //! For real-time performance, this should be replaced with a GPU shader.

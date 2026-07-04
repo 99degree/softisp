@@ -1,11 +1,11 @@
 //! UnpackBlock — splits packed INT32 into interleaved INT32 pixels.
 //!
-//! Input:  INT32[1,1,H,W/2] where each element = pixel_even | (pixel_odd << 16)
-//! Output: INT32[1,1,H,W]    interleaved even/odd pixels (as 12-bit values)
+//! Input:  INT32`[1,1,H,W/2]` where each element = pixel_even | (pixel_odd << 16)
+//! Output: INT32`[1,1,H,W]`    interleaved even/odd pixels (as 12-bit values)
 //!
 //! Low 16 bits (even pixels): Cast INT32→INT16 (truncates), Cast INT16→INT32
 //! High 16 bits (odd pixels): Shr(input, 16) — ONE node instead of float path
-//! Interleave via: Reshape→[H,PW,1]→Concat(axis=2)→Reshape→[1,1,H,W] — 3 nodes vs 5
+//! Interleave via: Reshape→`[H,PW,1]`→Concat(axis=2)→Reshape→`[1,1,H,W]` — 3 nodes vs 5
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
@@ -105,7 +105,7 @@ impl IspBlock for UnpackBlock {
         vec![self.frame_tensor.clone()]
     }
 
-    /// Input is packed INT32[1,1,H,W/2]
+    /// Input is packed INT32`[1,1,H,W/2]`
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let pw = self.concrete_w.map(|w| w / 2);
         let dims: Vec<Vec<u8>> = match (self.concrete_h, pw) {
@@ -131,7 +131,7 @@ impl IspBlock for UnpackBlock {
         Some(Proto::value_info(&self.input_source, &dims, 6)) // INT32
     }
 
-    /// Output is interleaved INT32[1,1,H,W]
+    /// Output is interleaved INT32`[1,1,H,W]`
     fn output_value_info(&self) -> Option<Vec<u8>> {
         let dims: Vec<Vec<u8>> = match (self.concrete_h, self.concrete_w) {
             (Some(h), Some(w)) => vec![

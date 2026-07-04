@@ -28,7 +28,7 @@ pub fn color_ratios(rgb: [f32; 3]) -> (f32, f32) {
 }
 
 /// Correction factors: what to multiply `our` ratio by to match `ref`.
-/// Returns (corr_r, corr_b) clamped to [0.5, 2.0].
+/// Returns (corr_r, corr_b) clamped to `[0.5, 2.0]`.
 pub fn correction_ratios(ref_rg: f32, ref_bg: f32, our_rg: f32, our_bg: f32) -> (f32, f32) {
     (
         (ref_rg / our_rg).clamp(0.5, 2.0),

@@ -4,11 +4,11 @@
 //! for positive values, with optional shadow lift and highlight compression.
 //!
 //! ONNX subgraph:
-//!   1. Clamp input to [0, 1]
+//!   1. Clamp input to `[0, 1]`
 //!   2. Add epsilon (1e-6) to avoid log(0)
 //!   3. Log -> Mul(1/gamma) -> Exp  (equivalent to pow(x, 1/gamma))
 //!   4. Optional shadow lift: Add(shadow) then Mul(1/(1+shadow))
-//!   5. Optional highlight compression: Clip to [0, 1]
+//!   5. Optional highlight compression: Clip to `[0, 1]`
 //!
 //! Common gamma values:
 //!   - sRGB: gamma ≈ 2.2

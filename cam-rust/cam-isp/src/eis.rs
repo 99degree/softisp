@@ -9,7 +9,7 @@
 //! # Flow
 //! 1. Push gyro samples via `push_sample()`
 //! 2. Each frame, call `update()` with frame timestamp + focal length
-//! 3. Apply resulting [dx, dy, roll_deg] as inverse transform
+//! 3. Apply resulting `[dx, dy, roll_deg]` as inverse transform
 
 use std::f64::consts::PI;
 
@@ -96,7 +96,7 @@ impl EisEngine {
     /// Sums all gyro samples whose timestamps fall within `[from_ns, to_ns]`.
     /// Each sample contributes ω·Δt to the angular displacement.
     ///
-    /// Returns [pitch_deg, yaw_deg, roll_deg] displacement in degrees.
+    /// Returns `[pitch_deg, yaw_deg, roll_deg]` displacement in degrees.
     pub fn integrate_gyro(&self, from_ns: i64, to_ns: i64) -> [f32; 3] {
         if from_ns >= to_ns || self.buffer.is_empty() {
             return [0.0, 0.0, 0.0];
@@ -144,14 +144,14 @@ impl EisEngine {
     ///
     /// 1. Integrate gyro between previous and current frame timestamps
     /// 2. EMA smoothing to separate jitter from intentional motion
-    /// 3. Compute pixel-space compensation [dx_px, dy_px, roll_deg]
+    /// 3. Compute pixel-space compensation `[dx_px, dy_px, roll_deg]`
     ///
     /// The compensation should be applied as an inverse transform:
     ///   - Shift by (-dx, -dy) pixels
     ///   - Rotate by -roll degrees around center
     ///   - Crop by `EIS_CROP_FRACTION` on each edge to hide borders
     ///
-    /// Returns `Some([dx, dy, roll_deg])` or `None` if EIS disabled or no data.
+    /// Returns `Some(`[dx, dy, roll_deg]`)` or `None` if EIS disabled or no data.
     pub fn update(
         &mut self,
         frame_timestamp_ns: i64,
@@ -222,10 +222,10 @@ impl EisEngine {
     /// Compute the sampling grid for ONNX GridSample from EIS compensation.
     ///
     /// Each output pixel (x, y) is mapped to a source pixel (sx, sy) via the
-    /// inverse of [dx, dy, roll] so that the rendered frame appears stabilized.
+    /// inverse of `[dx, dy, roll]` so that the rendered frame appears stabilized.
     ///
     /// Grid format: `[H][W][2]` where `[h,w,0]` = normalized X (column)
-    /// and `[h,w,1]` = normalized Y (row), both in [-1, 1].
+    /// and `[h,w,1]` = normalized Y (row), both in `[-1, 1]`.
     pub fn compute_warp_grid(
         w: u32,
         h: u32,

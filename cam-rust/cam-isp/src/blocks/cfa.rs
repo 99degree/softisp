@@ -3,7 +3,7 @@ use crate::onnx::proto::Proto;
 
 /// CFA unpack block — extracts 2x2 Bayer quad positions using Conv stride=2.
 ///
-/// Takes [1,1,H,W] float normalized Bayer data and outputs [1,4,H/2,W/2]
+/// Takes `[1,1,H,W]` float normalized Bayer data and outputs `[1,4,H/2,W/2]`
 /// where each channel corresponds to one quad position (TL, TR, BL, BR).
 ///
 /// Uses Conv(kernel=2, stride=2, 4 filters) matching the Java implementation.

@@ -91,7 +91,7 @@ impl PipelineBuilder {
         Self { blocks: Vec::new(), width: w, height: h }
     }
 
-    /// Reconstruct a PipelineBuilder from a serialized [`PipelineConfig`].
+    /// Reconstruct a PipelineBuilder from a serialized `[`PipelineConfig`]`.
     ///
     /// Maps block ID strings to their corresponding builder methods.
     /// Unknown block IDs are silently skipped.
@@ -102,7 +102,7 @@ impl PipelineBuilder {
     /// use softisp_camera_isp::serializer::PipelineConfig;
     /// let cfg = PipelineConfig::from_text("# softisp pipeline v1\nW=1920 H=1080\nunpack\ndisplay").unwrap();
     /// let b = PipelineBuilder::from_config(&cfg);
-    /// let ids = b.block_ids();  // ["unpack", "display"]
+    /// let ids = b.block_ids();  // `["unpack", "display"]`
     /// ```
     pub fn from_config(cfg: &crate::serializer::PipelineConfig) -> Self {
         let mut builder = Self::new(cfg.width, cfg.height);
