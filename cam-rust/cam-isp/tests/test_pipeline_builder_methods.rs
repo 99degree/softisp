@@ -274,3 +274,29 @@ fn test_builder_validate_method() {
     let valid = PipelineBuilder::new(640, 480).unpack().display();
     assert!(valid.validate().is_ok(), "valid pipeline should pass");
 }
+
+#[test]
+fn test_builder_to_dot_export() {
+    let dot = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .demosaic_binning()
+        .gamma(2.2)
+        .sharpen(0.5)
+        .display()
+        .to_dot();
+
+    assert!(dot.contains("digraph ISP"));
+    assert!(dot.contains("1920x1080"));
+    assert!(dot.contains("input -> block_0"));
+    assert!(dot.contains("block_4 -> output"));
+    assert!(dot.contains("unpack"));
+    assert!(dot.contains("gamma"));
+}
+
+#[test]
+fn test_builder_to_dot_empty_pipeline() {
+    let dot = PipelineBuilder::new(640, 480).to_dot();
+    assert!(dot.contains("digraph ISP"));
+    assert!(dot.contains("input -> output"));
+    assert!(!dot.contains("block_0"));
+}
