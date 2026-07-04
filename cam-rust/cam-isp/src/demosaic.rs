@@ -228,7 +228,7 @@ fn interpolate_red_at_green(
 ) -> f32 {
     // R at G in BGGR: vertical neighbors for Gr (even row, odd col)
     // horizontal neighbors for Gb (odd row, even col)
-    let is_gr = y % 2 == 0 && x % 2 == 1; // Gr: green in red row
+    let is_gr = y.is_multiple_of(2) && x % 2 == 1; // Gr: green in red row
     let mut sum = 0.0f32;
     let mut cnt = 0u32;
 
@@ -270,7 +270,7 @@ fn interpolate_blue_at_green(
     y: usize,
 ) -> f32 {
     // B at G in BGGR: horizontal neighbors for Gr, vertical for Gb
-    let is_gr = y % 2 == 0 && x % 2 == 1;
+    let is_gr = y.is_multiple_of(2) && x % 2 == 1;
     let mut sum = 0.0f32;
     let mut cnt = 0u32;
 
@@ -319,8 +319,8 @@ fn set_rgb(rgb: &mut [f32], x: usize, y: usize, width: usize, r: f32, g: f32, b:
 /// and produces a flat `[4 * ((H+1)/2) * ((W+1)/2)]` array where each of
 /// the 4 channels represents one Bayer quadrant.
 pub(crate) fn bayer_to_quads(bayer: &[f32], w: usize, h: usize) -> Vec<f32> {
-    let qh = (h + 1) / 2;
-    let qw = (w + 1) / 2;
+    let qh = h.div_ceil(2);
+    let qw = w.div_ceil(2);
     let mut quads = vec![0.0f32; 4 * qh * qw];
 
     for y in 0..h {

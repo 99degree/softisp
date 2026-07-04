@@ -116,6 +116,12 @@ pub struct ChannelMeansBlock {
     pub concrete_w: Option<i64>,
 }
 
+impl Default for ChannelMeansBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChannelMeansBlock {
     pub fn new() -> Self {
         Self {
@@ -195,6 +201,12 @@ pub struct ToneStatsBlock {
     pub input_source: String,
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
+}
+
+impl Default for ToneStatsBlock {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ToneStatsBlock {
@@ -484,6 +496,12 @@ pub struct CalibrationBlock {
     pub input_source: String,
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
+}
+
+impl Default for CalibrationBlock {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CalibrationBlock {

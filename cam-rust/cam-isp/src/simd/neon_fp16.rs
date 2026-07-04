@@ -12,6 +12,12 @@ use crate::simd::selector::SimdEngine;
 
 pub struct NeonFp16;
 
+impl Default for NeonFp16 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NeonFp16 {
     pub const fn new() -> Self {
         Self

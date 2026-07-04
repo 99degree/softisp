@@ -9,6 +9,12 @@ pub struct ToneBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
 }
+impl Default for ToneBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToneBlock {
     pub fn new() -> Self { Self { id: "tone".into(), prev: None, next: None, frame_tensor: "ToneBlock/frame".into(), input_source: String::new() } }
 }

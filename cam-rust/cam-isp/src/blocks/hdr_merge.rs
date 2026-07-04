@@ -36,6 +36,12 @@ pub struct HdrMergeBlock {
     pub in_w: Option<i64>,
 }
 
+impl Default for HdrMergeBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HdrMergeBlock {
     pub fn new() -> Self {
         Self {

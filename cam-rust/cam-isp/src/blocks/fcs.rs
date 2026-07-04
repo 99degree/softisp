@@ -32,6 +32,12 @@ pub struct FcsBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
 }
+impl Default for FcsBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FcsBlock {
     pub fn new() -> Self { Self { id: "fcs".into(), prev: None, next: None, frame_tensor: "FcsBlock/frame".into(), input_source: String::new() } }
 }

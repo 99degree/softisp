@@ -1,6 +1,9 @@
 //! ISP (Image Signal Processing) pipeline for the camera HAL.
 //! Ported from com.camcore.isp
 
+#![allow(unsafe_op_in_unsafe_fn)] // FFI wrappers require raw pointer access
+#![allow(clippy::not_unsafe_ptr_arg_deref)] // FFI functions take raw pointers
+
 pub mod engine;
 pub mod pipeline;
 pub mod pipeline_snapshot;

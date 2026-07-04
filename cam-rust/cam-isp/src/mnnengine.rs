@@ -368,7 +368,7 @@ impl MnnEngine {
         ];
 
         // ── Weights (all resolution-independent, ~2K params total) ──
-        let conv1_w = Self::rand_weight(8 * 1 * 3 * 3);   // [8,1,3,3]  = 72
+        let conv1_w = Self::rand_weight(8 * 3 * 3);   // [8,1,3,3]  = 72
         let conv2_w = Self::rand_weight(8 * 8 * 3 * 3);   // [8,8,3,3]  = 576
         let conv3_w = Self::rand_weight(3 * 8 * 3 * 3);   // [3,8,3,3]  = 216
         let mm1_w = Self::rand_weight(8 * 64);             // [8,64]     = 512
@@ -376,7 +376,7 @@ impl MnnEngine {
         // total: 72+576+216+512+512 = 1,888 (constant at any resolution!)
 
         // Identity grid for GridSampler: [1, H, W, 2] in [-1, 1]
-        let mut grid = Vec::with_capacity((h as usize * w as usize * 2) as usize);
+        let mut grid = Vec::with_capacity(((h as usize * w as usize * 2)));
         if h > 0 && w > 0 {
             for y in 0..h {
                 for x in 0..w {
@@ -845,17 +845,16 @@ impl IspEngine for MnnEngine {
             // MNN writes directly into this Vec via host pointer.
             // We return it as frame.data — no memcpy at all.
             let max_out = (tw * h * 4) as usize; // max f32 elements: H×W×4
-            let mut out_bytes: Vec<u8> = Vec::with_capacity(max_out * 4);
-            unsafe { out_bytes.set_len(max_out * 4); }
+            let mut out_bytes: Vec<u8> = vec![0u8; max_out * 4];
             let out_ptr = out_bytes.as_mut_ptr() as *mut f32;
 
             // Determine inference path based on model input type
-            let path: &str;
+            
             let n: i32;
-            let t_prep_end: std::time::Instant;
-            let t_infer_start: std::time::Instant;
-            let t_tensor_before: std::time::Instant;
-            let t_tensor_after: std::time::Instant;
+            
+            
+            
+            
 
             // Determine if packed: model expects INT32 packed input
             let is_packed = if self.packed_input {
@@ -869,7 +868,7 @@ impl IspEngine for MnnEngine {
             };
 
             // ── Pre-inference: resize session and set extra inputs ──
-            t_tensor_before = Instant::now();
+            let t_tensor_before: std::time::Instant = Instant::now();
             {
                 let shape = if is_packed {
                     vec![1, 1, h as i32, (w / 2).max(1) as i32]
@@ -882,7 +881,7 @@ impl IspEngine for MnnEngine {
                 let _ = sess.resize();
                 Self::set_extra_inputs(&slot.tensor_pool, ccm, tone, bayer, awb, bayer_pattern);
             }
-            t_tensor_after = Instant::now();
+            let t_tensor_after: std::time::Instant = Instant::now();
             info!("pipeline stage=tensor_assign elapsed={:?}",
                 t_tensor_after.duration_since(t_tensor_before));
 
@@ -917,18 +916,18 @@ impl IspEngine for MnnEngine {
             info!("pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
                 buf.len(),
                 if is_packed {
-                    (buf.len() / 4) as usize
+                    (buf.len() / 4)
                 } else {
-                    (buf.len() / 2) as usize
+                    (buf.len() / 2)
                 },
                 is_packed,
                 input_shape[2],
                 input_shape[3]
             );
 
-            path = path_str;
-            t_prep_end = Instant::now();
-            t_infer_start = Instant::now();
+            let path: &str = path_str;
+            let t_prep_end: std::time::Instant = Instant::now();
+            let t_infer_start: std::time::Instant = Instant::now();
             unsafe {
                 n = crate::mnn_sys::mnn_run_with_output(
                     interp.as_ptr(), sess.as_ptr(),
@@ -1159,7 +1158,7 @@ impl IspEngine for MnnEngine {
             frame.prep_duration_ns = prep_ns;
             frame.inference_duration_ns = t_infer_elapsed.as_nanos() as u64;
             frame.total_duration_ns = total_duration_ns;
-            return Ok(frame);
+            Ok(frame)
         }
 
         #[cfg(not(feature = "mnn"))]

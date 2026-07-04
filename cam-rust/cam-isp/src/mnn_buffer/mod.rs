@@ -26,7 +26,7 @@ pub const DT_UINT16: u8 = 4;
 
 /// Helper to calculate tensor size from dims and type
 pub fn tensor_size(dims: &[i32], elem_bits: u8) -> usize {
-    let elem_size = (elem_bits as usize + 7) / 8;
+    let elem_size = (elem_bits as usize).div_ceil(8);
     dims.iter().product::<i32>() as usize * elem_size
 }
 

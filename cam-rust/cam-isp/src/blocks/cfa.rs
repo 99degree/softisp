@@ -18,6 +18,12 @@ pub struct CfaBlock {
     pub concrete_w: Option<i64>,
 }
 
+impl Default for CfaBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CfaBlock {
     pub fn new() -> Self {
         Self {
