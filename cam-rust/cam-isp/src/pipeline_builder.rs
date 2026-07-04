@@ -152,9 +152,9 @@ impl PipelineBuilder {
     /// ```rust,no_run
     /// use cam_isp::blocks::*;
     /// let b = PipelineBuilder::new(640, 480);
-    /// let _b = b.add(Box::new(UnpackBlock::new()));
+    /// let _b = b.push(Box::new(UnpackBlock::new()));
     /// ```
-    pub fn add(mut self, block: Box<dyn IspBlock>) -> Self {
+    pub fn push(mut self, block: Box<dyn IspBlock>) -> Self {
         self.blocks.push(block);
         self
     }
@@ -1178,9 +1178,9 @@ mod tests {
     fn test_add_block() {
         use crate::blocks::*;
         let onnx = PipelineBuilder::new(640, 480)
-            .add(Box::new(UnpackBlock::new()))
-            .add(Box::new(DemosaicCcmBlock::new(1)))
-            .add(Box::new(DisplayBlock::new(640).rgba()))
+            .push(Box::new(UnpackBlock::new()))
+            .push(Box::new(DemosaicCcmBlock::new(1)))
+            .push(Box::new(DisplayBlock::new(640).rgba()))
             .compose().unwrap();
         assert!(onnx.len() > 100);
     }

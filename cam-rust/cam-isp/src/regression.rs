@@ -47,7 +47,7 @@ impl Features {
     }
 
     /// Return as array for matrix operations.
-    fn to_array(&self) -> [f64; N_FEATURES] {
+    fn to_array(self) -> [f64; N_FEATURES] {
         [self.log_lum, self.rg_ratio, self.bg_ratio, self.cct_norm]
     }
 }

@@ -52,6 +52,10 @@ pub unsafe fn set_tensor_host(tensor: *mut std::ffi::c_void, data_ptr: *mut u8) 
 }
 
 /// Helper to get MNN tensor host pointer from Rust
+///
+/// # Safety
+///
+/// `tensor` must be a valid pointer to an MNN tensor buffer.
 pub unsafe fn get_tensor_host(tensor: *mut std::ffi::c_void) -> *mut u8 {
     let buffer_ptr = tensor as *mut u8;
     let host_offset = 8;
@@ -60,6 +64,10 @@ pub unsafe fn get_tensor_host(tensor: *mut std::ffi::c_void) -> *mut u8 {
 }
 
 /// Helper to get MNN tensor shape
+///
+/// # Safety
+///
+/// `tensor` must be a valid pointer to an MNN tensor buffer.
 pub unsafe fn get_tensor_shape(tensor: *mut std::ffi::c_void) -> Vec<i32> {
     let buffer_ptr = tensor as *mut u8;
     let extent_offset = 16; // After device + host
@@ -130,6 +138,9 @@ impl OutputBufferPool {
 
     /// Number of buffers in the pool.
     pub fn len(&self) -> usize { self.pool_size }
+
+    /// Returns true if pool is empty.
+    pub fn is_empty(&self) -> bool { self.pool_size == 0 }
 
     /// Capacity of each buffer (f32 elements).
     pub fn buffer_capacity(&self) -> usize { self.buffers.first().map(|b| b.len()).unwrap_or(0) }

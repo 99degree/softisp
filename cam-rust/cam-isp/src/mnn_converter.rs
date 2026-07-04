@@ -81,7 +81,7 @@ pub fn convert_onnx_to_mnn(
     } else {
         // Extract error message from C string (null-terminated)
         let msg = unsafe {
-            let ptr = result.error_msg.as_ptr() as *const u8;
+            let ptr = result.error_msg.as_ptr();
             let mut len = 0usize;
             while len < 1024 && *ptr.add(len) != 0 { len += 1; }
             String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).to_string()

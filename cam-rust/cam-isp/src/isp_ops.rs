@@ -121,7 +121,7 @@ pub(crate) fn apply_blc_wb_raw(
                 _ => 0,
             };
             let val = (float[idx] - blc[ch]) * gains[ch];
-            out[idx] = val.max(0.0).min(1.0);
+            out[idx] = val.clamp(0.0, 1.0);
         }
     }
     out
@@ -210,9 +210,9 @@ pub(crate) fn apply_tone(rgb: &[f32], params: &ToneParams, w: usize, h: usize) -
         g = luma + (g - luma) * saturation;
         b = luma + (b - luma) * saturation;
 
-        toned.push(r.max(0.0).min(1.0));
-        toned.push(g.max(0.0).min(1.0));
-        toned.push(b.max(0.0).min(1.0));
+        toned.push(r.clamp(0.0, 1.0));
+        toned.push(g.clamp(0.0, 1.0));
+        toned.push(b.clamp(0.0, 1.0));
     }
 
     // Apply unsharp mask edge enhancement

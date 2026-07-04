@@ -143,11 +143,7 @@ impl AfState {
     /// One-line AF status string for UI overlay.
     pub fn display_string(&self) -> String {
         if self.scan_phase != AfScanPhase::Idle {
-            let pct = if self.scan_total > 0 {
-                self.scan_step * 100 / self.scan_total
-            } else {
-                0
-            };
+            let pct = self.scan_step * 100 / self.scan_total.max(1);
             return format!(
                 "AF {} {}% vcm={}",
                 self.scan_phase.display(),

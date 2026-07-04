@@ -453,10 +453,10 @@ impl IspController {
             SceneCategory::Dark => {
                 // Boost exposure, reduce sharpness, warm up tones
                 self.tone_shadow_lift = self.tone_shadow_lift.max(0.15);
-                self.tone_gamma = self.tone_gamma.max(2.0).min(2.6);
+                self.tone_gamma = self.tone_gamma.clamp(2.0, 2.6);
                 // CCM diagonal boost for better low-light color
                 for i in [0, 4, 8] {
-                    self.ccm_scale_a[i] = self.ccm_scale_a[i].max(1.05).min(1.25);
+                    self.ccm_scale_a[i] = self.ccm_scale_a[i].clamp(1.05, 1.25);
                 }
             },
             SceneCategory::SunriseSunset => {
@@ -465,9 +465,9 @@ impl IspController {
                 self.awb_gains[0] += (1.0 - self.awb_gains[0]) * 0.1;
                 self.awb_gains[2] += (1.0 - self.awb_gains[2]) * 0.1;
                 // Warm color bias: increase R channel gain slightly
-                self.ccm_scale_a[0] = self.ccm_scale_a[0].max(1.0).min(1.15);
+                self.ccm_scale_a[0] = self.ccm_scale_a[0].clamp(1.0, 1.15);
                 // Enhance saturation for richer colors
-                self.tone_saturation = self.tone_saturation.max(1.1).min(1.4);
+                self.tone_saturation = self.tone_saturation.clamp(1.1, 1.4);
             },
             SceneCategory::Indoor => {
                 // Moderate settings (default behavior, reset any extremes)
@@ -477,14 +477,14 @@ impl IspController {
             },
             SceneCategory::Outdoor => {
                 // Increase contrast and sharpness, reduce shadow lift
-                self.tone_contrast = self.tone_contrast.max(1.05).min(1.3);
+                self.tone_contrast = self.tone_contrast.clamp(1.05, 1.3);
                 self.tone_shadow_lift = self.tone_shadow_lift.min(0.12);
                 self.tone_gamma = self.tone_gamma.clamp(2.0, 2.4);
             },
             SceneCategory::Bright => {
                 // Reduce exposure gain, increase contrast for punch
                 self.exposure_gain = self.exposure_gain.min(1.2);
-                self.tone_contrast = self.tone_contrast.max(1.1).min(1.4);
+                self.tone_contrast = self.tone_contrast.clamp(1.1, 1.4);
                 self.tone_shadow_lift = self.tone_shadow_lift.min(0.08);
                 self.tone_gamma = self.tone_gamma.clamp(2.0, 2.3);
                 // Slightly desaturate very bright scenes

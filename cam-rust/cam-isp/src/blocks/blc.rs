@@ -11,6 +11,10 @@ pub struct BlcBlock {
     pub frame_tensor: String, pub input_source: String,
     instance: String,
 }
+impl Default for BlcBlock {
+    fn default() -> Self { Self::new() }
+}
+
 impl BlcBlock {
     /// Create BlcBlock with default instance (single-use).
     pub fn new() -> Self { Self::with_instance("") }

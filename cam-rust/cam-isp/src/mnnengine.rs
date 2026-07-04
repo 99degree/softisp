@@ -18,6 +18,9 @@ use std::time::Instant;
 use std::ffi::CStr;
 use log::{info, debug, warn, error};
 
+/// Zone data: (rows, cols, zone_rgb[r][c] = [f32; 3])
+type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
+
 use cam_types::{FrameFormat, ToneParams};
 use crate::engine::{IspEngine, ProcessParams};
 use crate::controller::IspController;
@@ -45,7 +48,7 @@ impl MnnBackend {
         match self { Self::Vulkan => 99, Self::Opencl => 55, Self::OpenGl => 50, Self::CpuNeon => 75, Self::Cpu => 65 }
     }
     #[cfg(feature = "mnn")]
-    fn to_sys(&self) -> MnnBackendType {
+    fn to_sys(self) -> MnnBackendType {
         match self { Self::Vulkan => MnnBackendType::Vulkan, Self::Opencl => MnnBackendType::Opencl, Self::OpenGl => MnnBackendType::Opengl, _ => MnnBackendType::Cpu }
     }
 }
@@ -376,7 +379,7 @@ impl MnnEngine {
         // total: 72+576+216+512+512 = 1,888 (constant at any resolution!)
 
         // Identity grid for GridSampler: [1, H, W, 2] in [-1, 1]
-        let mut grid = Vec::with_capacity(((h as usize * w as usize * 2)));
+        let mut grid = Vec::with_capacity(h as usize * w as usize * 2);
         if h > 0 && w > 0 {
             for y in 0..h {
                 for x in 0..w {
@@ -731,8 +734,10 @@ impl IspEngine for MnnEngine {
                     std::fs::write(&on, &onnx).map_err(|e| format!("write: {}", e))?;
                     // Save a copy for inspection
                     let _ = std::fs::copy(&on, ".mnn_last_pipeline.onnx");
-                    let mut opts = MnnConvertOptions::default();
-                    opts.preserve_input_type = self.preserve_input_type;
+                    let opts = MnnConvertOptions {
+                        preserve_input_type: self.preserve_input_type,
+                        ..Default::default()
+                    };
                     info!("preserve_input_type: {}, optimize_level: {}", self.preserve_input_type, opts.optimize_level);
                     crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, Some(&opts)).map_err(|e| format!("convert: {}", e))?;
                     let _ = std::fs::remove_file(&on);
@@ -916,9 +921,9 @@ impl IspEngine for MnnEngine {
             info!("pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
                 buf.len(),
                 if is_packed {
-                    (buf.len() / 4)
+                    buf.len() / 4
                 } else {
-                    (buf.len() / 2)
+                    buf.len() / 2
                 },
                 is_packed,
                 input_shape[2],
@@ -992,7 +997,7 @@ impl IspEngine for MnnEngine {
                 let mut cm_vals: Option<[f32; 3]> = None;
                 let mut ts_vals: Option<[f32; 6]> = None;
                 let mut hist_vals: Option<[f32; 16]> = None;
-                let mut zone_data: Option<(usize, usize, Vec<Vec<[f32; 3]>>)> = None;
+                let mut zone_data: Option<ZoneData> = None;
 
                 // ChannelMeansBlock/frame → [1, 3] or [3]
                 if let Some(t) = interp.get_output(sess, "ChannelMeansBlock/frame") {

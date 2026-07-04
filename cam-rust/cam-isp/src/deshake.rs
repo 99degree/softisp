@@ -820,12 +820,15 @@ pub mod gpu_pipeline {
     use crate::mnn_sys::{MnnInterpreterSafe, MnnBackendType};
     use std::sync::{Mutex, Arc};
 
+    /// Cache entry: (width, height, mnn_bytes)
+    type PipelineCache = Option<(u32, u32, Vec<u8>)>;
+
     /// Cached GPU pipeline for grayscale+pyramid.
     /// Lazily built from ONNX at first use.
     #[derive(Debug, Clone)]
     pub struct DeshakeGpuPipeline {
         /// Cached MNN model bytes for current resolution (Arc for Clone).
-        mnn_cache: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>,
+        mnn_cache: Arc<Mutex<PipelineCache>>,
     }
 
     impl Default for DeshakeGpuPipeline {
