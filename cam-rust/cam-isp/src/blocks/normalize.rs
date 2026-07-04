@@ -104,4 +104,17 @@ mod tests {
         assert!(!input_vi.is_empty());
         assert!(!output_vi.is_empty());
     }
+
+    #[test]
+    fn test_normalize_initializers() {
+        let b = NormalizeBlock::new();
+        let inits = b.initializers();
+        assert_eq!(inits.len(), 1, "scale factor");
+    }
+
+    #[test]
+    fn test_normalize_tensor_ns() {
+        let b = NormalizeBlock::new();
+        assert!(!b.tensor_ns().is_empty());
+    }
 }
