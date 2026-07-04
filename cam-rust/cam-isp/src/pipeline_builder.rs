@@ -810,6 +810,60 @@ impl PipelineBuilder {
         cfg.block_ids = self.blocks.iter().map(|b| b.id().to_string()).collect();
         cfg
     }
+
+    /// Export the pipeline as a DOT/Graphviz graph.
+    ///
+    /// Returns a String of valid DOT syntax that can be rendered with
+    /// `dot -Tpng pipeline.dot -o pipeline.png` or online editors.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let dot = PipelineBuilder::new(640, 480)
+    ///     .unpack()
+    ///     .demosaic_binning()
+    ///     .gamma(2.2)
+    ///     .display()
+    ///     .to_dot();
+    /// std::fs::write("pipeline.dot", &dot).unwrap();
+    /// ```
+    pub fn to_dot(&self) -> String {
+        let mut out = String::new();
+        out.push_str("digraph ISP {\n");
+        out.push_str("  rankdir=LR;\n");
+        out.push_str("  node [shape=box, style=filled, fillcolor=lightblue];\n");
+        out.push_str("  edge [color=gray50];\n");
+        out.push('\n');
+
+        // Input node
+        out.push_str(&format!("  input [label=\"Input\\n{}x{}\", fillcolor=lightgreen];\n", self.width, self.height));
+
+        // Block nodes
+        for (i, block) in self.blocks.iter().enumerate() {
+            let id = format!("block_{}", i);
+            let label = block.id();
+            out.push_str(&format!("  {} [label=\"{}\"];\n", id, label));
+        }
+
+        // Output node
+        out.push_str("  output [label=\"Output\", fillcolor=lightyellow];\n");
+
+        out.push('\n');
+
+        // Edges
+        if !self.blocks.is_empty() {
+            out.push_str("  input -> block_0;\n");
+            for i in 0..self.blocks.len().saturating_sub(1) {
+                out.push_str(&format!("  block_{} -> block_{};\n", i, i + 1));
+            }
+            out.push_str(&format!("  block_{} -> output;\n", self.blocks.len() - 1));
+        } else {
+            out.push_str("  input -> output;\n");
+        }
+
+        out.push_str("}\n");
+        out
+    }
 }
 
 #[cfg(test)]
@@ -1223,6 +1277,33 @@ mod tests {
             PipelineError::InvalidResolution(0, 0) => (),
             other => panic!("expected InvalidResolution, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_to_dot() {
+        let dot = PipelineBuilder::new(1920, 1080)
+            .unpack()
+            .demosaic_binning()
+            .gamma(2.2)
+            .display()
+            .to_dot();
+        assert!(dot.contains("digraph ISP"));
+        assert!(dot.contains("1920x1080"));
+        assert!(dot.contains("unpack"));
+        assert!(dot.contains("demosaic_ccm"));
+        assert!(dot.contains("gamma"));
+        assert!(dot.contains("display"));
+        assert!(dot.contains("input -> block_0"));
+        assert!(dot.contains("block_3 -> output"));
+    }
+
+    #[test]
+    fn test_to_dot_empty() {
+        let dot = PipelineBuilder::new(640, 480).to_dot();
+        assert!(dot.contains("digraph ISP"));
+        assert!(dot.contains("640x480"));
+        // Empty pipeline: no block edges, just input->output
+        assert!(!dot.contains("block_0"));
     }
 
 }
