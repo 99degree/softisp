@@ -494,41 +494,22 @@ impl UnpackCfaBlock {
 
     fn native_nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        let has_process = self.use_blc || self.use_wb;
         let sw = self.stride_w;
 
         // Cast(INT16→F32) + Conv — IspChainFusion fuses into single GPU shader
-        let nodes = if has_process {
-            vec![
-                Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
-                    &[Proto::attribute_int("to", 1)]),
-                Proto::node("Conv",
-                    &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
-                    &[&self.frame_tensor],
-                    &[
-                        Proto::attribute_ints("kernel_shape", &[2, sw]),
-                        Proto::attribute_ints("strides", &[2, sw]),
-                        Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                        Proto::attribute_int("group", 1),
-                    ]),
-            ]
-        } else {
-            vec![
-                Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
-                    &[Proto::attribute_int("to", 1)]),
-                Proto::node("Conv",
-                    &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
-                    &[&self.frame_tensor],
-                    &[
-                        Proto::attribute_ints("kernel_shape", &[2, sw]),
-                        Proto::attribute_ints("strides", &[2, sw]),
-                        Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                        Proto::attribute_int("group", 1),
-                    ]),
-            ]
-        };
-
-        nodes
+        vec![
+            Proto::node("Cast", &[&self.input_source], &[&format!("{}/input_f32", ns)],
+                &[Proto::attribute_int("to", 1)]),
+            Proto::node("Conv",
+                &[&format!("{}/input_f32", ns), &format!("{}/unpack_w", ns), &format!("{}/unpack_b", ns)],
+                &[&self.frame_tensor],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[2, sw]),
+                    Proto::attribute_ints("strides", &[2, sw]),
+                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                    Proto::attribute_int("group", 1),
+                ]),
+        ]
     }
 }
 

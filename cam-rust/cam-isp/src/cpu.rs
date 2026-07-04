@@ -197,8 +197,8 @@ impl IspEngine for CpuEngine {
                 .map(|g| g.get_awb_gains())
                 .unwrap_or([1.0, 1.0, 1.0])
         };
-        let default_bayer_gains = if bayer_gains.is_some() {
-            *bayer_gains.unwrap()
+        let default_bayer_gains = if let Some(bg) = bayer_gains {
+            *bg
         } else {
             [awb_gains[0], awb_gains[1], awb_gains[1], awb_gains[2]]
         };

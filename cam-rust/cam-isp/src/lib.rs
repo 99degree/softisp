@@ -3,6 +3,9 @@
 
 #![allow(unsafe_op_in_unsafe_fn)] // FFI wrappers require raw pointer access
 #![allow(clippy::not_unsafe_ptr_arg_deref)] // FFI functions take raw pointers
+#![allow(clippy::needless_range_loop)] // ISP loops are clearer with explicit indices
+#![allow(clippy::too_many_arguments)] // ISP pipeline functions require all parameters
+#![allow(clippy::arc_with_non_send_sync)] // Internal Arc usage for single-threaded buffers
 
 pub mod engine;
 pub mod pipeline;

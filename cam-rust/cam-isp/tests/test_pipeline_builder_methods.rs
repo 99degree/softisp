@@ -208,8 +208,8 @@ fn test_builder_workgroup_via_add() {
 
     let b = PipelineBuilder::new(640, 480)
         .unpack()
-        .add(Box::new(WarpGridBlock::new(32, 32).workgroup(32, 8)))  // Mali preset
-        .add(Box::new(DisplayBlock::new(640).rgba().workgroup(64, 4)))  // Adreno preset
+        .push(Box::new(WarpGridBlock::new(32, 32).workgroup(32, 8)))  // Mali preset
+        .push(Box::new(DisplayBlock::new(640).rgba().workgroup(64, 4)))  // Adreno preset
         .compose()
         .expect("should compose");
     assert!(b.len() > 100);

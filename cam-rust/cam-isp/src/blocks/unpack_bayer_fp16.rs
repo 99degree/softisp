@@ -83,6 +83,7 @@ impl IspBlock for UnpackBayerToFp16Block {
     /// 3. Cast to FP16
     /// 4. Normalise by dividing by 1023.0
     /// 5. Concat into 2-channel output
+    #[allow(clippy::vec_init_then_push)]
     fn nodes(&self) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         
