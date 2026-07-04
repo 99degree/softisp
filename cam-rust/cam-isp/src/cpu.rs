@@ -45,6 +45,12 @@ pub struct CpuEngine {
     simd: &'static dyn SimdEngine,
 }
 
+impl Default for CpuEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuEngine {
     pub fn new() -> Self {
         let simd = best_backend();
@@ -139,7 +145,7 @@ impl IspEngine for CpuEngine {
         let calibration_stats = {
             let quads = bayer_to_quads(&denoised, width as usize, height as usize);
             crate::calibration::compute_calibration_stats(
-                &quads, 4, (height as usize + 1) / 2, (width as usize + 1) / 2,
+                &quads, 4, (height as usize).div_ceil(2), (width as usize).div_ceil(2),
                 cam_types::BayerPattern::Rggb,
             )
         };

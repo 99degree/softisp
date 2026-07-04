@@ -691,7 +691,7 @@ impl IspController {
     pub fn get_brightness(&self) -> f32 {
         let ev_range = 4.0;
         let ev_offset = (self.exposure_gain.max(0.25) as f64).ln() / (2.0f64).ln();
-        (0.5 + ev_offset / ev_range as f64).clamp(0.0, 1.0) as f32
+        (0.5 + ev_offset / ev_range).clamp(0.0, 1.0) as f32
     }
 
     /// Set brightness (normalized 0..1, 0.5 = default).
@@ -917,7 +917,7 @@ impl IspController {
             };
 
             // Check for mixed illumination
-            let mut sorted = vec![warm_c, mid_c, cool_c];
+            let mut sorted = [warm_c, mid_c, cool_c];
             sorted.sort_by(|a, b| b.cmp(a));
             if sorted.len() >= 2 && (sorted[1] as f32 / total) > 0.20
                 && (sorted[0] as f32) < 0.80 * total

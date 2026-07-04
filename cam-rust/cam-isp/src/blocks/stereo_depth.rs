@@ -37,6 +37,12 @@ pub struct StereoDepthBlock {
     pub block_size: i64,
 }
 
+impl Default for StereoDepthBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StereoDepthBlock {
     pub fn new() -> Self {
         Self {

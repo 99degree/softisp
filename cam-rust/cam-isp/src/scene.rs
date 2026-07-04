@@ -42,10 +42,10 @@ impl SceneCategory {
         if !lum.is_finite() || lum < 0.03 {
             return Self::Dark;
         }
-        if lum >= 0.03 && lum <= 0.25 && cct >= 2000 && cct <= 4000 {
+        if (0.03..=0.25).contains(&lum) && (2000..=4000).contains(&cct) {
             return Self::SunriseSunset;
         }
-        if lum >= 0.03 && lum <= 0.25 {
+        if (0.03..=0.25).contains(&lum) {
             return Self::Indoor;
         }
         if lum > 0.5 {
