@@ -1,14 +1,14 @@
 //! NoiseEstimateBlock — per-pixel noise level estimation.
 //!
 //! Estimates local noise variance from the input image using a Laplacian-based
-//! noise estimator. Output is a [1,1,H,W] noise level map that can drive
+//! noise estimator. Output is a `[1,1,H,W]` noise level map that can drive
 //! adaptive temporal denoising or spatial denoising strength.
 //!
 //! ONNX subgraph:
 //!   1. Grayscale = 0.299*R + 0.587*G + 0.114*B (Conv group=3, 3→1)
-//!   2. Laplacian kernel: [[0,1,0],[1,-4,1],[0,1,0]] (Conv 3×3, 1→1)
+//!   2. Laplacian kernel: [`[0,1,0]`,`[1,-4,1]`,`[0,1,0]`] (Conv 3×3, 1→1)
 //!   3. Abs(laplacian)
-//!   4. Local mean: AvgPool(3×3) → [1,1,H,W]
+//!   4. Local mean: AvgPool(3×3) → `[1,1,H,W]`
 //!   5. Noise level = Mean(Abs(laplacian)) * scale
 //!
 //! The scale parameter controls sensitivity:

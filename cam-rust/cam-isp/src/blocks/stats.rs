@@ -5,10 +5,10 @@
 //! estimation (white balance gains, exposure, tone curve).
 //!
 //! Blocks:
-//! - `ZoneStatsBlock` — per-zone RGB means [1, 3, rows, cols]
-//! - `ChannelMeansBlock` — global channel means [1, 3]
-//! - `ToneStatsBlock` — luma mean, min, max, clipped/shadows [6]
-//! - `CoarseHistogramBlock` — 16-bin luminance histogram [16]
+//! - `ZoneStatsBlock` — per-zone RGB means `[1, 3, rows, cols]`
+//! - `ChannelMeansBlock` — global channel means `[1, 3]`
+//! - `ToneStatsBlock` — luma mean, min, max, clipped/shadows `[6]`
+//! - `CoarseHistogramBlock` — 16-bin luminance histogram `[16]`
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
@@ -19,7 +19,7 @@ use crate::onnx::proto::Proto;
 
 /// Zone statistics block — per-zone RGB averages via AveragePool.
 ///
-/// Graph: AveragePool(kernel=H/rows, stride=H/rows) → [1, 3, rows, cols]
+/// Graph: AveragePool(kernel=H/rows, stride=H/rows) → `[1, 3, rows, cols]`
 ///
 /// Kernel sizes are computed from concrete dims set via `with_concrete_dims()`.
 /// The pipeline builder passes the target resolution at model-build time,
@@ -105,7 +105,7 @@ impl IspBlock for ZoneStatsBlock {
 // ═══════════════════════════════════════════════════════════════════
 
 /// Global channel means — ReduceMean over spatial dims.
-/// Output: [1, 3] flat tensor of (mean_R, mean_G, mean_B).
+/// Output: `[1, 3]` flat tensor of (mean_R, mean_G, mean_B).
 pub struct ChannelMeansBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -183,13 +183,13 @@ impl IspBlock for ChannelMeansBlock {
 
 /// Tone statistics block — luma mean, min, max, clipped, shadows, count.
 ///
-/// Output: [6] flat tensor:
-///   [0] mean luma
-///   [1] min luma
-///   [2] max luma
-///   [3] clipped fraction (pixels > 0.95)
-///   [4] shadow fraction (pixels < 0.05)
-///   [5] total pixel count
+/// Output: `[6]` flat tensor:
+///   `[0]` mean luma
+///   `[1]` min luma
+///   `[2]` max luma
+///   `[3]` clipped fraction (pixels > 0.95)
+///   `[4]` shadow fraction (pixels < 0.05)
+///   `[5]` total pixel count
 ///
 /// Used by AE for exposure metering and tone mapping.
 /// All statistics are derived from luminance: L = 0.299R + 0.587G + 0.114B
@@ -320,7 +320,7 @@ impl IspBlock for ToneStatsBlock {
 
 /// Coarse luminance histogram — 16 evenly-spaced bins.
 ///
-/// Output: [1, 16] flat tensor of bin counts (normalised to fraction of pixels).
+/// Output: `[1, 16]` flat tensor of bin counts (normalised to fraction of pixels).
 ///
 /// Uses `Less` + `GreaterOrEqual` + `ReduceSum` per bin — 16 × 3 ≈ 48 ops
 /// over the full H×W tensor.  At FHD this is ~6ms on CPU, <1ms on GPU.
@@ -475,19 +475,19 @@ impl IspBlock for CoarseHistogramBlock {
 
 /// Calibration statistics block — quad-level Bayer stats for AF + learner.
 ///
-/// Input:  [1, 4, H, W]  Bayer quadrants (from aux_hook_src or its downscale)
-/// Output: [1, 24]       calibration stats matching CalibrationStats layout:
-///   [0:4]   quad_means     — mean of each quad channel
-///   [4:8]   quad_vars      — variance per quad (used by AF focus metric)
-///   [8:12]  quad_mins      — min per quad
-///   [12:16] quad_maxs      — max per quad
-///   [16:20] quad_ranges    — (max-min)/(max+ε) per quad
-///   [20]    frame_lum      — mean of 4 quad means
-///   [21]    frame_noise    — mean of 4 quad vars
-///   [22]    frame_min      — min across all quads
-///   [23]    frame_max      — max across all quads
+/// Input:  `[1, 4, H, W]`  Bayer quadrants (from aux_hook_src or its downscale)
+/// Output: `[1, 24]`       calibration stats matching CalibrationStats layout:
+///   `[0:4]`   quad_means     — mean of each quad channel
+///   `[4:8]`   quad_vars      — variance per quad (used by AF focus metric)
+///   `[8:12]`  quad_mins      — min per quad
+///   `[12:16]` quad_maxs      — max per quad
+///   `[16:20]` quad_ranges    — (max-min)/(max+ε) per quad
+///   `[20]`    frame_lum      — mean of 4 quad means
+///   `[21]`    frame_noise    — mean of 4 quad vars
+///   `[22]`    frame_min      — min across all quads
+///   `[23]`    frame_max      — max across all quads
 ///
-/// Graph: var = E[X²] - E[X]² (linearity of variance)
+/// Graph: var = E`[X²]` - E`[X]`² (linearity of variance)
 pub struct CalibrationBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

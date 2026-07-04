@@ -39,9 +39,9 @@ use crate::controller::IspController;
 /// - Per default (`PackedRgb`), every frame is `[1,1,H,W/2]` INT32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
-    /// Float RGB [0,1] — return raw f32×3 planar bytes.
+    /// Float RGB `[0,1]` — return raw f32×3 planar bytes.
     FloatRgb,
-    /// Float BGRA [0,255] — return raw f32×4 planar bytes (bg4a).
+    /// Float BGRA `[0,255]` — return raw f32×4 planar bytes (bg4a).
     FloatBgra,
     /// INT32 packed — return raw packed bytes (R<<16|G<<8|B, 4B/pixel).
     PackedRgb,
@@ -58,9 +58,9 @@ pub enum OutputFormat {
     Rgb,
     /// BGR u8 (3 bytes/pixel). Always converted.
     Bgr,
-    /// Float16 RGB [0,255] — return raw f16×3 planar bytes. Halves GPU→CPU bandwidth.
+    /// Float16 RGB `[0,255]` — return raw f16×3 planar bytes. Halves GPU→CPU bandwidth.
     Float16Rgb,
-    /// Float16 BGRA [0,255] — return raw f16×4 planar bytes. Halves GPU→CPU bandwidth.
+    /// Float16 BGRA `[0,255]` — return raw f16×4 planar bytes. Halves GPU→CPU bandwidth.
     Float16Bgra,
 }
 

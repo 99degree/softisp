@@ -3,10 +3,10 @@ use crate::onnx::proto::Proto;
 
 /// Demosaic block — Conv 1×1 converts 4 Bayer channels → 3 RGB channels.
 ///
-/// Takes [1,4,H,W] input (from CfaBlock's Conv stride=2 unpack) and outputs
-/// [1,3,H,W] where H,W are the halved dimensions after CfaBlock.
+/// Takes `[1,4,H,W]` input (from CfaBlock's Conv stride=2 unpack) and outputs
+/// `[1,3,H,W]` where H,W are the halved dimensions after CfaBlock.
 ///
-/// Uses Conv(1×1) with weights [3,4,1,1] matching the Java implementation.
+/// Uses Conv(1×1) with weights `[3,4,1,1]` matching the Java implementation.
 ///
 /// Bayer pattern → weight mapping (SpaceToDepth channel order: TL, TR, BL, BR):
 ///   RGGB (0): R=TL, G=avg(TR,BL), B=BR
@@ -48,7 +48,7 @@ impl DemosaicBlock {
         self
     }
 
-    /// Compute Conv 1×1 weights [3,4,1,1] based on bayer pattern.
+    /// Compute Conv 1×1 weights `[3,4,1,1]` based on bayer pattern.
     fn conv_weights(&self) -> Vec<f32> {
         match self.bayer_pattern {
             0 => vec![ // RGGB: [R, G, G, B] → [R, G_avg, B]

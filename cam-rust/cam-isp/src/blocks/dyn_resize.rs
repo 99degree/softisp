@@ -5,7 +5,7 @@
 //! or scale up for display.
 //!
 //! ONNX subgraph:
-//!   Resize(input, scales=[1,1,2,2], mode='linear')
+//!   Resize(input, scales=`[1,1,2,2]`, mode='linear')
 //!
 //! The scales are stored as initializers and can be hot-swapped via
 //! MNN's hot_swap_const_buffer() API.

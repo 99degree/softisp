@@ -36,7 +36,7 @@ impl SceneCategory {
 
     /// Classify a scene from mean luminance and estimated CCT.
     ///
-    /// `lum` is the mean luminance in [0, 1].
+    /// `lum` is the mean luminance in `[0, 1]`.
     /// `cct` is the estimated color temperature in Kelvin (can be 0 if unknown).
     pub fn classify(lum: f32, cct: u32) -> Self {
         if !lum.is_finite() || lum < 0.03 {

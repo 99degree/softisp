@@ -6,8 +6,8 @@ use crate::pipeline::IspBlock;
 /// Generates a Conv(4×4, stride=1, 1ch→3ch) pattern that IspChainFusion
 /// converts to `isp.demosaic_interp` (bilinear SPIR-V shader).
 ///
-/// Input:  [1,1,H,W] INT32 Bayer
-/// Output: [1,3,H,W] F32 RGB at full resolution (no downscale)
+/// Input:  `[1,1,H,W]` INT32 Bayer
+/// Output: `[1,3,H,W]` F32 RGB at full resolution (no downscale)
 ///
 /// For non-binned sensors where binning would lose too much resolution.
 /// Only one of UnpackCfaBlock or DemosaicInterpBlock should be used.

@@ -5,7 +5,7 @@
 //!
 //! ## IspChainFusion Standard Rule: R4
 //! R4 detects: `Conv(3×3, unsharp_kernel, outputCount=3)` → `isp.ee`
-//! * kernel_shape=[3,3], strides=[1,1], pads=[1,1,1,1]
+//! * kernel_shape=`[3,3]`, strides=`[1,1]`, pads=`[1,1,1,1]`
 //! * unsharp weights: `{0, -0.5, 0, -0.5, 3.0, -0.5, 0, -0.5, 0}` per channel
 //! * inputCount=3, outputCount=3 (per-channel edge detection)
 //!
@@ -16,8 +16,8 @@
 //! ### Intended runtime shader: `isp.ee`
 //! * SPIR-V `shader4_ee.comp` (embedded as `g_ee_spv`)
 //! * Const buffer: `[W, H, strength=0.5, threshold=0.01]`
-//! * Input: F32[1,3,H,W] RGB (original frame)
-//! * Output: F32[1,3,H,W] RGB (edge-enhanced)
+//! * Input: F32`[1,3,H,W]` RGB (original frame)
+//! * Output: F32`[1,3,H,W]` RGB (edge-enhanced)
 //! * Algorithm: `laplacian = 4*center - (t+b+l+r)`, `output = center + strength*laplacian`
 //!
 //! Trade-off vs original Rust block:

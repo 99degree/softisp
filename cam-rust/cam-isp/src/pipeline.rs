@@ -18,7 +18,7 @@ pub struct IspAuxOutput {
     pub focus_metric: Option<f32>,
     pub cct: Option<f32>,
     pub ae_gain: Option<f32>,
-    /// Calibration statistics [24] from quad-level Bayer analysis.
+    /// Calibration statistics `[24]` from quad-level Bayer analysis.
     pub calibration_stats: Option<[f32; 24]>,
     /// Scene classification for adaptive ISP.
     pub scene_category: Option<String>,
@@ -26,7 +26,7 @@ pub struct IspAuxOutput {
     pub af_phase: Option<String>,
     /// Current VCM lens position.
     pub vcm_position: Option<i32>,
-    /// EIS compensation [dx_px, dy_px, roll_deg].
+    /// EIS compensation `[dx_px, dy_px, roll_deg]`.
     pub eis_compensation: Option<[f32; 3]>,
 }
 
@@ -69,8 +69,8 @@ impl IspFrame {
 
 /// ISP block that contributes ONNX graph fragments to a fused pipeline.
 ///
-/// Blocks form a linked list via [next]/[prev], defining the frame buffer flow.
-/// GraphComposer takes the head block and traverses via [next].
+/// Blocks form a linked list via `[next]`/`[prev]`, defining the frame buffer flow.
+/// GraphComposer takes the head block and traverses via `[next]`.
 #[allow(clippy::borrowed_box)]
 pub trait IspBlock: Send {
     /// Unique block identifier.
@@ -111,7 +111,7 @@ pub trait IspBlock: Send {
         vec![]
     }
 
-    /// Tensor names this block reads. GraphComposer walks [prev] chain to
+    /// Tensor names this block reads. GraphComposer walks `[prev]` chain to
     /// find the producing block. Unresolved tensors become graph inputs.
     fn input_tensors(&self) -> Vec<String> {
         self.input_source()

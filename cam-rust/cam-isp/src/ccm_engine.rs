@@ -9,14 +9,14 @@
 
 /// Typical mobile sensor raw gray response (R:G:B ratios from HW ISP AWB gains).
 /// Derived from Camera2 hardware ISP: hw_awb_rg ≈ 2.2, hw_awb_bg ≈ 1.7
-/// → sensor raw gray = [1/2.2, 1.0, 1/1.7] ≈ [0.46, 1.0, 0.60].
+/// → sensor raw gray = `[1/2.2, 1.0, 1/1.7]` ≈ `[0.46, 1.0, 0.60]`.
 const SENSOR_GRAY_R: f32 = 0.46;
 const SENSOR_GRAY_G: f32 = 1.0;
 const SENSOR_GRAY_B: f32 = 0.60;
 
 /// Quadratic coefficients for CCT-based CCM interpolation.
 ///
-/// ccmelement[i] = a2[i] * cct² + a1[i] * cct + a0[i]
+/// ccmelement`[i]` = a2`[i]` * cct² + a1`[i]` * cct + a0`[i]`
 /// 9 elements × 3 coefficients = 27 floats.
 ///
 /// Fitted from 3-point targets at 2000K, 6500K, 10000K.
@@ -113,10 +113,10 @@ pub fn select_ccm(cct: i32) -> [f32; 9] {
 /// Enforced invariants:
 /// 1. Each row sums to 1.0 (neutral preservation).
 /// 2. R-B < 0 and B-R < 0 (no purple cross-contamination).
-/// 3. All off-diagonals ∈ [-1.0, 0] (no positive cross-talk).
-/// 4. Main diagonal ∈ [0.5, 3.0] (reasonable gain range).
-/// 5. AWB feasibility: for sensor gray [0.46, 1.0, 0.60],
-///    required R_gain, B_gain ∈ [0.5, 3.0] (no AWB clamp saturation).
+/// 3. All off-diagonals ∈ `[-1.0, 0]` (no positive cross-talk).
+/// 4. Main diagonal ∈ `[0.5, 3.0]` (reasonable gain range).
+/// 5. AWB feasibility: for sensor gray `[0.46, 1.0, 0.60]`,
+///    required R_gain, B_gain ∈ `[0.5, 3.0]` (no AWB clamp saturation).
 ///
 /// @param matrix 3×3 row-major CCM (modified in place)
 /// @param cct    CCT hint for diagnostics (default 5500)

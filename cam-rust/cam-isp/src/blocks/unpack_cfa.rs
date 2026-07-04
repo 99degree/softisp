@@ -1,14 +1,14 @@
 //! UnpackCfaBlock — Bayer input → 4-channel CFA quadrants via SpaceToDepth.
 //!
 //! PackedInt32 mode (legacy):
-//!   Input:  INT32[1,1,H,W/2]    (packed: pixel_even | (pixel_odd << 16))
-//!   Uses:   integer split → Cast → Conv(2×2,stride=2) → [1,4,H/2,W/2]
+//!   Input:  INT32`[1,1,H,W/2]`    (packed: pixel_even | (pixel_odd << 16))
+//!   Uses:   integer split → Cast → Conv(2×2,stride=2) → `[1,4,H/2,W/2]`
 //!
 //! NativeInt16 mode (default):
-//!   Input:  INT16[1,1,H,W]      (raw Bayer samples)
-//!   Uses:   SpaceToDepth(blocksize=2) → [1,4,H/2,W/2]
-//!           When use_blc|use_wb: Cast(INT16→F32) → SpaceToDepth → F32[1,4,H/2,W/2]
-//!           Otherwise: SpaceToDepth → INT16[1,4,H/2,W/2] (1 node, no Cast)
+//!   Input:  INT16`[1,1,H,W]`      (raw Bayer samples)
+//!   Uses:   SpaceToDepth(blocksize=2) → `[1,4,H/2,W/2]`
+//!           When use_blc|use_wb: Cast(INT16→F32) → SpaceToDepth → F32`[1,4,H/2,W/2]`
+//!           Otherwise: SpaceToDepth → INT16`[1,4,H/2,W/2]` (1 node, no Cast)
 //!   BLC + WB are fused into DemosaicCcmBlock's Conv1×1 weights.
 //!
 //! Fuses UnpackBlock + NormalizeBlock + CfaBlock (+ optionally BlcBlock, BayerWbBlock)
@@ -125,7 +125,7 @@ impl UnpackCfaBlock {
     }
 
     /// Enable extra height downscale (2×) after the CFA Conv.
-    /// Fuses a Resize(H/2) node into the output, giving [1,4,H/4,W/2/stride_w].
+    /// Fuses a Resize(H/2) node into the output, giving `[1,4,H/4,W/2/stride_w]`.
     /// Useful for 4K→FHD pipelines where FCS/LDCI/EE run at lower resolution.
     pub fn with_height_downscale(mut self, factor: i64) -> Self {
         self.height_downscale = factor.max(1);
