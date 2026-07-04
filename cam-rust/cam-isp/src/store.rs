@@ -34,11 +34,11 @@ pub const MAX_PERSISTENCE_FILE_BYTES: u64 = 1024 * 1024;
 pub struct CameraCharacteristics {
     /// Camera identifier (e.g., "0", "1", or "back", "front").
     pub camera_id: String,
-    /// Sensor sensitivity: ISO range [min, max].
+    /// Sensor sensitivity: ISO range `[min, max]`.
     pub iso_range: [f32; 2],
-    /// Exposure time range in nanoseconds [min, max].
+    /// Exposure time range in nanoseconds `[min, max]`.
     pub exposure_range_ns: [i64; 2],
-    /// Sensor physical size in mm [width, height].
+    /// Sensor physical size in mm `[width, height]`.
     pub sensor_size_mm: [f32; 2],
     /// Focal lengths in mm (may be multiple for zoom lenses).
     pub focal_lengths: Vec<f32>,
@@ -51,15 +51,15 @@ pub struct CameraCharacteristics {
 
     // ── ISP calibration targets (learned per sensor) ──
 
-    /// Black level per Bayer channel [R, Gr, Gb, B].
+    /// Black level per Bayer channel `[R, Gr, Gb, B]`.
     pub black_level: [f32; 4],
     /// White level (sensor saturation).
     pub white_level: f32,
     /// Default CCM matrix (3x3 row-major) for D65 illuminant.
     pub default_ccm: [f32; 9],
-    /// AWB gains for D65 illuminant [R, G, B].
+    /// AWB gains for D65 illuminant `[R, G, B]`.
     pub d65_awb: [f32; 3],
-    /// AWB gains for A illuminant [R, G, B].
+    /// AWB gains for A illuminant `[R, G, B]`.
     pub a_awb: [f32; 3],
     /// Sensor gray world R/G and B/G ratios (for AWB sanity checking).
     pub sensor_gray_rg: f32,
@@ -168,11 +168,11 @@ impl CameraCharacteristicsStore {
 /// Matches StatsLearner.Observation from the Java codebase.
 #[derive(Debug, Clone)]
 pub struct LearnerObservation {
-    /// Pipeline RGB channel means [0..1].
+    /// Pipeline RGB channel means `[0..1]`.
     pub r: f32,
     pub g: f32,
     pub b: f32,
-    /// Pipeline mean luminance [0..1].
+    /// Pipeline mean luminance `[0..1]`.
     pub lum: f32,
     /// Pipeline estimated CCT in Kelvin.
     pub cct: u32,

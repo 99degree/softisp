@@ -4,11 +4,11 @@
 //! This corrects color fringing at edges caused by lens design limitations.
 //!
 //! ONNX subgraph:
-//!   Split(input, axis=1) → [R, G, B]
+//!   Split(input, axis=1) → `[R, G, B]`
 //!   GridSample(R, grid_r) → R_corrected
 //!   GridSample(G, grid_g) → G_corrected
 //!   GridSample(B, grid_b) → B_corrected
-//!   Concat([R_c, G_c, B_c], axis=1) → output
+//!   Concat(`[R_c, G_c, B_c]`, axis=1) → output
 //!
 //! Grid generation: radial model where R and B channels are shifted outward/inward
 //! relative to G (reference channel).
@@ -29,7 +29,7 @@ pub struct ChromaticAberrationBlock {
     pub input_source: String,
     pub height: Option<i64>,
     pub width: Option<i64>,
-    /// Per-channel grids: [grid_r, grid_g, grid_b] each [1, H, W, 2]
+    /// Per-channel grids: `[grid_r, grid_g, grid_b]` each `[1, H, W, 2]`
     pub grids: Option<Vec<f32>>, // flattened all 3 grids
 }
 

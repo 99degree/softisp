@@ -6,15 +6,15 @@
 //! learner/calibration system:
 //!
 //! Output: `[CalibrationStats; 24]`
-//!   [0:4]   quad_means     — mean of each quad channel (TL, TR, BL, BR)
-//!   [4:8]   quad_vars      — variance (read noise per quad)
-//!   [8:12]  quad_mins      — minimum value per quad (DSNU)
-//!   [12:16] quad_maxs      — maximum value per quad (saturation check)
-//!   [16:20] quad_ranges    — (max-min)/max per quad (dynamic range)
-//!   [20]    frame_lum      — overall mean luminance (avg of 4 means)
-//!   [21]    frame_noise    — mean of 4 variances (overall noise floor)
-//!   [22]    frame_min      — minimum across all quads (darkest pixel)
-//!   [23]    frame_max      — maximum across all quads (brightest pixel)
+//!   `[0:4]`   quad_means     — mean of each quad channel (TL, TR, BL, BR)
+//!   `[4:8]`   quad_vars      — variance (read noise per quad)
+//!   `[8:12]`  quad_mins      — minimum value per quad (DSNU)
+//!   `[12:16]` quad_maxs      — maximum value per quad (saturation check)
+//!   `[16:20]` quad_ranges    — (max-min)/max per quad (dynamic range)
+//!   `[20]`    frame_lum      — overall mean luminance (avg of 4 means)
+//!   `[21]`    frame_noise    — mean of 4 variances (overall noise floor)
+//!   `[22]`    frame_min      — minimum across all quads (darkest pixel)
+//!   `[23]`    frame_max      — maximum across all quads (brightest pixel)
 
 use cam_types::BayerPattern;
 

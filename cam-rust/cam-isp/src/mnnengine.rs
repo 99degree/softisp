@@ -6,7 +6,7 @@
 //!   3. Load .mnn with MNN runtime
 //!
 //! Inference flow:
-//!   1. Set input shape [1,1,H,W]
+//!   1. Set input shape `[1,1,H,W]`
 //!   2. Copy INT16 sensor data as normalized float32
 //!   3. Run session
 //!   4. Read output float32 → BGRA U8
@@ -18,7 +18,7 @@ use std::time::Instant;
 use std::ffi::CStr;
 use log::{info, debug, warn, error};
 
-/// Zone data: (rows, cols, zone_rgb[r][c] = [f32; 3])
+/// Zone data: (rows, cols, zone_rgb`[r]``[c]` = `[f32; 3]`)
 type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 
 use cam_types::{FrameFormat, ToneParams};
@@ -316,11 +316,11 @@ impl MnnEngine {
     /// size is fixed, making this suitable for benchmarking any resolution.
     ///
     /// Architecture:
-    ///   Input [1,1,H,W] → Conv1(1→8,3×3) → Relu → Conv2(8→8,3×3) → Relu
-    ///   → GlobalAveragePool [1,8,1,1] → Reshape [1,8]
-    ///   → MatMul[8,64] → Relu → MatMul[64,8] → Reshape [1,8,1,1]
-    ///   → Resize (nearest, ×H×W) [1,8,H,W] → Conv3(8→3,3×3)
-    ///   → GridSampler(bilinear) → Output [1,3,H,W]
+    ///   Input `[1,1,H,W]` → Conv1(1→8,3×3) → Relu → Conv2(8→8,3×3) → Relu
+    ///   → GlobalAveragePool `[1,8,1,1]` → Reshape `[1,8]`
+    ///   → MatMul`[8,64]` → Relu → MatMul`[64,8]` → Reshape `[1,8,1,1]`
+    ///   → Resize (nearest, ×H×W) `[1,8,H,W]` → Conv3(8→3,3×3)
+    ///   → GridSampler(bilinear) → Output `[1,3,H,W]`
     ///
     /// ~2K weights (all Conv), compute scales with H×W.
     #[cfg(feature = "mnn")]

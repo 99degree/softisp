@@ -9,10 +9,10 @@
 //!   Mul(warped, shading_lut) → output  (if lens shading enabled)
 //!
 //! GridSample node specs:
-//! - Input: [1,3,H,W] float32 RGB image tensor
-//! - Grid: [1,OH,OW,2] float32 sampling grid in [-1,1] range
+//! - Input: `[1,3,H,W]` float32 RGB image tensor
+//! - Grid: `[1,OH,OW,2]` float32 sampling grid in `[-1,1]` range
 //! - Mode: LINEAR, CLAMP
-//! - Target: [1,3,OH,OW] out
+//! - Target: `[1,3,OH,OW]` out
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
@@ -115,7 +115,7 @@ impl WarpGridBlock {
 
     /// Generate a combined GDC + EIS grid.
     /// `gdc_k1..k3`: radial distortion coefficients.
-    /// `eis_grid`: per-frame EIS sampling grid [1,H,W,2] (identity if no EIS).
+    /// `eis_grid`: per-frame EIS sampling grid `[1,H,W,2]` (identity if no EIS).
     /// The two grids are composed: for each output pixel, first apply EIS warp,
     /// then apply GDC correction at the EIS-sampled position.
     pub fn with_gdc_and_eis(mut self, k1: f32, k2: f32, k3: f32, eis_grid: Vec<f32>) -> Self {
@@ -205,7 +205,7 @@ impl WarpGridBlock {
         self
     }
 
-    /// Use a pre-built shading LUT (already packed as [1,3,H,W] f32).
+    /// Use a pre-built shading LUT (already packed as `[1,3,H,W]` f32).
     pub fn with_shading_lut(mut self, h: u32, w: u32, lut: Vec<f32>) -> Self {
         let name = format!("{}/shading_lut", self.tensor_ns());
         let init = Proto::tensor_proto_float(
