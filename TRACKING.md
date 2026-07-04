@@ -80,14 +80,14 @@ RawInput(INT16 [1,1,2160,3840])
 | **Display** | DisplayBlock |
 | **Other** | IdentityBlock, FastDemosaicBlock, BlcBlock, FlipBlock, LensShadingBlock (merged), NormalizeBlock, MbAlignBlock, SmartPadBlock |
 
-### 490 Tests
+### 521 Tests
 
 | Suite | Count |
 |-------|-------|
 | Lib unit tests | 432 |
-| Integration (new_blocks, builder methods) | 56 |
+| Integration (all test files) | 87 |
 | E2E (isp_pipeline) | 2 |
-| **Total** | **490** |
+| **Total** | **521** |
 
 All 36 examples compile, 0 warnings.
 
