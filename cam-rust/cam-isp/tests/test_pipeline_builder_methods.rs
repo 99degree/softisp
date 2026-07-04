@@ -140,7 +140,6 @@ fn test_builder_remove_block() {
 
 #[test]
 fn test_builder_replace_block() {
-    use cam_isp::pipeline::IspBlock;
     use cam_isp::blocks::GammaBlock;
 
     let mut b = PipelineBuilder::new(640, 480)
@@ -190,8 +189,6 @@ fn test_builder_from_config_roundtrip() {
 
 #[test]
 fn test_builder_to_config_roundtrip() {
-    use cam_isp::serializer::PipelineConfig;
-
     let original = PipelineBuilder::new(1920, 1080)
         .unpack()
         .demosaic_mhc()
