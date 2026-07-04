@@ -224,8 +224,8 @@ mod tests {
     #[test]
     fn test_ca_grid_r_shifts_outward() {
         let grids = ChromaticAberrationBlock::generate_ca_grids(100, 100, 2.0);
-        let h = 100usize;
-        let w = 100usize;
+        let _h = 100usize;
+        let _w = 100usize;
         // Top-left corner: R should shift outward (away from center)
         let r_offset = 0; // R channel
         let corner_idx = 0; // top-left pixel
