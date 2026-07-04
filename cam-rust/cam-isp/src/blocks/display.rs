@@ -575,4 +575,17 @@ mod tests {
         // Rgba uses Conv(1x1) for channel permutation
         assert!(!nodes.is_empty());
     }
+
+    #[test]
+    fn test_display_tensor_ns() {
+        let b = DisplayBlock::new(640);
+        assert!(!b.tensor_ns().is_empty());
+    }
+
+    #[test]
+    fn test_display_initializers() {
+        let b = DisplayBlock::new(640);
+        let inits = b.initializers();
+        assert_eq!(inits.len(), 3);
+    }
 }

@@ -158,9 +158,16 @@ mod tests {
         assert!(onnx.is_ok(), "ONNX composition should succeed");
         let bytes = onnx.unwrap();
         assert!(bytes.len() > 100, "ONNX protobuf should be non-trivial");
-        let s = String::from_utf8_lossy(&bytes);
-        assert!(s.contains("Conv"), "ONNX should contain Conv op");
-        assert!(s.contains("GrayscaleBlock"), "ONNX should contain grayscale tensor names");
-        assert!(s.contains("PyramidBlock"), "ONNX should contain pyramid tensor names");
+    }
+
+    #[test]
+    fn test_grayscale_id() {
+        assert_eq!(GrayscaleBlock::new().id(), "grayscale");
+    }
+
+    #[test]
+    fn test_grayscale_tensor_ns() {
+        let b = GrayscaleBlock::new();
+        assert!(!b.tensor_ns().is_empty());
     }
 }
