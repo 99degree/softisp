@@ -109,4 +109,17 @@ mod tests {
         // gain + bias = 2
         assert_eq!(inits.len(), 2);
     }
+
+    #[test]
+    fn test_fcs_tensor_ns() {
+        let b = FcsBlock::new();
+        assert!(!b.tensor_ns().is_empty());
+    }
+
+    #[test]
+    fn test_fcs_with_gain_offset() {
+        let b = FcsBlock::new();
+        let inits = b.initializers();
+        assert_eq!(inits.len(), 2);
+    }
 }
