@@ -3,7 +3,7 @@
 //! Generates a single Conv(2×2, stride=2) with identity weight (top-left=1.0).
 //! IspChainFusion detects this and fuses into `isp.pyramid` Extra op,
 //! which runs a SPIR-V compute shader doing nearest-neighbor 2× downscale:
-//!   `out[oy, ox] = input[2*oy, 2*ox]` per channel
+//!   `out`[oy, ox]` = input[2*oy, 2*ox]` per channel
 //!
 //! This reduces the luminance map resolution for the block-matching search
 //! in the DeshakeEngine, enabling faster motion estimation.
@@ -97,7 +97,7 @@ mod tests {
     use super::*;
 
     /// Verify pyramid identity weights: top-left = 1.0 per output channel.
-    /// Weight shape: [3, 3, 2, 2], position (oc, oc, 0, 0) = 1.0
+    /// Weight shape: `[3, 3, 2, 2]`, position (oc, oc, 0, 0) = 1.0
     #[test]
     fn test_pyramid_identity_weights() {
         let block = PyramidBlock::new();
@@ -124,7 +124,7 @@ mod tests {
         assert!(w_pos.is_some(), "identity weights not found in tensor");
     }
 
-    /// Verify output shape preserves channels [1, 3, H, W].
+    /// Verify output shape preserves channels `[1, 3, H, W]`.
     #[test]
     fn test_pyramid_output_shape() {
         let block = PyramidBlock::new();

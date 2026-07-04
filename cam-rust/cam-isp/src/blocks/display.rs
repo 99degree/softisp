@@ -5,16 +5,16 @@
 //! just reads the raw output buffer, no Rust-side conversion needed.
 //!
 //! Format → ONNX subgraph:
-//! - `FloatRgb`:  identity Mul(1.0) → [1,3,H,W] f32 RGB [0,1]
-//! - `FloatBgra`: Conv(1×1) BGR permutation + alpha=255 → [1,4,H,W] f32 BGRA [0,255]
-//! - `PackedRgb`: adjacent-pixel pack → [1,1,H,W/2] INT32
+//! - `FloatRgb`:  identity Mul(1.0) → `[1,3,H,W]` f32 RGB `[0,1]`
+//! - `FloatBgra`: Conv(1×1) BGR permutation + alpha=255 → `[1,4,H,W]` f32 BGRA `[0,255]`
+//! - `PackedRgb`: adjacent-pixel pack → `[1,1,H,W/2]` INT32
 //!   word = (pixel0.R << 8) | pixel0.G | (pixel1.B << 24) | (pixel1.A << 16)
-//! - `Bgra`:      same Conv as FloatBgra → [1,4,H,W] f32 BGRA [0,255]
-//! - `Rgba`:      Conv(1×1) identity permutation + alpha=255 → [1,4,H,W] f32 RGBA [0,255]
-//! - `Argb`:      Conv(1×1) alpha-first permutation → [1,4,H,W] f32 ARGB [0,255]
-//! - `Abgr`:      Conv(1×1) ABGR permutation → [1,4,H,W] f32 ABGR [0,255]
-//! - `Rgb`:       Conv(1×1) identity permutation, no alpha → [1,3,H,W] f32 RGB [0,255]
-//! - `Bgr`:       Conv(1×1) BGR permutation, no alpha → [1,3,H,W] f32 BGR [0,255]
+//! - `Bgra`:      same Conv as FloatBgra → `[1,4,H,W]` f32 BGRA `[0,255]`
+//! - `Rgba`:      Conv(1×1) identity permutation + alpha=255 → `[1,4,H,W]` f32 RGBA `[0,255]`
+//! - `Argb`:      Conv(1×1) alpha-first permutation → `[1,4,H,W]` f32 ARGB `[0,255]`
+//! - `Abgr`:      Conv(1×1) ABGR permutation → `[1,4,H,W]` f32 ABGR `[0,255]`
+//! - `Rgb`:       Conv(1×1) identity permutation, no alpha → `[1,3,H,W]` f32 RGB `[0,255]`
+//! - `Bgr`:       Conv(1×1) BGR permutation, no alpha → `[1,3,H,W]` f32 BGR `[0,255]`
 //!
 //! Rotation/flip modes fused via Transpose + Slice before the format node.
 
@@ -24,7 +24,7 @@ use crate::onnx::proto::Proto;
 
 /// DisplayBlock — final format conversion + tone mapping.
 ///
-/// Converts float32 RGB [0,1] → RGBA/ARGB/AGBR [0,255] via Conv(1×1)
+/// Converts float32 RGB `[0,1]` → RGBA/ARGB/AGBR `[0,255]` via Conv(1×1)
 /// with channel permutation weights. Supports sRGB gamma encoding.
 /// Output format selected at build time via `.rgba()`, `.argb()`, `.agbr()`.
 pub struct DisplayBlock {
@@ -45,8 +45,8 @@ pub struct DisplayBlock {
     /// lower 16 bits = pixel0.R|G, upper 16 bits = pixel1.B|A.
     pub pack_two_pixels: bool,
     /// Optional float output tensor name for post-processing pipeline.
-    /// When set, the block produces an additional [1,3,H,W] float32 tensor
-    /// in [0,1] range that can be consumed by PostProcessPipeline.
+    /// When set, the block produces an additional `[1,3,H,W]` float32 tensor
+    /// in `[0,1]` range that can be consumed by PostProcessPipeline.
     pub postprocess_output: Option<String>,
     /// Workgroup tuning for Vulkan dispatch: (size_x, size_y).
     /// Default (0,0) = MNN auto-tune; recommended: (32,8) for 4K.
@@ -91,7 +91,7 @@ impl DisplayBlock {
         self.output_format = fmt;
         self
     }
-    /// Enable post-processing output: additional [1,3,H,W] float32 tensor in [0,1] range.
+    /// Enable post-processing output: additional `[1,3,H,W]` float32 tensor in `[0,1]` range.
     /// When enabled, the block produces a second output tensor named `postprocess_output`
     /// that can be consumed directly by PostProcessPipeline.
     pub fn with_postprocess_output(mut self, enable: bool) -> Self {
@@ -108,7 +108,7 @@ impl DisplayBlock {
         self.postprocess_output = Some(name.to_string());
         self
     }
-    /// Output is [1,1,H,W/2] INT32:
+    /// Output is `[1,1,H,W/2]` INT32:
     /// lower 16 bits = pixel0.R|G, upper 16 bits = pixel1.B|A.
     /// Equivalent to `.with_output_format(OutputFormat::PackedRgb)`.
     pub fn with_pack_rgba(mut self, enable: bool) -> Self {
@@ -124,7 +124,7 @@ impl DisplayBlock {
         self.pack_two_pixels = enable;
         self
     }
-    /// Enable BGRA float [0,255] output via Conv(1×1) (FloatBgra format).
+    /// Enable BGRA float `[0,255]` output via Conv(1×1) (FloatBgra format).
     /// Equivalent to `.with_output_format(OutputFormat::FloatBgra)`.
     pub fn with_bg4a(mut self, enable: bool) -> Self {
         if enable {
@@ -174,17 +174,17 @@ impl DisplayBlock {
         self
     }
 
-    /// RGBA output: [1,4,H,W] float32 [0,255].
+    /// RGBA output: `[1,4,H,W]` float32 `[0,255]`.
     pub fn rgba(self) -> Self {
         self.with_output_format(OutputFormat::Rgba)
     }
 
-    /// ARGB output: [1,4,H,W] float32 [0,255].
+    /// ARGB output: `[1,4,H,W]` float32 `[0,255]`.
     pub fn argb(self) -> Self {
         self.with_output_format(OutputFormat::Argb)
     }
 
-    /// AGRB (ABGR) output: [1,4,H,W] float32 [0,255].
+    /// AGRB (ABGR) output: `[1,4,H,W]` float32 `[0,255]`.
     pub fn agbr(self) -> Self {
         self.with_output_format(OutputFormat::Abgr)
     }

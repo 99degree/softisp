@@ -119,7 +119,7 @@ pub struct PostProcessPipeline {
     prev_frame: Option<Vec<u8>>,
     /// Previous frame dimensions.
     prev_dims: Option<(u32, u32)>,
-    /// GDC distortion coefficients [k1, k2, p1, p2, k3].
+    /// GDC distortion coefficients `[k1, k2, p1, p2, k3]`.
     gdc_coefficients: [f32; 5],
     /// GDC center point (normalized 0-1).
     gdc_center: (f32, f32),
@@ -224,11 +224,11 @@ impl PostProcessPipeline {
         self.process_inner(&frame.data, frame.width, frame.height, frame)
     }
 
-    /// Process a float tensor [1,3,H,W] in [0,1] range (FloatRgb planar format).
+    /// Process a float tensor `[1,3,H,W]` in `[0,1]` range (FloatRgb planar format).
     ///
     /// This is the preferred input for post-processing — avoids format conversion.
     /// The float data is expected as RGB planar: [R0,R1,...,Rn, G0,G1,...,Gn, B0,B1,...,Bn].
-    /// Values are in [0,1] range (matching FloatRgb ISP output).
+    /// Values are in `[0,1]` range (matching FloatRgb ISP output).
     pub fn process_float(
         &mut self,
         float_data: &[f32],
