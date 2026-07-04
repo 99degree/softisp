@@ -67,44 +67,4 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
     }
 }
 
-/// Convert a TensorFlow model to MNN format.
-/// @param preserve_input_type  Preserve int16/uint16/float16 input types.
-MNN_PUBLIC void mnn_convert_tf_to_mnn(
-    const char* tf_model_path,
-    const char* mnn_path,
-    const char* biz_code,
-    int optimize_level,
-    int weight_quant_bits,
-    int fp16,
-    int preserve_input_type,
-    MnnConvertResult* result)
-{
-    result->success = 0;
-    result->error_msg[0] = '\0';
-
-    try {
-        modelConfig config;
-        config.model = modelConfig::TENSORFLOW;
-        config.modelFile = tf_model_path;
-        config.MNNModel = mnn_path;
-        config.bizCode = biz_code ? biz_code : "MNN";
-        config.optimizeLevel = optimize_level;
-        config.weightQuantBits = weight_quant_bits;
-        config.saveHalfFloat = fp16 != 0;
-        config.preserveInputType = preserve_input_type != 0;
-
-        if (!MNN::Cli::convertModel(config)) {
-            result->success = -1;
-            snprintf(result->error_msg, sizeof(result->error_msg),
-                     "MNN::Cli::convertModel returned false");
-        }
-    } catch (const std::exception& e) {
-        result->success = -1;
-        snprintf(result->error_msg, sizeof(result->error_msg), "%s", e.what());
-    } catch (...) {
-        result->success = -1;
-        snprintf(result->error_msg, sizeof(result->error_msg), "Unknown exception");
-    }
-}
-
 } // extern "C"
