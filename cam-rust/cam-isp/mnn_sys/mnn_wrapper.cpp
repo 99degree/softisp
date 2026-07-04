@@ -13,9 +13,6 @@
 #include <MNN/Tensor.hpp>
 #include <MNN/HalideRuntime.h>
 #include <MNN/MNNForwardType.h>
-#include <MNN/expr/Expr.hpp>
-#include <MNN/expr/Module.hpp>
-#include <MNN/expr/ExprCreator.hpp>
 #include <cstring>
 
 // ── Interpreter ──────────────────────────────────────────────────────────
@@ -385,113 +382,6 @@ extern "C" int mnn_set_input_float(
     return 0;
 }
 
-// ── Express Module API (C wrapper) ──────────────────────────────────────
-
-using namespace MNN::Express;
-
-MnnVARP* mnn_express_load_vars(const char* path, int* out_count) {
-    if (!path || !out_count) return nullptr;
-    try {
-        auto vars = Variable::load(path);
-        if (vars.empty()) return nullptr;
-        int n = (int)vars.size();
-        auto* arr = new MnnVARP[n];
-        for (int i = 0; i < n; i++) {
-            arr[i] = new VARP(vars[i]);
-        }
-        *out_count = n;
-        return arr;
-    } catch (...) { return nullptr; }
-}
-
-MnnExpressModule mnn_express_extract(MnnVARP* inputs, int n_inputs, MnnVARP* outputs, int n_outputs) {
-    if (!inputs || !outputs || n_inputs < 1 || n_outputs < 1) return nullptr;
-    try {
-        std::vector<VARP> ins, outs;
-        for (int i = 0; i < n_inputs; i++) ins.push_back(*(VARP*)inputs[i]);
-        for (int i = 0; i < n_outputs; i++) outs.push_back(*(VARP*)outputs[i]);
-        auto* module = Module::extract(ins, outs, false);
-        return (MnnExpressModule)module;
-    } catch (...) { return nullptr; }
-}
-
-void mnn_express_destroy_module(MnnExpressModule module) {
-    auto* m = (Module*)module;
-    if (m) Module::destroy(m);
-}
-
-MnnVARP mnn_express_create_input(const int* dims, int ndim, int format, int dtype) {
-    if (!dims) return nullptr;
-    try {
-        std::vector<int> shape(dims, dims + ndim);
-        auto fmt = (Dimensionformat)format;
-        halide_type_t type;
-        if (dtype == 4) type = halide_type_of<float>();
-        else type = halide_type_of<int>();
-        auto var = _Input(shape, fmt, type);
-        if (!var.get()) return nullptr;
-        return new VARP(var);
-    } catch (...) { return nullptr; }
-}
-
-void* mnn_express_write_map(MnnVARP varp) {
-    if (!varp) return nullptr;
-    try { return ((VARP*)varp)->get()->writeMap<float>(); }
-    catch (...) { return nullptr; }
-}
-
-const void* mnn_express_read_map(MnnVARP varp) {
-    if (!varp) return nullptr;
-    try { return ((VARP*)varp)->get()->readMap<float>(); }
-    catch (...) { return nullptr; }
-}
-
-int mnn_express_var_info(MnnVARP varp, int* dims_out, int max_dims, int* out_format) {
-    if (!varp || !dims_out || !out_format) return -1;
-    try {
-        auto* info = ((VARP*)varp)->get()->getInfo();
-        if (!info) return -1;
-        int n = (int)info->dim.size() < max_dims ? (int)info->dim.size() : max_dims;
-        for (int i = 0; i < n; i++) dims_out[i] = info->dim[i];
-        *out_format = (int)info->order;
-        return n;
-    } catch (...) { return -1; }
-}
-
-int mnn_express_var_resize(MnnVARP varp, const int* dims, int ndim) {
-    if (!varp || !dims) return -1;
-    try {
-        std::vector<int> shape(dims, dims + ndim);
-        return ((VARP*)varp)->get()->resize(shape) ? 0 : -1;
-    } catch (...) { return -1; }
-}
-
-MnnVARP* mnn_express_forward(MnnExpressModule module, MnnVARP* inputs, int n_inputs, int* out_count) {
-    if (!module || !inputs || !out_count) return nullptr;
-    try {
-        auto* m = (Module*)module;
-        std::vector<VARP> ins;
-        for (int i = 0; i < n_inputs; i++) ins.push_back(*(VARP*)inputs[i]);
-        auto outs = m->onForward(ins);
-        if (outs.empty()) { *out_count = 0; return nullptr; }
-        int n = (int)outs.size();
-        auto* arr = new MnnVARP[n];
-        for (int i = 0; i < n; i++) {
-            arr[i] = new VARP(outs[i]);
-        }
-        *out_count = n;
-        return arr;
-    } catch (...) { return nullptr; }
-}
-
-void mnn_varps_destroy(MnnVARP* varps, int count) {
-    if (!varps) return;
-    for (int i = 0; i < count; i++) {
-        delete (VARP*)varps[i];
-    }
-    delete[] varps;
-}
-
 
 // ── Zero-copy inference: directly set host pointer ──────────────────────
 /**
@@ -775,25 +665,3 @@ extern "C" int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session
     }
 }
 
-
-// ── Profiler API ─────────────────────────────────────────────────────
-// MNN::Express is NOT available in the current libMNN.so build
-// (MNN_Express was disabled during cmake). Provide safe stubs.
-
-extern "C" MnnExecutor mnn_executor_get_global() {
-    // Express not available — return nullptr (caller checks for null)
-    return nullptr;
-}
-
-extern "C" void mnn_executor_reset_profile(MnnExecutor /*executor*/) {
-    // No-op: MNN_Express profiling not available in this build
-}
-
-extern "C" void mnn_executor_dump_profile(MnnExecutor /*executor*/) {
-    // No-op: MNN_Express profiling not available in this build
-}
-
-extern "C" float mnn_executor_get_last_gpu_time_ms(MnnExecutor /*executor*/) {
-    // Return -1 to indicate 'profiling unavailable'
-    return -1.0f;
-}
