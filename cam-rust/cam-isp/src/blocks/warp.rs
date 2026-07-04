@@ -146,8 +146,8 @@ impl WarpGridBlock {
                 let inv = if denom.abs() > 1e-6 { 1.0 / denom } else { 1.0 };
                 let gx = (dx * inv * cx + cx) / (cx * 2.0) * 2.0 - 1.0;
                 let gy = (dy * inv * cy + cy) / (cy * 2.0) * 2.0 - 1.0;
-                composed.push(gx.max(-1.0).min(1.0));
-                composed.push(gy.max(-1.0).min(1.0));
+                composed.push(gx.clamp(-1.0, 1.0));
+                composed.push(gy.clamp(-1.0, 1.0));
             }
         }
         self.grid_initializer = Some(Proto::tensor_proto_float(
@@ -179,8 +179,8 @@ impl WarpGridBlock {
                 let inv = if denom.abs() > 1e-6 { 1.0 / denom } else { 1.0 };
                 let ux = nx * inv;
                 let uy = ny * inv;
-                grid.push(ux.max(-1.0).min(1.0));
-                grid.push(uy.max(-1.0).min(1.0));
+                grid.push(ux.clamp(-1.0, 1.0));
+                grid.push(uy.clamp(-1.0, 1.0));
             }
         }
         grid

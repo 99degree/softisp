@@ -159,6 +159,10 @@ pub fn mnn_run_with_output(
 // returns 0 on success. This works without the profiler flag.
 // When profiling is enabled, a separate string version `MNN_GetSessionInfoString`
 // can be used for per‑node timing data.
+///
+/// # Safety
+///
+/// `session`, `info_code`, and `out` must be valid pointers.
 #[no_mangle]
 pub unsafe extern "C" fn MNN_GetSessionInfo(session: *mut c_void, info_code: c_int, out: *mut c_void) -> c_int {
     // The real implementation is provided by libMNN.so; this stub simply
@@ -169,6 +173,10 @@ pub unsafe extern "C" fn MNN_GetSessionInfo(session: *mut c_void, info_code: c_i
 }
 
 // Fallback for optional profiling string version (returns NULL when profiling is unavailable).
+///
+/// # Safety
+///
+/// `session` must be a valid pointer.
 #[no_mangle]
 pub unsafe extern "C" fn MNN_GetSessionInfoString(_session: *mut c_void) -> *const c_char {
     std::ptr::null()

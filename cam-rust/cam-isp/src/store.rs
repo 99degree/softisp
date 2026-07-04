@@ -120,8 +120,10 @@ impl CameraCharacteristicsStore {
     /// Get or create default characteristics for a camera.
     pub fn get_or_default(&mut self, camera_id: &str) -> CameraCharacteristics {
         self.cameras.get(camera_id).cloned().unwrap_or_else(|| {
-            let mut chars = CameraCharacteristics::default();
-            chars.camera_id = camera_id.to_string();
+            let chars = CameraCharacteristics {
+                camera_id: camera_id.to_string(),
+                ..Default::default()
+            };
             self.cameras.insert(camera_id.to_string(), chars.clone());
             chars
         })
