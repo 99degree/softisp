@@ -115,3 +115,41 @@ pub(crate) fn compute_zone_stats(
     }
     zones
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_channel_means() {
+        let rgb = vec![0.8, 0.6, 0.4, 0.2, 0.4, 0.6];
+        let means = compute_channel_means(&rgb);
+        assert!((means[0] - 0.5).abs() < 0.001);
+        assert!((means[1] - 0.5).abs() < 0.001);
+        assert!((means[2] - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_compute_channel_means_empty() {
+        assert_eq!(compute_channel_means(&[]), [0.0; 3]);
+    }
+
+    #[test]
+    fn test_compute_tone_stats() {
+        let rgb = vec![0.1, 0.2, 0.3, 0.9, 0.8, 0.7];
+        let stats = compute_tone_stats(&rgb);
+        assert!(stats[1] <= stats[0]);
+        assert!(stats[2] >= stats[0]);
+    }
+
+    #[test]
+    fn test_compute_zone_stats() {
+        let mut rgb = vec![0.0f32; 4 * 4 * 3];
+        for i in 0..4 {
+            rgb[i * 3] = 0.8;
+        }
+        let zones = compute_zone_stats(&rgb, 4, 4, 2, 2);
+        assert_eq!(zones.len(), 12);
+        assert!(zones[0] > 0.0); // R channel of top-left zone
+    }
+}

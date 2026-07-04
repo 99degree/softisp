@@ -143,4 +143,35 @@ mod tests {
         let p = OptProfile::auto_select(640, 480, PerfTier::Low);
         assert!(p.estimated_dispatches() <= 4); // unpack + denoise + display
     }
+
+    #[test]
+    fn test_needs_warp_high() {
+        let p = OptProfile::auto_select(3840, 2160, PerfTier::High);
+        assert!(p.needs_warp());
+    }
+
+    #[test]
+    fn test_needs_warp_low() {
+        let p = OptProfile::auto_select(640, 480, PerfTier::Low);
+        assert!(!p.needs_warp());
+    }
+
+    #[test]
+    fn test_needs_ca_high() {
+        let p = OptProfile::auto_select(3840, 2160, PerfTier::High);
+        assert!(p.needs_ca());
+    }
+
+    #[test]
+    fn test_needs_ca_medium() {
+        let p = OptProfile::auto_select(1920, 1080, PerfTier::Medium);
+        assert!(!p.needs_ca());
+    }
+
+    #[test]
+    fn test_dispatches_ordered() {
+        let low = OptProfile::auto_select(640, 480, PerfTier::Low);
+        let high = OptProfile::auto_select(640, 480, PerfTier::High);
+        assert!(high.estimated_dispatches() >= low.estimated_dispatches());
+    }
 }
