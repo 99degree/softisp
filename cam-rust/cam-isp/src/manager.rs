@@ -301,4 +301,45 @@ mod tests {
         assert!(!r.data.is_empty());
         assert!(r.latency_ms > 0.0);
     }
+
+    #[test]
+    fn test_manager_set_profile() {
+        let mut mgr = PipelineManager::new();
+        mgr.set_profile(PipelineProfile::LITE);
+        assert_eq!(mgr.profile.label, "LITE");
+        mgr.set_profile(PipelineProfile::HEAVY);
+        assert_eq!(mgr.profile.label, "HEAVY");
+    }
+
+    #[test]
+    fn test_manager_set_bayer_pattern() {
+        let mut mgr = PipelineManager::new();
+        mgr.set_bayer_pattern(1); // GRBG
+        assert_eq!(mgr.bayer_pattern, 1);
+    }
+
+    #[test]
+    fn test_manager_not_ready_before_build() {
+        let mgr = PipelineManager::new();
+        assert!(!mgr.is_ready());
+        assert_eq!(mgr.status(), PipelineStatus::Building);
+    }
+
+    #[test]
+    fn test_pipeline_result_struct() {
+        let r = PipelineResult {
+            data: vec![],
+            width: 0,
+            height: 0,
+            latency_ms: 0.0,
+            awb_gains: [1.0; 3],
+            estimated_cct: None,
+            exposure_gain: 1.0,
+            channel_means: [0.5; 3],
+        };
+        assert_eq!(r.width, 0);
+        assert!(r.data.is_empty());
+        assert!(r.estimated_cct.is_none());
+        assert_eq!(r.exposure_gain, 1.0);
+    }
 }
