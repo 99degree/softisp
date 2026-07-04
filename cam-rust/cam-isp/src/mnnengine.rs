@@ -1189,3 +1189,44 @@ macro_rules! register_mnn_engine {
     };
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mnn_backend_id() {
+        assert_eq!(MnnBackend::Vulkan.id(), "mnn_vulkan");
+        assert_eq!(MnnBackend::Cpu.id(), "mnn_cpu");
+    }
+
+    #[test]
+    fn test_mnn_backend_priority() {
+        assert!(MnnBackend::Vulkan.priority() > MnnBackend::Cpu.priority());
+    }
+
+    #[test]
+    fn test_mnn_engine_new() {
+        let engine = MnnEngine::new(MnnBackend::Cpu);
+        assert_eq!(engine.backend_name(), "mnn_cpu");
+    }
+
+    #[test]
+    fn test_mnn_engine_with_pool_size() {
+        let engine = MnnEngine::with_pool_size(MnnBackend::Cpu, 4);
+        assert_eq!(engine.backend_name(), "mnn_cpu");
+    }
+
+    #[test]
+    fn test_preserve_input_type() {
+        let mut engine = MnnEngine::new(MnnBackend::Cpu);
+        assert!(!engine.preserve_input_type());
+        engine.set_preserve_input_type(true);
+        assert!(engine.preserve_input_type());
+    }
+
+    #[test]
+    fn test_query_optimal_workgroup() {
+        let (wx, wy) = MnnEngine::query_optimal_workgroup();
+        assert!(wx > 0 && wy > 0);
+    }
+}
