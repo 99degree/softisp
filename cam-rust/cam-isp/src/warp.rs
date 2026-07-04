@@ -2,11 +2,11 @@
 //!
 //! Ported from `WarpBlock.kt` companion object and extracted from `cpu.rs`.
 
-/// Generate an identity warp grid of shape [H, W, 2].
+/// Generate an identity warp grid of shape `[H, W, 2]`.
 ///
-/// Each [y,x] maps to normalized coordinates [-1, 1] where:
-///   - grid[y][x][0] = y normalized (row)
-///   - grid[y][x][1] = x normalized (col)
+/// Each `[y,x]` maps to normalized coordinates `[-1, 1]` where:
+///   - grid`[y]``[x]``[0]` = y normalized (row)
+///   - grid`[y]``[x]``[1]` = x normalized (col)
 pub fn generate_identity_grid(h: usize, w: usize) -> Vec<f32> {
     let mut grid = vec![0.0f32; h * w * 2];
     let mut idx = 0;

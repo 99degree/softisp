@@ -58,7 +58,7 @@ pub struct DeshakeEngine {
     prev_gray: Option<Vec<u8>>,
     /// Previous frame dimensions after optional downscale.
     prev_dims: Option<(u32, u32)>,
-    /// Smoothed accumulated motion vector [dx, dy].
+    /// Smoothed accumulated motion vector `[dx, dy]`.
     smooth_motion: [f32; 2],
     /// Deshake enabled.
     pub enabled: bool,
@@ -166,7 +166,7 @@ impl DeshakeEngine {
         factor
     }
 
-    /// Convert BGRA/RGBA u8 frame to planar RGB float32 [0,1].
+    /// Convert BGRA/RGBA u8 frame to planar RGB float32 `[0,1]`.
     /// Output layout: RRR...GGG...BBB... (CHW, H×W each channel).
     fn bgra_to_planar_rgb_f32(data: &[u8], width: u32, height: u32) -> Vec<f32> {
         let len = (width * height) as usize;
@@ -449,7 +449,7 @@ impl DeshakeEngine {
 
     /// Per-frame deshake update with pyramid downscale + diamond search.
     ///
-    /// Takes current BGRA/RGBA frame, returns compensation vector [dx, dy].
+    /// Takes current BGRA/RGBA frame, returns compensation vector `[dx, dy]`.
     pub fn update(
         &mut self,
         data: &[u8],
@@ -1011,7 +1011,7 @@ pub mod gpu_pipeline {
         }
 
         /// Build a GridSampler warp model and run on GPU.
-        /// Takes RGB planar f32 [1,3,H,W] + motion (dx,dy) + crop → warped output.
+        /// Takes RGB planar f32 `[1,3,H,W]` + motion (dx,dy) + crop → warped output.
         pub fn warp_frame(
             &self,
             rgb_data: &[f32],
@@ -1139,7 +1139,7 @@ pub mod gpu_pipeline {
         }
 
         /// Build identity grid + motion offset for GridSampler.
-        /// Returns [1, outH, outW, 2] with (x,y) in [-1,1].
+        /// Returns `[1, outH, outW, 2]` with (x,y) in `[-1,1]`.
         fn build_warp_grid(
             in_w: u32, in_h: u32,
             dx: f32, dy: f32,

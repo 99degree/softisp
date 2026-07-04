@@ -5,7 +5,7 @@
 //!
 //! ONNX subgraph:
 //!   1. Luminance = 0.299*R + 0.587*G + 0.114*B (Conv group=3, 3→3)
-//!   2. ReduceSum → [1,1,H,W], clip to [0,1]
+//!   2. ReduceSum → `[1,1,H,W]`, clip to `[0,1]`
 //!   3. Weight over   = clip(lum * 2, 0, 1)      → dark areas low weight
 //!   4. Weight under  = 1 - w_over                 → bright areas low weight
 //!   5. Weight neutral = 1 - |lum - 0.5| * 2      → mid-range high weight
@@ -13,9 +13,9 @@
 //!   7. Merged = under*w_under + neutral*w_neutral + over*w_over
 //!
 //! Inputs (graph inputs, not initializers):
-//!   - neutral_exposure: [1,3,H,W] float — main pipeline input
-//!   - under_exposure:   [1,3,H,W] float — short exposure
-//!   - over_exposure:    [1,3,H,W] float — long exposure
+//!   - neutral_exposure: `[1,3,H,W]` float — main pipeline input
+//!   - under_exposure:   `[1,3,H,W]` float — short exposure
+//!   - over_exposure:    `[1,3,H,W]` float — long exposure
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;

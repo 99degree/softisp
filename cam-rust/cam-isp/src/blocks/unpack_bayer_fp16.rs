@@ -5,7 +5,7 @@
 //!        and A, B are 16-bit values containing 10-bit Bayer samples in bits 0-9
 //!
 //! Output: 2-channel FP16 `[1,2,H,W]` (two unpacked channels)
-//!         Each channel is normalised to [0,1] by dividing by 1023.0
+//!         Each channel is normalised to `[0,1]` by dividing by 1023.0
 //!
 //! Note: This is a simplified version that unpacks to 2 channels.
 //! A full Bayer unpack would produce 4 channels (R, Gr, Gb, B) with proper rearrangement.

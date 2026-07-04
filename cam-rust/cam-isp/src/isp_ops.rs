@@ -25,7 +25,7 @@ pub(crate) fn generate_simulated_raw(width: u32, height: u32, rgba: &[u8]) -> Ve
     raw
 }
 
-/// Build gamma lookup table (4096 entries covering [0, 1]).
+/// Build gamma lookup table (4096 entries covering `[0, 1]`).
 pub(crate) fn build_gamma_lut(gamma: f32) -> [f32; 4096] {
     let mut lut = [0.0f32; 4096];
     for i in 0..4096 {

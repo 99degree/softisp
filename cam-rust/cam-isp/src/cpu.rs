@@ -4,8 +4,8 @@
 //!
 //! Pipeline:
 //!   RawInput(INT16) → Normalize(FLOAT) → DPC → Denoise → Calibration
-//!   → [AF stats] → [EIS gyro] → AWB → BLC/WB → LSC → Demosaic(RGB)
-//!   → [IspController feedback] → CCM → AE → Tone → FCS → LDCI
+//!   → `[AF stats]` → `[EIS gyro]` → AWB → BLC/WB → LSC → Demosaic(RGB)
+//!   → `[IspController feedback]` → CCM → AE → Tone → FCS → LDCI
 //!   → Warp → Display(UINT8 BGRA)
 
 use std::sync::Mutex;

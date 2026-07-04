@@ -21,7 +21,7 @@ const N_FEATURES: usize = 4;
 /// Number of weights per target: bias + N_FEATURES = 5
 const N_WEIGHTS: usize = N_FEATURES + 1;
 
-/// Feature vector [log(lum), R/G, B/G, CCT/10000].
+/// Feature vector `[log(lum), R/G, B/G, CCT/10000]`.
 #[derive(Debug, Clone, Copy)]
 pub struct Features {
     pub log_lum: f64,
@@ -32,7 +32,7 @@ pub struct Features {
 
 impl Features {
     /// Build feature vector from raw pixel stats.
-    /// `lum` is mean luminance in [0, 1].
+    /// `lum` is mean luminance in `[0, 1]`.
     /// `cct` is estimated color temperature in Kelvin.
     pub fn from_rgb_lum_cct(r: f32, g: f32, b: f32, lum: f32, cct: u32) -> Self {
         let rg = if g > 0.001 { (r / g) as f64 } else { 1.0 };
@@ -101,7 +101,7 @@ impl RegressionModel {
     }
 
     /// Predict a single target from features using fitted weights.
-    /// y = w[0] + sum(w[i+1] * features[i])
+    /// y = w`[0]` + sum(w`[i+1]` * features`[i]`)
     pub fn predict(features: &Features, weights: &Weights) -> f64 {
         let arr = features.to_array();
         let mut y = weights[0];

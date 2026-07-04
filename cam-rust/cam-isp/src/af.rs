@@ -189,7 +189,7 @@ impl AfState {
 
     /// Compute a focus metric from calibration data.
     ///
-    /// The calibration data should contain quad-level variances at indices [4:8].
+    /// The calibration data should contain quad-level variances at indices `[4:8]`.
     /// Higher variance = more high-frequency detail = better focus.
     /// Returns the mean of 4 quad variances.
     pub fn focus_metric_from_calibration(calibration_data: &[f32]) -> f32 {
