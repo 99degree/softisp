@@ -306,3 +306,60 @@ pub fn select_engine_by_name(name: &str) -> Option<Box<dyn IspEngine>> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_output_format_channel_count() {
+        assert_eq!(OutputFormat::Rgb.channel_count(), 3);
+        assert_eq!(OutputFormat::Rgba.channel_count(), 4);
+        assert_eq!(OutputFormat::FloatRgb.channel_count(), 3);
+        assert_eq!(OutputFormat::FloatBgra.channel_count(), 4);
+        assert_eq!(OutputFormat::PackedRgb.channel_count(), 1);
+        assert_eq!(OutputFormat::Float16Rgb.channel_count(), 3);
+        assert_eq!(OutputFormat::Float16Bgra.channel_count(), 4);
+    }
+
+    #[test]
+    fn test_output_format_bytes_per_pixel() {
+        assert_eq!(OutputFormat::Rgb.bytes_per_pixel(), 3);
+        assert_eq!(OutputFormat::Rgba.bytes_per_pixel(), 4);
+        assert_eq!(OutputFormat::FloatRgb.bytes_per_pixel(), 12);
+        assert_eq!(OutputFormat::FloatBgra.bytes_per_pixel(), 16);
+        assert_eq!(OutputFormat::PackedRgb.bytes_per_pixel(), 2);
+        assert_eq!(OutputFormat::Float16Rgb.bytes_per_pixel(), 6);
+        assert_eq!(OutputFormat::Float16Bgra.bytes_per_pixel(), 8);
+    }
+
+    #[test]
+    fn test_output_format_is_fp16() {
+        assert!(!OutputFormat::Rgb.is_fp16());
+        assert!(!OutputFormat::FloatRgb.is_fp16());
+        assert!(OutputFormat::Float16Rgb.is_fp16());
+        assert!(OutputFormat::Float16Bgra.is_fp16());
+    }
+
+    #[test]
+    fn test_process_params_new() {
+        let data = vec![0u8; 64];
+        let p = ProcessParams::new(8, 8, &data);
+        assert_eq!(p.width, 8);
+        assert_eq!(p.height, 8);
+        assert_eq!(p.buf.len(), 64);
+    }
+
+    #[test]
+    fn test_default_tone_params() {
+        let tp = default_tone_params();
+        assert!(tp.contrast >= 0.0 && tp.contrast <= 2.0);
+    }
+
+    #[test]
+    fn test_select_engine() {
+        crate::init();
+        let engine = select_engine();
+        assert!(engine.is_some());
+    }
+}
