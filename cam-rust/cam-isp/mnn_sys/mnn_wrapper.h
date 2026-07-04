@@ -105,7 +105,6 @@ int mnn_session_run(MnnInterpreter interpreter, MnnSession session);
  * @param name     Tensor name (can be NULL for first input).
  * @return Opaque tensor handle, or NULL.
  */
-MnnTensor mnn_session_get_input(MnnSession session, const char* name);
 
 /**
  * Get an output tensor by name (deprecated - use V2).
@@ -113,7 +112,6 @@ MnnTensor mnn_session_get_input(MnnSession session, const char* name);
  * @param name     Tensor name (can be NULL for first output).
  * @return Opaque tensor handle, or NULL.
  */
-MnnTensor mnn_session_get_output(MnnSession session, const char* name);
 
 /**
  * Get an input tensor by name.
@@ -191,7 +189,6 @@ size_t mnn_tensor_get_data_size(MnnTensor tensor);
  * @return Pointer to model buffer, or NULL on failure.
  *         The pointer is valid until interpreter is destroyed.
  */
-const void* mnn_interpreter_get_model_buffer(MnnInterpreter interpreter, size_t* out_size);
 
 /**
  * Save model buffer to file.
@@ -200,7 +197,6 @@ const void* mnn_interpreter_get_model_buffer(MnnInterpreter interpreter, size_t*
  * @param path         File path to save.
  * @return 0 on success, non-zero on failure.
  */
-int mnn_interpreter_save_model(MnnInterpreter interpreter, const char* path);
 
 /**
  * Run inference with proper host-tensor management.
@@ -224,9 +220,6 @@ int mnn_run_host_tensors(MnnInterpreter interpreter, MnnSession session,
  * Output buffer must hold at least max_out * 2 bytes (uint16_t per element).
  * @return Number of output elements written, or -1 on error.
  */
-int mnn_run_host_tensors_fp16(MnnInterpreter interpreter, MnnSession session,
-                               const float* in_data, const int* in_shape, int in_ndim,
-                               void* out_data, int max_out);
 
 /**
  * Set a named input tensor from float32 host data.
@@ -277,17 +270,6 @@ extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession s
     int* out_code, int* out_bits);
 
 // ── True zero-copy inference ──────────────────────────────────────────────────
-extern "C" int mnn_run_true_zero_copy(
-    MnnInterpreter interpreter,
-    MnnSession session,
-    const void* buffer,
-    int buffer_type_code,
-    int buffer_type_bits,
-    const int* in_shape,
-    int in_ndim,
-    float* out_data,
-    int max_out
-);
 
 // Model info enum
 typedef enum {
