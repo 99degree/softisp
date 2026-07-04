@@ -234,4 +234,15 @@ mod tests {
         // First init is threshold
         assert_eq!(inits.len(), 4);
     }
+
+    #[test]
+    fn test_temporal_denoise_id() {
+        assert_eq!(TemporalDenoiseBlock::new().id(), "temporal_denoise");
+    }
+
+    #[test]
+    fn test_temporal_denoise_tensor_ns() {
+        let b = TemporalDenoiseBlock::new();
+        assert!(!b.tensor_ns().is_empty());
+    }
 }
