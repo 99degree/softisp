@@ -123,4 +123,24 @@ mod tests {
         let block = SharpenBlock::new(0.7);
         assert_eq!(block.initializers().len(), 1);
     }
+
+    #[test]
+    fn test_sharpen_id() {
+        assert_eq!(SharpenBlock::new(0.5).id(), "sharpen");
+    }
+
+    #[test]
+    fn test_sharpen_tensor_ns() {
+        let b = SharpenBlock::new(0.5);
+        assert!(!b.tensor_ns().is_empty());
+    }
+
+    #[test]
+    fn test_sharpen_various_strengths() {
+        for s in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let b = SharpenBlock::new(s);
+            let nodes = b.nodes();
+            assert_eq!(nodes.len(), 4, "strength={}: AvgPool + Sub + Mul + Add", s);
+        }
+    }
 }
