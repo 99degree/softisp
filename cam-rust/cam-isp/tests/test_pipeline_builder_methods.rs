@@ -321,3 +321,12 @@ fn test_builder_cost_scales_with_resolution() {
         .unpack().display().cost();
     assert!(flops_large > flops_small, "4K should cost more than HD");
 }
+
+#[test]
+fn test_builder_cost_varies_by_pipeline() {
+    let (flops_simple, _) = PipelineBuilder::new(1920, 1080)
+        .unpack().display().cost();
+    let (flops_full, _) = PipelineBuilder::new(1920, 1080)
+        .unpack().demosaic_binning().gamma(2.2).sharpen(0.5).display().cost();
+    assert!(flops_full > flops_simple, "Full pipeline should cost more than simple");
+}
