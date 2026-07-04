@@ -397,4 +397,23 @@ mod tests {
         // display_output produces BGRA bytes; data[2] is Red channel
         assert!(frame.data[2] > 0, "first pixel R channel is zero: data[0..4]={:?}", &frame.data[..4]);
     }
+
+    #[test]
+    fn test_cpu_engine_new() {
+        let engine = CpuEngine::new();
+        assert!(engine.backend_name().is_empty() || engine.backend_name() == "CPU");
+    }
+
+    #[test]
+    fn test_cpu_engine_name() {
+        let engine = CpuEngine::new();
+        assert_eq!(engine.backend_name(), "CPU");
+    }
+
+    #[test]
+    fn test_register_cpu_engine() {
+        register_cpu_engine();
+        // Should not panic on double registration
+        register_cpu_engine();
+    }
 }
