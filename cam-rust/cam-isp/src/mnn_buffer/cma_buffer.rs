@@ -40,8 +40,10 @@ use std::sync::{Arc, RwLock};
 /// - 8192 = Common for camera/ISP
 /// - 16384 = Some ISP require 16KB alignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum BufferAlignment {
     /// Page alignment (4096 bytes)
+    #[default]
     Page = 4096,
     /// 8KB alignment
     Align8K = 8192,
@@ -51,16 +53,13 @@ pub enum BufferAlignment {
     Align64K = 65536,
 }
 
-impl Default for BufferAlignment {
-    fn default() -> Self {
-        Self::Page
-    }
-}
 
 /// CMA allocation method
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum CMAAllocator {
     /// Android ION (Ion Memory Allocator)
+    #[default]
     Ion,
     /// Linux CMA (/dev/cma)
     CMA,
@@ -72,11 +71,6 @@ pub enum CMAAllocator {
     Malloc,
 }
 
-impl Default for CMAAllocator {
-    fn default() -> Self {
-        Self::Ion
-    }
-}
 
 /// Buffer usage flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,7 +286,7 @@ impl CMABufferInfo {
         }
 
         // ION_IOC_ALLOC
-        const ION_IOC_MAGIC: u8 = b'I' as u8;
+        const ION_IOC_MAGIC: u8 = b'I';
         const ION_IOC_ALLOC: u8 = 0;
         const ION_IOC_ALLOC_CMD: libc::c_uint =
             ((ION_IOC_MAGIC as u32) << 8) | (ION_IOC_ALLOC as u32);
@@ -355,7 +349,7 @@ impl CMABufferInfo {
     /// Convert ION buffer to DMA-BUF
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn ion_to_dmabuf(ion_fd: RawFd) -> io::Result<RawFd> {
-        const ION_IOC_MAGIC: u8 = b'I' as u8;
+        const ION_IOC_MAGIC: u8 = b'I';
         const ION_IOC_SHARE: u8 = 4;
         const ION_IOC_SHARE_CMD: libc::c_uint =
             ((ION_IOC_MAGIC as u32) << 8) | (ION_IOC_SHARE as u32);
@@ -722,7 +716,7 @@ impl CMABufferManager {
         dims: &[i32],
     ) -> io::Result<Arc<CMABuffer>> {
         // Calculate size
-        let elem_size = (elem_bits as usize + 7) / 8; // Round up to bytes
+        let elem_size = (elem_bits as usize).div_ceil(8); // Round up to bytes
         let total_size = dims.iter().product::<i32>() as usize * elem_size;
 
         // Determine alignment based on usage

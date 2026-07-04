@@ -14,6 +14,12 @@ pub struct BayerWbBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
 }
+impl Default for BayerWbBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BayerWbBlock {
     pub fn new() -> Self { Self { id: "bayer_wb".into(), prev: None, next: None, frame_tensor: "BayerWbBlock/frame".into(), input_source: String::new() } }
 }

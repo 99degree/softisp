@@ -23,15 +23,15 @@ const SENSOR_GRAY_B: f32 = 0.60;
 /// All off-diagonals are negative across full CCT range — no purple contamination.
 const CCM_QUADRATIC: [f32; 27] = [
     // a2                    a1                      a0
-     4.96031746e-09, -1.53273810e-04,  2.58670635e+00,    // R-R
-    -5.35714286e-09,  1.45535714e-04, -1.26964286e+00,    // R-G
-     3.96825397e-10,  7.73809524e-06, -3.17063492e-01,    // R-B
-     2.18253968e-09, -7.44047619e-06, -3.43849206e-01,    // G-R
-    -6.15079365e-09,  3.00595238e-05,  1.71448413e+00,    // G-G
-     3.96825397e-09, -2.26190476e-05, -3.70634921e-01,    // G-B
-    -3.96825397e-10, -7.73809524e-06, -3.29365079e-02,    // B-R
-     2.38095238e-09, -5.35714286e-05, -2.02380952e-01,    // B-G
-    -1.98412698e-09,  6.13095238e-05,  1.23531746e+00,    // B-B
+     4.960_317_5e-9, -1.532_738_1e-4,  2.586_706_4,    // R-R
+    -5.357_142_7e-9,  1.455_357_1e-4, -1.269_642_8,    // R-G
+     3.968_254e-10,  7.738_095_5e-6, -3.170_634_8e-1,    // R-B
+     2.182_539_7e-9, -7.440_476e-6, -3.438_492e-1,    // G-R
+    -6.150_793_7e-9,  3.005_952_4e-5,  1.714_484_1,    // G-G
+     3.968_254e-9, -2.261_904_8e-5, -3.706_349e-1,    // G-B
+    -3.968_254e-10, -7.738_095_5e-6, -3.293_651e-2,    // B-R
+     2.380_952_3e-9, -5.357_142_8e-5, -2.023_809_6e-1,    // B-G
+    -1.984_127e-9,  6.130_952_5e-5,  1.235_317_5,    // B-B
 ];
 
 /// Clamp feedback flags.
@@ -256,7 +256,7 @@ pub fn sanitize_ccm(
     let mut awb_unfeasible = false;
     if r_out > 0.001 {
         let r_gain = g_out / r_out;
-        if r_gain < 0.5 || r_gain > 3.0 {
+        if !(0.5..=3.0).contains(&r_gain) {
             let target_r_out = g_out * 0.5; // yields R_gain = 2.0
             let scale = target_r_out / r_out;
             matrix[0] *= scale;
@@ -281,7 +281,7 @@ pub fn sanitize_ccm(
     // Scale B row so B_gain = g_out / b_out ≈ 2.0
     if b_out > 0.001 {
         let b_gain = g_out / b_out;
-        if b_gain < 0.5 || b_gain > 3.0 {
+        if !(0.5..=3.0).contains(&b_gain) {
             let target_b_out = g_out * 0.5;
             let scale = target_b_out / b_out;
             matrix[6] *= scale;
