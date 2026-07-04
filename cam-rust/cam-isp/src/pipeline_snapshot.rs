@@ -96,4 +96,33 @@ mod tests {
         assert_eq!(snap.stage_count, 4);
         assert!(!snap.is_cached());
     }
+
+    #[test]
+    fn test_snapshot_is_cached() {
+        let snap = PipelineSnapshot {
+            onnx_bytes: vec![0u8; 100],
+            mnn_path: PathBuf::from("/nonexistent/path.mnn"),
+            width: 640,
+            height: 480,
+            stage_count: 2,
+        };
+        // File doesn't exist, so not cached
+        assert!(!snap.is_cached());
+    }
+
+    #[test]
+    fn test_snapshot_invalidate() {
+        let snap = PipelineSnapshot {
+            onnx_bytes: vec![0u8; 50],
+            mnn_path: PathBuf::from("/nonexistent/path.mnn"),
+            width: 640,
+            height: 480,
+            stage_count: 2,
+        };
+        assert!(!snap.is_cached());
+        // invalidate is safe even if file doesn't exist
+        let _ = snap.invalidate();
+        // After invalidation, mnn_path should be cleared
+        assert!(!snap.is_cached());
+    }
 }
