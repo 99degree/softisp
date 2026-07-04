@@ -1,7 +1,7 @@
 # Rust Camera ISP Pipeline
 
 A complete Rust ISP pipeline: ONNX generation → MNN conversion → Vulkan GPU inference.
-Compiles with **0 warnings** and **486 tests pass** (454 lib + 24 integration + 8 property).
+Compiles with **0 warnings** and **496 tests pass** (464 lib + 24 integration + 8 property).
 
 ## Performance (Vulkan, Snapdragon 8 Gen 2)
 
@@ -37,7 +37,7 @@ RawInput(INT16 [1,1,H,W])
 
 ## Key Features
 
-- **486 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
+- **496 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
 - **MnnEngine** — Vulkan GPU acceleration (4K→FHD 57.7 FPS)
 - **IspChainFusion** — 12 fusion rules (R1–R12b), 32+ ops → 12 dispatches
 - **PipelineBuilder** — Fluent API: `.unpack().demosaic().gamma().sharpen().display().compose()`
@@ -81,7 +81,7 @@ cargo run --example camera_isp --features mnn -p cam-isp -- --width 640 --height
 cargo run --example bench_4k_to_fhd -p cam-isp --features mnn
 ```
 
-## Test Coverage (486 tests)
+## Test Coverage (496 tests)
 
 | Suite | Count | Command |
 |-------|------:|--------|
@@ -184,7 +184,7 @@ tests/
 ## Status
 
 ### ✅ Completed (All Items)
-- 44 ISP blocks, 486 tests, 36 examples, 0 warnings
+- 44 ISP blocks, 496 tests, 36 examples, 0 warnings
 - Full GPU ISP pipeline (MNN Vulkan): 4K→FHD 57.7 FPS
 - 12 fusion rules (IspChainFusion.cpp): R1–R12b
 - PipelineBuilder fluent API + 5 presets + config roundtrip
