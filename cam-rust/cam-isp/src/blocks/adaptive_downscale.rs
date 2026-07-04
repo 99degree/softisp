@@ -395,7 +395,7 @@ impl IspBlock for AdaptiveDownscaleBlock {
                     &[0, 0, sy.max(0), sx.max(0)]));
                 inits.push(Proto::tensor_proto_int64(
                     &format!("{}/crop_ends", ns),
-                    &[std::i64::MAX, std::i64::MAX,
+                    &[i64::MAX, i64::MAX,
                       (sy + sah).min(sh), (sx + saw).min(sw)]));
                 inits.push(Proto::tensor_proto_int64(
                     &format!("{}/crop_axes", ns), &[0, 1, 2, 3]));
@@ -421,7 +421,7 @@ impl IspBlock for AdaptiveDownscaleBlock {
                 &[0, 0, crop_h.max(0), crop_w.max(0)]));
             inits.push(Proto::tensor_proto_int64(
                 &format!("{}/margin_ends", ns),
-                &[std::i64::MAX, std::i64::MAX,
+                &[i64::MAX, i64::MAX,
                   (crop_h + self.target_h).min(_oh),
                   (crop_w + self.target_w).min(_ow)]));
             inits.push(Proto::tensor_proto_int64(
