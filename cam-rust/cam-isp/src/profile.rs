@@ -18,8 +18,10 @@ pub const ROTATE_VFLIP: i32 = 5; // Vertical mirror
 
 /// Demosaic quality selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum DemosaicQuality {
     /// Fast bilinear demosaic.
+    #[default]
     Standard,
     /// Higher-quality gradient-based (Malvar 2004).
     HqLinear,
@@ -27,9 +29,6 @@ pub enum DemosaicQuality {
     Edge,
 }
 
-impl Default for DemosaicQuality {
-    fn default() -> Self { Self::Standard }
-}
 
 /// Feature complexity level — gates controller features.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

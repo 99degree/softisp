@@ -39,6 +39,12 @@ pub struct EeBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
 }
+impl Default for EeBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EeBlock {
     pub fn new() -> Self { Self { id: "ee".into(), prev: None, next: None, frame_tensor: "EeBlock/frame".into(), input_source: String::new() } }
 }

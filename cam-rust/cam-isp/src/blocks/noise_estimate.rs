@@ -33,6 +33,12 @@ pub struct NoiseEstimateBlock {
     pub pool_size: i64,
 }
 
+impl Default for NoiseEstimateBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NoiseEstimateBlock {
     pub fn new() -> Self {
         Self {

@@ -19,6 +19,12 @@ pub struct PyramidBlock {
     pub input_source: String,
 }
 
+impl Default for PyramidBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PyramidBlock {
     pub fn new() -> Self {
         Self {

@@ -12,15 +12,14 @@ use crate::pipeline::IspBlock;
 /// Wraps a single ONNX Extra op with the chosen algorithm baked in.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum DemosaicAlgo {
     Binning,
+    #[default]
     Bilinear,
     Mhc,
 }
 
-impl Default for DemosaicAlgo {
-    fn default() -> Self { Self::Bilinear }
-}
 
 impl DemosaicAlgo {
     pub fn as_str(&self) -> &'static str {
@@ -144,7 +143,7 @@ impl IspBlock for BayerDemosaicBlock {
             Proto::attribute_ints("kernel_shape", &[k, k]),
             Proto::attribute_ints("strides", &[s, s]),
             Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-            Proto::attribute_int("group", g as i64),
+            Proto::attribute_int("group", g),
         ])]
     }
 
@@ -154,7 +153,7 @@ impl IspBlock for BayerDemosaicBlock {
         let k = self.algo.kernel() as usize;
         match self.algo {
             DemosaicAlgo::Binning => {
-                let mut w = vec![0.0f32; oc * 1 * k * k];
+                let mut w = vec![0.0f32; oc * k * k];
                 for c in 0..oc {
                     w[c * k * k + c] = 1.0;
                 }
@@ -165,7 +164,7 @@ impl IspBlock for BayerDemosaicBlock {
                 ]
             }
             DemosaicAlgo::Bilinear => {
-                let mut w = vec![0.0f32; oc * 1 * k * k];
+                let mut w = vec![0.0f32; oc * k * k];
                 for o in 0..oc {
                     for ky in 0..k {
                         for kx in 0..k {
@@ -195,16 +194,16 @@ impl IspBlock for BayerDemosaicBlock {
             DemosaicAlgo::Mhc => {
                 // 6x6 conv — weights not used by SPIR-V shader,
                 // but must be non-zero for MNN converter detection
-                let mut w = vec![0.0f32; oc * 1 * k * k];
+                let mut w = vec![0.0f32; oc * k * k];
                 for o in 0..oc {
                     // Center region weight
                     for ky in 0..k {
                         for kx in 0..k {
                             let idx = o * k * k + ky * k + kx;
                             // 6x6 kernel, center 2x2 gets highest weight
-                            if ky >= 2 && ky <= 3 && kx >= 2 && kx <= 3 {
+                            if (2..=3).contains(&ky) && (2..=3).contains(&kx) {
                                 w[idx] = 1.0 / 4.0;
-                            } else if ky >= 1 && ky <= 4 && kx >= 1 && kx <= 4 {
+                            } else if (1..=4).contains(&ky) && (1..=4).contains(&kx) {
                                 w[idx] = 1.0 / 8.0;
                             } else {
                                 w[idx] = 1.0 / 16.0;

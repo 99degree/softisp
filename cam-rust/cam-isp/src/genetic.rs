@@ -245,8 +245,8 @@ fn fitness(chr: &Chromosome, data: &[LearnerObservation]) -> f32 {
 }
 
 /// Tournament selection: randomly pick `size` individuals, return the best.
-fn tournament_select<'a, R: Rng>(
-    pop: &'a [Chromosome],
+fn tournament_select<R: Rng>(
+    pop: &[Chromosome],
     fitnesses: &[f32],
     size: u32,
     rng: &mut R,

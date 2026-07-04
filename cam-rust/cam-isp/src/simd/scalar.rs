@@ -5,6 +5,12 @@ use crate::simd::selector::SimdEngine;
 
 pub struct Scalar;
 
+impl Default for Scalar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scalar {
     pub const fn new() -> Self {
         Scalar

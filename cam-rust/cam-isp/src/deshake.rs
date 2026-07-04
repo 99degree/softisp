@@ -653,8 +653,8 @@ impl DeshakeEngine {
                 for x in 0..ow as usize {
                     let si = y * ow as usize + x;
                     let di = (y * ow as usize + x) * bpp as usize;
-                    let r = (warped[0 * plane + si] * 255.0).round().clamp(0.0, 255.0) as u8;
-                    let g = (warped[1 * plane + si] * 255.0).round().clamp(0.0, 255.0) as u8;
+                    let r = (warped[si] * 255.0).round().clamp(0.0, 255.0) as u8;
+                    let g = (warped[plane + si] * 255.0).round().clamp(0.0, 255.0) as u8;
                     let b = (warped[2 * plane + si] * 255.0).round().clamp(0.0, 255.0) as u8;
                     out[di] = b;
                     out[di + 1] = g;
@@ -826,6 +826,12 @@ pub mod gpu_pipeline {
     pub struct DeshakeGpuPipeline {
         /// Cached MNN model bytes for current resolution (Arc for Clone).
         mnn_cache: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>,
+    }
+
+    impl Default for DeshakeGpuPipeline {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl DeshakeGpuPipeline {

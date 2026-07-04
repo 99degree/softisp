@@ -13,6 +13,12 @@ pub struct RawInputBlock {
     pub elem_type: i32,
 }
 
+impl Default for RawInputBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RawInputBlock {
     pub fn new() -> Self {
         Self {

@@ -19,6 +19,12 @@ pub struct UnpackBayerToFp16Block {
     output_name: String,
 }
 
+impl Default for UnpackBayerToFp16Block {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UnpackBayerToFp16Block {
     pub fn new() -> Self {
         Self {

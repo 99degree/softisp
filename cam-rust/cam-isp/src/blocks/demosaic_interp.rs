@@ -106,14 +106,14 @@ impl IspBlock for DemosaicInterpBlock {
 
         // Conv weights: [3, 1, 4, 4] = 48 floats
         // Bilinear interpolation weights for RGGB Bayer pattern
-        let mut weights = vec![0.0f32; 3 * 1 * 4 * 4]; // [OC, IC, KY, KX]
+        let mut weights = vec![0.0f32; 3 * 4 * 4]; // [OC, IC, KY, KX]
 
         // Channel 0 (R): weight R positions heavily, interpolate G and B
         for ky in 0..4 {
             for kx in 0..4 {
                 let bx = kx % 2;
                 let by = ky % 2;
-                let idx = 0 * 16 + ky * 4 + kx;
+                let idx = ky * 4 + kx;
 
                 if bx == 0 && by == 0 {
                     // R position: weight 0.25
@@ -133,7 +133,7 @@ impl IspBlock for DemosaicInterpBlock {
             for kx in 0..4 {
                 let bx = kx % 2;
                 let by = ky % 2;
-                let idx = 1 * 16 + ky * 4 + kx;
+                let idx = 16 + ky * 4 + kx;
 
                 if (bx == 1 && by == 0) || (bx == 0 && by == 1) {
                     // G position: weight 0.25

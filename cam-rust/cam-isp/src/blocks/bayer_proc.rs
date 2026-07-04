@@ -55,6 +55,12 @@ pub struct BayerProcBlock {
     pub ccm_matrix: [f32; 9],
 }
 
+impl Default for BayerProcBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BayerProcBlock {
     pub fn new() -> Self {
         Self {
@@ -207,14 +213,11 @@ impl IspBlock for BayerProcBlock {
     
     fn input_tensors(&self) -> Vec<String> {
         let mut tensors = vec![self.input_source.clone()];
-        match self.mode {
-            BayerMode::FullProc => {
-                tensors.push(format!("{}/wb_gains", self.id));
-                if self.use_blc {
-                    tensors.push(format!("{}/blc_vals", self.id));
-                }
+        if self.mode == BayerMode::FullProc {
+            tensors.push(format!("{}/wb_gains", self.id));
+            if self.use_blc {
+                tensors.push(format!("{}/blc_vals", self.id));
             }
-            _ => {}
         }
         tensors
     }

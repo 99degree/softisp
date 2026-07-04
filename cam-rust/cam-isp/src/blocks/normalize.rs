@@ -14,6 +14,12 @@ pub struct NormalizeBlock {
     pub input_source: String,
 }
 
+impl Default for NormalizeBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NormalizeBlock {
     pub fn new() -> Self {
         Self {

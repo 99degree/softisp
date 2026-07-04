@@ -33,6 +33,12 @@ pub struct ChromaticAberrationBlock {
     pub grids: Option<Vec<f32>>, // flattened all 3 grids
 }
 
+impl Default for ChromaticAberrationBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChromaticAberrationBlock {
     pub fn new() -> Self {
         Self {

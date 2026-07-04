@@ -27,6 +27,12 @@ pub struct UnpackBlock {
     pub workgroup_size: (u32, u32),
 }
 
+impl Default for UnpackBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UnpackBlock {
     pub fn new() -> Self {
         Self {

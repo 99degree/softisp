@@ -5,6 +5,12 @@ use crate::simd::selector::SimdEngine;
 
 pub struct Neon;
 
+impl Default for Neon {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Neon {
     pub const fn new() -> Self {
         Neon

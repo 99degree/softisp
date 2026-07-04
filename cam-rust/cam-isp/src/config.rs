@@ -90,7 +90,7 @@ impl PipelineConfig {
 
     /// Merge this config back into a `PipelineProfile`, overriding fields.
     pub fn to_profile(&self) -> PipelineProfile {
-        let mut p = self.profile.clone();
+        let mut p = self.profile;
         p.use_unpack = self.use_unpack;
         p.use_fcs = self.use_fcs;
         p.use_ldci = self.use_ldci;
