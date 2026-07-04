@@ -91,32 +91,6 @@ fn test_mnn_per_block_profiling() {
         }
     }
 
-    // Try profiler API (requires MNN_PIPELINE_PROFILE=ON)
-    unsafe {
-        let executor = cam_isp::mnn_sys::mnn_executor_get_global();
-        if !executor.is_null() {
-            println!("[perf] Resetting profiler...");
-            cam_isp::mnn_sys::mnn_executor_reset_profile(executor);
-            
-            // Run inference again to populate profiler
-            let out_ptr2 = out_bytes.as_mut_ptr() as *mut f32;
-            let _ = cam_isp::mnn_sys::mnn_run_with_output(
-                interp.as_ptr(), sess.as_ptr(), buf.as_ptr() as *const c_void, 0, 32, shape.as_ptr(), shape.len() as i32,
-                CStr::from_bytes_with_nul_unchecked(b"DisplayBlock/frame\0").as_ptr(), out_ptr2, max_out as i32,
-            );
-            
-            // Dump profile
-            println!("[perf] Profile dump:");
-            cam_isp::mnn_sys::mnn_executor_dump_profile(executor);
-            
-            // Get last GPU time
-            let gpu_time = cam_isp::mnn_sys::mnn_executor_get_last_gpu_time_ms(executor);
-            println!("[perf] Last GPU time: {}ms", gpu_time);
-        } else {
-            println!("[perf] WARNING: Could not get executor handle - profiler not available");
-        }
-    }
-
     // Clean up temporary files.
     let _ = std::fs::remove_file(mnn_path);
 }
