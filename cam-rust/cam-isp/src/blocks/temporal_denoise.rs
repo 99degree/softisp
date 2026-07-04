@@ -42,6 +42,12 @@ pub struct TemporalDenoiseBlock {
     pub blend_weight: f32,
 }
 
+impl Default for TemporalDenoiseBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TemporalDenoiseBlock {
     pub fn new() -> Self {
         Self {

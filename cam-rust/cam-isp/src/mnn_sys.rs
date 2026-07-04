@@ -355,6 +355,14 @@ impl MnnTensorSafe {
     }
 
     /// Get a mutable reference to the tensor's host data as bytes.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure:
+    /// - The tensor has valid host data
+    /// - No other references to this data exist
+    /// - The tensor outlives the returned slice
+    #[allow(clippy::mut_from_ref)] // MNN tensors are inherently mutable
     pub fn as_bytes_mut(&self) -> Option<&mut [u8]> {
         let ptr = unsafe { mnn_tensor_get_host_data_raw(self.inner) };
         if ptr.is_null() {

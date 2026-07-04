@@ -19,6 +19,12 @@ pub struct GrayscaleBlock {
     pub input_source: String,
 }
 
+impl Default for GrayscaleBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GrayscaleBlock {
     pub fn new() -> Self {
         Self {

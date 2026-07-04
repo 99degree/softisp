@@ -422,9 +422,9 @@ pub(crate) fn apply_ldci(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<
             let luma = 0.299 * r_val + 0.587 * g + 0.114 * b;
 
             // Box sum via integral image (4 lookups)
-            let y0 = if y >= r { y - r } else { 0 };
+            let y0 = y.saturating_sub(r);
             let y1 = (y + r + 1).min(h);
-            let x0 = if x >= r { x - r } else { 0 };
+            let x0 = x.saturating_sub(r);
             let x1 = (x + r + 1).min(w);
             let area = ((y1 - y0) * (x1 - x0)) as f32;
             let sum = ii[y1 * (w + 1) + x1]

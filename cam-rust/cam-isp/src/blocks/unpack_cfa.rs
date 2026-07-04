@@ -327,9 +327,9 @@ impl IspBlock for UnpackCfaBlock {
                     //   oc=3 (B):  BR → kh=1, kw=sw/2 (center bottom)
                     let mut w2 = vec![0.0f32; 4 * 2 * sw as usize];
                     w2[0] = 1.0;                                          // oc=0, TL
-                    w2[0 * 2 * sw as usize + sw as usize / 2] = 1.0;     // oc=1, TR
-                    w2[1 * sw as usize] = 1.0;                            // oc=2, BL
-                    w2[1 * 2 * sw as usize + sw as usize + sw as usize / 2] = 1.0; // oc=3, BR
+                    w2[sw as usize / 2] = 1.0;                            // oc=1, TR
+                    w2[sw as usize] = 1.0;                                // oc=2, BL
+                    w2[sw as usize + sw as usize / 2] = 1.0;             // oc=3, BR
                     w2
                 };
 
@@ -482,7 +482,7 @@ impl UnpackCfaBlock {
             // Replace frame_tensor with resized output
             let prev_out = self.frame_tensor.clone();
             nodes.push(Proto::node("Resize",
-                &[&prev_out, &"".to_string(), &scale_h],
+                &[&prev_out, "", &scale_h],
                 &[&resized],
                 &[Proto::attribute_int("mode", 0)])); // 0 = nearest
             // Final identity to rename to frame_tensor

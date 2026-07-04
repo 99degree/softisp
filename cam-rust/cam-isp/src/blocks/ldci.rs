@@ -30,6 +30,12 @@ pub struct LdciBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
 }
+impl Default for LdciBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LdciBlock {
     pub fn new() -> Self { Self { id: "ldci".into(), prev: None, next: None, frame_tensor: "LdciBlock/frame".into(), input_source: String::new() } }
 }

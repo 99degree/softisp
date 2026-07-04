@@ -30,8 +30,10 @@ use std::sync::Arc;
 
 // Alignment for hardware access
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Alignment {
     /// 4KB - Page size, minimum for mmap
+    #[default]
     Page4K = 4096,
     /// 64KB - Common for camera/ISP
     Page64K = 65536,
@@ -39,11 +41,6 @@ pub enum Alignment {
     Page2M = 2 * 1024 * 1024,
 }
 
-impl Default for Alignment {
-    fn default() -> Self {
-        Self::Page4K
-    }
-}
 
 // memfd buffer for zero-copy MNN inference
 //
@@ -357,7 +354,7 @@ impl Clone for MemfdBuffer {
     fn clone(&self) -> Self {
         // Create a new buffer with the same size
         Self::new(self.original_size, self.alignment, "mnn_buffer_clone")
-            .map(|new_buf| {
+            .inspect(|new_buf| {
                 // Copy data
                 unsafe {
                     std::ptr::copy_nonoverlapping(
@@ -366,7 +363,6 @@ impl Clone for MemfdBuffer {
                         self.original_size,
                     );
                 }
-                new_buf
             })
             .unwrap_or_else(|_| {
                 // Fallback: create empty buffer
@@ -453,7 +449,7 @@ impl MemfdBufferManager {
         dims: &[i32],
     ) -> std::io::Result<Arc<MemfdBuffer>> {
         // Calculate size
-        let elem_size = (elem_bits as usize + 7) / 8; // Bytes per element
+        let elem_size = (elem_bits as usize).div_ceil(8); // Bytes per element
         let total_elements: usize = dims.iter().product::<i32>() as usize;
         let size = total_elements * elem_size;
         
