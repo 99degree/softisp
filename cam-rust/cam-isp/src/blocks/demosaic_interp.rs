@@ -193,4 +193,23 @@ mod tests {
         let inits = block.initializers();
         assert_eq!(inits.len(), 2, "Conv weights + bias");
     }
+
+    #[test]
+    fn test_demosaic_interp_id() {
+        let block = DemosaicInterpBlock::new();
+        assert_eq!(block.id(), "DemosaicInterpBlock");
+    }
+
+    #[test]
+    fn test_demosaic_interp_tensor_ns() {
+        let block = DemosaicInterpBlock::new();
+        assert!(!block.tensor_ns().is_empty());
+    }
+
+    #[test]
+    fn test_demosaic_interp_with_sensor_max() {
+        let block = DemosaicInterpBlock::new().with_sensor_max(4095.0);
+        let inits = block.initializers();
+        assert_eq!(inits.len(), 2, "Conv weights + bias");
+    }
 }

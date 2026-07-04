@@ -88,5 +88,18 @@ mod tests {
         let b = ToneBlock::new();
         assert_eq!(b.signals_aux(), vec!["fcs", "ldci", "ee"]);
     }
+
+    #[test]
+    fn test_tone_initializers() {
+        let b = ToneBlock::new();
+        let inits = b.initializers();
+        assert_eq!(inits.len(), 5);
+    }
+
+    #[test]
+    fn test_tone_tensor_ns() {
+        let b = ToneBlock::new();
+        assert!(!b.tensor_ns().is_empty());
+    }
 }
 
