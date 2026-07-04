@@ -811,6 +811,29 @@ impl PipelineBuilder {
         cfg
     }
 
+    /// Estimate computational cost (FLOPs) and memory usage without composing.
+    ///
+    /// Returns `(flops, memory_bytes)` for the pipeline at the builder's resolution.
+    /// Useful for comparing pipeline variants before committing to ONNX emission.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (flops, mem) = PipelineBuilder::new(1920, 1080)
+    ///     .unpack()
+    ///     .demosaic_binning()
+    ///     .gamma(2.2)
+    ///     .display()
+    ///     .cost();
+    /// println!("Cost: {} FLOPs, {} bytes", flops, mem);
+    /// ```
+    pub fn cost(&self) -> (u64, u64) {
+        let refs: Vec<&dyn IspBlock> = self.blocks.iter().map(|b| b.as_ref()).collect();
+        let (flops, _) = GraphComposer::pipeline_flops_estimate(&refs, self.width, self.height);
+        let (mem, _) = GraphComposer::pipeline_memory_estimate(&refs, self.width, self.height);
+        (flops, mem)
+    }
+
     /// Export the pipeline as a DOT/Graphviz graph.
     ///
     /// Returns a String of valid DOT syntax that can be rendered with
@@ -1304,6 +1327,17 @@ mod tests {
         assert!(dot.contains("640x480"));
         // Empty pipeline: no block edges, just input->output
         assert!(!dot.contains("block_0"));
+    }
+
+    #[test]
+    fn test_cost() {
+        let (flops, mem) = PipelineBuilder::new(640, 480)
+            .unpack()
+            .demosaic_binning()
+            .display()
+            .cost();
+        assert!(flops > 0);
+        assert!(mem > 0);
     }
 
 }
