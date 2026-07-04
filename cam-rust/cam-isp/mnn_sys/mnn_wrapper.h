@@ -289,22 +289,6 @@ extern "C" int mnn_run_true_zero_copy(
     int max_out
 );
 
-// ── Express Module API ──────────────────────────────────────────────────
-
-typedef void* MnnExpressModule;
-typedef void* MnnVARP;
-
-MnnVARP* mnn_express_load_vars(const char* path, int* out_count);
-MnnExpressModule mnn_express_extract(MnnVARP* inputs, int n_inputs, MnnVARP* outputs, int n_outputs);
-void mnn_express_destroy_module(MnnExpressModule module);
-MnnVARP mnn_express_create_input(const int* dims, int ndim, int format, int dtype);
-void* mnn_express_write_map(MnnVARP varp);
-const void* mnn_express_read_map(MnnVARP varp);
-int mnn_express_var_info(MnnVARP varp, int* dims_out, int max_dims, int* out_format);
-int mnn_express_var_resize(MnnVARP varp, const int* dims, int ndim);
-MnnVARP* mnn_express_forward(MnnExpressModule module, MnnVARP* inputs, int n_inputs, int* out_count);
-void mnn_varps_destroy(MnnVARP* varps, int count);
-
 // Model info enum
 typedef enum {
     MNN_MODEL_INFO_MEMORY = 0,
@@ -324,12 +308,6 @@ typedef enum {
  */
 int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelInfo info_code, void* out);
 
-// Profiler API (requires MNN_PIPELINE_PROFILE=ON)
-typedef void* MnnExecutor;
-MnnExecutor mnn_executor_get_global();
-void mnn_executor_reset_profile(MnnExecutor executor);
-void mnn_executor_dump_profile(MnnExecutor executor);
-float mnn_executor_get_last_gpu_time_ms(MnnExecutor executor);
 #ifdef __cplusplus
 }
 #endif
