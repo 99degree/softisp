@@ -203,8 +203,6 @@ mod tests {
         let block = GammaBlock::new(2.2);
         let inits = block.initializers();
         // Check inv_gamma = 1/2.2 ≈ 0.4545
-        let ns = block.tensor_ns();
-        let target = format!("{}/inv_gamma", ns);
         assert!(inits.iter().any(|i| {
             let s = String::from_utf8_lossy(i);
             s.contains("inv_gamma")

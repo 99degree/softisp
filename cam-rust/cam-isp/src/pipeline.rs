@@ -890,9 +890,9 @@ mod tests {
 
     #[test]
     fn test_validate_good_pipeline() {
-        let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
-        let demosaic = DemosaicCcmBlock::new(0);
-        let display = DisplayBlock::new(640);
+        let _unpack = UnpackBlock::new().with_concrete_dims(480, 640);
+        let _demosaic = DemosaicCcmBlock::new(0);
+        let _display = DisplayBlock::new(640);
         // Wire them
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
             Box::new(UnpackBlock::new().with_concrete_dims(480, 640)),
