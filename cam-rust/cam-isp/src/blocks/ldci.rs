@@ -105,4 +105,24 @@ mod tests {
         // AvgPool + Sub + Mul + Add = 4 nodes
         assert_eq!(nodes.len(), 4);
     }
+
+    #[test]
+    fn test_ldci_initializers() {
+        let b = LdciBlock::new();
+        let inits = b.initializers();
+        assert_eq!(inits.len(), 1);
+    }
+
+    #[test]
+    fn test_ldci_tensor_ns() {
+        let b = LdciBlock::new();
+        assert!(!b.tensor_ns().is_empty());
+    }
+
+    #[test]
+    fn test_ldci_with_strength() {
+        let b = LdciBlock::new();
+        let inits = b.initializers();
+        assert_eq!(inits.len(), 1);
+    }
 }
