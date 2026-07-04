@@ -30,7 +30,7 @@ impl DemosaicAlgo {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_name(s: &str) -> Self {
         match s {
             "binning" => Self::Binning,
             "mhc" => Self::Mhc,

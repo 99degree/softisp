@@ -346,7 +346,7 @@ impl CoarseHistogramBlock {
             id: "histogram".into(), prev: None, next: None,
             frame_tensor: "CoarseHistogramBlock/frame".into(),
             input_source: String::new(),
-            num_bins: num_bins.max(2).min(64),
+            num_bins: num_bins.clamp(2, 64),
             concrete_h: None, concrete_w: None,
         }
     }

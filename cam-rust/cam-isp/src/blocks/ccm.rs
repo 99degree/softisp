@@ -17,6 +17,10 @@ pub struct CcmBlock {
     in_ch: i64,
     out_ch: i64,
 }
+impl Default for CcmBlock {
+    fn default() -> Self { Self::new() }
+}
+
 impl CcmBlock {
     /// Create a default CCM block (single instance, 3 input channels).
     pub fn new() -> Self { Self::with_instance("") }

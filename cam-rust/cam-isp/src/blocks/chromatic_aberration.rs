@@ -90,8 +90,8 @@ impl ChromaticAberrationBlock {
                     let norm_factor = 2.0 / (w as f32 - 1.0);
                     let gx = (x as f32 + dx * shift * norm_factor) * norm_factor - 1.0;
                     let gy = (y as f32 + dy * shift * norm_factor) * (2.0 / (h as f32 - 1.0)) - 1.0;
-                    grids.push(gx.max(-1.0).min(1.0));
-                    grids.push(gy.max(-1.0).min(1.0));
+                    grids.push(gx.clamp(-1.0, 1.0));
+                    grids.push(gy.clamp(-1.0, 1.0));
                 }
             }
         }
