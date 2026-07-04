@@ -300,3 +300,24 @@ fn test_builder_to_dot_empty_pipeline() {
     assert!(dot.contains("input -> output"));
     assert!(!dot.contains("block_0"));
 }
+
+#[test]
+fn test_builder_cost_estimator() {
+    let (flops, mem) = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .demosaic_binning()
+        .gamma(2.2)
+        .display()
+        .cost();
+    assert!(flops > 0, "FLOPs should be positive");
+    assert!(mem > 0, "Memory should be positive");
+}
+
+#[test]
+fn test_builder_cost_scales_with_resolution() {
+    let (flops_small, _) = PipelineBuilder::new(640, 480)
+        .unpack().display().cost();
+    let (flops_large, _) = PipelineBuilder::new(3840, 2160)
+        .unpack().display().cost();
+    assert!(flops_large > flops_small, "4K should cost more than HD");
+}
