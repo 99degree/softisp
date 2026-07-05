@@ -195,7 +195,7 @@ fn main() {
         );
         let postproc_ms = t_postproc.elapsed().as_secs_f64() * 1000.0;
 
-        let output_pixels = match &postproc_result {
+        let _output_pixels = match &postproc_result {
             Ok(f) => (f.width * f.height) as f64,
             Err(e) => {
                 eprintln!("  [{:2}] Postproc ERROR: {}", i, e);
