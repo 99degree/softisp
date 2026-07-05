@@ -9,7 +9,7 @@ Bayer RAW → [Extra(isp.unpack_demosaic)] → [Extra(isp.ee_ldci)] → [Extra(i
               BLC+WB+CCM+demosaic+FCS      EE + LDCI fused          sRGB gamma + format
 ```
 
-**12 GPU dispatches** (minimum after all fusions), 575 tests, 0 warnings.
+**12 GPU dispatches** (minimum after all fusions), 579 tests, 0 warnings.
 
 ## Performance (Vulkan, Snapdragon 8 Gen 2)
 
@@ -22,7 +22,7 @@ Bayer RAW → [Extra(isp.unpack_demosaic)] → [Extra(isp.ee_ldci)] → [Extra(i
 ## Features
 
 - **44 ISP blocks**: input, demosaic, color, enhance, warp, denoise, effects, stats, display
-- **575 tests**: 540 lib + 24 integration + 2 e2e
+- **579 tests**: 544 lib + 24 integration + 2 e2e
 - **36 examples** compile, 0 warnings
 - **12 fusion rules**: R1–R12b (IspChainFusion.cpp)
 - **Runtime 3A**: hot-swap const buffers, workgroup presets
@@ -83,7 +83,7 @@ cd ~/softisp/cam-rust && cargo build -p cam-isp --features mnn
 ## Test
 
 ```bash
-cargo test --lib -p cam-isp --features mnn               # 540 lib tests
+cargo test --lib -p cam-isp --features mnn               # 544 lib tests
 cargo test --tests -p cam-isp --features mnn                # 24 integration
 ```
 
