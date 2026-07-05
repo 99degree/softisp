@@ -140,4 +140,36 @@ mod tests {
             assert!((warped[i] - rgb[i]).abs() < 0.001);
         }
     }
+
+    #[test]
+    fn test_identity_grid_range() {
+        let grid = generate_identity_grid(32, 64);
+        assert_eq!(grid.len(), 32 * 64 * 2);
+        // Grid uses normalized coords in [-1, 1]
+        for i in (0..grid.len()).step_by(2) {
+            assert!(grid[i] >= -1.0 && grid[i] <= 1.0, "x at {} = {}", i, grid[i]);
+            assert!(grid[i + 1] >= -1.0 && grid[i + 1] <= 1.0, "y at {} = {}", i, grid[i + 1]);
+        }
+    }
+
+    #[test]
+    fn test_radial_distortion_pincushion() {
+        // Negative k1 = pincushion
+        let grid = generate_identity_grid(8, 8);
+        let distorted = apply_radial_distortion(&grid, 8, 8, -0.5, 0.0, 0.0, 0.5, 0.5);
+        assert_eq!(distorted.len(), grid.len());
+        let diff: f32 = grid.iter().zip(distorted.iter()).map(|(a, b)| (a - b).abs()).sum();
+        assert!(diff > 0.0, "pincushion should distort the grid");
+    }
+
+    #[test]
+    fn test_warp_image_with_distortion() {
+        let h = 8;
+        let w = 8;
+        let rgb = vec![0.5f32; h * w * 3];
+        let grid = generate_identity_grid(h, w);
+        let distorted = apply_radial_distortion(&grid, h, w, 0.1, 0.0, 0.0, 0.5, 0.5);
+        let warped = warp_image(&rgb, &distorted, h, w);
+        assert_eq!(warped.len(), rgb.len());
+    }
 }
