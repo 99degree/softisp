@@ -80,10 +80,10 @@ fn main() {
     let graph = Proto::graph(
         "fused_isp",
         &[node],
-        &[input_vi.clone()],
-        &[output_vi.clone()],
+        std::slice::from_ref(&input_vi),
+        std::slice::from_ref(&output_vi),
         &[],  // no initializers
-        &[input_vi.clone()],
+        std::slice::from_ref(&input_vi),
     );
 
     // Build model with opset

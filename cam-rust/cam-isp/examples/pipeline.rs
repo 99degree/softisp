@@ -93,7 +93,7 @@ fn oscillate_raw(raw: &[u8], frame_idx: u32) -> Vec<u8> {
     for chunk in shifted.chunks_exact_mut(2) {
         if chunk.len() == 2 {
             let val = u16::from_le_bytes([chunk[0], chunk[1]]);
-            let adjusted = if (frame_idx % 2) == 0 {
+            let adjusted = if frame_idx.is_multiple_of(2) {
                 (val as f32 * (1.0 + warmth * 0.3)).min(65535.0) as u16
             } else {
                 (val as f32 * (1.0 - warmth * 0.3)).min(65535.0) as u16

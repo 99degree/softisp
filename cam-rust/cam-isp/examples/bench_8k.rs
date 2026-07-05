@@ -26,8 +26,7 @@ fn main() {
     let n_frames = 10;        // fewer frames because 8K is slow
 
     // Generate 8K Bayer test data inline (deterministic pseudo-random)
-    use std::io::Write;
-    let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 2) as usize);
+        let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 2) as usize);
     let mut rng_state = 42u64;
     for _ in 0..sensor_w * sensor_h {
         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
