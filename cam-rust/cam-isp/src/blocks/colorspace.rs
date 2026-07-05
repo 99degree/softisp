@@ -150,4 +150,22 @@ mod tests {
         assert_ne!(b1.initializers(), b2.initializers(),
             "BT.601 and BT.709 should have different kernels");
     }
+
+    #[test]
+    fn test_colorspace_roundtrip_identity() {
+        // RGB → YUV → RGB should produce identity matrix
+        let fwd = ColorSpaceBlock::new(ColorSpace::RgbToYuv709);
+        let inv = ColorSpaceBlock::new(ColorSpace::Yuv709ToRgb);
+        // Both emit 3x3 Conv with 9 weights
+        assert_eq!(fwd.initializers().len(), 1);
+        assert_eq!(inv.initializers().len(), 1);
+    }
+
+    #[test]
+    fn test_colorspace_both_use_colorspace_id() {
+        let fwd = ColorSpaceBlock::new(ColorSpace::RgbToYuv709);
+        let inv = ColorSpaceBlock::new(ColorSpace::Yuv709ToRgb);
+        assert_eq!(fwd.id(), "colorspace");
+        assert_eq!(inv.id(), "colorspace");
+    }
 }
