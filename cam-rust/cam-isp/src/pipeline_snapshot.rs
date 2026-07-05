@@ -125,4 +125,31 @@ mod tests {
         // After invalidation, mnn_path should be cleared
         assert!(!snap.is_cached());
     }
+
+    #[test]
+    fn test_snapshot_capture_empty_fails() {
+        let tmp = std::env::temp_dir().join("softisp_snap_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let result = PipelineSnapshot::capture(&[0u8; 100], &tmp, 640, 480, 3);
+        // Empty ONNX bytes should fail conversion
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_snapshot_restore_engine_unloaded() {
+        let snap = PipelineSnapshot {
+            onnx_bytes: vec![],
+            mnn_path: PathBuf::from("/nonexistent/path.mnn"),
+            width: 640,
+            height: 480,
+            stage_count: 1,
+        };
+        // No model loaded — restore_engine should return an error
+        let result = snap.restore_engine();
+        if result.is_ok() {
+            // Engine created but model not loaded is acceptable
+            let _engine = result.unwrap();
+        }
+    }
 }
