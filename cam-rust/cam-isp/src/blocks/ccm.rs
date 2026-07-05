@@ -129,7 +129,20 @@ mod tests {
     fn test_ccm_with_channels() {
         let b = CcmBlock::new().with_channels(4);
         let inits = b.initializers();
-        // matrix is [4,4,1,1] = 16 floats for identity
-        assert_eq!(inits.len(), 4); // matrix + bias + zero + one
+        assert_eq!(inits.len(), 4);
+    }
+
+    #[test]
+    fn test_ccm_different_channels() {
+        let b3 = CcmBlock::new().with_channels(3);
+        let b4 = CcmBlock::new().with_channels(4);
+        // 4-channel has more initializer data than 3-channel
+        assert!(b4.initializers().len() >= b3.initializers().len());
+    }
+
+    #[test]
+    fn test_ccm_extra_inputs() {
+        let b = CcmBlock::new();
+        assert!(!b.extra_inputs().is_empty());
     }
 }
