@@ -44,6 +44,7 @@ mod passthrough;
 mod stage;
 mod hdr_debayer;
 mod blc50;
+mod watermark;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -90,6 +91,7 @@ pub use passthrough::PassthroughBlock;
 pub use stage::StageBlock;
 pub use hdr_debayer::HdrDebayerBlock;
 pub use blc50::Blc50Block;
+pub use watermark::WatermarkBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
