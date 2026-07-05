@@ -389,3 +389,46 @@ fn test_builder_full_hdr_pipeline() {
         .unwrap();
     assert!(!onnx.is_empty());
 }
+
+#[test]
+fn test_builder_hdr_debayer() {
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .hdr_debayer(4.0)
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
+}
+
+#[test]
+fn test_builder_blc50() {
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .blc50(10.0, 12.0, 8.0)
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
+}
+
+#[test]
+fn test_builder_laplacian_pyramid() {
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .laplacian_pyramid(3)
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
+}
+
+#[test]
+fn test_builder_watermark() {
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .watermark(0.3)
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
+}
