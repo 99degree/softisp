@@ -143,4 +143,16 @@ mod tests {
             assert_eq!(nodes.len(), 4, "strength={}: AvgPool + Sub + Mul + Add", s);
         }
     }
+
+    #[test]
+    fn test_sharpen_extreme_strengths() {
+        // Zero strength — identity (no sharpening)
+        let b = SharpenBlock::new(0.0);
+        assert_eq!(b.strength, 0.0);
+        // Very high strength
+        let b = SharpenBlock::new(100.0);
+        assert_eq!(b.strength, 100.0);
+        let nodes = b.nodes();
+        assert_eq!(nodes.len(), 4);
+    }
 }

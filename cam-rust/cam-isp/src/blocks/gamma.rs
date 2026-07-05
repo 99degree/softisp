@@ -223,4 +223,14 @@ mod tests {
         assert_eq!(block.input_tensors().len(), 1);
         assert_eq!(block.output_tensors().len(), 1);
     }
+
+    #[test]
+    fn test_gamma_extreme_values() {
+        // Very low gamma (near-linear)
+        let block = GammaBlock::new(0.1);
+        assert_eq!(block.gamma, 0.1);
+        // Very high gamma (crush shadows)
+        let block = GammaBlock::new(10.0);
+        assert_eq!(block.gamma, 10.0);
+    }
 }
