@@ -222,9 +222,21 @@ mod tests {
     fn test_noise_estimate_scale_affects_output() {
         let block1 = NoiseEstimateBlock::new().with_scale(0.5);
         let block2 = NoiseEstimateBlock::new().with_scale(2.0);
-        // Different scales should produce different initializer values
         let inits1 = block1.initializers();
         let inits2 = block2.initializers();
         assert_ne!(inits1, inits2, "different scales should produce different initializers");
+    }
+
+    #[test]
+    fn test_noise_estimate_zero_scale() {
+        let block = NoiseEstimateBlock::new().with_scale(0.0);
+        assert_eq!(block.scale, 0.0);
+        assert!(!block.nodes().is_empty());
+    }
+
+    #[test]
+    fn test_noise_estimate_negative_scale() {
+        let block = NoiseEstimateBlock::new().with_scale(-1.0);
+        assert_eq!(block.scale, -1.0);
     }
 }
