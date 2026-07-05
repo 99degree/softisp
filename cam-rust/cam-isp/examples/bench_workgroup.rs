@@ -9,7 +9,7 @@ use std::time::Instant;
 fn main() {
     println!("=== Workgroup Size Benchmark ===\n");
 
-    let engine = MnnEngine::new(MnnBackend::Vulkan);
+    let _engine = MnnEngine::new(MnnBackend::Vulkan);
     let (opt_x, opt_y) = MnnEngine::query_optimal_workgroup();
     println!("GPU optimal workgroup: {}x{}\n", opt_x, opt_y);
 
