@@ -90,4 +90,10 @@ mod tests {
         let b = PassthroughBlock::new("my_breakpoint");
         assert_eq!(b.tensor_ns(), "Passthrough/passthrough_my_breakpoint");
     }
+
+    #[test]
+    fn test_passthrough_graph_output() {
+        let b = PassthroughBlock::new("test");
+        assert!(b.graph_output_name().is_some());
+    }
 }

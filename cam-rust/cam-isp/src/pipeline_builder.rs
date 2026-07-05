@@ -394,6 +394,30 @@ impl PipelineBuilder {
         self
     }
 
+    /// Add `HdrDebayerBlock` — multi-exposure HDR Bayer merge.
+    pub fn hdr_debayer(mut self, exposure_ratio: f32) -> Self {
+        self.blocks.push(Box::new(HdrDebayerBlock::new().with_exposure_ratio(exposure_ratio)));
+        self
+    }
+
+    /// Add `Blc50Block` — 50Hz FPN subtraction.
+    pub fn blc50(mut self, r: f32, g: f32, b: f32) -> Self {
+        self.blocks.push(Box::new(Blc50Block::new().with_offsets(r, g, b)));
+        self
+    }
+
+    /// Add `LaplacianPyramidBlock` — multi-scale Laplacian decomposition.
+    pub fn laplacian_pyramid(mut self, levels: usize) -> Self {
+        self.blocks.push(Box::new(LaplacianPyramidBlock::new().with_levels(levels)));
+        self
+    }
+
+    /// Add `WatermarkBlock` — text/image watermark overlay.
+    pub fn watermark(mut self, opacity: f32) -> Self {
+        self.blocks.push(Box::new(WatermarkBlock::new().with_opacity(opacity)));
+        self
+    }
+
     /// Add `DisplayBlock` — final format conversion to RGBA output.
     /// Output width matches the builder's input width.
     ///
