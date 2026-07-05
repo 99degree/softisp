@@ -42,6 +42,8 @@ mod plugin;
 mod laplacian_pyramid;
 mod passthrough;
 mod stage;
+mod hdr_debayer;
+mod blc50;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -86,6 +88,8 @@ pub use plugin::PluginBlock;
 pub use laplacian_pyramid::LaplacianPyramidBlock;
 pub use passthrough::PassthroughBlock;
 pub use stage::StageBlock;
+pub use hdr_debayer::HdrDebayerBlock;
+pub use blc50::Blc50Block;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
