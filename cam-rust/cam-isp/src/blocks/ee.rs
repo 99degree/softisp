@@ -128,7 +128,19 @@ mod tests {
     fn test_ee_kernel_shape() {
         let b = EeBlock::new();
         let inits = b.initializers();
-        // kernel + bias = 2
         assert_eq!(inits.len(), 2);
+    }
+
+    #[test]
+    fn test_ee_has_input_output() {
+        let b = EeBlock::new();
+        assert!(!b.input_tensors().is_empty());
+        assert!(!b.output_tensors().is_empty());
+    }
+
+    #[test]
+    fn test_ee_tensor_ns() {
+        let b = EeBlock::new();
+        assert!(!b.tensor_ns().is_empty());
     }
 }

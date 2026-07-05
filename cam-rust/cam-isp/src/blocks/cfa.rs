@@ -206,7 +206,6 @@ mod tests {
 
     #[test]
     fn test_cfa_pipeline_integration() {
-        // Build a minimal pipeline: RawInput -> Normalize -> CfaBlock
         let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
             .with_elem_type(1).with_concrete_dims(48, 64));
         let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
@@ -220,5 +219,14 @@ mod tests {
         let model = result.unwrap();
         assert!(!model.is_empty(), "Model should not be empty");
         assert!(model.len() > 100, "Model should be substantial");
+    }
+
+    #[test]
+    fn test_cfa_various_sizes() {
+        for (w, h) in [(32, 32), (64, 48), (128, 128)] {
+            let b = CfaBlock::new().with_concrete_dims(w, h);
+            let nodes = b.nodes();
+            assert!(!nodes.is_empty(), "CFA {}x{} should emit nodes", w, h);
+        }
     }
 }

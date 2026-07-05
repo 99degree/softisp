@@ -207,4 +207,18 @@ mod tests {
         b.set_input_source("in/packed");
         assert_eq!(b.output_tensors(), vec!["UnpackBayerToFp16Block/frame_fp16".to_string()]);
     }
+
+    #[test]
+    fn test_unpack_bayer_fp16_has_input_output() {
+        let b = UnpackBayerToFp16Block::new();
+        assert!(!b.input_tensors().is_empty());
+        assert!(!b.output_tensors().is_empty());
+    }
+
+    #[test]
+    fn test_unpack_bayer_fp16_extra_inputs() {
+        let b = UnpackBayerToFp16Block::new();
+        // FP16 unpack doesn't use extra inputs for BLC/WB (those are in the const buffer)
+        let _ = b.extra_inputs();
+    }
 }

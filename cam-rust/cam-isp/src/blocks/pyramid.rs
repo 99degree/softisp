@@ -162,4 +162,17 @@ mod tests {
         assert!(s.contains("GrayscaleBlock"), "should contain grayscale tensor");
         assert!(s.contains("PyramidBlock"), "should contain pyramid tensor");
     }
+
+    #[test]
+    fn test_pyramid_has_input_output() {
+        let p = PyramidBlock::new();
+        assert!(!p.input_tensors().is_empty());
+        assert!(!p.output_tensors().is_empty());
+    }
+
+    #[test]
+    fn test_pyramid_tensor_ns() {
+        let p = PyramidBlock::new();
+        assert!(!p.tensor_ns().is_empty());
+    }
 }

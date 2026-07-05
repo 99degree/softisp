@@ -231,13 +231,26 @@ mod tests {
         let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
         let b3: Box<dyn IspBlock> = Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
         let b4: Box<dyn IspBlock> = Box::new(crate::blocks::DemosaicCcmBlock::new(2).with_concrete_dims(24, 32));
-        let b5: Box<dyn IspBlock> = Box::new(ResizeBlock::new(0.5).with_concrete_dims(24, 32)); // down to 12×16
-        let b6: Box<dyn IspBlock> = Box::new(ResizeBlock::new(2.0).with_concrete_dims(12, 16)); // up to 24×32
+        let b5: Box<dyn IspBlock> = Box::new(ResizeBlock::new(0.5).with_concrete_dims(24, 32));
+        let b6: Box<dyn IspBlock> = Box::new(ResizeBlock::new(2.0).with_concrete_dims(12, 16));
 
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![b1, b2, b3, b4, b5, b6];
         GraphComposer::wire_blocks(&mut blocks);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let result = GraphComposer::compose_from_vec(&refs, &[], 16);
         assert!(result.is_ok(), "Pipeline through ResizeBlock: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_resize_identity() {
+        let b = ResizeBlock::new(1.0).with_concrete_dims(64, 64);
+        let nodes = b.nodes();
+        assert!(!nodes.is_empty());
+    }
+
+    #[test]
+    fn test_resize_tensor_ns() {
+        let b = ResizeBlock::new(0.5).with_concrete_dims(64, 64);
+        assert!(!b.tensor_ns().is_empty());
     }
 }
