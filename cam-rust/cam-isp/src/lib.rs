@@ -86,3 +86,25 @@ pub fn init() {
 // MNN FFI bindings (only compiled when `mnn` feature is enabled)
 #[cfg(feature = "mnn")]
 pub mod mnn_sys;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_registers_engines() {
+        init();
+        let engine = engine::select_engine();
+        assert!(engine.is_some());
+    }
+
+    #[test]
+    fn test_init_is_idempotent() {
+        init();
+        init(); // second call is a no-op via Once
+        let e1 = engine::select_engine();
+        let e2 = engine::select_engine();
+        assert!(e1.is_some());
+        assert!(e2.is_some());
+    }
+}
