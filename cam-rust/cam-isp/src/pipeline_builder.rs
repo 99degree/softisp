@@ -351,6 +351,49 @@ impl PipelineBuilder {
         self
     }
 
+    /// Add `HdrToneBlock` — HDR to SDR tone mapping.
+    ///
+    /// Supported operators: `Aces` (default), `Reinhard`, `Uncharted2`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .unpack().hdr_tone(ToneOperator::Aces).display().compose();
+    /// ```
+    pub fn hdr_tone(mut self, operator: ToneOperator) -> Self {
+        self.blocks.push(Box::new(HdrToneBlock::new().with_operator(operator)));
+        self
+    }
+
+    /// Add `WaveletDenoiseBlock` — Haar wavelet denoising.
+    ///
+    /// `sigma`: noise level (0.01–0.1 typical).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .unpack().wavelet_denoise(0.05).display().compose();
+    /// ```
+    pub fn wavelet_denoise(mut self, sigma: f32) -> Self {
+        self.blocks.push(Box::new(WaveletDenoiseBlock::new().with_sigma(sigma)));
+        self
+    }
+
+    /// Add `PluginBlock` — load arbitrary ONNX model at runtime.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .unpack().plugin("custom.onnx").display().compose();
+    /// ```
+    pub fn plugin(mut self, model_path: &str) -> Self {
+        self.blocks.push(Box::new(PluginBlock::new(model_path, "plugin")));
+        self
+    }
+
     /// Add `DisplayBlock` — final format conversion to RGBA output.
     /// Output width matches the builder's input width.
     ///
