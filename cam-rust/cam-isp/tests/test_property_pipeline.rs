@@ -103,4 +103,41 @@ proptest! {
         prop_assert!(summary.contains("×"));
         prop_assert!(summary.contains("→"));
     }
+
+    #[test]
+    fn test_cost_scales_with_resolution(w in 1u32..4096, h in 1u32..4096) {
+        let (flops, mem) = PipelineBuilder::new(w, h)
+            .unpack()
+            .demosaic_binning()
+            .display()
+            .cost();
+        prop_assert!(flops > 0, "FLOPs must be > 0 for {}x{}", w, h);
+        prop_assert!(mem > 0, "memory must be > 0 for {}x{}", w, h);
+    }
+
+    #[test]
+    fn test_dot_never_empty(w in 1u32..2048, h in 1u32..2048) {
+        let dot = PipelineBuilder::new(w, h)
+            .unpack()
+            .demosaic_binning()
+            .display()
+            .to_dot();
+        prop_assert!(!dot.is_empty());
+        prop_assert!(dot.contains("digraph"));
+    }
+
+    #[test]
+    fn test_all_presets_valid(w in 64u32..3840, h in 64u32..2160) {
+        let presets: Vec<fn(u32, u32) -> PipelineBuilder> = vec![
+            PipelineBuilder::photo_preset,
+            PipelineBuilder::video_preset,
+            PipelineBuilder::night_preset,
+            PipelineBuilder::minimal_preset,
+        ];
+        for preset_fn in &presets {
+            let builder = preset_fn(w, h);
+            let validation = builder.validate();
+            prop_assert!(validation.is_ok(), "Preset failed for {}x{}: {:?}", w, h, validation.err());
+        }
+    }
 }
