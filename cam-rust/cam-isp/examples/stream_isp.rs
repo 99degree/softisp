@@ -108,7 +108,7 @@ fn main() {
     info!("Duration: {}s (or Ctrl+C)", if args.duration > 0 { args.duration.to_string() } else { "infinite".to_string() });
 
     // Select ISP engine
-    let mut engine: Box<dyn IspEngine> = if args.engine == "auto" {
+    let engine: Box<dyn IspEngine> = if args.engine == "auto" {
         select_engine().expect("No ISP engine available")
     } else {
         select_engine_by_name(&args.engine)
@@ -158,7 +158,7 @@ fn main() {
         match engine.process(&params) {
             Ok(_frame) => {
                 let t_end = Instant::now();
-                let latency_ns = t_end.duration_since(t_start).as_nanos() as u128;
+                let latency_ns = t_end.duration_since(t_start).as_nanos();
                 total_latency_ns += latency_ns;
                 min_latency_ns = min_latency_ns.min(latency_ns);
                 max_latency_ns = max_latency_ns.max(latency_ns);

@@ -16,7 +16,6 @@
 //!   cargo run --example camera_isp --features mnn -p cam-isp -- \
 //!     --engine mnn --width 1920 --height 1080 --frames 10
 
-use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::time::{Instant, Duration};
 
@@ -24,7 +23,6 @@ use clap::Parser;
 use log::info;
 
 use cam_isp::engine::{ProcessParams, IspEngine, select_engine, select_engine_by_name};
-use cam_isp::pipeline::IspFrame;
 
 #[derive(Parser, Debug)]
 #[clap(about = "Camera → ISP pipeline integration")]
@@ -108,7 +106,7 @@ fn main() {
     std::fs::create_dir_all(&args.out).ok();
 
     // Select ISP engine
-    let mut engine: Box<dyn IspEngine> = if args.engine == "auto" {
+    let engine: Box<dyn IspEngine> = if args.engine == "auto" {
         select_engine().expect("No ISP engine available")
     } else {
         select_engine_by_name(&args.engine)

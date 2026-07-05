@@ -39,7 +39,7 @@ fn main() {
 
     let node = Proto::node("DiagConst", &[], &["output"], &attrs);
 
-    let graph = Proto::graph("diag", &[node], &[], &[output_vi.clone()], &[], &[output_vi.clone()]);
+    let graph = Proto::graph("diag", &[node], &[], std::slice::from_ref(&output_vi), &[], std::slice::from_ref(&output_vi));
 
     let opset = Proto::opset("", 21);
     let model = Proto::model(9, &opset, "softisp", &graph);

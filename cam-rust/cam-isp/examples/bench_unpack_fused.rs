@@ -1,7 +1,6 @@
 //! Compare unpack+norm+cfa (separate) vs UnpackCfaBlock (fused).
 //! Uses the same build/process pattern as bench_blocks.
 
-use std::time::{Instant, Duration};
 use cam_isp::pipeline::{IspBlock, GraphComposer};
 use cam_isp::blocks::*;
 use cam_isp::mnnengine::{MnnEngine, MnnBackend};
@@ -113,7 +112,7 @@ fn bench_fused(h: u32, w_full: u32) -> (f64, String) {
 }
 
 fn main() {
-    let _ = std::env::set_var("RUST_LOG", "warn");
+    std::env::set_var("RUST_LOG", "warn");
     cam_isp::init();
 
     let args: Vec<String> = std::env::args().collect();
