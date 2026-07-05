@@ -90,4 +90,17 @@ mod tests {
         assert_eq!(extra.len(), 1);
         assert_eq!(extra[0].2, vec![1, 4, 1, 1]);
     }
+
+    #[test]
+    fn test_bayer_wb_has_input_output() {
+        let b = BayerWbBlock::new();
+        assert!(!b.input_tensors().is_empty());
+        assert!(!b.output_tensors().is_empty());
+    }
+
+    #[test]
+    fn test_bayer_wb_tensor_ns() {
+        let b = BayerWbBlock::new();
+        assert!(!b.tensor_ns().is_empty());
+    }
 }
