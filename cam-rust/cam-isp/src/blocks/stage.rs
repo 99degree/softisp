@@ -90,4 +90,10 @@ mod tests {
         let b = StageBlock::new("color_correction", 2);
         assert!(b.tensor_ns().contains("Stage"));
     }
+
+    #[test]
+    fn test_stage_index() {
+        let b = StageBlock::new("demosaic", 3);
+        assert_eq!(b.stage_index, 3);
+    }
 }
