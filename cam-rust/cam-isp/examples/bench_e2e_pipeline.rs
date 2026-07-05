@@ -15,7 +15,7 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
     println!("{} ({}x{}):", name, w, h);
 
     // Build pipeline
-    let blocks: Vec<Box<dyn IspBlock>> = vec![
+    let mut blocks: Vec<Box<dyn IspBlock>> = vec![
         Box::new(UnpackBlock::new()
             .with_concrete_dims(h as i64, w as i64)),
         Box::new(DemosaicCcmBlock::new(0)),

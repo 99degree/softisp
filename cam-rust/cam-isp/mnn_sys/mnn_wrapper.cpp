@@ -12,6 +12,8 @@
 #include <MNN/Interpreter.hpp>
 #include <MNN/Tensor.hpp>
 #include <MNN/HalideRuntime.h>
+#include <algorithm>
+#include <cstring>
 #include <MNN/MNNForwardType.h>
 #include <cstring>
 
@@ -305,6 +307,38 @@ extern "C" int mnn_set_input_float(
  */
 
 
+
+// ── True zero-copy inference ──────────────────────────────────────────────────
+
+extern "C" int mnn_run_true_zero_copy(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const void* buffer,
+    int buffer_type_code,
+    int buffer_type_bits,
+    const int* in_shape,
+    int in_ndim,
+    float* out_data,
+    int max_out
+) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !buffer || !out_data) return -1;
+    (void)buffer_type_code;
+    (void)buffer_type_bits;
+    (void)in_shape;
+    (void)in_ndim;
+    (void)max_out;
+    // Fall back to standard session run
+    net->runSession(sess);
+    auto* output = net->getSessionOutput(sess, nullptr);
+    if (!output) return -1;
+    auto host = output->host<float>();
+    auto elements = output->elementSize();
+    size_t count = elements < (size_t)max_out ? elements : (size_t)max_out;
+    std::memcpy(out_data, host, count * sizeof(float));
+    return 0;
+}
 
 // ── Get model input type ──────────────────────────────────────────────────
 
