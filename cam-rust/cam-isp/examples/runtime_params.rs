@@ -8,9 +8,11 @@
 
 use cam_isp::mnn_sys::{self, MnnBackendType};
 use std::ffi::CString;
-use std::ptr;
 
 const BUFFER_LEN: usize = 26;
+
+/// Type alias for preset function: takes params, returns modified params.
+ type PresetFn = fn([f32; BUFFER_LEN]) -> [f32; BUFFER_LEN];
 
 fn make_default_params() -> [f32; BUFFER_LEN] {
     let mut buf = [0.0f32; BUFFER_LEN];
@@ -51,7 +53,7 @@ fn main() {
         mnn_sys::mnn_session_run(interp, session);
 
         let mut params = make_default_params();
-        let presets: Vec<(&str, fn([f32; BUFFER_LEN]) -> [f32; BUFFER_LEN])> = vec![
+        let presets: Vec<(&str, PresetFn)> = vec![
             ("neutral", |p| p),
             ("warm_wb", warm_wb),
             ("cool_wb", cool_wb),

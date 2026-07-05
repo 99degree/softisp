@@ -169,7 +169,7 @@ fn build_and_bench(
 }
 
 fn main() {
-    let _ = std::env::set_var("RUST_LOG", "warn");
+    std::env::set_var("RUST_LOG", "warn");
     cam_isp::init();
 
     let args: Vec<String> = std::env::args().collect();
@@ -233,7 +233,7 @@ fn main() {
     );
     let all_blocks = profile.build_blocks(w, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile
-    let block_names: Vec<String> = all_blocks.iter().map(|b| format!("{}", b.id())).collect();
+    let block_names: Vec<String> = all_blocks.iter().map(|b| b.id().to_string()).collect();
     drop(all_blocks);
 
     eprintln!("Blocks: {} total", max_blocks);
@@ -301,7 +301,7 @@ fn main() {
         .map(|(_, _, t, _, _, _)| *t)
         .unwrap_or(1.0);
     for (i, (_, name, _, inc, _, _)) in sorted.iter().enumerate().take(5) {
-        let bar = "#".repeat((*inc as usize).max(1).min(40));
+        let bar = "#".repeat((*inc as usize).clamp(1, 40));
         let pct = (*inc / final_total) * 100.0;
         eprintln!("  #{:2}  +{:>6.2}ms ({:>4.1}%)  {}  {}", i + 1, inc, pct, bar, name);
     }

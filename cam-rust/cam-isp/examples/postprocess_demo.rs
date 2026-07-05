@@ -87,10 +87,12 @@ fn main() {
     info!("EIS: {}, GDC: {}, Denoise: {}", args.eis, args.gdc, args.denoise);
 
     // Build post-process config
-    let mut config = PostProcessConfig::default();
-    config.eis_enabled = args.eis;
-    config.gdc_enabled = args.gdc;
-    config.temporal_denoise_enabled = args.denoise;
+    let config = PostProcessConfig {
+        eis_enabled: args.eis,
+        gdc_enabled: args.gdc,
+        temporal_denoise_enabled: args.denoise,
+        ..PostProcessConfig::default()
+    };
 
     // Create pipeline with selected features
     let mut pipeline = PostProcessPipeline::new(config)
