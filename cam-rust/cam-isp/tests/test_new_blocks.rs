@@ -450,3 +450,82 @@ fn dyn_resize_scales_are_correct() {
     assert!((sh - 0.5).abs() < 0.01);
     assert!((sw - 0.5).abs() < 0.01);
 }
+
+#[test]
+fn test_hdr_tone_block_aces_compose() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    use cam_isp::blocks::ToneOperator;
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .hdr_tone(ToneOperator::Aces)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 1000);
+}
+
+#[test]
+fn test_hdr_tone_block_reinhard_compose() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    use cam_isp::blocks::ToneOperator;
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .hdr_tone(ToneOperator::Reinhard)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 1000);
+}
+
+#[test]
+fn test_hdr_tone_block_uncharted2_compose() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    use cam_isp::blocks::ToneOperator;
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .hdr_tone(ToneOperator::Uncharted2)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 1000);
+}
+
+#[test]
+fn test_wavelet_denoise_compose() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .wavelet_denoise(0.05)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 1000);
+}
+
+#[test]
+fn test_plugin_block_compose() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .plugin("dummy_model.onnx")
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 1000);
+}
+
+#[test]
+fn test_full_hdr_pipeline_compose() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    use cam_isp::blocks::ToneOperator;
+    let onnx = PipelineBuilder::new(3840, 2160)
+        .unpack()
+        .demosaic_binning()
+        .hdr_tone(ToneOperator::Aces)
+        .wavelet_denoise(0.03)
+        .gamma(2.2)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 2000);
+}

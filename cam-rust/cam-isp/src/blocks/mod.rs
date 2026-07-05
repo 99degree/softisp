@@ -36,6 +36,9 @@ mod sharpen;
 mod colorspace;
 mod aspect_crop;
 mod dyn_resize;
+mod hdr_tone;
+mod wavelet_denoise;
+mod plugin;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -74,6 +77,9 @@ pub use sharpen::SharpenBlock;
 pub use colorspace::{ColorSpaceBlock, ColorSpace};
 pub use aspect_crop::AspectCropBlock;
 pub use dyn_resize::DynResizeBlock;
+pub use hdr_tone::{HdrToneBlock, ToneOperator};
+pub use wavelet_denoise::WaveletDenoiseBlock;
+pub use plugin::PluginBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
