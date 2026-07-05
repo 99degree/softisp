@@ -81,7 +81,7 @@ fn main() {
         return;
     }
 
-    println!("Pipeline: {} blocks", if use_native { 8 } else { 8 });
+    println!("Pipeline: 8 blocks");
     let mut params = cam_isp::engine::ProcessParams::new(sensor_w, sensor_h, &raw);
     params.target_width = post_w;
     params.target_height = post_h;

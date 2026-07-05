@@ -15,14 +15,15 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
     println!("{} ({}x{}):", name, w, h);
 
     // Build pipeline
-    let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
-    blocks.push(Box::new(UnpackBlock::new()
-        .with_concrete_dims(h as i64, w as i64)));
-    blocks.push(Box::new(DemosaicCcmBlock::new(0)));
-    blocks.push(Box::new(WarpGridBlock::new(w, h)
-        .with_gdc(-0.1, 0.0, 0.0)
-        .with_lens_shading(1.2, 1.0)));
-    blocks.push(Box::new(DisplayBlock::new(w)));
+    let blocks: Vec<Box<dyn IspBlock>> = vec![
+        Box::new(UnpackBlock::new()
+            .with_concrete_dims(h as i64, w as i64)),
+        Box::new(DemosaicCcmBlock::new(0)),
+        Box::new(WarpGridBlock::new(w, h)
+            .with_gdc(-0.1, 0.0, 0.0)
+            .with_lens_shading(1.2, 1.0)),
+        Box::new(DisplayBlock::new(w)),
+    ];
 
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
 

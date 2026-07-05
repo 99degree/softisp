@@ -62,7 +62,7 @@ fn main() {
     let full_h   = sensor_h as i64;
     let ds_w     = pipe_w as i64;
     let ds_h     = pipe_h as i64;
-    let mid_h    = (full_h / 2) as i64;   // 2160 (after UnpackCfa stride=2)
+    let mid_h    = full_h / 2;   // 2160 (after UnpackCfa stride=2)
     let mid_w    = packed_w;               // 3840
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![

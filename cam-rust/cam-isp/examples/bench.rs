@@ -113,7 +113,7 @@ fn main() {
 
         let start = Instant::now();
         let n = 20 / (w * h).max(1);
-        let n = n.max(5).min(50);
+        let n = n.clamp(5, 50);
         for _ in 0..n {
             let _ = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw));
         }

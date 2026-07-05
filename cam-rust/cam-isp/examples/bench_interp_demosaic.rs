@@ -15,7 +15,7 @@ fn main() {
     let hw = std::env::var("HW").unwrap_or_else(|_| "1920x1080".to_string());
     let parts: Vec<i64> = hw.split('x').map(|s| s.parse().unwrap()).collect();
     let (w, h) = (parts[0], parts[1]);
-    let algo = DemosaicAlgo::from_str(&std::env::var("ALGO").unwrap_or_else(|_| "bilinear".to_string()));
+    let algo = DemosaicAlgo::from_name(&std::env::var("ALGO").unwrap_or_else(|_| "bilinear".to_string()));
     let oh = algo.output_height(h);
     let ow = algo.output_width(w);
 

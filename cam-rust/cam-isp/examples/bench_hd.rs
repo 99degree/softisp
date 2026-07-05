@@ -73,15 +73,14 @@ fn main() {
                 let mut total_infer_ns = 0u64;
                 let mut total_total_ns = 0u64;
                 while Instant::now() < deadline {
-                    let frame = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &buf));
-                    if frame.is_ok() {
-                        let f = frame.unwrap();
-                        total_prep_ns += f.prep_duration_ns;
-                        total_infer_ns += f.inference_duration_ns;
-                        total_total_ns += f.total_duration_ns;
-                        count += 1;
-                    } else {
-                        break;
+                    match engine.process(&cam_isp::engine::ProcessParams::new(w, h, &buf)) {
+                        Ok(f) => {
+                            total_prep_ns += f.prep_duration_ns;
+                            total_infer_ns += f.inference_duration_ns;
+                            total_total_ns += f.total_duration_ns;
+                            count += 1;
+                        }
+                        Err(_) => break,
                     }
                 }
                 let _ = tx.send(Some((count, total_prep_ns, total_infer_ns, total_total_ns)));
