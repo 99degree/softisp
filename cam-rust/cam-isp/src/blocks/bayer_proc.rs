@@ -543,4 +543,25 @@ mod tests {
         let expected_b_bias = -(w[0] * blc_vals[0] + w[1] * blc_vals[1] + w[2] * blc_vals[2] + w[3] * blc_vals[3]);
         assert!((b[2] - expected_b_bias).abs() < 0.0001, "B location bias: {:.5} ≈ {:.5}", b[2], expected_b_bias);
     }
+
+    #[test]
+    fn test_bayerproc_identity_ccm() {
+        let mut block = BayerProcBlock::new()
+            .with_mode(BayerMode::FullProc)
+            .with_bayer_pattern(BayerPattern::Rggb)
+            .with_blc(true)
+            .with_wb(true)
+            .with_sensor_max(1023.0);
+        block.ccm_matrix = [
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+        ];
+        let wb_gains = [1.0, 1.0, 1.0, 1.0];
+        let blc_vals = [0.0; 4];
+        let (w, b) = block.full_weights(wb_gains, blc_vals);
+        // Identity CCM + unity WB + zero BLC → first weight = 1/1023
+        assert!((w[0] - 1.0 / 1023.0).abs() < 0.0001);
+        assert!((b[0]).abs() < 0.0001, "zero BLC → zero bias");
+    }
 }
