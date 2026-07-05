@@ -218,4 +218,17 @@ mod tests {
         let b = AutoContrastBlock::new(1.5);
         assert!(!b.tensor_ns().is_empty());
     }
+
+    #[test]
+    fn test_auto_contrast_zero_strength() {
+        let b = AutoContrastBlock::new(0.0);
+        assert_eq!(b.contrast, 0.0);
+        assert!(!b.nodes().is_empty());
+    }
+
+    #[test]
+    fn test_auto_contrast_high_strength() {
+        let b = AutoContrastBlock::new(5.0);
+        assert_eq!(b.contrast, 5.0);
+    }
 }
