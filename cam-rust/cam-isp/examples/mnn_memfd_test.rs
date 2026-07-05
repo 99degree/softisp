@@ -20,8 +20,8 @@ fn main() {
             
             // Fill with test data using mutable slice
             let data = unsafe { std::slice::from_raw_parts_mut(buffer.as_ptr(), size) };
-            for i in 0..size {
-                data[i] = (i % 256) as u8;
+            for (i, d) in data.iter_mut().enumerate() {
+                *d = (i % 256) as u8;
             }
             println!("✅ Buffer filled with test data");
             

@@ -13,7 +13,7 @@ fn build_conv_pack_model() -> Vec<u8> {
         1); // FLOAT
     // Conv weight: out_ch=1, in_ch=3, kernel=1x1
     let conv_w = Proto::tensor_proto_float(
-        &"pack_weights".to_string(),
+        "pack_weights",
         &[1, 3, 1, 1],
         &[65536.0f32, 256.0, 1.0]
     );
