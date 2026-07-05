@@ -129,4 +129,19 @@ mod tests {
         let inits = block.initializers();
         assert_eq!(inits.len(), 3); // starts, ends, axes
     }
+
+    #[test]
+    fn test_aspect_crop_same_ratio() {
+        // 1:1 aspect — no cropping needed
+        let block = AspectCropBlock::new(100, 100);
+        let inits = block.initializers();
+        assert_eq!(inits.len(), 3);
+    }
+
+    #[test]
+    fn test_aspect_crop_tall() {
+        // Portrait: target wider than source
+        let block = AspectCropBlock::new(480, 640);
+        assert!(!block.nodes().is_empty());
+    }
 }
