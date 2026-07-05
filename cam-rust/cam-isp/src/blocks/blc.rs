@@ -106,4 +106,18 @@ mod tests {
         assert_eq!(extra.len(), 1);
         assert_eq!(extra[0].2, vec![1, 4, 1, 1]);
     }
+
+    #[test]
+    fn test_blc_different_instances() {
+        let b1 = BlcBlock::new();
+        let b2 = BlcBlock::with_instance("dpc");
+        assert_ne!(b1.id(), b2.id());
+    }
+
+    #[test]
+    fn test_blc_tensor_ns_unique() {
+        let b1 = BlcBlock::new();
+        let b2 = BlcBlock::with_instance("dpc");
+        assert_ne!(b1.tensor_ns(), b2.tensor_ns());
+    }
 }
