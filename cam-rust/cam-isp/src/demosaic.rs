@@ -359,6 +359,48 @@ mod tests {
     fn test_bayer_to_quads_2x2() {
         let bayer = vec![0.5, 0.3, 0.4, 0.6];
         let quads = bayer_to_quads(&bayer, 2, 2);
-        assert_eq!(quads.len(), 4); // 4 quads
+        assert_eq!(quads.len(), 4);
+    }
+
+    #[test]
+    fn test_demosaic_malvar_basic() {
+        // 4x4 uniform CFA → RGB should be approximately uniform
+        let cfa = vec![0.5; 16];
+        let rgb = demosaic_malvar(&cfa, 4, 4, None);
+        assert_eq!(rgb.len(), 4 * 4 * 3);
+        // All RGB channels should be close to 0.5
+        for i in 0..rgb.len() {
+            assert!((rgb[i] - 0.5).abs() < 0.1, "pixel {} = {}", i, rgb[i]);
+        }
+    }
+
+    #[test]
+    fn test_demosaic_malvar_with_awb() {
+        let cfa = vec![0.3; 16];
+        let awb = [1.2, 1.0, 0.8];
+        let rgb = demosaic_malvar(&cfa, 4, 4, Some(&awb));
+        assert_eq!(rgb.len(), 48);
+    }
+
+    #[test]
+    fn test_demosaic_malvar_gradient() {
+        // Gradient CFA: left=0.2, right=0.8
+        let mut cfa = vec![0.0f32; 16];
+        for y in 0..4 {
+            for x in 0..4 {
+                cfa[y * 4 + x] = if x < 2 { 0.2 } else { 0.8 };
+            }
+        }
+        let rgb = demosaic_malvar(&cfa, 4, 4, None);
+        assert_eq!(rgb.len(), 48);
+    }
+
+    #[test]
+    fn test_demosaic_set_rgb() {
+        let mut rgb = vec![0.0f32; 12]; // 2x2 image
+        set_rgb(&mut rgb, 0, 0, 2, 1.0, 0.5, 0.25);
+        assert!((rgb[0] - 1.0).abs() < 0.001);
+        assert!((rgb[1] - 0.5).abs() < 0.001);
+        assert!((rgb[2] - 0.25).abs() < 0.001);
     }
 }
