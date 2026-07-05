@@ -78,14 +78,15 @@ fn main() {
 
     // Also test with ColorSpace (YUV conversion)
     println!("\n--- Variant with YUV conversion ---");
-    let mut blocks2: Vec<Box<dyn IspBlock>> = Vec::new();
-    blocks2.push(Box::new(UnpackBlock::new()
-        .with_concrete_dims(h as i64, w as i64)));
-    blocks2.push(Box::new(DemosaicCcmBlock::new(0)));
-    blocks2.push(Box::new(ColorSpaceBlock::new(ColorSpace::RgbToYuv601)));
-    blocks2.push(Box::new(SharpenBlock::new(0.3)));
-    blocks2.push(Box::new(ColorSpaceBlock::new(ColorSpace::Yuv601ToRgb)));
-    blocks2.push(Box::new(DisplayBlock::new(w)));
+    let blocks2: Vec<Box<dyn IspBlock>> = vec![
+        Box::new(UnpackBlock::new()
+            .with_concrete_dims(h as i64, w as i64)),
+        Box::new(DemosaicCcmBlock::new(0)),
+        Box::new(ColorSpaceBlock::new(ColorSpace::RgbToYuv601)),
+        Box::new(SharpenBlock::new(0.3)),
+        Box::new(ColorSpaceBlock::new(ColorSpace::Yuv601ToRgb)),
+        Box::new(DisplayBlock::new(w)),
+    ];
 
     let refs2: Vec<&dyn IspBlock> = blocks2.iter().map(|b| b.as_ref()).collect();
     let onnx2 = GraphComposer::compose_from_vec(&refs2, &[], 8).unwrap();

@@ -68,7 +68,7 @@ fn test_cast(to_type: i64, elem_type: i32, label: &str) {
     };
 
     print!("Bytes[0..16]: ");
-    for i in 0..16.min(out_bytes.len()) { print!(" {:02x}", out_bytes[i]); }
+    for b in out_bytes.iter().take(16) { print!(" {:02x}", b); }
     println!();
 
     // Check as i32

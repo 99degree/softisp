@@ -14,12 +14,13 @@ fn bench_separate(h: u32, w_full: u32) -> (f64, String) {
     let n_runs = 10;
 
     // Build blocks: raw → unpack → norm → cfa
-    let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
-    blocks.push(Box::new(RawInputBlock::new()
-        .with_elem_type(6).with_concrete_dims(h_i64, pw_i64)));
-    blocks.push(Box::new(UnpackBlock::new().with_concrete_dims(h_i64, w_i64)));
-    blocks.push(Box::new(NormalizeBlock::new()));
-    blocks.push(Box::new(CfaBlock::new().with_concrete_dims(h_i64, w_i64)));
+    let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+        Box::new(RawInputBlock::new()
+            .with_elem_type(6).with_concrete_dims(h_i64, pw_i64)),
+        Box::new(UnpackBlock::new().with_concrete_dims(h_i64, w_i64)),
+        Box::new(NormalizeBlock::new()),
+        Box::new(CfaBlock::new().with_concrete_dims(h_i64, w_i64)),
+    ];
 
     GraphComposer::wire_blocks(&mut blocks);
     let mut all = blocks;
