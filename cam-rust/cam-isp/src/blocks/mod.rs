@@ -39,6 +39,9 @@ mod dyn_resize;
 mod hdr_tone;
 mod wavelet_denoise;
 mod plugin;
+mod laplacian_pyramid;
+mod passthrough;
+mod stage;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -80,6 +83,9 @@ pub use dyn_resize::DynResizeBlock;
 pub use hdr_tone::{HdrToneBlock, ToneOperator};
 pub use wavelet_denoise::WaveletDenoiseBlock;
 pub use plugin::PluginBlock;
+pub use laplacian_pyramid::LaplacianPyramidBlock;
+pub use passthrough::PassthroughBlock;
+pub use stage::StageBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
