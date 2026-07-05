@@ -18,7 +18,7 @@
 
 use std::time::Instant;
 use cam_isp::pipeline::{IspBlock, GraphComposer};
-use cam_isp::engine::{IspEngine, ProcessParams, OutputFormat};
+use cam_isp::engine::{IspEngine, ProcessParams};
 use cam_isp::blocks::*;
 
 fn main() {
@@ -46,8 +46,8 @@ fn main() {
     // ── Build main pipeline (10 blocks) ────────────────────────
     let full_w   = sensor_w as i64;
     let full_h   = sensor_h as i64;
-    let ds_w     = pipe_w as i64;
-    let ds_h     = pipe_h as i64;
+    let _ds_w     = pipe_w as i64;
+    let _ds_h     = pipe_h as i64;
     let post_w_i = post_w as i64;
     let post_h_i = post_h as i64;
 

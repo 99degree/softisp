@@ -41,7 +41,7 @@ fn main() {
         .with_blend_weight(0.6);
 
     // 7. Display: RGB float output
-    let display = DisplayBlock::new(w as u32);
+    let display = DisplayBlock::new(w);
 
     // Compose ONNX
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![

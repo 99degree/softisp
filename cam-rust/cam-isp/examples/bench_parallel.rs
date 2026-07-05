@@ -76,7 +76,7 @@ fn main() {
     }
 
     println!("Engine built OK (backend={}, native={})", engine_name, use_native);
-    println!("");
+    println!();
 
     // ── Sequential baseline (1 frame) ──
     let mut params = cam_isp::engine::ProcessParams::new(sensor_w, sensor_h, &raw_buf);
@@ -124,7 +124,7 @@ fn main() {
         println!("⚠️  Partial speedup — sessions may be contending for resources");
     }
 
-    println!("");
+    println!();
     println!("Note: On CPU backend, parallel speedup is limited by CPU cores.");
     println!("      True parallelism requires GPU backends (Vulkan/OpenCL).");
 }

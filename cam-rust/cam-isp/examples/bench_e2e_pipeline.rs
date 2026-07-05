@@ -46,7 +46,7 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
 
     // Build pipeline
     let head = blocks.remove(0);
-    let mut all = blocks;
+    let all = blocks;
     if let Err(e) = engine.build(head, all, None, 21) {
         println!("  Build FAILED: {}", e);
         return;
