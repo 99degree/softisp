@@ -140,4 +140,27 @@ mod tests {
         let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new())).unwrap();
         let _engine = pipe.into_engine();
     }
+
+    #[test]
+    fn test_fused_pipeline_build() {
+        crate::init();
+        let profile = PipelineProfile::MED;
+        let blocks = profile.build_blocks(32, 0);
+        let pipe = FusedPipeline::build(blocks, 32);
+        assert!(pipe.is_ok(), "MED profile build failed: {:?}", pipe.err());
+        let p = pipe.unwrap();
+        assert!(p.is_loaded());
+        assert!(!p.engine().backend_name().is_empty());
+    }
+
+    #[test]
+    fn test_fused_pipeline_process() {
+        crate::init();
+        let profile = PipelineProfile::LITE;
+        let blocks = profile.build_blocks(32, 0);
+        let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new())).unwrap();
+        let raw = vec![0u8; 32 * 32 * 2];
+        let result = pipe.process(&ProcessParams::new(32, 32, &raw));
+        assert!(result.is_ok(), "process failed: {:?}", result.err());
+    }
 }
