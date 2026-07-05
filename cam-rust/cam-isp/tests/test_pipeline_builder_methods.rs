@@ -9,6 +9,7 @@
 //! - workgroup on WarpGridBlock through builder
 
 use cam_isp::pipeline_builder::PipelineBuilder;
+use cam_isp::blocks::ToneOperator;
 
 #[test]
 fn test_builder_compose_to_file() {
@@ -329,4 +330,62 @@ fn test_builder_cost_varies_by_pipeline() {
     let (flops_full, _) = PipelineBuilder::new(1920, 1080)
         .unpack().demosaic_binning().gamma(2.2).sharpen(0.5).display().cost();
     assert!(flops_full > flops_simple, "Full pipeline should cost more than simple");
+}
+
+#[test]
+fn test_builder_hdr_tone_aces() {
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .hdr_tone(ToneOperator::Aces)
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
+}
+
+#[test]
+fn test_builder_hdr_tone_reinhard() {
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .hdr_tone(ToneOperator::Reinhard)
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
+}
+
+#[test]
+fn test_builder_wavelet_denoise() {
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .wavelet_denoise(0.05)
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
+}
+
+#[test]
+fn test_builder_plugin() {
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .plugin("test_model.onnx")
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
+}
+
+#[test]
+fn test_builder_full_hdr_pipeline() {
+    let onnx = PipelineBuilder::new(3840, 2160)
+        .unpack()
+        .demosaic_binning()
+        .hdr_tone(ToneOperator::Aces)
+        .wavelet_denoise(0.03)
+        .gamma(2.2)
+        .display()
+        .compose()
+        .unwrap();
+    assert!(!onnx.is_empty());
 }
