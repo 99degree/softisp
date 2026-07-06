@@ -544,3 +544,130 @@ fn test_super_res_block_emit() {
     let extras = sr_block.extra_inputs();
     assert_eq!(extras.len(), 1, "SuperRes should have 1 extra input");
 }
+
+// === Integration tests for blocks with 0 test files ===
+
+#[test]
+fn test_hdr_tone_aces_full_pipeline() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    use cam_isp::blocks::ToneOperator;
+    // Full pipeline: unpack → demosaic → HDR tone → gamma → display
+    let onnx = PipelineBuilder::new(3840, 2160)
+        .unpack()
+        .demosaic_binning()
+        .hdr_tone(ToneOperator::Aces)
+        .gamma(2.2)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 3000, "full HDR pipeline should produce substantial ONNX");
+}
+
+#[test]
+fn test_hdr_tone_reinhard_full_pipeline() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    use cam_isp::blocks::ToneOperator;
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .demosaic_binning()
+        .hdr_tone(ToneOperator::Reinhard)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 2000);
+}
+
+#[test]
+fn test_wavelet_denoise_full_pipeline() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    // Unpack → wavelet denoise → display
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .wavelet_denoise(0.05)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 1500);
+}
+
+#[test]
+fn test_wavelet_denoise_with_demosaic() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    // Unpack → demosaic → wavelet denoise → sharpen → display
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .demosaic_bilinear()
+        .wavelet_denoise(0.03)
+        .sharpen(0.5)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 2000);
+}
+
+#[test]
+fn test_laplacian_pyramid_standalone() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    // Unpack → laplacian pyramid → display
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .laplacian_pyramid(3)
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 2000, "laplacian pyramid should produce substantial ONNX");
+}
+
+#[test]
+fn test_laplacian_pyramid_different_levels() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    for levels in 1..=4 {
+        let onnx = PipelineBuilder::new(640, 480)
+            .unpack()
+            .laplacian_pyramid(levels)
+            .display()
+            .compose()
+            .expect("should compose");
+        assert!(!onnx.is_empty(), "laplacian pyramid with {} levels failed", levels);
+    }
+}
+
+#[test]
+fn test_hdr_debayer_standalone() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    // HDR debayer → demosaic → display
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .hdr_debayer(4.0)
+        .demosaic_binning()
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 500);
+}
+
+#[test]
+fn test_hdr_debayer_different_ratios() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    for ratio in &[2.0, 4.0, 8.0] {
+        let onnx = PipelineBuilder::new(640, 480)
+            .hdr_debayer(*ratio)
+            .display()
+            .compose()
+            .expect("should compose");
+        assert!(!onnx.is_empty(), "hdr debayer with ratio {} failed", ratio);
+    }
+}
+
+#[test]
+fn test_blc50_full_pipeline() {
+    use cam_isp::pipeline_builder::PipelineBuilder;
+    // Unpack → BLC50 → demosaic → display
+    let onnx = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .blc50(10.0, 12.0, 8.0)
+        .demosaic_binning()
+        .display()
+        .compose()
+        .expect("should compose");
+    assert!(onnx.len() > 2000);
+}
