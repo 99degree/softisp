@@ -4,6 +4,7 @@
 //! for arbitrary inputs and configurations.
 
 use cam_isp::pipeline_builder::PipelineBuilder;
+use cam_isp::blocks::ToneOperator;
 use proptest::prelude::*;
 
 proptest! {
@@ -139,5 +140,56 @@ proptest! {
             let validation = builder.validate();
             prop_assert!(validation.is_ok(), "Preset failed for {}x{}: {:?}", w, h, validation.err());
         }
+    }
+
+    #[test]
+    fn test_hdr_tone_all_operators(w in 128u32..1920, h in 128u32..1080) {
+        for op in &[ToneOperator::Aces, ToneOperator::Reinhard, ToneOperator::Uncharted2] {
+            let onnx = PipelineBuilder::new(w, h)
+                .unpack()
+                .hdr_tone(*op)
+                .display()
+                .compose()
+                .unwrap();
+            prop_assert!(!onnx.is_empty(), "HDR tone {:?} failed for {}x{}", op, w, h);
+        }
+    }
+
+    #[test]
+    fn test_wavelet_denoise_valid(w in 128u32..1920, h in 128u32..1080) {
+        let onnx = PipelineBuilder::new(w, h)
+            .unpack()
+            .wavelet_denoise(0.05)
+            .display()
+            .compose()
+            .unwrap();
+        prop_assert!(!onnx.is_empty());
+    }
+
+    #[test]
+    fn test_watermark_valid(w in 128u32..1920, h in 128u32..1080) {
+        let onnx = PipelineBuilder::new(w, h)
+            .unpack()
+            .watermark(0.3)
+            .display()
+            .compose()
+            .unwrap();
+        prop_assert!(!onnx.is_empty());
+    }
+
+    #[test]
+    fn test_hdr_full_pipeline_valid(w in 256u32..3840, h in 256u32..2160) {
+        let onnx = PipelineBuilder::new(w, h)
+            .unpack()
+            .demosaic_binning()
+            .hdr_tone(ToneOperator::Aces)
+            .wavelet_denoise(0.03)
+            .gamma(2.2)
+            .watermark(0.2)
+            .display()
+            .compose()
+            .unwrap();
+        prop_assert!(!onnx.is_empty());
+        prop_assert!(onnx.len() > 1000);
     }
 }
