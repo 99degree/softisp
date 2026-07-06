@@ -1,11 +1,63 @@
-//! ICameraDeviceSession -- AIDL Camera Device Session implementation.
+//! # ICameraDeviceSession — AIDL Camera Device Session
 //!
-//! Matches `android.hardware.camera.device.ICameraDeviceSession`.
+//! Implements `android.hardware.camera.device.ICameraDeviceSession` for the
+//! camera HAL service. Integrates V4L2 camera capture with ISP pipeline
+//! processing.
 //!
-//! Flow:
-//! 1. configureStreams(configs) -> set up output streams + ISP pipeline
-//! 2. processCaptureRequest(request) -> capture V4L2 frame → ISP → output
-//! 3. flush() / close()
+//! ## AIDL Transaction Codes
+//!
+//! | Code | Method | Description |
+//! |------|--------|-------------|
+//! | 1 | configureStreams | Set up output streams + ISP pipeline |
+//! | 2 | processCaptureRequest | Capture frame → ISP → output |
+//! | 3 | getStreamBuffer | Get stream buffer |
+//! | 4 | returnStreamBuffer | Return stream buffer |
+//! | 5 | returnInputBuffer | Return input buffer |
+//! | 6 | returnResultMetadata | Return result metadata |
+//! | 7 | notify | Notify shutter/error |
+//! | 8 | flush | Flush pending requests |
+//! | 9 | close | Close session |
+//! | 10 | signalStreamFlush | Signal stream flush |
+//! | 11 | setRepeatingRequest | Set repeating capture request |
+//! | 12 | getRequestList | Get pending request list |
+//!
+//! ## Flow
+//!
+//! ```text
+//! configure_streams(configs)
+//!   ├── Parse stream configurations
+//!   ├── Build ISP pipeline (PipelineBuilder)
+//!   └── Return configured stream IDs
+//!
+//! process_capture_request(request)
+//!   ├── Capture frame (V4L2 or test pattern)
+//!   ├── Process through ISP pipeline
+//!   └── Return processed RGBA buffer
+//!
+//! flush() / close()
+//!   └── Release ISP pipeline resources
+//! ```
+//!
+//! ## V4L2 Integration
+//!
+//! When V4L2 is enabled (`--features v4l2`):
+//! - `auto_configure_v4l2()` — auto-detect camera
+//! - `configure_v4l2(path)` — configure specific device
+//! - `capture_frame()` — real camera capture
+//!
+//! Without V4L2:
+//! - Falls back to SMPTE color bar test patterns
+//!
+//! ## ISP Pipeline
+//!
+//! The session builds an ISP pipeline on `configure_streams()`:
+//!
+//! ```text
+//! Unpack → Demosaic → Display (RGBA)
+//! ```
+//!
+//! The pipeline is stored in `IspPipelineState` and executed
+//! on each `process_capture_request()`.
 
 use std::sync::{Arc, Mutex};
 use log::info;
