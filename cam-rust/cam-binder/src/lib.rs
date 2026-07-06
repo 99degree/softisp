@@ -20,6 +20,8 @@ pub mod service;
 pub mod isp_session;
 pub mod metadata;
 pub mod dispatch;
+pub mod factory;
+pub mod hardware_buffer;
 
 pub use provider::CameraProvider;
 pub use device::CameraDevice;
@@ -28,3 +30,5 @@ pub use service::CameraHalService;
 pub use isp_session::IspCameraSession;
 pub use metadata::{CameraMetadata, MetadataEntry, MetadataType};
 pub use dispatch::{dispatch_provider_transaction, dispatch_device_transaction, dispatch_session_transaction};
+pub use factory::{CameraProviderFactory, HidlToAidlShim, VndkCompatLayer, VintfManifestEntry};
+pub use hardware_buffer::{HardwareBuffer, HardwareBufferDesc, GrallocAllocator, DmaBuf, ZeroCopyBuffer};
