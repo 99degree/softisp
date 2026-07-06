@@ -1,17 +1,60 @@
-//! CameraMetadata — AOSP CameraMetadata parcelable.
+//! # CameraMetadata — AOSP-Compatible Metadata Parcelable
 //!
-//! Matches `android.hardware.camera.metadata.CameraMetadata` from AOSP.
+//! Implements `android.hardware.camera.metadata.CameraMetadata` from AOSP.
 //! Contains static camera characteristics and per-frame capture results.
 //!
-//! The metadata is stored as a flat byte buffer with tag entries.
-//! Each tag has: tag_id, count, type, value.
+//! ## Overview
 //!
-//! Standard tag IDs from `camera_metadata_tags.h`:
-//! - ANDROID_SENSOR_INFO
-//! - ANDROID_CONTROL_AE
-//! - ANDROID_CONTROL_AF
-//! - ANDROID_CONTROL_AWB
-//! - etc.
+//! CameraMetadata is the standard container for camera parameters in Android.
+//! It stores key-value pairs where keys are tag IDs and values are typed arrays.
+//!
+//! ## Structure
+//!
+//! ```text
+//! ┌─────────────────────────────────────────┐
+//! │ Header                                  │
+//! │   version: u32                          │
+//! │   entry_count: u32                      │
+//! │   data_size: u32                        │
+//! ├─────────────────────────────────────────┤
+//! │ Entries (sorted by tag_id)              │
+//! │   tag_id: u32                           │
+//! │   count: u32                            │
+//! │   type: u32 (0=Byte,1=Int32,2=Float...) │
+//! │   offset: u32                           │
+//! ├─────────────────────────────────────────┤
+//! │ Data Section                            │
+//! │   [values...]                           │
+//! └─────────────────────────────────────────┘
+//! ```
+//!
+//! ## Tag IDs
+//!
+//! Common AOSP tag IDs:
+//!
+//! | Tag | Description |
+//! |-----|-------------|
+//! | `ANDROID_CONTROL_AE_MODE` | Auto-exposure mode |
+//! | `ANDROID_CONTROL_AF_MODE` | Auto-focus mode |
+//! | `ANDROID_CONTROL_AWB_MODE` | Auto-whitebalance mode |
+//! | `ANDROID_SENSOR_INFO_ACTIVE_ARRAY_SIZE` | Sensor active area |
+//! | `ANDROID_LENS_FACING` | Lens facing direction |
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use cam_binder::metadata::{CameraMetadata, MetadataEntry};
+//!
+//! // Create metadata
+//! let mut meta = CameraMetadata::new();
+//! meta.set(MetadataEntry::new_int32(0x01, &[1, 2, 3]));
+//!
+//! // Serialize
+//! let bytes = meta.to_bytes();
+//!
+//! // Deserialize
+//! let restored = CameraMetadata::from_bytes(&bytes).unwrap();
+//! ```
 
 use std::collections::HashMap;
 
