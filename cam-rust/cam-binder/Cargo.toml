@@ -7,6 +7,10 @@ edition = "2021"
 name = "cam-demo"
 path = "src/bin/demo.rs"
 
+[[bin]]
+name = "cam-hal-service"
+path = "src/bin/cam_hal_service.rs"
+
 [dependencies]
 cam-types = { path = "../cam-types" }
 cam-core = { path = "../cam-core" }
