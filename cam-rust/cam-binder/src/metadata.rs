@@ -460,7 +460,7 @@ pub fn build_camera_characteristics(
 
 /// Build per-frame capture result metadata.
 pub fn build_capture_result_metadata(
-    frame_number: i64,
+    _frame_number: i64,
     ae_state: i32,
     af_state: i32,
     awb_state: i32,

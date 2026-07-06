@@ -11,14 +11,14 @@
 
 use std::sync::{Arc, Mutex};
 
-use log::{info, warn, error};
+use log::{info, warn};
 
 use crate::binder::{Parcel, IBinder, BinderStatus, TransactionCode};
 use crate::provider::CameraProvider;
 use crate::device::CameraDevice;
 use crate::session::CameraDeviceSession;
 use crate::types::*;
-use crate::metadata::{CameraMetadata, build_camera_characteristics, build_capture_result_metadata};
+use crate::metadata::build_camera_characteristics;
 
 // ── BnCameraProvider (Server/Stub) ──
 
@@ -83,7 +83,7 @@ impl BnCameraProvider {
         info!("BnCameraProvider::getCameraDeviceInterface({})", camera_id);
 
         match self.provider.get_camera_device(&camera_id) {
-            Some(device) => {
+            Some(_device) => {
                 let mut reply = Parcel::new();
                 // In real binder, this would return a BpCameraDevice
                 // For local simulation, we write device metadata
@@ -128,11 +128,8 @@ impl BnCameraProvider {
 }
 
 impl IBinder for BnCameraProvider {
-    fn transact(&self, code: TransactionCode, mut data: Parcel) -> Result<BinderStatus, BinderStatus> {
-        match self.on_transact(code, &mut data) {
-            Ok(_) => Ok(BinderStatus::Ok),
-            Err(e) => Err(e),
-        }
+    fn transact(&self, code: TransactionCode, mut data: Parcel) -> Result<Parcel, BinderStatus> {
+        self.on_transact(code, &mut data)
     }
 
     fn interface_descriptor(&self) -> &str {
@@ -216,7 +213,7 @@ impl BnCameraDevice {
         Ok(Parcel::new())
     }
 
-    fn open(&self, data: &mut Parcel) -> Result<Parcel, BinderStatus> {
+    fn open(&self, _data: &mut Parcel) -> Result<Parcel, BinderStatus> {
         info!("BnCameraDevice::open");
         // In real binder, we'd read the callback binder
         let mut reply = Parcel::new();
@@ -232,11 +229,8 @@ impl BnCameraDevice {
 }
 
 impl IBinder for BnCameraDevice {
-    fn transact(&self, code: TransactionCode, mut data: Parcel) -> Result<BinderStatus, BinderStatus> {
-        match self.on_transact(code, &mut data) {
-            Ok(_) => Ok(BinderStatus::Ok),
-            Err(e) => Err(e),
-        }
+    fn transact(&self, code: TransactionCode, mut data: Parcel) -> Result<Parcel, BinderStatus> {
+        self.on_transact(code, &mut data)
     }
 
     fn interface_descriptor(&self) -> &str {
@@ -378,7 +372,7 @@ impl BnCameraDeviceSession {
         let stream_id = data.read_i32()?;
         let request = CaptureRequest::preview(frame_number, stream_id);
         let session = self.session.lock().unwrap();
-        session.set_repeating_request(&request)?;
+        session.set_repeating_request(&request).map_err(|_| BinderStatus::UnknownError)?;
         Ok(Parcel::new())
     }
 
@@ -392,11 +386,8 @@ impl BnCameraDeviceSession {
 }
 
 impl IBinder for BnCameraDeviceSession {
-    fn transact(&self, code: TransactionCode, mut data: Parcel) -> Result<BinderStatus, BinderStatus> {
-        match self.on_transact(code, &mut data) {
-            Ok(_) => Ok(BinderStatus::Ok),
-            Err(e) => Err(e),
-        }
+    fn transact(&self, code: TransactionCode, mut data: Parcel) -> Result<Parcel, BinderStatus> {
+        self.on_transact(code, &mut data)
     }
 
     fn interface_descriptor(&self) -> &str {
