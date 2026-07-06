@@ -395,24 +395,64 @@ impl PipelineBuilder {
     }
 
     /// Add `HdrDebayerBlock` — multi-exposure HDR Bayer merge.
+    ///
+    /// Merges short+long exposures into a single HDR raw frame.
+    /// `exposure_ratio`: gain ratio between exposures (e.g., 4.0 = 2 stops).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .hdr_debayer(4.0).demosaic_binning().display().compose();
+    /// ```
     pub fn hdr_debayer(mut self, exposure_ratio: f32) -> Self {
         self.blocks.push(Box::new(HdrDebayerBlock::new().with_exposure_ratio(exposure_ratio)));
         self
     }
 
-    /// Add `Blc50Block` — 50Hz FPN subtraction.
+    /// Add `Blc50Block` — 50Hz fixed pattern noise subtraction.
+    ///
+    /// Subtracts pre-captured dark frame offsets per channel.
+    /// `r`, `g`, `b`: per-channel black level offsets.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .unpack().blc50(10.0, 12.0, 8.0).display().compose();
+    /// ```
     pub fn blc50(mut self, r: f32, g: f32, b: f32) -> Self {
         self.blocks.push(Box::new(Blc50Block::new().with_offsets(r, g, b)));
         self
     }
 
     /// Add `LaplacianPyramidBlock` — multi-scale Laplacian decomposition.
+    ///
+    /// Decomposes into `levels` frequency bands for HDR merge and
+    /// multi-scale editing.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .unpack().laplacian_pyramid(3).display().compose();
+    /// ```
     pub fn laplacian_pyramid(mut self, levels: usize) -> Self {
         self.blocks.push(Box::new(LaplacianPyramidBlock::new().with_levels(levels)));
         self
     }
 
     /// Add `WatermarkBlock` — text/image watermark overlay.
+    ///
+    /// Alpha-blends a pre-rendered watermark onto the output.
+    /// `opacity`: blend factor (0.0=transparent, 1.0=opaque, 0.3 typical).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .unpack().demosaic_binning().watermark(0.3).display().compose();
+    /// ```
     pub fn watermark(mut self, opacity: f32) -> Self {
         self.blocks.push(Box::new(WatermarkBlock::new().with_opacity(opacity)));
         self
