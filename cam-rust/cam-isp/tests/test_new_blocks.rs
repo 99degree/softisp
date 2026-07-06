@@ -529,3 +529,18 @@ fn test_full_hdr_pipeline_compose() {
         .expect("should compose");
     assert!(onnx.len() > 2000);
 }
+
+#[test]
+fn test_super_res_block_emit() {
+    use cam_isp::blocks::SuperResBlock;
+    use cam_isp::pipeline::IspBlock;
+    let mut sr = SuperResBlock::new().with_num_frames(2);
+    sr.set_input_source("input/frame0");
+    let sr_block = sr.add_frame("input/frame1");
+    let nodes = sr_block.nodes();
+    assert!(!nodes.is_empty(), "SuperRes should emit nodes");
+    let inits = sr_block.initializers();
+    assert!(!inits.is_empty(), "SuperRes should have initializers");
+    let extras = sr_block.extra_inputs();
+    assert_eq!(extras.len(), 1, "SuperRes should have 1 extra input");
+}
