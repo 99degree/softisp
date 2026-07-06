@@ -98,6 +98,10 @@ struct Args {
     #[clap(long, default_value = "android.hardware.camera.provider.ICameraProvider/internal/0")]
     service_name: String,
 
+    /// Enable temporal denoise plugin (multi-frame noise reduction)
+    #[clap(long)]
+    temporal_denoise: bool,
+
     /// Verbose output
     #[clap(long, short)]
     verbose: bool,
@@ -344,6 +348,7 @@ fn main() {
     info!("ISP: {}", args.isp);
     if args.isp {
         info!("Profile: {}, Engine: {}", args.profile, args.engine);
+        info!("Temporal Denoise: {}", args.temporal_denoise);
     }
 
     // Determine V4L2 device
