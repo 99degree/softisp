@@ -21,7 +21,19 @@ pub mod isp_session;
 pub mod metadata;
 pub mod dispatch;
 pub mod factory;
-pub mod hardware_buffer;
+
+// Re-export buffer management from cam-hal (unified across all crates)
+pub use cam_hal::buffer::{
+    MappedBuffer, CameraBuffer, BufferAllocator,
+    HeapAllocator, HeapBuffer, HeapCameraBuffer, GenericCameraBuffer,
+    allocator, set_allocator, allocate, allocate_frame,
+};
+
+// Re-export platform-specific buffer backends
+#[cfg(feature = "v4l2")]
+pub use cam_hal_linux::dmabuf::{DMABuf, DMABufAllocator, MemfdBuf, MemfdAllocator};
+#[cfg(feature = "android")]
+pub use cam_hal_android::gralloc::{native_handle_t, BufferHandleT, GrallocInterop};
 
 pub use provider::CameraProvider;
 pub use device::CameraDevice;
@@ -31,4 +43,3 @@ pub use isp_session::IspCameraSession;
 pub use metadata::{CameraMetadata, MetadataEntry, MetadataType};
 pub use dispatch::{dispatch_provider_transaction, dispatch_device_transaction, dispatch_session_transaction};
 pub use factory::{CameraProviderFactory, HidlToAidlShim, VndkCompatLayer, VintfManifestEntry};
-pub use hardware_buffer::{HardwareBuffer, HardwareBufferDesc, GrallocAllocator, DmaBuf, ZeroCopyBuffer};
