@@ -129,6 +129,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mnn")]
     fn test_snapshot_capture_empty_fails() {
         let tmp = std::env::temp_dir().join("softisp_snap_test");
         std::fs::create_dir_all(&tmp).unwrap();
@@ -139,6 +140,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mnn")]
     fn test_snapshot_restore_engine_unloaded() {
         let snap = PipelineSnapshot {
             onnx_bytes: vec![],
