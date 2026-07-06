@@ -119,4 +119,33 @@ impl CameraDevice {
             session.lock().unwrap().flush();
         }
     }
+
+    /// AIDL: openSession — create and configure a capture session.
+    pub fn open_session(&self, callback: Arc<dyn ICameraDeviceCallback>) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
+        if *self.opened.lock().unwrap() {
+            return Err("device already opened".into());
+        }
+        let session = Arc::new(Mutex::new(CameraDeviceSession::new(
+            self.camera_id.clone(),
+            self.device_path.clone(),
+            self.info.clone(),
+        )));
+        session.lock().unwrap().set_callback(callback);
+        *self.session.lock().unwrap() = Some(session.clone());
+        *self.opened.lock().unwrap() = true;
+        Ok(session)
+    }
+
+    /// AIDL: getResourceCost — get the resource cost for this device.
+    pub fn get_resource_cost(&self) -> CameraResourceCost {
+        CameraResourceCost {
+            cost: 100,
+            conflict_devices: vec![],
+        }
+    }
+
+    /// AIDL: getCameraInfo — get the CameraInfo for this device.
+    pub fn get_camera_info(&self) -> &CameraInfo {
+        &self.info
+    }
 }
