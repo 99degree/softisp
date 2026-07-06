@@ -46,6 +46,7 @@ struct ActiveStream {
 }
 
 /// ICameraDeviceSession implementation.
+/// Integrates with ISP pipeline for real-time frame processing.
 pub struct CameraDeviceSession {
     camera_id: String,
     _device_path: String,
@@ -58,6 +59,38 @@ pub struct CameraDeviceSession {
     _buffer_pool: Mutex<std::collections::HashMap<i32, Vec<Vec<u8>>>>,
     /// Optional V4L2 device path for real frame capture.
     v4l2_device: Mutex<Option<String>>,
+    /// ISP pipeline for frame processing.
+    isp_pipeline: Mutex<Option<IspPipelineState>>,
+}
+
+/// ISP pipeline state for a session.
+pub struct IspPipelineState {
+    /// ONNX model bytes (generated from pipeline config).
+    pub onnx_bytes: Vec<u8>,
+    /// MNN model bytes (converted from ONNX).
+    pub mnn_bytes: Option<Vec<u8>>,
+    /// Pipeline width.
+    pub width: u32,
+    /// Pipeline height.
+    pub height: u32,
+    /// ISP engine type ("cpu", "vulkan", "auto").
+    pub engine_type: String,
+    /// Pipeline block IDs for debugging.
+    pub block_ids: Vec<String>,
+}
+
+impl IspPipelineState {
+    /// Create a new ISP pipeline state.
+    pub fn new(width: u32, height: u32, engine_type: &str) -> Self {
+        Self {
+            onnx_bytes: Vec::new(),
+            mnn_bytes: None,
+            width,
+            height,
+            engine_type: engine_type.to_string(),
+            block_ids: Vec::new(),
+        }
+    }
 }
 
 impl CameraDeviceSession {
@@ -72,6 +105,7 @@ impl CameraDeviceSession {
             frame_counter: Mutex::new(0),
             _buffer_pool: Mutex::new(std::collections::HashMap::new()),
             v4l2_device: Mutex::new(None),
+            isp_pipeline: Mutex::new(None),
         }
     }
 
@@ -83,25 +117,69 @@ impl CameraDeviceSession {
     ///
     /// Must be called before processCaptureRequest.
     /// Returns configured stream IDs.
+    /// Also initializes the ISP pipeline for the configured resolution.
     pub fn configure_streams(&self, configs: &[StreamConfig]) -> Vec<i32> {
         let mut streams = self.streams.lock().unwrap();
         streams.clear();
         self._buffer_pool.lock().unwrap().clear();
 
+        // Find the primary output stream for ISP pipeline
+        let mut primary_width: u32 = 0;
+        let mut primary_height: u32 = 0;
+
         for cfg in configs {
             let stream_id = cfg.stream_id;
-
             streams.push(ActiveStream {
                 config: cfg.clone(),
                 _frame_count: 0,
             });
 
+            // Use first stream as primary for ISP
+            if primary_width == 0 {
+                primary_width = cfg.width as u32;
+                primary_height = cfg.height as u32;
+            }
+
             info!("CameraDeviceSession({}): configured stream {} ({}x{})",
                 self.camera_id, stream_id, cfg.width, cfg.height);
         }
 
+        // Build ISP pipeline for the primary stream
+        if primary_width > 0 && primary_height > 0 {
+            match self.build_isp_pipeline(primary_width, primary_height) {
+                Ok(isp_state) => {
+                    info!("CameraDeviceSession({}): ISP pipeline ready ({} blocks, {} bytes ONNX)",
+                        self.camera_id, isp_state.block_ids.len(), isp_state.onnx_bytes.len());
+                    *self.isp_pipeline.lock().unwrap() = Some(isp_state);
+                }
+                Err(e) => {
+                    log::warn!("CameraDeviceSession({}): ISP pipeline build failed: {}",
+                        self.camera_id, e);
+                }
+            }
+        }
+
         *self.state.lock().unwrap() = SessionState::Configured;
         streams.iter().map(|s| s.config.stream_id).collect()
+    }
+
+    /// Build the ISP pipeline for the given resolution.
+    fn build_isp_pipeline(&self, width: u32, height: u32) -> Result<IspPipelineState, String> {
+        use cam_isp::pipeline_builder::PipelineBuilder;
+
+        // Build the standard ISP pipeline:
+        // Unpack → Demosaic → Display (minimal for GPU execution)
+        let onnx_bytes = PipelineBuilder::new(width, height)
+            .unpack()
+            .demosaic_bilinear()
+            .display_rgba()
+            .compose()?;
+
+        let mut state = IspPipelineState::new(width, height, "auto");
+        state.onnx_bytes = onnx_bytes;
+        state.block_ids = vec!["unpack".into(), "demosaic".into(), "display".into()];
+
+        Ok(state)
     }
 
     /// Process a single capture request.
@@ -153,6 +231,7 @@ impl CameraDeviceSession {
     ///
     /// If a V4L2 device is configured, captures a real frame.
     /// Otherwise generates a test pattern (color bars).
+    /// Then processes through the ISP pipeline if available.
     fn capture_frame(&self, stream_id: i32, frame_number: u64) -> StreamBuffer {
         let streams = self.streams.lock().unwrap();
         let stream = match streams.iter().find(|s| s.config.stream_id == stream_id) {
@@ -164,20 +243,61 @@ impl CameraDeviceSession {
         let height = stream.config.height;
 
         // Try real V4L2 capture first
-        if let Some(dev_path) = self.v4l2_device.lock().unwrap().as_ref() {
+        let raw_data = if let Some(dev_path) = self.v4l2_device.lock().unwrap().as_ref() {
             match capture_v4l2_frame(dev_path, width as u32, height as u32) {
-                Ok(data) => {
-                    return StreamBuffer::ok(stream_id, width, height, data);
-                }
+                Ok(data) => data,
                 Err(e) => {
                     info!("V4L2 capture failed ({}), falling back to test pattern", e);
+                    self.generate_test_pattern(width as u32, height as u32, frame_number)
                 }
             }
-        }
+        } else {
+            // Fallback: generate test pattern
+            self.generate_test_pattern(width as u32, height as u32, frame_number)
+        };
 
-        // Fallback: generate test pattern
-        let data = self.generate_test_pattern(width as u32, height as u32, frame_number);
-        StreamBuffer::ok(stream_id, width, height, data)
+        // Process through ISP pipeline if available
+        let output_data = {
+            let isp_guard = self.isp_pipeline.lock().unwrap();
+            if let Some(ref isp_state) = *isp_guard {
+                match self.process_through_isp(&raw_data, isp_state) {
+                    Ok(processed) => {
+                        info!("ISP: {}x{} → {}x{} ({} bytes)",
+                            width, height, width, height, processed.len());
+                        processed
+                    }
+                    Err(e) => {
+                        log::warn!("ISP processing failed: {}, using raw", e);
+                        raw_data
+                    }
+                }
+            } else {
+                raw_data
+            }
+        };
+
+        StreamBuffer::ok(stream_id, width, height, output_data)
+    }
+
+    /// Process raw camera data through the ISP pipeline.
+    fn process_through_isp(&self, raw_data: &[u8], isp_state: &IspPipelineState) -> Result<Vec<u8>, String> {
+        use cam_isp::engine::{IspEngine, ProcessParams, select_engine_by_name};
+
+        // Select engine based on pipeline config
+        let engine = select_engine_by_name(&isp_state.engine_type)
+            .ok_or_else(|| format!("ISP engine '{}' not available", isp_state.engine_type))?;
+
+        // Create processing params
+        let mut params = ProcessParams::new(
+            isp_state.width,
+            isp_state.height,
+            raw_data,
+        );
+        params.sensor_max = 1023.0; // 10-bit sensor
+
+        // Process through ISP
+        let output = engine.process(&params)?;
+        Ok(output.data)
     }
 
     /// Set a V4L2 device path for real frame capture.
@@ -236,15 +356,18 @@ impl CameraDeviceSession {
     pub fn flush(&self) {
         *self.state.lock().unwrap() = SessionState::Flushing;
         info!("CameraDeviceSession({}): flush", self.camera_id);
+        // ISP pipeline continues running (no cleanup needed)
         *self.state.lock().unwrap() = SessionState::Configured;
     }
 
-    /// Close the session.
+    /// Close the session and release ISP resources.
     pub fn close(&self) {
         *self.state.lock().unwrap() = SessionState::Closed;
         self.streams.lock().unwrap().clear();
         self._buffer_pool.lock().unwrap().clear();
-        info!("CameraDeviceSession({}): closed", self.camera_id);
+        // Release ISP pipeline
+        *self.isp_pipeline.lock().unwrap() = None;
+        info!("CameraDeviceSession({}): closed, ISP pipeline released", self.camera_id);
     }
 
     /// Pause frame production.
