@@ -31,6 +31,13 @@ impl CameraHalService {
         }
     }
 
+    /// Create with an existing provider.
+    pub fn with_provider(provider: CameraProvider) -> Self {
+        Self {
+            provider: Arc::new(provider),
+        }
+    }
+
     /// Get a reference to the provider.
     pub fn provider(&self) -> &Arc<CameraProvider> {
         &self.provider

@@ -9,10 +9,8 @@
 //! On host, this provides a local IPC simulation.
 
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
-use std::ffi::c_void;
 
-use log::{info, warn, error};
+use log::info;
 
 /// Transaction code type.
 pub type TransactionCode = i32;
@@ -290,7 +288,7 @@ impl Parcel {
     }
 
     /// Write the parcel data with header (for AIDL transactions).
-    pub fn write_to_binder(&self, target: &dyn IBinder, code: TransactionCode, _flags: i32) -> Result<BinderStatus, BinderStatus> {
+    pub fn write_to_binder(&self, target: &dyn IBinder, code: TransactionCode, _flags: i32) -> Result<Parcel, BinderStatus> {
         target.transact(code, self.clone())
     }
 
@@ -309,8 +307,8 @@ impl Default for Parcel {
 
 /// IBinder — interface for binder objects.
 pub trait IBinder: Send + Sync {
-    /// Perform a binder transaction.
-    fn transact(&self, code: TransactionCode, data: Parcel) -> Result<BinderStatus, BinderStatus>;
+    /// Perform a binder transaction. Returns the reply Parcel on success.
+    fn transact(&self, code: TransactionCode, data: Parcel) -> Result<Parcel, BinderStatus>;
 
     /// Get the interface descriptor.
     fn interface_descriptor(&self) -> &str;
@@ -421,22 +419,16 @@ impl BpCameraDeviceSession {
         let mut data = Parcel::new();
         data.write_interface_token("android.hardware.camera.device.ICameraDeviceSession");
         data.write_i64(request.frame_number);
-        data.write_i32(request.stream_id);
+        let stream_id = request.buffer_requests.first().map(|r| r.stream_id).unwrap_or(0);
+        data.write_i32(stream_id);
         let reply = self.remote.transact(2, data)?; // PROCESS_CAPTURE_REQUEST = 2
-        let mut reply = Parcel { data: reply.data().to_vec(), pos: 0, owner: None };
-        let count = reply.read_i32()? as usize;
+        let mut reader = Parcel { data: reply.data().to_vec(), pos: 0, owner: None };
+        let count = reader.read_i32()? as usize;
         let mut buffers = Vec::new();
         for _ in 0..count {
-            let status = reply.read_i32()?;
-            let frame_number = reply.read_i64()?;
-            buffers.push(StreamBuffer {
-                stream_id: 0,
-                frame_number,
-                status,
-                width: 0,
-                height: 0,
-                data: Vec::new(),
-            });
+            let status = reader.read_i32()?;
+            let _frame_number = reader.read_i64()?;
+            buffers.push(StreamBuffer::error(stream_id, status));
         }
         Ok(buffers)
     }
@@ -547,11 +539,10 @@ impl<T: Send + Sync> LocalBinder<T> {
 }
 
 impl<T: Send + Sync> IBinder for LocalBinder<T> {
-    fn transact(&self, code: TransactionCode, data: Parcel) -> Result<BinderStatus, BinderStatus> {
+    fn transact(&self, code: TransactionCode, data: Parcel) -> Result<Parcel, BinderStatus> {
         info!("LocalBinder: transact code={} descriptor={}", code, self.interface_descriptor);
         // In a real implementation, this would dispatch to the handler
-        // For now, return OK
-        Ok(BinderStatus::Ok)
+        Ok(data) // echo back the data as reply
     }
 
     fn interface_descriptor(&self) -> &str {

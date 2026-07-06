@@ -1,3 +1,4 @@
+#![allow(unused, non_upper_case_globals)]
 //! Android Camera HAL Binder Interfaces.
 //!
 //! Implements the AIDL interfaces matching:

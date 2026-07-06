@@ -739,6 +739,7 @@ impl PipelineBuilder {
     }
 
     /// Compose and convert to MNN in one call.
+    #[cfg(feature = "mnn")]
     pub fn to_mnn(self, output_path: &str) -> Result<(Vec<u8>, String), String> {
         let mut blocks = self.blocks;
         GraphComposer::wire_blocks(&mut blocks);
