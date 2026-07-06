@@ -1,13 +1,88 @@
-//! AIDL Interface Implementations — Binary-compatible binder stubs.
+//! # AIDL Interface Implementations — Binary-Compatible Binder Stubs
 //!
-//! Implements the AIDL interfaces for camera HAL:
-//! - BnCameraProvider (native/stub side)
-//! - BpCameraProvider (proxy/client side)
-//! - BnCameraDevice, BpCameraDevice
-//! - BnCameraDeviceSession, BpCameraDeviceSession
+//! Implements the AIDL interfaces for the camera HAL service.
+//! Each interface has two sides:
 //!
-//! Each BnXxx implements onTransact() for incoming binder calls.
-//! Each BpXxx provides typed methods for outgoing binder calls.
+//! - **BnXxx** (Native/Stub) — Server side, handles incoming transactions
+//! - **BpXxx** (Proxy) — Client side, makes outgoing transactions
+//!
+//! ## Interface Mapping
+//!
+//! | AIDL Interface | BnXxx (Server) | BpXxx (Client) |
+//! |----------------|----------------|----------------|
+//! | ICameraProvider | BnCameraProvider | BpCameraProvider |
+//! | ICameraDevice | BnCameraDevice | BpCameraDevice |
+//! | ICameraDeviceSession | BnCameraDeviceSession | BpCameraDeviceSession |
+//!
+//! ## Transaction Codes
+//!
+//! ### ICameraProvider (1-7)
+//!
+//! | Code | Method |
+//! |------|--------|
+//! | 1 | setCallback |
+//! | 2 | getVendorTags |
+//! | 3 | getCameraIdList |
+//! | 4 | getCameraDeviceInterface |
+//! | 5 | notifyDeviceStateChange |
+//! | 6 | getConcurrentCameraIds |
+//! | 7 | isConcurrentStreamCombinationSupported |
+//!
+//! ### ICameraDevice (1-7)
+//!
+//! | Code | Method |
+//! |------|--------|
+//! | 1 | getCameraCharacteristics |
+//! | 2 | deserialize |
+//! | 3 | getResourceCost |
+//! | 4 | supportsTorchMode |
+//! | 5 | setTorchMode |
+//! | 6 | open |
+//! | 7 | close |
+//!
+//! ### ICameraDeviceSession (1-12)
+//!
+//! | Code | Method |
+//! |------|--------|
+//! | 1 | configureStreams |
+//! | 2 | processCaptureRequest |
+//! | 3 | getStreamBuffer |
+//! | 4 | returnStreamBuffer |
+//! | 5 | returnInputBuffer |
+//! | 6 | returnResultMetadata |
+//! | 7 | notify |
+//! | 8 | flush |
+//! | 9 | close |
+//! | 10 | signalStreamFlush |
+//! | 11 | setRepeatingRequest |
+//! | 12 | getRequestList |
+//!
+//! ## Usage
+//!
+//! ### Server Side (BnXxx)
+//!
+//! ```rust,ignore
+//! use cam_binder::aidl::BnCameraProvider;
+//!
+//! let provider = Arc::new(CameraProvider::new());
+//! let stub = BnCameraProvider::new(provider);
+//!
+//! // Handle incoming transaction
+//! let mut data = Parcel::new();
+//! data.write_string16("descriptor");
+//! let reply = stub.on_transact(3, &mut data); // getCameraIdList
+//! ```
+//!
+//! ### Client Side (BpXxx)
+//!
+//! ```rust,ignore
+//! use cam_binder::binder::{BpCameraProvider, LocalBinder};
+//!
+//! let binder = Arc::new(LocalBinder::new("test", 42));
+//! let proxy = BpCameraProvider::new(binder);
+//!
+//! let ids = proxy.get_camera_id_list().unwrap();
+//! ```
 
 use std::sync::{Arc, Mutex};
 

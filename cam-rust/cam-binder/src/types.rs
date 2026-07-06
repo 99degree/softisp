@@ -1,17 +1,83 @@
-//! AIDL parcelable types for Camera HAL.
+//! # AIDL Parcelable Types for Camera HAL
 //!
-//! Matches the real Android Camera HAL AIDL types:
-//! - CameraDeviceStatus
-//! - TorchModeStatus
-//! - VendorTagSection / VendorTag
-//! - StreamConfig
-//! - StreamBuffer
-//! - BufferRequest
-//! - CaptureRequest
-//! - CaptureResult
-//! - CameraInfo
-//! - ConcurrentCameraIdCombination
-//! - CameraIdAndStreamCombination
+//! Matches the real Android Camera HAL AIDL types used in binder transactions.
+//!
+//! ## Type Reference
+//!
+//! ### Status Types
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`CameraDeviceStatus`] | Camera device availability status |
+//! | [`TorchModeStatus`] | Torch mode status |
+//!
+//! ### Vendor Tags
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`VendorTagSection`] | Section of vendor tags |
+//! | [`VendorTag`] | Individual vendor tag |
+//!
+//! ### Stream Types
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`StreamConfig`] | Stream configuration (width, height, format) |
+//! | [`StreamBuffer`] | Stream buffer with frame data |
+//! | [`BufferRequest`] | Buffer request from framework |
+//!
+//! ### Capture Types
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`CaptureRequest`] | Capture request with 3A settings |
+//! | [`CaptureResult`] | Capture result with buffers and metadata |
+//!
+//! ### Camera Types
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`CameraInfo`] | Camera characteristics |
+//! | [`CameraResourceCost`] | Camera resource cost |
+//! | [`ConcurrentCameraIdCombination`] | Concurrent camera combination |
+//!
+//! ### Buffer Types
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`BufferUsage`] | Gralloc buffer usage flags |
+//! | [`DataSpace`] | Color data space |
+//!
+//! ### Pixel Formats
+//!
+//! | Constant | Value | Description |
+//! |----------|-------|-------------|
+//! | `HAL_PIXEL_FORMAT_RGBA_8888` | 0x1 | RGBA 8-bit per channel |
+//! | `HAL_PIXEL_FORMAT_YCbCr_420_888` | 0x23 | YUV 4:2:0 |
+//! | `HAL_PIXEL_FORMAT_RAW10` | 0x25 | 10-bit RAW |
+//!
+//! ### Transaction Codes
+//!
+//! | Interface | Codes | Description |
+//! |-----------|-------|-------------|
+//! | [`provider_transaction`] | 1-7 | ICameraProvider methods |
+//! | [`device_transaction`] | 1-7 | ICameraDevice methods |
+//! | [`session_transaction`] | 1-12 | ICameraDeviceSession methods |
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use cam_binder::types::*;
+//!
+//! // Create stream config
+//! let config = StreamConfig::new(0, 1920, 1080, 0x1);
+//!
+//! // Create capture request
+//! let request = CaptureRequest::preview(42, 0);
+//!
+//! // Check buffer usage
+//! let usage = BufferUsage::GPU_TEXTURE | BufferUsage::CAMERA_WRITE;
+//! ```
 
 use cam_types::FrameFormat;
 
