@@ -3,12 +3,11 @@
 //! Matches `android.hardware.camera.device.ICameraDeviceSession`.
 //!
 //! Flow:
-//! 1. configureStreams(configs) -> set up output streams
-//! 2. processCaptureRequest(request) -> fill buffers with camera data
+//! 1. configureStreams(configs) -> set up output streams + ISP pipeline
+//! 2. processCaptureRequest(request) -> capture V4L2 frame → ISP → output
 //! 3. flush() / close()
 
 use std::sync::{Arc, Mutex};
-
 use log::info;
 
 use crate::types::*;
@@ -26,6 +25,18 @@ fn capture_v4l2_frame(device_path: &str, width: u32, height: u32) -> Result<Vec<
 #[cfg(not(feature = "v4l2"))]
 fn capture_v4l2_frame(_device_path: &str, _width: u32, _height: u32) -> Result<Vec<u8>, String> {
     Err("V4L2 feature not enabled".to_string())
+}
+
+/// List available V4L2 cameras.
+pub fn list_v4l2_cameras() -> Vec<String> {
+    #[cfg(feature = "v4l2")]
+    {
+        cam_hal_linux::list_v4l2_devices()
+    }
+    #[cfg(not(feature = "v4l2"))]
+    {
+        vec![]
+    }
 }
 
 /// Session state.
@@ -107,6 +118,41 @@ impl CameraDeviceSession {
             v4l2_device: Mutex::new(None),
             isp_pipeline: Mutex::new(None),
         }
+    }
+
+    /// Auto-detect and configure V4L2 camera.
+    ///
+    /// Scans /dev/video* and configures the first available camera.
+    pub fn auto_configure_v4l2(&self) -> Result<(), String> {
+        let cameras = list_v4l2_cameras();
+        if cameras.is_empty() {
+            return Err("No V4L2 cameras found".into());
+        }
+        let device_path = &cameras[0];
+        info!("CameraDeviceSession({}): auto-configured V4L2: {}", self.camera_id, device_path);
+        *self.v4l2_device.lock().unwrap() = Some(device_path.to_string());
+        Ok(())
+    }
+
+    /// Configure V4L2 with a specific device path.
+    pub fn configure_v4l2(&self, device_path: &str) -> Result<(), String> {
+        // Verify device exists
+        if !std::path::Path::new(device_path).exists() {
+            return Err(format!("V4L2 device not found: {}", device_path));
+        }
+        info!("CameraDeviceSession({}): V4L2 configured: {}", self.camera_id, device_path);
+        *self.v4l2_device.lock().unwrap() = Some(device_path.to_string());
+        Ok(())
+    }
+
+    /// Get the V4L2 device path (if configured).
+    pub fn v4l2_device_path(&self) -> Option<String> {
+        self.v4l2_device.lock().unwrap().clone()
+    }
+
+    /// List available V4L2 cameras.
+    pub fn list_cameras() -> Vec<String> {
+        list_v4l2_cameras()
     }
 
     pub fn is_valid(&self) -> bool {
