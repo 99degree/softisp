@@ -282,7 +282,7 @@ pub struct CaptureResult {
 
 // ── Camera info ──
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CameraInfo {
     pub camera_id: String,
     pub facing: i32,           // LENS_FACING_BACK=1, LENS_FACING_FRONT=2
