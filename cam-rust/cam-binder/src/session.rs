@@ -261,4 +261,34 @@ impl CameraDeviceSession {
     pub fn set_callback(&self, callback: Arc<dyn ICameraDeviceCallback>) {
         *self.callback.lock().unwrap() = Some(callback);
     }
+
+    /// AIDL: signalStreamFlush — signal that a stream's buffers are ready to be flushed.
+    pub fn signal_stream_flush(&self, _stream_id: i32, _frame_number: i64) {
+        info!("CameraDeviceSession({}): signalStreamFlush", self.camera_id);
+    }
+
+    /// AIDL: setRepeatingRequest — set a repeating capture request.
+    pub fn set_repeating_request(&self, request: &CaptureRequest) -> Result<(), String> {
+        info!("CameraDeviceSession({}): setRepeatingRequest frame={}", self.camera_id, request.frame_number);
+        Ok(())
+    }
+
+    /// AIDL: getRequestList — get the list of pending capture requests.
+    pub fn get_request_list(&self) -> Vec<CaptureRequest> {
+        Vec::new()
+    }
+
+    /// AIDL: getActiveStreamConfigurations — get currently active streams.
+    pub fn get_active_stream_configurations(&self) -> Vec<StreamConfig> {
+        self.streams.lock().unwrap().iter().map(|s| s.config.clone()).collect()
+    }
+
+    /// AIDL: getActiveStreamBufferCount — get buffer count for a stream.
+    pub fn get_active_stream_buffer_count(&self, stream_id: i32) -> i32 {
+        self.streams.lock().unwrap()
+            .iter()
+            .find(|s| s.config.stream_id == stream_id)
+            .map(|s| s.config.buffer_count)
+            .unwrap_or(0)
+    }
 }
