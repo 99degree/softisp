@@ -41,6 +41,7 @@ use cam_binder::{
     CameraHalService, CameraProviderFactory,
     types::*,
     callback::{IFrameCallback, ICameraDeviceCallback},
+    v4l2_aidl_bridge::{V4l2AidlBridge, SensorSpec, BridgeStats, BayerPattern},
 };
 
 #[derive(Parser, Debug)]
@@ -266,10 +267,34 @@ fn run_capture_pipeline(args: &Args, device_path: Option<String>) {
         }
     };
 
-    // Configure V4L2 if available
+    // ── V4L2 → AIDL Bridge (real capture wire-in) ──
     if let Some(ref dev_path) = device_path {
         session.lock().unwrap().set_v4l2_device(dev_path);
         info!("V4L2 device configured: {}", dev_path);
+
+        // Use the production-grade bridge with sensor spec
+        let bridge = Arc::new(V4l2AidlBridge::new(dev_path.clone()));
+        let sensor = SensorSpec {
+            name: "auto-detected".into(),
+            width: args.width as u32,
+            height: args.height as u32,
+            bayer_pattern: BayerPattern::Rggb,
+            bit_depth: 10,
+            frame_rate_hz: 30,
+        };
+        bridge.set_sensor(sensor);
+
+        info!("V4L2→AIDL bridge ready, streaming {} frames", args.frames);
+        let stats: Result<BridgeStats, _> = bridge.capture_loop(args.frames, &*collector);
+        match stats {
+            Ok(s) => {
+                info!("═══ Bridge stats: capt={} proc={} drop={} ═══",
+                    s.frames_captured, s.frames_processed, s.frames_dropped);
+                info!("Avg timings: capture_us={:.1} proc_us={:.1}",
+                    s.avg_capture_us, s.avg_processing_us);
+            }
+            Err(e) => error!("Bridge failed: {}", e),
+        }
     }
 
     // Configure streams

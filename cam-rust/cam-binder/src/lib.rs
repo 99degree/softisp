@@ -157,6 +157,8 @@ pub mod dispatch;
 pub mod factory;
 pub mod binder;
 pub mod aidl;
+pub mod hal_bridge;
+pub mod v4l2_aidl_bridge;
 
 // Re-export buffer management from cam-hal (unified across all crates)
 pub use cam_hal::buffer::{
