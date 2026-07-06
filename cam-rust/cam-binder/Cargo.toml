@@ -17,6 +17,7 @@ cam-core = { path = "../cam-core" }
 cam-hal = { path = "../cam-hal" }
 cam-isp = { path = "../cam-isp" }
 cam-hal-linux = { path = "../cam-hal-linux", optional = true }
+cam-hal-android = { path = "../cam-hal-android", optional = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 env_logger = "0.11"
@@ -26,4 +27,4 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 [features]
 default = []
 v4l2 = ["dep:cam-hal-linux"]
-android = []
+android = ["dep:cam-hal-android"]
