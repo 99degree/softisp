@@ -339,6 +339,7 @@ impl StreamCombination {
 // ── HAL Pixel Formats ──
 
 /// HAL pixel format constants (matching AOSP HAL_PIXEL_FORMAT_*).
+#[allow(non_camel_case_types)]
 pub mod hal_pixel_format {
     pub const UNKNOWN: i32 = 0;
     pub const RGBA_8888: i32 = 0x1;

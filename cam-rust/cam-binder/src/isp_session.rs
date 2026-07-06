@@ -19,7 +19,6 @@ use log::{info, error};
 
 use crate::types::*;
 use crate::callback::*;
-use crate::session::CameraDeviceSession;
 
 /// ISP-processed frame result.
 #[derive(Debug, Clone)]
@@ -39,6 +38,7 @@ pub struct IspFrameResult {
 }
 
 /// Camera session with integrated ISP processing.
+#[allow(dead_code)]
 pub struct IspCameraSession {
     camera_id: String,
     width: i32,

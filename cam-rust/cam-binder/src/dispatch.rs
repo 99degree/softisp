@@ -9,7 +9,6 @@
 //! - ICameraDevice: 1-7
 //! - ICameraDeviceSession: 1-12
 
-use std::sync::{Arc, Mutex};
 
 use log::{info, warn};
 
@@ -17,7 +16,7 @@ use crate::provider::CameraProvider;
 use crate::device::CameraDevice;
 use crate::session::CameraDeviceSession;
 use crate::types::*;
-use crate::metadata::{CameraMetadata, build_camera_characteristics, build_capture_result_metadata};
+use crate::metadata::{build_camera_characteristics, build_capture_result_metadata};
 
 /// AIDL transaction dispatch for ICameraProvider.
 pub fn dispatch_provider_transaction(
