@@ -11,6 +11,7 @@
 pub mod adapter;
 pub mod util;
 pub mod gralloc;
+pub mod buffer_pool;
 
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};

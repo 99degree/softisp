@@ -9,6 +9,8 @@
 #[cfg(feature = "v4l2")]
 pub mod v4l2;
 
+pub mod v4l2_compliance;
+
 #[cfg(feature = "v4l2")]
 use crate::v4l2::V4l2CameraAdapter;
 
