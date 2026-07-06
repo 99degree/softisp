@@ -21,6 +21,7 @@ pub struct PipelineSnapshot {
 
 impl PipelineSnapshot {
     /// Capture pipeline state: generate ONNX + convert to MNN.
+    #[cfg(feature = "mnn")]
     pub fn capture(
         onnx_bytes: &[u8],
         mnn_dir: &Path,
@@ -51,6 +52,7 @@ impl PipelineSnapshot {
     }
 
     /// Restore engine from cached MNN model (skips ONNX gen + conversion).
+    #[cfg(feature = "mnn")]
     pub fn restore_engine(&self) -> Result<crate::mnnengine::MnnEngine, String> {
         let mut engine = crate::mnnengine::MnnEngine::new(
             crate::mnnengine::MnnBackend::Vulkan);

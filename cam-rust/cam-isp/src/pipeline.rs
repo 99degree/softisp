@@ -675,6 +675,7 @@ impl GraphComposer {
 
     /// Compose ONNX + convert to MNN in one call.
     /// Returns (onnx_bytes, mnn_path, stats).
+    #[cfg(feature = "mnn")]
     pub fn compose_and_convert(
         blocks: &mut [Box<dyn IspBlock>],
         aux_blocks: &[&dyn IspBlock],

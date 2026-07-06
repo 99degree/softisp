@@ -13,12 +13,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use log::{info, warn, error};
+use log::info;
 
 use crate::provider::CameraProvider;
 use crate::service::CameraHalService;
-use crate::types::*;
-use crate::metadata::CameraMetadata;
 
 /// Service registration state.
 static SERVICE_REGISTERED: AtomicBool = AtomicBool::new(false);
