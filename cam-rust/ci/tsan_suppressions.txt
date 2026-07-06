@@ -1,0 +1,9 @@
+# TSAN suppressions for SoftISP
+
+# Ignore false positives from Rust's standard library
+race:std::sys_common::mutex
+race:std::sys::unix::mutex_impl
+
+# Ignore false positives from Vulkan/MNN FFI
+race:mnn_.*
+race:vk.*
