@@ -21,6 +21,8 @@ pub mod isp_session;
 pub mod metadata;
 pub mod dispatch;
 pub mod factory;
+pub mod binder;
+pub mod aidl;
 
 // Re-export buffer management from cam-hal (unified across all crates)
 pub use cam_hal::buffer::{
@@ -43,3 +45,5 @@ pub use isp_session::IspCameraSession;
 pub use metadata::{CameraMetadata, MetadataEntry, MetadataType};
 pub use dispatch::{dispatch_provider_transaction, dispatch_device_transaction, dispatch_session_transaction};
 pub use factory::{CameraProviderFactory, HidlToAidlShim, VndkCompatLayer, VintfManifestEntry};
+pub use binder::{Parcel, IBinder, BinderStatus, BpCameraProvider, BpCameraDevice, BpCameraDeviceSession, ServiceManager, BinderThreadPool, LocalBinder};
+pub use aidl::{BnCameraProvider, BnCameraDevice, BnCameraDeviceSession};
