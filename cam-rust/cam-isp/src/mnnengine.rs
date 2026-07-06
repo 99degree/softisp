@@ -179,6 +179,9 @@ pub struct MnnEngine {
     #[cfg(feature = "mnn")]
     #[allow(dead_code)]
     buf_pool: Mutex<crate::mnn_buffer::OutputBufferPool>,
+    /// GPU hang watchdog for fault-tolerant inference.
+    /// Triggers CPU fallback when MNN/Vulkan hangs exceed threshold.
+    watchdog: crate::gpu_watchdog::GpuWatchdog,
 }
 
 #[cfg(feature = "mnn")]
@@ -220,6 +223,9 @@ impl MnnEngine {
             pool: None,
             #[cfg(feature = "mnn")]
             buf_pool: Mutex::new(crate::mnn_buffer::OutputBufferPool::new(3, 1)),
+            watchdog: crate::gpu_watchdog::GpuWatchdog::new(
+                crate::gpu_watchdog::WatchdogConfig::default()
+            ),
         }
     }
 
@@ -277,6 +283,27 @@ impl MnnEngine {
     /// Get whether to preserve input type.
     pub fn preserve_input_type(&self) -> bool {
         self.preserve_input_type
+    }
+
+    /// Start background GPU hang watchdog.
+    /// Triggers CPU fallback when GPU execution exceeds threshold.
+    pub fn start_watchdog(&self) {
+        self.watchdog.start_monitoring();
+    }
+
+    /// Stop background GPU hang watchdog.
+    pub fn stop_watchdog(&self) {
+        self.watchdog.stop_monitoring();
+    }
+
+    /// Get reference to GPU watchdog (for advanced configuration)
+    pub fn watchdog(&self) -> &crate::gpu_watchdog::GpuWatchdog {
+        &self.watchdog
+    }
+
+    /// Check if CPU fallback is currently requested by watchdog
+    pub fn needs_cpu_fallback(&self) -> bool {
+        self.watchdog.fallback_requested()
     }
 
     /// Register MNN engine factories for all available backends.
