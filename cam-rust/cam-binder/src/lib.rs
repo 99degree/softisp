@@ -34,7 +34,7 @@ pub use cam_hal::buffer::{
 
 // Re-export platform-specific buffer backends
 #[cfg(feature = "v4l2")]
-pub use cam_hal_linux::dmabuf::{DMABuf, DMABufAllocator, MemfdBuf, MemfdAllocator};
+pub use cam_hal_linux::list_v4l2_devices;
 #[cfg(feature = "android")]
 pub use cam_hal_android::gralloc::{native_handle_t, BufferHandleT, GrallocInterop};
 

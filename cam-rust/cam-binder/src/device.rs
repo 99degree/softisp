@@ -46,6 +46,7 @@ impl CameraDevice {
     /// Open the camera device.
     ///
     /// Creates a capture session and delivers it via the callback's onOpened().
+    /// If V4L2 is available, auto-configures the camera.
     pub fn open(&self, callback: Arc<dyn ICameraDeviceCallback>) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
         if *self.opened.lock().unwrap() {
             return Err(format!("Camera {} already opened", self.camera_id));
@@ -66,6 +67,13 @@ impl CameraDevice {
 
         // Give the session a reference to the same callback
         session.lock().unwrap().set_callback(callback_for_session);
+
+        // Auto-configure V4L2 if device_path looks like a V4L2 device
+        if self.device_path.starts_with("/dev/video") {
+            if let Err(e) = session.lock().unwrap().configure_v4l2(&self.device_path) {
+                log::warn!("CameraDevice({}): V4L2 config failed: {}", self.camera_id, e);
+            }
+        }
 
         info!("CameraDevice({}): opened", self.camera_id);
 
