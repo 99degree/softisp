@@ -334,17 +334,14 @@ impl PostProcessPipeline {
         if self.config.deshake_enabled {
             let t_deshake = std::time::Instant::now();
 
-            if let Some(comp) = self.deshake.update(&data, width, height) {
-                let crop = self.config.deshake_crop_fraction;
-                let (new_data, new_w, new_h) = self.deshake.apply_warp_gpu(
-                    &data, width, height, &comp, crop,
-                )?;
+            if let Some((new_data, new_w, new_h)) = self.deshake.update(&data, width, height) {
                 data = new_data;
                 width = new_w;
                 height = new_h;
 
+                let motion = self.deshake.smooth_motion();
                 debug!("Deshake: dx={:.1} dy={:.1} ({:.2}ms)",
-                    comp[0], comp[1],
+                    motion[0], motion[1],
                     t_deshake.elapsed().as_secs_f64() * 1000.0);
             }
         }
