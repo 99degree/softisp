@@ -1,14 +1,61 @@
-//! CameraProviderFactory — AOSP CameraProvider service registration.
+//! # CameraProviderFactory — AOSP Service Registration
 //!
 //! Implements the factory pattern for creating and registering CameraProvider
-//! instances with Android's ServiceManager. This is the entry point for the
-//! camera HAL service on Android.
+//! instances with Android's ServiceManager.
 //!
-//! Registration flow:
+//! ## Overview
+//!
+//! The `CameraProviderFactory` is the entry point for the camera HAL service.
+//! It creates the provider, registers it with the system, and manages
+//! the service lifecycle.
+//!
+//! ## Registration Flow
+//!
+//! ```text
 //! 1. Create CameraHalService
-//! 2. Register with ServiceManager as "media.camera"
-//! 3. Start binder thread pool
-//! 4. Handle incoming requests via AIDL dispatch
+//! 2. Create CameraProviderFactory
+//! 3. factory.register()
+//!    ├── Register with ServiceManager
+//!    └── Generate VINTF manifest
+//! 4. Start binder thread pool (Android)
+//! 5. Handle incoming requests via AIDL dispatch
+//! 6. factory.unregister() (on shutdown)
+//! ```
+//!
+//! ## Platform Support
+//!
+//! | Platform | Behavior |
+//! |----------|----------|
+//! | Android | Registers with ServiceManager |
+//! | Linux | Runs as standalone local service |
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use cam_binder::factory::CameraProviderFactory;
+//!
+//! // Create and start service
+//! let factory = CameraProviderFactory::new();
+//! factory.register().unwrap();
+//!
+//! // Service is now ready
+//! println!("Service: {}", factory.service_name());
+//!
+//! // Shutdown
+//! factory.unregister().unwrap();
+//! ```
+//!
+//! ## VINTF Manifest
+//!
+//! The factory generates VINTF manifest entries for Android:
+//!
+//! ```xml
+//! <hal format="aidl">
+//!     <name>android.hardware.camera.provider</name>
+//!     <version>1</version>
+//!     <fqname>ICameraProvider/internal/0</fqname>
+//! </hal>
+//! ```
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

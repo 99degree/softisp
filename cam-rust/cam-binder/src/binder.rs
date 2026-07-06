@@ -1,12 +1,64 @@
-//! Binder IPC — AOSP-compatible binder transaction handling.
+//! # Binder IPC — AOSP-Compatible Binder Transaction Handling
 //!
-//! Provides the core binder types for AIDL interface implementation:
-//! - IBinder trait (remote binder reference)
-//! - Parcel (serialization buffer)
-//! - BpXxx / BnXxx patterns (proxy/stub)
+//! Provides the core binder types for AIDL interface implementation.
+//! This module is designed for binary compatibility with Android's binder IPC.
 //!
-//! On Android, this uses the real `binder` crate.
-//! On host, this provides a local IPC simulation.
+//! ## Core Types
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`Parcel`] | AIDL-compatible serialization buffer |
+//! | [`IBinder`] | Interface for binder objects |
+//! | [`BinderStatus`] | Status codes for binder transactions |
+//! | [`BpCameraProvider`] | Client-side proxy for ICameraProvider |
+//! | [`BpCameraDevice`] | Client-side proxy for ICameraDevice |
+//! | [`BpCameraDeviceSession`] | Client-side proxy for ICameraDeviceSession |
+//! | [`ServiceManager`] | Service registration and lookup |
+//! | [`BinderThreadPool`] | Thread pool management |
+//! | [`LocalBinder`] | Same-process binder objects |
+//!
+//! ## Parcel Layout
+//!
+//! The `Parcel` struct matches Android's `android::Parcel` layout:
+//!
+//! ```text
+//! [data bytes...]
+//! ```
+//!
+//! Methods for reading/writing:
+//! - `write_i32()` / `read_i32()` — 32-bit integers
+//! - `write_i64()` / `read_i64()` — 64-bit integers
+//! - `write_f32()` / `read_f32()` — 32-bit floats
+//! - `write_string16()` / `read_string16()` — AIDL string format
+//! - `write_bytes()` / `read_bytes()` — byte arrays
+//! - `write_interface_token()` — interface descriptor verification
+//!
+//! ## Transaction Flow
+//!
+//! ```text
+//! Client (BpXxx)                    Server (BnXxx)
+//!     │                                  │
+//!     │  transact(code, data)            │
+//!     │─────────────────────────────────>│
+//!     │                                  │
+//!     │                    on_transact(code, data)
+//!     │                                  │
+//!     │                    process request
+//!     │                                  │
+//!     │  reply (Parcel)                  │
+//!     │<─────────────────────────────────│
+//!     │                                  │
+//! ```
+//!
+//! ## Binary Compatibility
+//!
+//! This implementation ensures binary compatibility with AOSP:
+//!
+//! - Parcel layout matches `android::Parcel`
+//! - Transaction codes match AIDL interface spec
+//! - String16 encoding for AIDL string format
+//! - Interface token verification
+//! - BinderStatus codes match AOSP values
 
 use std::sync::{Arc, Mutex};
 
