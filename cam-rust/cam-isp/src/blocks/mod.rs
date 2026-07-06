@@ -45,6 +45,7 @@ mod stage;
 mod hdr_debayer;
 mod blc50;
 mod watermark;
+mod super_res;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -92,6 +93,7 @@ pub use stage::StageBlock;
 pub use hdr_debayer::HdrDebayerBlock;
 pub use blc50::Blc50Block;
 pub use watermark::WatermarkBlock;
+pub use super_res::SuperResBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
