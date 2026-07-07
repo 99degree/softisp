@@ -68,15 +68,16 @@ use crate::callback::ICameraDeviceCallback;
 /// Attempt to capture a single frame from V4L2 device.
 /// Returns raw RGBA pixel data.
 #[cfg(feature = "v4l2")]
-fn capture_v4l2_frame(device_path: &str, width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let (_w, _h, data) = cam_hal_linux::capture_single_v4l2_frame(device_path, width, height)?;
+fn capture_v4l2_frame(device_path: &str, width: u32, height: u32) -> crate::error::BinderResult<Vec<u8>> {
+    let (_w, _h, data) = cam_hal_linux::capture_single_v4l2_frame(device_path, width, height)
+        .map_err(|e| crate::error::BinderError::V4L2(e))?;
     Ok(data)
 }
 
 /// Non-V4L2 stub.
 #[cfg(not(feature = "v4l2"))]
-fn capture_v4l2_frame(_device_path: &str, _width: u32, _height: u32) -> Result<Vec<u8>, String> {
-    Err("V4L2 feature not enabled".to_string())
+fn capture_v4l2_frame(_device_path: &str, _width: u32, _height: u32) -> crate::error::BinderResult<Vec<u8>> {
+    Err(crate::error::BinderError::NotImplemented("V4L2 feature not enabled".into()))
 }
 
 /// List available V4L2 cameras.
