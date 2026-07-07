@@ -200,7 +200,7 @@ impl CoeffExtractor for GainExtractor {
         let mut gain_map = vec![1.0f32; size];
         for y in 0..h {
             for x in 0..w {
-                let ch = (x % 3) as usize;
+                let ch = x % 3;
                 gain_map[y * w + x] = match ch {
                     0 => r_gain,
                     1 => g_gain,
