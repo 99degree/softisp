@@ -1,4 +1,23 @@
-//! RawInputBlock — pipeline head, declares INT32 input tensor (no UINT16 in pipeline).
+//! RawInputBlock — pipeline head, declares INT32 input tensor.
+//!
+//! This block is the entry point of the ISP pipeline. It declares the input
+//! tensor that will receive raw sensor data from the camera.
+//!
+//! # Input Format
+//!
+//! - Raw 16-bit Bayer data (packed or unpacked)
+//! - Stored as INT32 in the ONNX model (for compatibility)
+//! - Supports RGGB, GRBG, GBRG, BGGR patterns
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! let raw_input = RawInputBlock::new();
+//! let pipeline = raw_input
+//!     .chain(CfaBlock::new())
+//!     .chain(DemosaicBlock::new(0))
+//!     .chain(DisplayBlock::new(width));
+//! ```
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
 
