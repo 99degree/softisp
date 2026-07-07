@@ -16,3 +16,9 @@ impl DebugService {
         info!("Frame[{}] {}x{} processed in {:.2}ms", frame_number, width, height, processing_ms);
     }
 }
+
+impl Default for DebugService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
