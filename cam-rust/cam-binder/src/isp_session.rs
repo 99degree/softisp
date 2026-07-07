@@ -60,13 +60,10 @@ impl IspCameraSession {
         // Initialize ISP engine
         let engine = if engine_name == "none" {
             None
+        } else if engine_name == "auto" {
+            cam_isp::engine::select_engine()
         } else {
-            let eng = if engine_name == "auto" {
-                cam_isp::engine::select_engine()
-            } else {
-                cam_isp::engine::select_engine_by_name(engine_name)
-            };
-            eng
+            cam_isp::engine::select_engine_by_name(engine_name)
         };
 
         if let Some(ref e) = engine {
