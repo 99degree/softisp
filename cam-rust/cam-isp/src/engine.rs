@@ -235,16 +235,46 @@ impl fmt::Debug for EngineFactory {
 }
 
 /// Trait for an ISP processing engine.
+///
 /// Implementations compile an IspBlock chain into a fused model and run per-frame inference.
+///
+/// # Implementations
+///
+/// - `CpuEngine`: Pure CPU implementation (priority 70)
+/// - `MnnEngine`: MNN-based GPU/NPU acceleration (priority 90)
+/// - `OnnxEngine`: ONNX Runtime backend (priority 80)
+///
+/// # Lifecycle
+///
+/// ```text
+/// 1. select_engine()  → Box<dyn IspEngine>
+/// 2. engine.build(blocks, ...)  → compiles pipeline
+/// 3. engine.process(params)  → IspFrame
+/// ```
 pub trait IspEngine: Send + Sync {
+    /// Backend identifier (e.g., "CPU", "MNN/Vulkan", "ONNX")
     fn backend_name(&self) -> &'static str;
+    
+    /// Engine priority (higher = preferred). Used by select_engine().
     fn priority(&self) -> i32;
+    
+    /// Whether the engine has been built and is ready for inference.
     fn is_loaded(&self) -> bool;
+    
     /// Downcast to dyn Any for engine-specific configuration before build().
     fn as_any(&self) -> &dyn std::any::Any { unimplemented!() }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any { unimplemented!() }
     
     /// Build the engine from a pipeline of blocks.
+    ///
+    /// Compiles the block chain into an executable model (ONNX/MNN/etc.)
+    /// and prepares the engine for inference.
+    ///
+    /// # Arguments
+    /// * `pipeline_head` - First block in the processing chain
+    /// * `aux_blocks` - Additional blocks (stats, etc.)
+    /// * `warp_block` - Optional geometric correction block
+    /// * `opset_version` - ONNX opset version for model generation
     fn build(
         &mut self,
         pipeline_head: Box<dyn IspBlock>,
@@ -257,14 +287,27 @@ pub trait IspEngine: Send + Sync {
     fn controller(&self) -> &Mutex<IspController>;
 
     /// Process a raw frame through the pipeline.
+    ///
+    /// Takes raw sensor data and returns a processed IspFrame.
+    /// The engine applies all configured blocks in sequence.
     fn process(&self, params: &ProcessParams) -> crate::error::IspResult<IspFrame>;
 }
 
 /// Global registry of engine factories.
+///
+/// Engines are registered at startup via `init()` and sorted by priority.
+/// The registry is thread-safe and can be accessed from multiple threads.
 static REGISTRY: std::sync::LazyLock<Mutex<Vec<EngineFactory>>> =
     std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Register an engine factory.
+///
+/// Called during `init()` to register available backends.
+/// Engines are sorted by priority (descending) so `select_engine()`
+/// returns the best available backend.
+///
+/// # Arguments
+/// * `factory` - Engine factory with name, priority, and creation function
 pub fn register_engine(factory: EngineFactory) {
     let name = factory.name;
     let priority = factory.priority;
@@ -277,6 +320,12 @@ pub fn register_engine(factory: EngineFactory) {
 }
 
 /// Select the best available engine by priority.
+///
+/// Returns the highest-priority engine that can be created.
+/// Priority order: MNN (90) > ONNX (80) > CPU (70).
+///
+/// # Returns
+/// Some(engine) if available, None if registry is empty.
 pub fn select_engine() -> Option<Box<dyn IspEngine>> {
     let registry = REGISTRY.lock().unwrap();
     for factory in registry.iter() {
@@ -291,7 +340,20 @@ pub fn select_engine() -> Option<Box<dyn IspEngine>> {
     None
 }
 
-/// Select a specific engine by name (cpu, ort, mnn, or auto for best available).
+/// Select a specific engine by name.
+///
+/// # Arguments
+/// * `name` - Engine name: "cpu", "ort", "mnn", or "auto" for best available
+///
+/// # Returns
+/// Matching engine if found and can be created, None otherwise.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let engine = select_engine_by_name("mnn");
+/// let engine = select_engine_by_name("auto"); // best available
+/// ```
 pub fn select_engine_by_name(name: &str) -> Option<Box<dyn IspEngine>> {
     let registry = REGISTRY.lock().unwrap();
     let name_lower = name.to_lowercase();
