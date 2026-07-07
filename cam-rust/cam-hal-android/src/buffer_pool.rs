@@ -172,7 +172,7 @@ impl HardwareBufferPool {
         let mut free_buffers = self.free_buffers.lock().unwrap();
         let mut live_count = self.live_count.lock().unwrap();
         
-        free_buffers.entry(format).or_insert_with(VecDeque::new).push_back(buffer);
+        free_buffers.entry(format).or_default().push_back(buffer);
         if let Some(count) = live_count.get_mut(&format) {
             *count = count.saturating_sub(1);
         }

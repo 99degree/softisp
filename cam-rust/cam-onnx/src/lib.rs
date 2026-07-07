@@ -19,6 +19,7 @@
 //! )?;
 //! ```
 
+#[allow(unused_imports)]
 use log::info;
 
 /// ONNX model session for inference.

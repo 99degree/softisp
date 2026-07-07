@@ -268,7 +268,7 @@ fn bayer_to_rgb_quick(bayer: &[u8], width: usize, height: usize) -> Vec<u8> {
     let mut rgb = Vec::with_capacity(pixels * 4);
     
     // Simple bilinear demosaic (placeholder; real impl uses MHC/bilinear)
-    let stride = if bayer.len() >= pixels { width } else { width };
+    let stride = width;
     
     for y in 0..height {
         for x in 0..width {
