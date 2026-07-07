@@ -8,6 +8,7 @@
 #![allow(clippy::arc_with_non_send_sync)] // Internal Arc usage for single-threaded buffers
 
 pub mod engine;
+pub mod error;
 pub mod pipeline;
 pub mod pipeline_snapshot;
 pub mod blocks;

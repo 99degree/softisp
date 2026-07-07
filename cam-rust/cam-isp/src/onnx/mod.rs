@@ -108,7 +108,7 @@ impl IspEngine for OnnxEngine {
         aux_blocks: Vec<Box<dyn IspBlock>>,
         _warp_block: Option<Box<dyn IspBlock>>,
         opset_version: i64,
-    ) -> Result<(), String> {
+    ) -> crate::error::IspResult<()> {
         // Build full pipeline: head + aux_blocks
         let mut all_blocks: Vec<&dyn IspBlock> = vec![pipeline_head.as_ref()];
         let aux_refs: Vec<&dyn IspBlock> = aux_blocks.iter().map(|b| b.as_ref() as &dyn IspBlock).collect();
@@ -117,7 +117,8 @@ impl IspEngine for OnnxEngine {
         eprintln!("OnnxEngine::build: all_blocks count = {}", all_blocks.len());
         
         // Compose using compose_from_vec to avoid linked list requirement
-        let model = GraphComposer::compose_from_vec(&all_blocks, &[], opset_version)?;
+        let model = GraphComposer::compose_from_vec(&all_blocks, &[], opset_version)
+            .map_err(|e| crate::error::IspError::Pipeline(e))?;
 
         eprintln!("OnnxEngine::build: model size = {} bytes", model.len());
         info!("OnnxEngine({}) composed ONNX model ({} bytes)", self.backend.id(), model.len());
@@ -130,7 +131,7 @@ impl IspEngine for OnnxEngine {
             // Build session from model
             let session = ::ort::session::Session::builder()
                 .and_then(|mut b| b.commit_from_memory(&model))
-                .map_err(|e| format!("OnnxEngine({}) failed to load ORT session: {}", self.backend.id(), e))?;
+                .map_err(|e| crate::error::IspError::Onnx(format!("OnnxEngine({}) failed to load ORT session: {}", self.backend.id(), e)))?;
             info!("OnnxEngine({}) loaded ORT session", self.backend.id());
             let mut guard = self.session.lock().unwrap();
             *guard = Some(session);
@@ -142,14 +143,14 @@ impl IspEngine for OnnxEngine {
         Ok(())
     }
 
-    fn process(&self, p: &ProcessParams) -> Result<IspFrame, String> {
+    fn process(&self, p: &ProcessParams) -> crate::error::IspResult<IspFrame> {
         let width = p.width;
         let height = p.height;
         let target_width = p.target_width;
         let _buf = p.buf;
 
         if !self.initialized {
-            return Err("Engine not initialized".to_string());
+            return Err(crate::error::IspError::Config("Engine not initialized".into()));
         }
 
         eprintln!("OnnxEngine::process called, feature ort={}, initialized={}", cfg!(feature = "ort"), self.initialized);

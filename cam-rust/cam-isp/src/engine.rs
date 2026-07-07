@@ -251,13 +251,13 @@ pub trait IspEngine: Send + Sync {
         aux_blocks: Vec<Box<dyn IspBlock>>,
         warp_block: Option<Box<dyn IspBlock>>,
         opset_version: i64,
-    ) -> Result<(), String>;
+    ) -> crate::error::IspResult<()>;
 
     /// Access the ISP controller for reading AWB/AE/tone state.
     fn controller(&self) -> &Mutex<IspController>;
 
     /// Process a raw frame through the pipeline.
-    fn process(&self, params: &ProcessParams) -> Result<IspFrame, String>;
+    fn process(&self, params: &ProcessParams) -> crate::error::IspResult<IspFrame>;
 }
 
 /// Global registry of engine factories.
