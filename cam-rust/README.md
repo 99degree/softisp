@@ -1,15 +1,15 @@
 # Rust Camera ISP Pipeline
 
 A complete Rust ISP pipeline: ONNX generation → MNN conversion → Vulkan GPU inference.
-Compiles with **0 warnings** and **579 tests pass** (544 lib + 24 integration + 11 property).
+Compiles with **0 warnings** and **637 tests pass** (621 lib + 16 integration).
 
-## Performance (Vulkan, Snapdragon 8 Gen 2)
+## Performance (Vulkan GPU, Snapdragon 8 Gen 2)
 
-| Resolution | Latency | FPS | Notes |
-|---|---|---|---|
-| 4K→FHD | 17.3 ms | **57.7** | Full pipeline, all fusions |
-| HD→HD | ~5 ms | **200** | Minimal preset |
-| FHD→FHD | ~8 ms | **125** | Photo preset (MHC) |
+| Resolution | GPU Latency | GPU FPS | CPU Latency | CPU FPS | Speedup |
+|---|---|---|---|---|---|
+| HD (1280×720) | 1.47 ms | **680** | 442 ms | 2 | **340×** |
+| FHD (1920×1080) | 2.28 ms | **438** | 983 ms | 1 | **438×** |
+| 4K (3840×2160) | 12.87 ms | **78** | 3904 ms | 0.25 | **312×** |
 
 ## Pipeline (Fused, 12 GPU dispatches)
 
@@ -37,7 +37,7 @@ RawInput(INT16 [1,1,H,W])
 
 ## Key Features
 
-- **579 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
+- **637 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
 - **MnnEngine** — Vulkan GPU acceleration (4K→FHD 57.7 FPS)
 - **IspChainFusion** — 12 fusion rules (R1–R12b), 32+ ops → 12 dispatches
 - **PipelineBuilder** — Fluent API: `.unpack().demosaic().gamma().sharpen().display().compose()`
@@ -65,10 +65,10 @@ RawInput(INT16 [1,1,H,W])
 ```bash
 cd cam-rust
 
-# Run all lib tests (432)
+# Run all lib tests (621)
 cargo test --lib -p cam-isp --features mnn
 
-# Integration tests (54)
+# Integration tests (16)
 cargo test --tests -p cam-isp --features mnn
 
 # Generate ONNX model
@@ -79,15 +79,26 @@ cargo run --example camera_isp --features mnn -p cam-isp -- --width 640 --height
 
 # Streaming benchmark
 cargo run --example bench_4k_to_fhd -p cam-isp --features mnn
+
+# GPU benchmark (Vulkan)
+ENGINE=vulkan cargo run --release --example bench_e2e_pipeline -p cam-isp --features mnn
 ```
 
-## Test Coverage (579 tests)
+## Test Coverage (637 tests)
 
 | Suite | Count | Command |
 |-------|------:|--------|
-| Lib unit tests | 432 | `cargo test --lib -p cam-isp --features mnn` |
-| Integration (new_blocks + builder_methods + mnn_engine + ...) | 87 | `cargo test --tests -p cam-isp --features mnn` |
-| E2E (isp_pipeline) | 2 | `cargo test --test test_e2e_isp_pipeline -p cam-isp --features mnn -- --ignored --test-threads=1` |
+| Lib unit tests | 621 | `cargo test --lib -p cam-isp --features mnn` |
+| Integration tests | 16 | `cargo test --tests -p cam-isp --features mnn` |
+
+## Vulkan GPU Performance
+
+The ISP pipeline runs entirely on GPU via MNN Vulkan backend:
+
+- **IspChainFusion** pass fuses standard ONNX ops into ISP-specific VulkanFuse Extra ops
+- **12 GPU dispatches** for the full 4-stage pipeline (unpack, demosaic, warp, display)
+- **Dynamic workgroup tuning** per GPU (Mali 32×8, Adreno 64×4, Apple 16×16)
+- **Zero-copy** input via memfd/CMA buffers on Android
 
 ## Module Map (cam-isp, 21 modules)
 

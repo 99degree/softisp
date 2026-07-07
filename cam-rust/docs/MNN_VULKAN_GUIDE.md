@@ -431,6 +431,49 @@ fn pipeline_double_buffer() {
 
 ---
 
+## ISP Pipeline Performance
+
+The SoftISP pipeline runs entirely on Vulkan GPU via MNN:
+
+### Benchmark Results (Snapdragon 8 Gen 2)
+
+| Resolution | GPU Latency | GPU FPS | CPU Latency | CPU FPS | Speedup |
+|------------|-------------|---------|-------------|---------|---------|
+| HD (1280×720) | 1.47 ms | **680** | 442 ms | 2 | **340×** |
+| FHD (1920×1080) | 2.28 ms | **438** | 983 ms | 1 | **438×** |
+| 4K (3840×2160) | 12.87 ms | **78** | 3904 ms | 0.25 | **312×** |
+
+### Pipeline Architecture
+
+The ISP pipeline uses 4 GPU dispatches:
+
+```
+RawInput (INT16 packed) → Unpack+Demosaic+CCM → WarpGrid → Display
+     ↓                        ↓                    ↓           ↓
+  1 dispatch              1 dispatch          1 dispatch   1 dispatch
+```
+
+### IspChainFusion
+
+The MNN converter fuses standard ONNX ops into ISP-specific VulkanFuse Extra ops:
+
+- **Pass 1**: Standard ops → ISP Extra ops (demosaic, FCS, display)
+- **Pass 2**: Adjacent Extra ops → Fused Extra ops (unpack_demosaic, fcs_display)
+
+This reduces GPU dispatches from 12+ to 4-5.
+
+### Running the Benchmark
+
+```bash
+# GPU benchmark
+ENGINE=vulkan cargo run --release --features mnn --example bench_e2e_pipeline -p cam-isp
+
+# CPU benchmark
+ENGINE=cpu cargo run --release --features mnn --example bench_e2e_pipeline -p cam-isp
+```
+
+---
+
 ## Performance Tuning
 
 ### Benchmarking

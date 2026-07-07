@@ -2,65 +2,74 @@
 
 ## Test Environment
 - Platform: Android (Termux)
-- CPU: ARM64
-- Backends: CPU, MNN (CPU), MNN (Vulkan)
+- CPU: ARM64 (Snapdragon 8 Gen 2)
+- Backends: CPU, MNN Vulkan GPU
 
-## Benchmark Results
+## GPU Performance (Vulkan)
 
-### Small Frame Performance (CPU Backend)
+| Resolution | Latency | FPS | Model Size |
+|------------|---------|-----|------------|
+| HD (1280×720) | 1.47 ms | **680** | 18 MB |
+| FHD (1920×1080) | 2.28 ms | **438** | 41 MB |
+| 4K (3840×2160) | 12.87 ms | **78** | 166 MB |
 
-| Resolution | Avg Time | FPS | Throughput |
-|------------|----------|-----|------------|
-| 16×16 | 87.6µs | 11,422 fps | - |
-| 32×32 | 221.2µs | 4,520 fps | 17.9 MB/s |
-| 64×48 | 598.9µs | 1,670 fps | - |
-| 128×96 | 2.6ms | 379 fps | - |
+## CPU Performance
 
-### E2E Pipeline Performance
+| Resolution | Latency | FPS | Model Size |
+|------------|---------|-----|------------|
+| HD (1280×720) | 442 ms | 2 | 18 MB |
+| FHD (1920×1080) | 983 ms | 1 | 41 MB |
+| 4K (3840×2160) | 3904 ms | 0.25 | 166 MB |
 
-| Resolution | CPU | MNN CPU |
-|------------|-----|----------|
-| HD (1280×720) | 442 ms (2 FPS) | 442 ms (2 FPS) |
-| FHD (1920×1080) | 983 ms (1 FPS) | 983 ms (1 FPS) |
-| 4K (3840×2160) | 3,904 ms (0.25 FPS) | 3,904 ms (0.25 FPS) |
+## Speedup (GPU vs CPU)
 
-### Pipeline Composition Time
+| Resolution | Speedup |
+|------------|---------|
+| HD (1280×720) | **340×** |
+| FHD (1920×1080) | **438×** |
+| 4K (3840×2160) | **312×** |
 
-| Resolution | ONNX Emit Time |
-|------------|----------------|
-| HD (1280×720) | 102 ms |
-| FHD (1920×1080) | 229 ms |
-| 4K (3840×2160) | 875 ms |
+## Small Frame Performance (CPU)
 
-## Analysis
+| Resolution | Avg Time | FPS |
+|------------|----------|-----|
+| 16×16 | 87.6µs | 11,422 |
+| 32×32 | 221.2µs | 4,520 |
+| 64×48 | 598.9µs | 1,670 |
+| 128×96 | 2.6ms | 379 |
 
-### Strengths
-1. **Small frame performance**: Excellent for thumbnail/preview processing
-2. **Pipeline composition**: Fast ONNX graph generation
-3. **Consistent latency**: Low variance (P50 ≈ P99)
+## Pipeline Composition Time
 
-### Areas for Improvement
-1. **Large frame processing**: 4K requires GPU acceleration for real-time
-2. **Model size**: Large models for full pipeline (166 MB for 4K)
-3. **Vulkan backend**: Currently crashes during MNN conversion for complex models
+| Resolution | ONNX Emit |
+|------------|-----------|
+| HD (1280×720) | 95 ms |
+| FHD (1920×1080) | 170 ms |
+| 4K (3840×2160) | 997 ms |
 
-### Recommendations
-1. **Fix Vulkan backend**: Debug MNN conversion for complex ONNX models
-2. **Use quantized models** (INT8) for mobile deployment
-3. **Implement tiling** for large frame processing
+## Pipeline Architecture
+
+The GPU pipeline uses 4 stages with IspChainFusion:
+
+```
+RawInput (INT16 packed) → Unpack+Demosaic+CCM → WarpGrid → Display
+     ↓                        ↓                    ↓           ↓
+  1 dispatch              1 dispatch          1 dispatch   1 dispatch
+```
+
+Total: 4-5 GPU dispatches for the full pipeline.
 
 ## Test Commands
 
 ```bash
+# GPU benchmark (Vulkan)
+ENGINE=vulkan cargo run --release --features mnn --example bench_e2e_pipeline -p cam-isp
+
+# CPU benchmark
+ENGINE=cpu cargo run --release --features mnn --example bench_e2e_pipeline -p cam-isp
+
 # Small frame benchmark
-cargo run --release --example bench
+cargo run --release --example bench -p cam-isp
 
-# E2E pipeline benchmark (CPU)
-ENGINE=cpu cargo run --release --features mnn --example bench_e2e_pipeline
-
-# E2E pipeline benchmark (Vulkan)
-ENGINE=vulkan cargo run --release --features mnn --example bench_e2e_pipeline
-
-# Block-level benchmark (requires mnn feature)
-cargo run --release --features mnn --example bench_blocks
+# Run all tests (637)
+cargo test -p cam-isp --features mnn --release
 ```
