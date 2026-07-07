@@ -115,8 +115,10 @@ pub struct PostProcessPipeline {
     config: PostProcessConfig,
     eis: EisEngine,
     deshake: DeshakeEngine,
-    /// Previous frame for temporal denoise.
+    /// Previous frame for temporal denoise (u8).
     prev_frame: Option<Vec<u8>>,
+    /// Previous frame for temporal denoise (float).
+    prev_frame_float: Option<Vec<f32>>,
     /// Previous frame dimensions.
     prev_dims: Option<(u32, u32)>,
     /// GDC distortion coefficients `[k1, k2, p1, p2, k3]`.
@@ -144,6 +146,7 @@ impl PostProcessPipeline {
             eis,
             deshake,
             prev_frame: None,
+            prev_frame_float: None,
             prev_dims: None,
             gdc_coefficients: [0.0; 5], // No distortion by default
             gdc_center: (0.5, 0.5),
@@ -238,41 +241,112 @@ impl PostProcessPipeline {
         timestamp_ns: u64,
     ) -> Result<IspFrame, String> {
         let n = (width * height) as usize;
-        let mut u8_rgba = vec![0u8; n * 4];
-        if float_data.len() >= n * 3 {
-            // Convert planar [0,1] f32 → packed u8 RGBA
-            let r_plane = &float_data[0..n];
-            let g_plane = &float_data[n..n * 2];
-            let b_plane = &float_data[n * 2..n * 3];
-            for i in 0..n {
-                u8_rgba[i * 4] = (r_plane[i].clamp(0.0, 1.0) * 255.0) as u8;
-                u8_rgba[i * 4 + 1] = (g_plane[i].clamp(0.0, 1.0) * 255.0) as u8;
-                u8_rgba[i * 4 + 2] = (b_plane[i].clamp(0.0, 1.0) * 255.0) as u8;
-                u8_rgba[i * 4 + 3] = 255;
-            }
-        } else {
+        if float_data.len() < n * 3 {
             return Err(format!(
                 "process_float: expected {} float values (3×{}×{}), got {}",
-                n * 3,
-                height,
-                width,
-                float_data.len()
+                n * 3, height, width, float_data.len()
             ));
         }
 
+        // Check if any post-processing is enabled
+        if !self.config.eis_enabled
+            && !self.config.deshake_enabled
+            && !self.config.gdc_enabled
+            && !self.config.temporal_denoise_enabled
+        {
+            // No post-processing — return float data directly
+            let frame = IspFrame {
+                data: vec![],
+                width,
+                height,
+                format: FrameFormat::Rgba8888,
+                float_data: Some(float_data.to_vec()),
+                aux,
+                timestamp_ns,
+                prep_duration_ns: 0,
+                inference_duration_ns: 0,
+                total_duration_ns: 0,
+            };
+            return Ok(frame);
+        }
+
+        // Process using float functions (zero-copy path)
+        let mut float_out = float_data.to_vec();
+        let mut w = width;
+        let mut h = height;
+
+        // EIS warp (float)
+        if self.config.eis_enabled {
+            if let Some(comp) = self.eis.update(
+                timestamp_ns as i64,
+                500.0, w, h,
+            ) {
+                match apply_eis_warp_f32(&float_out, w, h, &comp, self.config.eis_crop_fraction) {
+                    Ok((new_data, new_w, new_h)) => {
+                        float_out = new_data;
+                        w = new_w;
+                        h = new_h;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        // GDC (float)
+        if self.config.gdc_enabled {
+            match apply_gdc_f32(
+                &float_out, w, h,
+                &self.gdc_coefficients,
+                self.gdc_center,
+                self.config.gdc_strength,
+            ) {
+                Ok((new_data, new_w, new_h)) => {
+                    float_out = new_data;
+                    w = new_w;
+                    h = new_h;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        // Temporal denoise (float)
+        if self.config.temporal_denoise_enabled {
+            if let Some(ref prev) = self.prev_frame_float {
+                if prev.len() == float_out.len() {
+                    float_out = apply_temporal_denoise_f32(
+                        &float_out, prev, w, h, self.config.temporal_denoise_blend,
+                    );
+                }
+            }
+        }
+
+        // Store for next temporal denoise
+        if self.config.temporal_denoise_enabled {
+            self.prev_frame_float = Some(float_out.clone());
+        }
+
+        // Convert to u8 for output
+        let mut u8_rgba = vec![0u8; n * 4];
+        for i in 0..n.min(float_out.len() / 3) {
+            u8_rgba[i * 4] = (float_out[i].clamp(0.0, 1.0) * 255.0) as u8;
+            u8_rgba[i * 4 + 1] = (float_out[n + i].clamp(0.0, 1.0) * 255.0) as u8;
+            u8_rgba[i * 4 + 2] = (float_out[n * 2 + i].clamp(0.0, 1.0) * 255.0) as u8;
+            u8_rgba[i * 4 + 3] = 255;
+        }
+
         let frame = IspFrame {
-            data: vec![], // u8 data is passed separately to process_inner
-            width,
-            height,
+            data: u8_rgba,
+            width: w,
+            height: h,
             format: FrameFormat::Rgba8888,
-            float_data: Some(float_data.to_vec()),
+            float_data: Some(float_out),
             aux,
             timestamp_ns,
             prep_duration_ns: 0,
             inference_duration_ns: 0,
             total_duration_ns: 0,
         };
-        self.process_inner(&u8_rgba, width, height, &frame)
+        Ok(frame)
     }
 
     fn process_inner(
