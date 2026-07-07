@@ -23,10 +23,10 @@ impl FusedPipeline {
     pub fn build(
         blocks: Vec<Box<dyn IspBlock>>,
         _target_width: u32,
-    ) -> Result<Self, String> {
+    ) -> crate::error::IspResult<Self> {
         eprintln!("FusedPipeline::build: blocks={}", blocks.len());
         if blocks.is_empty() {
-            return Err("No blocks provided".to_string());
+            return Err(crate::error::IspError::Pipeline("No blocks provided".into()));
         }
         
         // Link blocks: set prev/next pointers
@@ -46,7 +46,7 @@ impl FusedPipeline {
         let head = blocks.remove(0);
         let aux_blocks = blocks;
         
-        let mut engine = select_engine().ok_or("No engine available")?;
+        let mut engine = select_engine().ok_or(crate::error::IspError::Config("No engine available".into()))?;
         engine.build(head, aux_blocks, None, 21)?;
         Ok(Self { engine, loaded: true })
     }
@@ -55,9 +55,9 @@ impl FusedPipeline {
     pub fn build_with_engine(
         blocks: Vec<Box<dyn IspBlock>>,
         mut engine: Box<dyn IspEngine>,
-    ) -> Result<Self, String> {
+    ) -> crate::error::IspResult<Self> {
         if blocks.is_empty() {
-            return Err("No blocks provided".to_string());
+            return Err(crate::error::IspError::Pipeline("No blocks provided".into()));
         }
         let mut blocks = blocks;
         let head = blocks.remove(0);
@@ -77,9 +77,9 @@ impl FusedPipeline {
     ///
     /// Named parameters for convenience — delegates to the backend engine.
     #[allow(clippy::too_many_arguments)]
-    pub fn process(&self, params: &ProcessParams) -> Result<IspFrame, String> {
+    pub fn process(&self, params: &ProcessParams) -> crate::error::IspResult<IspFrame> {
         if !self.loaded {
-            return Err("Pipeline not loaded — call build() first".to_string());
+            return Err(crate::error::IspError::Pipeline("Pipeline not loaded — call build() first".into()));
         }
         self.engine.process(params)
     }
