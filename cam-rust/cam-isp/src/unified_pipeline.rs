@@ -351,8 +351,20 @@ impl UnifiedPipeline {
         }
 
         // 3. Post-processing (CPU for deshake, temporal denoise, etc.)
-        let post_output = self.post_pipeline.process(&isp_output)
-            .map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?;
+        let post_output = if let Some(ref float_data) = isp_output.float_data {
+            // Float path: use process_float for zero-copy
+            self.post_pipeline.process_float(
+                float_data,
+                isp_output.width,
+                isp_output.height,
+                isp_output.aux.clone(),
+                isp_output.timestamp_ns,
+            ).map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
+        } else {
+            // u8 path: use process
+            self.post_pipeline.process(&isp_output)
+                .map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
+        };
 
         Ok(post_output)
     }
