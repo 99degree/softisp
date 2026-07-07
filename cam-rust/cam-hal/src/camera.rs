@@ -1,16 +1,49 @@
 //! Camera device abstraction.
 //!
-//! Trait for camera adapters (V4L2, Android NDK, stub, etc.).
+//! This module defines the trait for camera adapters (V4L2, Android NDK, stub, etc.)
+//! and common types for frame handling.
+//!
+//! # Camera Adapter Trait
+//!
+//! The `ICameraAdapter` trait provides a unified interface for different camera backends:
+//!
+//! ```text
+//! ICameraAdapter
+//!     ├── V4l2Camera (Linux V4L2)
+//!     ├── AndroidCamera (NDK Camera2)
+//!     └── StubCamera (test pattern)
+//! ```
+//!
+//! # Frame Flow
+//!
+//! ```text
+//! Camera → ByteFrame → ISP Pipeline → Output
+//! ```
 
 use cam_types::{FrameFormat, CameraSourceType};
 
 /// A byte frame sent from the camera adapter to the ISP pipeline.
+///
+/// Contains raw pixel data from the camera sensor, ready for ISP processing.
+///
+/// # Fields
+///
+/// - `data`: Raw pixel bytes
+/// - `width`: Frame width in pixels
+/// - `height`: Frame height in pixels
+/// - `format`: Pixel format (RawSensor, Rgba8888, etc.)
+/// - `timestamp`: Capture timestamp in nanoseconds
 #[derive(Debug, Clone)]
 pub struct ByteFrame {
+    /// Raw pixel data
     pub data: Vec<u8>,
+    /// Width in pixels
     pub width: u32,
+    /// Height in pixels
     pub height: u32,
+    /// Pixel format
     pub format: FrameFormat,
+    /// Capture timestamp in nanoseconds
     pub timestamp: u64,
 }
 
@@ -53,6 +86,26 @@ impl StreamConfig {
 }
 
 /// Trait for a camera adapter.
+///
+/// Provides a unified interface for different camera backends.
+/// Implement this trait to add support for new camera hardware.
+///
+/// # Implementations
+///
+/// - `V4l2Camera`: Linux V4L2 cameras
+/// - `AndroidCamera`: Android Camera2 API
+/// - `StubCamera`: Test pattern generator
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// let mut camera = V4l2Camera::new("/dev/video0");
+/// camera.open(&StreamConfig::new(1920, 1080, FrameFormat::RawSensor))?;
+/// camera.set_frame_callback(Box::new(|frame| {
+///     println!("Got frame: {}x{}", frame.width, frame.height);
+/// }));
+/// camera.start_streaming()?;
+/// ```
 pub trait ICameraAdapter: Send + Sync {
     /// Source type (raw camera, USB, etc.)
     fn source_type(&self) -> CameraSourceType;
