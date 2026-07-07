@@ -47,6 +47,17 @@ impl UnpackBlock {
         }
     }
 
+    /// Return the effective input tensor name: `input_source` if set,
+    /// otherwise `graph_input_name()`. This ensures ONNX nodes always
+    /// reference a valid tensor name even when `wire_blocks` wasn't called.
+    fn effective_input(&self) -> String {
+        if self.input_source.is_empty() {
+            self.graph_input_name().unwrap_or("UnpackBlock/frame").to_string()
+        } else {
+            self.input_source.clone()
+        }
+    }
+
     /// Set concrete height/width (FULL width, not packed).
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
         self.concrete_h = Some(h);
@@ -128,7 +139,7 @@ impl IspBlock for UnpackBlock {
                 Proto::tensor_dim_param("W2"),  // packed width = W/2
             ],
         };
-        Some(Proto::value_info(&self.input_source, &dims, 6)) // INT32
+        Some(Proto::value_info(&self.effective_input(), &dims, 6)) // INT32
     }
 
     /// Output is interleaved INT32`[1,1,H,W]`
@@ -158,11 +169,12 @@ impl IspBlock for UnpackBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        let inp = self.effective_input();
 
         vec![
             // --- Extract low 16 bits (even pixels) via INT16 truncation ---
             Proto::node("Cast",
-                &[&self.input_source],
+                &[&inp],
                 &[&format!("{}/even_i16", ns)],
                 &[Proto::attribute_int("to", 5)]),  // to=5 = INT16 (truncates to low 16 bits)
             Proto::node("Cast",
@@ -173,7 +185,7 @@ impl IspBlock for UnpackBlock {
             // --- Extract high 16 bits (odd pixels) via integer Div ---
             // For positive INT32 values (pixel0 | pixel1<<16), Div(65536) gives pixel1
             Proto::node("Div",
-                &[&self.input_source, &format!("{}/div_65536", ns)],
+                &[&inp, &format!("{}/div_65536", ns)],
                 &[&format!("{}/odd", ns)],
                 &[]),
 
