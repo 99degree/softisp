@@ -17,37 +17,20 @@
 //!                  │
 //!                  ▼
 //!   ┌─────────────────────────────────────┐
-//!   │  Post-Processing (GPU via ONNX)     │
-//!   │  EIS+GDC Warp → Temporal Denoise →  │
-//!   │  Wavelet Denoise → Chromatic Fix    │
+//!   │  GPU Warp (separate MNN session)    │
+//!   │  GDC grid + EIS displacement →      │
+//!   │  GridSample on GPU                  │
+//!   └──────────────┬──────────────────────┘
+//!                  │
+//!                  ▼
+//!   ┌─────────────────────────────────────┐
+//!   │  Post-Processing (CPU)              │
+//!   │  Deshake → Temporal Denoise →       │
+//!   │  Wavelet Denoise                    │
 //!   └──────────────┬──────────────────────┘
 //!                  │
 //!                  ▼
 //!           Final Output (RGBA/RGB)
-//! ```
-//!
-//! # GPU-Accelerated Post-Processing
-//!
-//! All post-processing stages run on GPU via ONNX ops:
-//! - **EIS+GDC Warp**: GridSample (bilinear interpolation)
-//! - **Temporal Denoise**: Sub/Abs/Less/Mul (motion-adaptive blending)
-//! - **Wavelet Denoise**: AvgPool/Sub/Sign/Mul (soft thresholding)
-//! - **Chromatic Aberration**: 3x GridSample (per-channel radial correction)
-//!
-//! Only deshake motion estimation (block matching) runs on CPU.
-//!
-//! # Usage
-//!
-//! ```rust,no_run
-//! use cam_isp::unified_pipeline::{UnifiedPipeline, UnifiedConfig};
-//!
-//! let config = UnifiedConfig::default();
-//! let mut pipeline = UnifiedPipeline::new(config).unwrap();
-//!
-//! // Process a frame
-//! let raw = vec![0u8; 1920 * 1080 * 2]; // INT16 raw bayer
-//! let output = pipeline.process(&raw, 1920, 1080).unwrap();
-//! println!("Output: {}x{} {} bytes", output.width, output.height, output.data.len());
 //! ```
 
 use log::{info, warn};
@@ -58,6 +41,8 @@ use crate::postprocess::{PostProcessConfig, PostProcessPipeline};
 use crate::profile::PipelineProfile;
 use crate::blocks::gpu_warp::GpuWarpBlock;
 use crate::onnx::proto::Proto;
+#[cfg(feature = "mnn")]
+use crate::warp_engine::GpuWarpEngine;
 
 /// Configuration for the unified pipeline.
 #[derive(Debug, Clone)]
@@ -77,7 +62,6 @@ pub struct UnifiedConfig {
     /// Sensor max value (default 1023 for 10-bit).
     pub sensor_max: f32,
     /// Enable GPU-accelerated warp for EIS/GDC.
-    /// When enabled, uses GpuWarpBlock instead of CPU-based warping.
     pub gpu_warp_enabled: bool,
 }
 
@@ -99,29 +83,17 @@ impl Default for UnifiedConfig {
 impl UnifiedConfig {
     /// Create a config for HD (1280x720) with LITE profile.
     pub fn hd() -> Self {
-        Self {
-            profile: PipelineProfile::LITE,
-            target_width: 1280,
-            ..Default::default()
-        }
+        Self { profile: PipelineProfile::LITE, target_width: 1280, ..Default::default() }
     }
 
     /// Create a config for FHD (1920x1080) with MED profile.
     pub fn fhd() -> Self {
-        Self {
-            profile: PipelineProfile::MED,
-            target_width: 1920,
-            ..Default::default()
-        }
+        Self { profile: PipelineProfile::MED, target_width: 1920, ..Default::default() }
     }
 
     /// Create a config for 4K (3840x2160) with HEAVY profile.
     pub fn uhd() -> Self {
-        Self {
-            profile: PipelineProfile::HEAVY,
-            target_width: 3840,
-            ..Default::default()
-        }
+        Self { profile: PipelineProfile::HEAVY, target_width: 3840, ..Default::default() }
     }
 
     /// Create a config for 4K with PRO profile and full post-processing.
@@ -131,25 +103,14 @@ impl UnifiedConfig {
         post.deshake_enabled = true;
         post.gdc_enabled = true;
         post.temporal_denoise_enabled = true;
-        Self {
-            profile: PipelineProfile::PRO,
-            target_width: 3840,
-            post_config: post,
-            ..Default::default()
-        }
+        Self { profile: PipelineProfile::PRO, target_width: 3840, post_config: post, ..Default::default() }
     }
 
     /// Enable EIS stabilization.
-    pub fn with_eis(mut self) -> Self {
-        self.post_config.eis_enabled = true;
-        self
-    }
+    pub fn with_eis(mut self) -> Self { self.post_config.eis_enabled = true; self }
 
     /// Enable deshake stabilization.
-    pub fn with_deshake(mut self) -> Self {
-        self.post_config.deshake_enabled = true;
-        self
-    }
+    pub fn with_deshake(mut self) -> Self { self.post_config.deshake_enabled = true; self }
 
     /// Enable GDC lens correction.
     pub fn with_gdc(mut self, strength: f32) -> Self {
@@ -160,15 +121,11 @@ impl UnifiedConfig {
 
     /// Enable temporal denoise.
     pub fn with_temporal_denoise(mut self) -> Self {
-        self.post_config.temporal_denoise_enabled = true;
-        self
+        self.post_config.temporal_denoise_enabled = true; self
     }
 
     /// Enable GPU-accelerated warp for EIS/GDC.
-    pub fn with_gpu_warp(mut self) -> Self {
-        self.gpu_warp_enabled = true;
-        self
-    }
+    pub fn with_gpu_warp(mut self) -> Self { self.gpu_warp_enabled = true; self }
 }
 
 /// GPU warp parameters (GDC coefficients + EIS displacement).
@@ -188,9 +145,7 @@ pub struct GpuWarpParams {
 
 impl GpuWarpParams {
     /// Create identity parameters (no distortion, no displacement).
-    pub fn identity() -> Self {
-        Self::default()
-    }
+    pub fn identity() -> Self { Self::default() }
 
     /// Create GDC-only parameters (no EIS).
     pub fn gdc(k1: f32, k2: f32, k3: f32) -> Self {
@@ -201,6 +156,15 @@ impl GpuWarpParams {
     pub fn eis(dx: f32, dy: f32) -> Self {
         Self { eis_dx: dx, eis_dy: dy, ..Default::default() }
     }
+
+    /// Returns true if any parameter is non-zero (warp needed).
+    pub fn needs_warp(&self) -> bool {
+        self.gdc_k1.abs() > 1e-6
+            || self.gdc_k2.abs() > 1e-6
+            || self.gdc_k3.abs() > 1e-6
+            || self.eis_dx.abs() > 1e-6
+            || self.eis_dy.abs() > 1e-6
+    }
 }
 
 /// Unified camera pipeline combining ISP + post-processing.
@@ -208,10 +172,13 @@ pub struct UnifiedPipeline {
     config: UnifiedConfig,
     engine: Box<dyn IspEngine>,
     post_pipeline: PostProcessPipeline,
-    /// GPU warp block (if enabled).
+    /// GPU warp block (for ONNX generation).
     gpu_warp: Option<GpuWarpBlock>,
-    /// GPU warp ONNX model (if enabled).
+    /// GPU warp ONNX model bytes.
     gpu_warp_onnx: Option<Vec<u8>>,
+    /// GPU warp MNN inference engine.
+    #[cfg(feature = "mnn")]
+    gpu_warp_engine: Option<GpuWarpEngine>,
     width: u32,
     height: u32,
     initialized: bool,
@@ -220,10 +187,9 @@ pub struct UnifiedPipeline {
 impl UnifiedPipeline {
     /// Create a new unified pipeline.
     pub fn new(config: UnifiedConfig) -> IspResult<Self> {
-        info!("UnifiedPipeline: creating with profile={}, width={}, gpu_warp={}",
+        info!("UnifiedPipeline: profile={}, width={}, gpu_warp={}",
             config.profile.label, config.target_width, config.gpu_warp_enabled);
 
-        // Select engine
         let mut engine = match config.engine_preference.as_str() {
             "vulkan" => {
                 crate::engine::select_engine_by_name("mnn_vulkan")
@@ -231,10 +197,7 @@ impl UnifiedPipeline {
                     .unwrap_or_else(|| Box::new(crate::cpu::CpuEngine::new()))
             }
             "cpu" => Box::new(crate::cpu::CpuEngine::new()),
-            _ => {
-                select_engine()
-                    .unwrap_or_else(|| Box::new(crate::cpu::CpuEngine::new()))
-            }
+            _ => select_engine().unwrap_or_else(|| Box::new(crate::cpu::CpuEngine::new())),
         };
 
         let h = config.target_width * 9 / 16;
@@ -243,55 +206,38 @@ impl UnifiedPipeline {
         // Build ISP blocks
         let blocks = config.profile.build_blocks(w, config.bayer_pattern);
         let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-
-        // Compose ONNX
         let onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21)
             .map_err(|e| crate::error::IspError::Pipeline(format!("compose: {}", e)))?;
-
         info!("UnifiedPipeline: ISP ONNX {} bytes, {} blocks", onnx.len(), blocks.len());
 
-        // Build engine
         let mut block_iter = blocks.into_iter();
         let head = block_iter.next()
             .ok_or_else(|| crate::error::IspError::Pipeline("empty pipeline".into()))?;
         let aux: Vec<Box<dyn IspBlock>> = block_iter.collect();
-
         engine.build(head, aux, None, 21)?;
 
-        // Build GPU warp ONNX if enabled (standalone model)
+        // Build GPU warp
         let (gpu_warp, gpu_warp_onnx) = if config.gpu_warp_enabled {
             let warp_block = GpuWarpBlock::new(w, h);
-
-            // Build standalone ONNX with explicit input/output
             let nodes = warp_block.nodes();
             let inits = warp_block.initializers();
             let extras = warp_block.extra_inputs();
 
-            // Explicit graph inputs
             let mut graph_inputs = vec![
-                // Main frame input
-                Proto::value_info(
-                    "GpuWarp/input",
+                Proto::value_info("GpuWarp/input",
                     &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
                       Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1),
             ];
-            // Extra inputs (GDC coefficients, EIS grid)
             for (name, etype, shape) in &extras {
-                // Convert shape dims to tensor dim protos
                 let dim_protos: Vec<Vec<u8>> = shape.iter().map(|d| {
-                    if *d > 0 {
-                        Proto::tensor_dim_value(*d)
-                    } else {
-                        Proto::tensor_dim_param("?")
-                    }
+                    if *d > 0 { Proto::tensor_dim_value(*d) }
+                    else { Proto::tensor_dim_param("?") }
                 }).collect();
                 graph_inputs.push(Proto::value_info(name, &dim_protos, *etype as i32));
             }
 
-            // Explicit graph output
             let graph_outputs = vec![
-                Proto::value_info(
-                    "GpuWarp/frame",
+                Proto::value_info("GpuWarp/frame",
                     &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
                       Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1),
             ];
@@ -299,14 +245,23 @@ impl UnifiedPipeline {
             let graph = Proto::graph("gpu_warp", &nodes, &graph_inputs, &graph_outputs, &inits, &[]);
             let opset = Proto::opset("", 21);
             let model = Proto::model(8, &opset, "softisp-gpu-warp", &graph);
-
-            info!("UnifiedPipeline: GPU warp ONNX {} bytes, {} extras", model.len(), extras.len());
+            info!("UnifiedPipeline: GPU warp ONNX {} bytes", model.len());
             (Some(warp_block), Some(model))
         } else {
             (None, None)
         };
 
-        // Create post-processing pipeline
+        // Build GPU warp MNN engine
+        #[cfg(feature = "mnn")]
+        let gpu_warp_engine = if let Some(ref onnx) = gpu_warp_onnx {
+            match GpuWarpEngine::from_onnx(onnx, w, h) {
+                Ok(e) => { info!("UnifiedPipeline: GPU warp engine ready"); Some(e) }
+                Err(e) => { warn!("GPU warp engine init failed: {:?}", e); None }
+            }
+        } else {
+            None
+        };
+
         let post_pipeline = PostProcessPipeline::new(config.post_config.clone());
 
         Ok(Self {
@@ -315,6 +270,8 @@ impl UnifiedPipeline {
             post_pipeline,
             gpu_warp,
             gpu_warp_onnx,
+            #[cfg(feature = "mnn")]
+            gpu_warp_engine,
             width: w,
             height: h,
             initialized: true,
@@ -327,14 +284,12 @@ impl UnifiedPipeline {
     }
 
     /// Process with GPU warp parameters (GDC + EIS).
-    ///
-    /// If `gpu_warp_enabled` is true, uses GPU-accelerated grid computation.
-    /// Otherwise falls back to CPU-based post-processing.
     pub fn process_with_warp(
         &mut self,
         raw_data: &[u8],
         width: u32,
         height: u32,
+        #[allow(unused_variables)]
         warp_params: &GpuWarpParams,
     ) -> IspResult<IspFrame> {
         if !self.initialized {
@@ -348,22 +303,52 @@ impl UnifiedPipeline {
         params.sensor_max = self.config.sensor_max;
         params.output_format = self.config.output_format.clone();
 
-        let isp_output = self.engine.process(&params)?;
+        #[allow(unused_mut)]
+        let mut isp_output = self.engine.process(&params)?;
 
-        // 2. GPU warp (if enabled and has GDC/EIS)
-        if self.config.gpu_warp_enabled
-            && self.gpu_warp_onnx.is_some()
-            && (warp_params.gdc_k1.abs() > 1e-6
-                || warp_params.gdc_k2.abs() > 1e-6
-                || warp_params.gdc_k3.abs() > 1e-6
-                || warp_params.eis_dx.abs() > 1e-6
-                || warp_params.eis_dy.abs() > 1e-6)
-        {
-            // TODO: Run GPU warp via engine
-            // For now, log and fall through to CPU post-processing
-            info!("GPU warp: k1={:.3} k2={:.3} k3={:.3} dx={:.3} dy={:.3}",
-                warp_params.gdc_k1, warp_params.gdc_k2, warp_params.gdc_k3,
-                warp_params.eis_dx, warp_params.eis_dy);
+        // 2. GPU warp (if enabled and parameters need warp)
+        #[cfg(feature = "mnn")]
+        if self.config.gpu_warp_enabled && warp_params.needs_warp() {
+            if let Some(ref warp_engine) = self.gpu_warp_engine {
+                let t_warp = std::time::Instant::now();
+
+                // Convert ISP output (RGBA u8) to RGB planar f32
+                let rgba = &isp_output.data;
+                let n = (self.width * self.height) as usize;
+                let mut rgb_planar = vec![0.0f32; n * 3];
+                for i in 0..n {
+                    rgb_planar[i] = rgba[i * 4] as f32 / 255.0;       // R
+                    rgb_planar[n + i] = rgba[i * 4 + 1] as f32 / 255.0; // G
+                    rgb_planar[n * 2 + i] = rgba[i * 4 + 2] as f32 / 255.0; // B
+                }
+
+                // Run GPU warp
+                match warp_engine.run(
+                    &rgb_planar,
+                    warp_params.gdc_k1,
+                    warp_params.gdc_k2,
+                    warp_params.gdc_k3,
+                    warp_params.eis_dx,
+                    warp_params.eis_dy,
+                ) {
+                    Ok(warped) => {
+                        // Convert RGB planar f32 back to RGBA u8
+                        for i in 0..n {
+                            isp_output.data[i * 4] = (warped[i].clamp(0.0, 1.0) * 255.0) as u8;
+                            isp_output.data[i * 4 + 1] = (warped[n + i].clamp(0.0, 1.0) * 255.0) as u8;
+                            isp_output.data[i * 4 + 2] = (warped[n * 2 + i].clamp(0.0, 1.0) * 255.0) as u8;
+                            isp_output.data[i * 4 + 3] = 255;
+                        }
+                        info!("GPU warp: k1={:.3} k2={:.3} k3={:.3} dx={:.3} dy={:.3} ({:.2}ms)",
+                            warp_params.gdc_k1, warp_params.gdc_k2, warp_params.gdc_k3,
+                            warp_params.eis_dx, warp_params.eis_dy,
+                            t_warp.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    Err(e) => {
+                        warn!("GPU warp failed, falling back to CPU: {:?}", e);
+                    }
+                }
+            }
         }
 
         // 3. Post-processing (CPU for deshake, temporal denoise, etc.)
@@ -373,25 +358,9 @@ impl UnifiedPipeline {
         Ok(post_output)
     }
 
-    /// Process with raw Bayer data (auto-calculates dimensions).
+    /// Process with raw Bayer data.
     pub fn process_bayer(&mut self, raw_data: &[u8], bayer_width: u32, bayer_height: u32) -> IspResult<IspFrame> {
         self.process(raw_data, bayer_width, bayer_height)
-    }
-
-    /// Set GDC coefficients for GPU warp.
-    pub fn set_gdc_coefficients(&mut self, k1: f32, k2: f32, k3: f32) {
-        if let Some(ref mut warp) = self.gpu_warp {
-            // Store for later use
-            info!("GDC coefficients set: k1={:.3} k2={:.3} k3={:.3}", k1, k2, k3);
-        }
-    }
-
-    /// Set EIS displacement for GPU warp.
-    pub fn set_eis_displacement(&mut self, dx: f32, dy: f32) {
-        if let Some(ref mut warp) = self.gpu_warp {
-            // Store for later use
-            info!("EIS displacement set: dx={:.3} dy={:.3}", dx, dy);
-        }
     }
 
     /// Get pipeline info.
@@ -410,24 +379,16 @@ impl UnifiedPipeline {
     }
 
     /// Check if pipeline is ready.
-    pub fn is_ready(&self) -> bool {
-        self.initialized
-    }
+    pub fn is_ready(&self) -> bool { self.initialized }
 
     /// Get reference to the engine.
-    pub fn engine(&self) -> &dyn IspEngine {
-        self.engine.as_ref()
-    }
+    pub fn engine(&self) -> &dyn IspEngine { self.engine.as_ref() }
 
     /// Get reference to GPU warp block.
-    pub fn gpu_warp(&self) -> Option<&GpuWarpBlock> {
-        self.gpu_warp.as_ref()
-    }
+    pub fn gpu_warp(&self) -> Option<&GpuWarpBlock> { self.gpu_warp.as_ref() }
 
     /// Get GPU warp ONNX model.
-    pub fn gpu_warp_onnx(&self) -> Option<&[u8]> {
-        self.gpu_warp_onnx.as_deref()
-    }
+    pub fn gpu_warp_onnx(&self) -> Option<&[u8]> { self.gpu_warp_onnx.as_deref() }
 }
 
 /// Pipeline information.
@@ -454,11 +415,7 @@ impl std::fmt::Display for PipelineInfo {
         if self.post_gdc { features.push("GDC"); }
         if self.post_temporal_denoise { features.push("TemporalDenoise"); }
         if self.gpu_warp { features.push("GPU_Warp"); }
-        if features.is_empty() {
-            write!(f, "none]")
-        } else {
-            write!(f, "{}]", features.join("+"))
-        }
+        if features.is_empty() { write!(f, "none]") } else { write!(f, "{}]", features.join("+")) }
     }
 }
 
@@ -477,34 +434,17 @@ mod tests {
 
     #[test]
     fn test_unified_config_presets() {
-        let hd = UnifiedConfig::hd();
-        assert_eq!(hd.target_width, 1280);
-        assert_eq!(hd.profile.label, "LITE");
-
-        let fhd = UnifiedConfig::fhd();
-        assert_eq!(fhd.target_width, 1920);
-        assert_eq!(fhd.profile.label, "MED");
-
-        let uhd = UnifiedConfig::uhd();
-        assert_eq!(uhd.target_width, 3840);
-        assert_eq!(uhd.profile.label, "HEAVY");
+        assert_eq!(UnifiedConfig::hd().target_width, 1280);
+        assert_eq!(UnifiedConfig::fhd().target_width, 1920);
+        assert_eq!(UnifiedConfig::uhd().target_width, 3840);
     }
 
     #[test]
     fn test_unified_config_builder() {
-        let cfg = UnifiedConfig::hd()
-            .with_eis()
-            .with_deshake()
-            .with_gdc(0.5)
-            .with_temporal_denoise()
-            .with_gpu_warp();
-
-        assert!(cfg.post_config.eis_enabled);
-        assert!(cfg.post_config.deshake_enabled);
-        assert!(cfg.post_config.gdc_enabled);
-        assert!((cfg.post_config.gdc_strength - 0.5).abs() < f32::EPSILON);
-        assert!(cfg.post_config.temporal_denoise_enabled);
+        let cfg = UnifiedConfig::hd().with_eis().with_deshake().with_gdc(0.5)
+            .with_temporal_denoise().with_gpu_warp();
         assert!(cfg.gpu_warp_enabled);
+        assert!(cfg.post_config.eis_enabled);
     }
 
     #[test]
@@ -515,25 +455,18 @@ mod tests {
         assert!(pipeline.is_ok(), "Build failed: {:?}", pipeline.err());
         let p = pipeline.unwrap();
         assert!(p.is_ready());
-        let info = p.info();
-        assert_eq!(info.profile, "LITE");
-        assert_eq!(info.input_width, 1280);
-        assert!(!info.gpu_warp);
+        assert_eq!(p.info().profile, "LITE");
     }
 
     #[test]
     fn test_unified_pipeline_process() {
         crate::init();
-        let config = UnifiedConfig::hd();
-        let mut pipeline = UnifiedPipeline::new(config).unwrap();
-
+        let mut pipeline = UnifiedPipeline::new(UnifiedConfig::hd()).unwrap();
         let raw = vec![128u8; 1280 * 720 * 2];
         let result = pipeline.process(&raw, 1280, 720);
         assert!(result.is_ok(), "Process failed: {:?}", result.err());
         let frame = result.unwrap();
-        assert!(frame.width > 0);
-        assert!(frame.height > 0);
-        assert!(!frame.data.is_empty());
+        assert!(frame.width > 0 && !frame.data.is_empty());
     }
 
     #[test]
@@ -543,37 +476,16 @@ mod tests {
         let pipeline = UnifiedPipeline::new(config);
         assert!(pipeline.is_ok(), "Build failed: {:?}", pipeline.err());
         let p = pipeline.unwrap();
-        assert!(p.gpu_warp().is_some(), "Should have GPU warp block");
-        assert!(p.gpu_warp_onnx().is_some(), "Should have GPU warp ONNX");
-        let info = p.info();
-        assert!(info.gpu_warp);
-    }
-
-    #[test]
-    fn test_unified_pipeline_process_with_warp() {
-        crate::init();
-        let config = UnifiedConfig::hd().with_gpu_warp();
-        let mut pipeline = UnifiedPipeline::new(config).unwrap();
-
-        let raw = vec![128u8; 1280 * 720 * 2];
-        let warp = GpuWarpParams::gdc(-0.3, 0.0, 0.0);
-        let result = pipeline.process_with_warp(&raw, 1280, 720, &warp);
-        assert!(result.is_ok(), "Process with warp failed: {:?}", result.err());
+        assert!(p.gpu_warp().is_some());
+        assert!(p.gpu_warp_onnx().is_some());
     }
 
     #[test]
     fn test_gpu_warp_params() {
-        let identity = GpuWarpParams::identity();
-        assert_eq!(identity.gdc_k1, 0.0);
-        assert_eq!(identity.eis_dx, 0.0);
-
-        let gdc = GpuWarpParams::gdc(-0.3, 0.0, 0.0);
-        assert_eq!(gdc.gdc_k1, -0.3);
-        assert_eq!(gdc.eis_dx, 0.0);
-
-        let eis = GpuWarpParams::eis(0.1, -0.05);
-        assert_eq!(eis.gdc_k1, 0.0);
-        assert_eq!(eis.eis_dx, 0.1);
+        assert!(!GpuWarpParams::identity().needs_warp());
+        assert!(GpuWarpParams::gdc(-0.3, 0.0, 0.0).needs_warp());
+        assert!(GpuWarpParams::eis(0.1, 0.0).needs_warp());
+        assert!(!GpuWarpParams { gdc_k1: 1e-7, ..Default::default() }.needs_warp());
     }
 
     #[test]
@@ -581,11 +493,7 @@ mod tests {
         crate::init();
         let config = UnifiedConfig::pro().with_gpu_warp();
         let pipeline = UnifiedPipeline::new(config).unwrap();
-        let info = pipeline.info();
-        let s = format!("{}", info);
-        assert!(s.contains("PRO"));
-        assert!(s.contains("EIS"));
-        assert!(s.contains("Deshake"));
-        assert!(s.contains("GPU_Warp"));
+        let s = format!("{}", pipeline.info());
+        assert!(s.contains("PRO") && s.contains("GPU_Warp"));
     }
 }

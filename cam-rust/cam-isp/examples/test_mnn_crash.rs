@@ -49,20 +49,20 @@ fn main() {
         // 1. Unpack only
         try_build("unpack_only", vec![
             Box::new(UnpackBlock::new().with_concrete_dims(h as i64, w as i64)),
-        ], &engine_name, opset);
+        ], &engine_name, opset, 0);
 
         // 2. Unpack + DemosaicCcm
         try_build("unpack+demosaic", vec![
             Box::new(UnpackBlock::new().with_concrete_dims(h as i64, w as i64)),
             Box::new(DemosaicCcmBlock::new(0)),
-        ], &engine_name, opset);
+        ], &engine_name, opset, 0);
 
         // 3. Unpack + DemosaicCcm + Display
         try_build("unpack+demosaic+display", vec![
             Box::new(UnpackBlock::new().with_concrete_dims(h as i64, w as i64)),
             Box::new(DemosaicCcmBlock::new(0)),
             Box::new(DisplayBlock::new(w)),
-        ], &engine_name, opset);
+        ], &engine_name, opset, 0);
 
         // 4. Unpack + DemosaicCcm + WarpGrid + Display (full pipeline)
         try_build("full_4blocks", vec![
@@ -70,28 +70,28 @@ fn main() {
             Box::new(DemosaicCcmBlock::new(0)),
             Box::new(WarpGridBlock::new(w, h).with_gdc(-0.1, 0.0, 0.0).with_lens_shading(1.2, 1.0)),
             Box::new(DisplayBlock::new(w)),
-        ], &engine_name, opset);
+        ], &engine_name, opset, 0);
     }
 
     // 5. Unpack + Display (skip demosaic/warp)
     try_build("unpack+display", vec![
         Box::new(UnpackBlock::new().with_concrete_dims(h as i64, w as i64)),
         Box::new(DisplayBlock::new(w)),
-    ], &engine_name, 13);
+    ], &engine_name, 13, 0);
 
     // 6. Unpack + WarpGrid + Display (skip demosaic)
     try_build("unpack+warp+display", vec![
         Box::new(UnpackBlock::new().with_concrete_dims(h as i64, w as i64)),
         Box::new(WarpGridBlock::new(w, h).with_gdc(-0.1, 0.0, 0.0)),
         Box::new(DisplayBlock::new(w)),
-    ], &engine_name, 13);
+    ], &engine_name, 13, 0);
 
     // 7. DemosaicCcm + Display (skip unpack)
     try_build("demosaic+warp+display", vec![
         Box::new(DemosaicCcmBlock::new(0)),
         Box::new(WarpGridBlock::new(w, h).with_gdc(-0.1, 0.0, 0.0)),
         Box::new(DisplayBlock::new(w)),
-    ], &engine_name, 13);
+    ], &engine_name, 13, 0);
 
     println!("\nDone.");
 }

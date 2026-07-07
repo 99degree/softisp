@@ -44,6 +44,22 @@ required-features = ["mnn"]
 name = "bench_heavy_postproc"
 required-features = ["mnn"]
 
+[[example]]
+name = "test_mnn_crash"
+required-features = ["mnn"]
+
+[[example]]
+name = "bench_parallel"
+required-features = ["mnn"]
+
+[[example]]
+name = "test_cast_bytes"
+required-features = ["mnn"]
+
+[[example]]
+name = "test_conv_pack"
+required-features = ["mnn"]
+
 [features]
 default = []
 mnn_buffer = []
