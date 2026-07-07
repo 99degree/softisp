@@ -118,7 +118,7 @@ impl IspEngine for OnnxEngine {
         
         // Compose using compose_from_vec to avoid linked list requirement
         let model = GraphComposer::compose_from_vec(&all_blocks, &[], opset_version)
-            .map_err(|e| crate::error::IspError::Pipeline(e))?;
+            .map_err(crate::error::IspError::Pipeline)?;
 
         eprintln!("OnnxEngine::build: model size = {} bytes", model.len());
         info!("OnnxEngine({}) composed ONNX model ({} bytes)", self.backend.id(), model.len());
