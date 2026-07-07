@@ -154,12 +154,12 @@ impl HardwareBufferBridge {
             stride: locked.stride,
         };
         free.entry(locked.format)
-            .or_insert_with(std::collections::VecDeque::new)
+            .or_default()
             .push_back((locked.id, desc));
         *allocated = allocated.saturating_sub(1);
 
         let prev = self.zero_copy_count.fetch_add(1, Ordering::Relaxed);
-        if prev % 100 == 0 && prev > 0 {
+        if prev.is_multiple_of(100) && prev > 0 {
             log::info!("zero-copy processed {} frames", prev);
         }
     }

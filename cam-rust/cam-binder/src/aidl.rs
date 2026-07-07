@@ -113,7 +113,7 @@ impl BnCameraProvider {
     /// Handle a binder transaction.
     pub fn on_transact(&self, code: TransactionCode, data: &mut Parcel) -> Result<Parcel, BinderStatus> {
         // Verify interface token
-        let _token = data.read_string16().map_err(|e| e)?;
+        let _token = data.read_string16()?;
 
         match code {
             1 => self.set_callback(data),
@@ -225,7 +225,7 @@ impl BnCameraDevice {
     }
 
     pub fn on_transact(&self, code: TransactionCode, data: &mut Parcel) -> Result<Parcel, BinderStatus> {
-        let _token = data.read_string16().map_err(|e| e)?;
+        let _token = data.read_string16()?;
 
         match code {
             1 => self.get_camera_characteristics(data),
@@ -326,7 +326,7 @@ impl BnCameraDeviceSession {
     }
 
     pub fn on_transact(&self, code: TransactionCode, data: &mut Parcel) -> Result<Parcel, BinderStatus> {
-        let _token = data.read_string16().map_err(|e| e)?;
+        let _token = data.read_string16()?;
 
         match code {
             1 => self.configure_streams(data),

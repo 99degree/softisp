@@ -364,7 +364,7 @@ unsafe extern "C" fn device_configure_streams(
     let adapter = &mut *adapter_ptr;
 
     for i in 0..cfg.num_streams as isize {
-        let stream = *cfg.streams.offset(i as isize);
+        let stream = *cfg.streams.offset(i);
         let s = &mut *stream;
         log::debug!(
             "  stream[{}]: {}x{} fmt=0x{:x}",

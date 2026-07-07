@@ -163,7 +163,7 @@ pub fn unpack_raw10_to_16le(
             for (j, pix) in [pix0, pix1, pix2, pix3].iter().enumerate() {
                 let idx = out_row + (x + j) * 2;
                 if idx + 2 <= out.len() {
-                    let v = (*pix as u16) << 6; // left-justify to 16 bits
+                    let v = *pix << 6; // left-justify to 16 bits
                     out[idx..idx + 2].copy_from_slice(&v.to_le_bytes());
                 }
             }

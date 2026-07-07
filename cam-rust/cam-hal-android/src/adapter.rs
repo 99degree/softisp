@@ -90,6 +90,12 @@ unsafe impl Sync for MmapFdCameraBuffer {}
 
 impl MmapFdCameraBuffer {
     /// Open a dma-buf fd, determine its size, and mmap it.
+    ///
+    /// # Safety
+    ///
+    /// - `fd` must be a valid file descriptor for a dma-buf
+    /// - The fd must remain valid for the lifetime of this buffer
+    /// - The buffer must not be unmapped externally while this struct exists
     pub unsafe fn new(
         fd: std::os::unix::io::RawFd,
         format: i32,
@@ -451,6 +457,11 @@ impl AndroidCameraAdapter {
     }
 
     /// Unlock a previously write-locked buffer.
+    ///
+    /// # Safety
+    ///
+    /// - `buffer` must be a valid pointer to an AHardwareBuffer
+    /// - The buffer must have been previously locked via `lock_buffer`
     pub unsafe fn unlock_buffer(buffer: *mut ahardware_buffer::AHardwareBuffer) -> Result<(), String> {
         let ret = AHardwareBuffer_unlock(buffer, std::ptr::null_mut());
         if ret != 0 {
