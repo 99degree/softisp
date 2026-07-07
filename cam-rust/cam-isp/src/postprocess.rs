@@ -650,6 +650,160 @@ fn bilinear_sample(data: &[u8], width: u32, height: u32, bpp: usize, x: f32, y: 
 }
 
 // ============================================================================
+// Float versions for zero-copy pipeline
+// ============================================================================
+
+/// Bilinear sample from float RGB planar data [R,G,B] per pixel.
+fn bilinear_sample_f32(data: &[f32], width: u32, height: u32, channels: usize, x: f32, y: f32) -> Vec<f32> {
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let x1 = x0 + 1;
+    let y1 = y0 + 1;
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let n = (width * height) as usize;
+
+    let sample = |sx: i32, sy: i32| -> Vec<f32> {
+        if sx < 0 || sx >= width as i32 || sy < 0 || sy >= height as i32 {
+            vec![0.0; channels]
+        } else {
+            let idx = (sy as u32 * width + sx as u32) as usize;
+            (0..channels).map(|c| data[c * n + idx]).collect()
+        }
+    };
+
+    let p00 = sample(x0, y0);
+    let p10 = sample(x1, y0);
+    let p01 = sample(x0, y1);
+    let p11 = sample(x1, y1);
+
+    (0..channels).map(|c| {
+        p00[c] * (1.0 - fx) * (1.0 - fy)
+            + p10[c] * fx * (1.0 - fy)
+            + p01[c] * (1.0 - fx) * fy
+            + p11[c] * fx * fy
+    }).collect()
+}
+
+/// Apply EIS warp to float RGB planar data.
+///
+/// `data`: RGB planar [R₀..Rₙ, G₀..Gₙ, B₀..Bₙ] in [0,1].
+/// Returns (warped_data, new_width, new_height).
+fn apply_eis_warp_f32(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    comp: &[f32; 3],
+    crop_fraction: f32,
+) -> Result<(Vec<f32>, u32, u32), String> {
+    let dx = comp[0];
+    let dy = comp[1];
+    let roll_deg = comp[2];
+
+    let margin_x = (width as f32 * crop_fraction).round() as u32;
+    let margin_y = (height as f32 * crop_fraction).round() as u32;
+
+    if width <= 2 * margin_x || height <= 2 * margin_y {
+        return Err("EIS crop too large".to_string());
+    }
+
+    let out_w = width - 2 * margin_x;
+    let out_h = height - 2 * margin_y;
+    let _n_in = (width * height) as usize;
+    let n_out = (out_w * out_h) as usize;
+    let channels = 3;
+
+    let roll_rad = roll_deg * std::f32::consts::PI / 180.0;
+    let cos_r = roll_rad.cos();
+    let sin_r = roll_rad.sin();
+    let cx = width as f32 / 2.0;
+    let cy = height as f32 / 2.0;
+
+    let mut out = vec![0.0f32; n_out * channels];
+
+    for oy in 0..out_h {
+        for ox in 0..out_w {
+            let ix = ox as f32 + margin_x as f32;
+            let iy = oy as f32 + margin_y as f32;
+            let xc = ix - cx;
+            let yc = iy - cy;
+            let sx = cos_r * xc - sin_r * yc + cx - dx;
+            let sy = sin_r * xc + cos_r * yc + cy - dy;
+
+            let pixel = bilinear_sample_f32(data, width, height, channels, sx, sy);
+            let out_idx = (oy * out_w + ox) as usize;
+            for c in 0..channels {
+                out[c * n_out + out_idx] = pixel[c];
+            }
+        }
+    }
+
+    Ok((out, out_w, out_h))
+}
+
+/// Apply GDC to float RGB planar data.
+fn apply_gdc_f32(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    coefficients: &[f32; 5],
+    center: (f32, f32),
+    strength: f32,
+) -> Result<(Vec<f32>, u32, u32), String> {
+    let [k1, k2, p1, p2, k3] = *coefficients;
+    let (cx, cy) = center;
+    let cx_px = cx * width as f32;
+    let cy_px = cy * height as f32;
+    let scale = (width as f32).max(height as f32) / 2.0;
+    let n = (width * height) as usize;
+    let channels = 3;
+
+    let mut out = vec![0.0f32; n * channels];
+
+    for y in 0..height {
+        for x in 0..width {
+            let x_n = (x as f32 - cx_px) / scale;
+            let y_n = (y as f32 - cy_px) / scale;
+            let r2 = x_n * x_n + y_n * y_n;
+            let r4 = r2 * r2;
+            let r6 = r4 * r2;
+            let radial = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+            let dx_tang = 2.0 * p1 * x_n * y_n + p2 * (r2 + 2.0 * x_n * x_n);
+            let dy_tang = p1 * (r2 + 2.0 * y_n * y_n) + 2.0 * p2 * x_n * y_n;
+            let src_x_n = x_n * radial + dx_tang * strength;
+            let src_y_n = y_n * radial + dy_tang * strength;
+            let src_x = src_x_n * scale + cx_px;
+            let src_y = src_y_n * scale + cy_px;
+
+            let pixel = bilinear_sample_f32(data, width, height, channels, src_x, src_y);
+            let out_idx = (y * width + x) as usize;
+            for c in 0..channels {
+                out[c * n + out_idx] = pixel[c];
+            }
+        }
+    }
+
+    Ok((out, width, height))
+}
+
+/// Blend current and previous float frames for temporal denoise.
+fn apply_temporal_denoise_f32(
+    current: &[f32],
+    previous: &[f32],
+    width: u32,
+    height: u32,
+    blend: f32,
+) -> Vec<f32> {
+    let n = (width * height * 3) as usize;
+    if current.len() != n || previous.len() != n {
+        return current.to_vec();
+    }
+    current.iter().zip(previous.iter()).map(|(c, p)| {
+        c * (1.0 - blend) + p * blend
+    }).collect()
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
