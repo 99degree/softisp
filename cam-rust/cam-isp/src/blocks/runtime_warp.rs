@@ -36,6 +36,8 @@ pub struct RuntimeWarpBlock {
     pub grid: Option<Vec<f32>>,
     /// Lens shading LUT (optional).
     pub shading_lut: Option<Vec<f32>>,
+    /// Cached GDC grid (k1, k2, k3) → grid to avoid recomputation.
+    gdc_cache: Option<(f32, f32, f32, Vec<f32>)>,
 }
 
 impl RuntimeWarpBlock {
@@ -50,6 +52,7 @@ impl RuntimeWarpBlock {
             output_height: target_height,
             grid: None,
             shading_lut: None,
+            gdc_cache: None,
         }
     }
 
@@ -109,7 +112,17 @@ impl RuntimeWarpBlock {
 
     /// Compute and set GDC grid from coefficients.
     pub fn set_gdc(&mut self, k1: f32, k2: f32, k3: f32) {
-        self.grid = Some(Self::compute_gdc_grid(k1, k2, k3, self.output_width, self.output_height));
+        // Check cache first
+        if let Some((ck1, ck2, ck3, ref cached_grid)) = self.gdc_cache {
+            if (ck1 - k1).abs() < 1e-6 && (ck2 - k2).abs() < 1e-6 && (ck3 - k3).abs() < 1e-6 {
+                self.grid = Some(cached_grid.clone());
+                return;
+            }
+        }
+        // Compute and cache
+        let grid = Self::compute_gdc_grid(k1, k2, k3, self.output_width, self.output_height);
+        self.gdc_cache = Some((k1, k2, k3, grid.clone()));
+        self.grid = Some(grid);
     }
 
     /// Set lens shading LUT.
