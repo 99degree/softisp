@@ -1211,7 +1211,7 @@ macro_rules! register_mnn_engine {
             cam_isp::engine::EngineFactory {
                 name: $backend.id(),
                 priority: $backend.priority(),
-                create_fn: || Box::new(cam_isp::mnnengine::MnnEngine::new($backend)),
+                create_fn: Box::new(|| Box::new(cam_isp::mnnengine::MnnEngine::new($backend))),
             }
         );
     };

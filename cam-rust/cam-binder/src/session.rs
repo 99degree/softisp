@@ -379,12 +379,12 @@ impl CameraDeviceSession {
     }
 
     /// Process raw camera data through the ISP pipeline.
-    fn process_through_isp(&self, raw_data: &[u8], isp_state: &IspPipelineState) -> Result<Vec<u8>, String> {
+    fn process_through_isp(&self, raw_data: &[u8], isp_state: &IspPipelineState) -> Result<Vec<u8>, cam_isp::error::IspError> {
         use cam_isp::engine::{IspEngine, ProcessParams, select_engine_by_name};
 
         // Select engine based on pipeline config
         let engine = select_engine_by_name(&isp_state.engine_type)
-            .ok_or_else(|| format!("ISP engine '{}' not available", isp_state.engine_type))?;
+            .ok_or_else(|| cam_isp::error::IspError::Config(format!("ISP engine '{}' not available", isp_state.engine_type)))?;
 
         // Create processing params
         let mut params = ProcessParams::new(

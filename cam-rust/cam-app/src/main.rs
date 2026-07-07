@@ -16,6 +16,8 @@ use cam_isp::profile::PipelineProfile;
 #[cfg(feature = "mnn")]
 use cam_isp::mnnengine::MnnBackend;
 #[cfg(feature = "mnn")]
+use cam_isp::register_mnn_engine;
+#[cfg(feature = "mnn")]
 use cam_isp::mnn_converter::{convert_onnx_to_mnn, MnnConvertOptions};
 #[cfg(feature = "ort")]
 use cam_isp::onnx::{OrtBackend, register_onnx_engine};
