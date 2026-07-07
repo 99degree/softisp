@@ -48,11 +48,28 @@ impl DeshakeGpuPipeline {
 #[cfg(feature = "mnn")]
 pub fn build_mnn_model(width: u32, height: u32) -> Result<Vec<u8>, String> {
     use crate::onnx::proto::Proto;
-    let mut g = Proto::new_graph("deshake");
-    let input = g.add_input("input", &[1, 3, height as i64, width as i64]);
-    let _output = g.add_output(input);
-    g.set_opset(13);
-    g.finish()
+    // Create a simple identity model for deshake
+    let input_shape = vec![
+        Proto::tensor_dim_value(1),
+        Proto::tensor_dim_value(3),
+        Proto::tensor_dim_value(height as i64),
+        Proto::tensor_dim_value(width as i64),
+    ];
+    let output_shape = input_shape.clone();
+    
+    let input_vi = Proto::value_info("input", &input_shape, 1); // 1 = FLOAT
+    let output_vi = Proto::value_info("output", &output_shape, 1);
+    
+    let node = Proto::node("Identity", &["input"], &["output"], &[]);
+    
+    Ok(Proto::graph(
+        "deshake",
+        &[node],
+        &[input_vi],
+        &[output_vi],
+        &[],
+        &[],
+    ))
 }
 
 /// Build warp grid ONNX for GridSampler.
