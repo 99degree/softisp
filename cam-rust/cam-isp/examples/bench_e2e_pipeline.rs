@@ -34,6 +34,14 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
     let emit_ms = t0.elapsed().as_secs_f64() * 1000.0;
     println!("  ONNX emit:  {:.2} ms  ({} bytes)", emit_ms, onnx.len());
 
+    // Register engines
+    cam_isp::cpu::register_cpu_engine();
+    #[cfg(feature = "mnn")]
+    {
+        cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
+        cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Cpu);
+    }
+
     // Select engine
     let engine_name = std::env::var("ENGINE").unwrap_or_else(|_| "vulkan".to_string());
     let mut engine = match cam_isp::engine::select_engine_by_name(&engine_name) {
