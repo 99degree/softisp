@@ -121,11 +121,11 @@ pub fn hal_format_buffer_size(format: i32, width: u32, height: u32, stride: u32)
 /// Unpack 10-bit packed Bayer data to 16-bit (little-endian).
 ///
 /// RAW10 packs 4 pixels into 5 bytes:
-///   Byte 0:  Pixel0[7:0] (bits 9:2)
-///   Byte 1:  Pixel1[7:0]
-///   Byte 2:  Pixel2[7:0]
-///   Byte 3:  Pixel3[7:0]
-///   Byte 4:  Pixel3[1:0] | Pixel2[1:0] << 2 | Pixel1[1:0] << 4 | Pixel0[1:0] << 6
+///   Byte 0:  Pixel0\[7:0\] (bits 9:2)
+///   Byte 1:  Pixel1\[7:0\]
+///   Byte 2:  Pixel2\[7:0\]
+///   Byte 3:  Pixel3\[7:0\]
+///   Byte 4:  Pixel3\[1:0\] | Pixel2\[1:0\] << 2 | Pixel1\[1:0\] << 4 | Pixel0\[1:0\] << 6
 ///
 /// Output: width×height×2 bytes of 16-bit LE data.
 pub fn unpack_raw10_to_16le(
@@ -175,9 +175,9 @@ pub fn unpack_raw10_to_16le(
 /// Unpack 12-bit packed Bayer data to 16-bit (little-endian).
 ///
 /// RAW12 packs 2 pixels into 3 bytes:
-///   Byte 0:  Pixel0[11:4]
-///   Byte 1:  Pixel0[3:0] | Pixel1[11:8] << 4
-///   Byte 2:  Pixel1[7:0]
+///   Byte 0:  Pixel0\[11:4\]
+///   Byte 1:  Pixel0\[3:0\] | Pixel1\[11:8\] << 4
+///   Byte 2:  Pixel1\[7:0\]
 ///
 /// Output: width×height×2 bytes of 16-bit LE data.
 pub fn unpack_raw12_to_16le(
