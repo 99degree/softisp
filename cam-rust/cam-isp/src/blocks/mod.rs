@@ -1,5 +1,38 @@
 //! Atomic ISP blocks — each is a separate ONNX graph fragment.
-//! Ported from com.camcore.isp.pipeline.processing.* in Java.
+//!
+//! This module contains all the individual image processing blocks that make up
+//! the ISP pipeline. Each block performs a specific transformation on the image data.
+//!
+//! # Block Categories
+//!
+//! ## Input/Output
+//! - `RawInputBlock` - Interprets raw sensor data
+//! - `DisplayBlock` - Converts to display format (BGRA/RGBA)
+//!
+//! ## Color Processing
+//! - `CcmBlock` - Color Correction Matrix
+//! - `ToneBlock` - Tone mapping curves
+//! - `GammaBlock` - Gamma correction
+//!
+//! ## Demosaicing
+//! - `DemosaicBlock` - Standard demosaicing
+//! - `DemosaicCcmBlock` - Demosaic + CCM fusion
+//! - `BayerDemosaicBlock` - Bayer-specific demosaicing
+//!
+//! ## Noise Reduction
+//! - `LdciBlock` - Local Digital Contrast Improvement
+//! - `FcsBlock` - False Color Suppression
+//! - `EeBlock` - Edge Enhancement
+//!
+//! ## Geometric
+//! - `WarpBlock` - Geometric correction (lens distortion, EIS)
+//! - `ResizeBlock` - Scale up/down
+//!
+//! # Pipeline Flow
+//!
+//! ```text
+//! RawInput → Normalize → CFA → BLC → WB → Demosaic → CCM → Tone → Display
+//! ```
 mod raw_input;
 mod normalize;
 mod cfa;
