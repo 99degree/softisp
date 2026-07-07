@@ -186,6 +186,9 @@ pub struct UnifiedPipeline {
     /// GPU warp MNN inference engine.
     #[cfg(feature = "mnn")]
     gpu_warp_engine: Option<GpuWarpEngine>,
+    /// GPU format converter for float→RGBA/BGRA/etc.
+    #[cfg(feature = "mnn")]
+    format_converter: Option<crate::format_convert::FormatConvertEngine>,
     width: u32,
     height: u32,
     initialized: bool,
@@ -269,6 +272,17 @@ impl UnifiedPipeline {
             None
         };
 
+        // GPU format converter for float→target format
+        #[cfg(feature = "mnn")]
+        let format_converter = if config.output_format != crate::engine::OutputFormat::FloatRgb {
+            match crate::format_convert::FormatConvertEngine::new(w, h, config.output_format) {
+                Ok(e) => { info!("UnifiedPipeline: GPU format converter ready for {:?}", config.output_format); Some(e) }
+                Err(e) => { warn!("GPU format converter init failed: {:?}", e); None }
+            }
+        } else {
+            None
+        };
+
         let post_pipeline = PostProcessPipeline::new(config.post_config.clone());
 
         Ok(Self {
@@ -279,6 +293,8 @@ impl UnifiedPipeline {
             gpu_warp_onnx,
             #[cfg(feature = "mnn")]
             gpu_warp_engine,
+            #[cfg(feature = "mnn")]
+            format_converter,
             width: w,
             height: h,
             initialized: true,
@@ -364,6 +380,48 @@ impl UnifiedPipeline {
             // u8 path: use process
             self.post_pipeline.process(&isp_output)
                 .map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
+        };
+
+        // GPU format conversion: float→target format via ONNX
+        #[cfg(feature = "mnn")]
+        let post_output = if let Some(ref converter) = self.format_converter {
+            if let Some(ref float_data) = post_output.float_data {
+                let n = (post_output.width * post_output.height * 3) as usize;
+                if float_data.len() >= n {
+                    let t_fmt = std::time::Instant::now();
+                    let mut out_buf = vec![0u8; post_output.width as usize * post_output.height as usize * converter.output_format().bytes_per_pixel()];
+                    match converter.convert(&float_data[..n], &mut out_buf) {
+                        Ok(bytes_written) => {
+                            out_buf.truncate(bytes_written);
+                            info!("GPU format convert: {:?} ({:.2}ms)",
+                                converter.output_format(),
+                                t_fmt.elapsed().as_secs_f64() * 1000.0);
+                            IspFrame {
+                                data: out_buf,
+                                width: post_output.width,
+                                height: post_output.height,
+                                format: post_output.format,
+                                float_data: post_output.float_data,
+                                aux: post_output.aux,
+                                timestamp_ns: post_output.timestamp_ns,
+                                prep_duration_ns: post_output.prep_duration_ns,
+                                inference_duration_ns: post_output.inference_duration_ns,
+                                total_duration_ns: post_output.total_duration_ns,
+                            }
+                        }
+                        Err(e) => {
+                            warn!("GPU format convert failed, falling back: {:?}", e);
+                            post_output
+                        }
+                    }
+                } else {
+                    post_output
+                }
+            } else {
+                post_output
+            }
+        } else {
+            post_output
         };
 
         Ok(post_output)
