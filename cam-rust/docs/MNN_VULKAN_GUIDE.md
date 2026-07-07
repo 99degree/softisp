@@ -2,7 +2,7 @@
 
 > **Using libMNN with Vulkan GPU acceleration on ARM64 Android/Termux**
 >
-> **Last Updated**: 2025-06-13
+> **Last Updated**: 2025-07-08
 > **Tested on**: Qualcomm Adreno GPU, MNN 3.5.0, ARM64 Termux
 
 ---
