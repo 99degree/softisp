@@ -71,7 +71,7 @@ impl OnnxSession {
     /// - `data`: Input data as f32 slice
     /// - `shape`: Input shape (e.g., &[1, 3, 1080, 1920])
     ///
-    /// Returns output data as Vec<f32>.
+    /// Returns output data as `Vec<f32>`.
     pub fn run(&self, input_name: &str, data: &[f32], shape: &[i64]) -> Result<Vec<f32>, String> {
         #[cfg(feature = "ort")]
         {

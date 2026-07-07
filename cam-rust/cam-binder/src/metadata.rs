@@ -244,11 +244,11 @@ impl CameraMetadata {
     /// Serialize to AOSP camera_metadata_t format.
     ///
     /// Layout:
-    ///   [0] u32: version
-    ///   [1] u32: entry_count
-    ///   [2] u32: data_size
-    ///   [3..3+entry_count*4] entries (tag_id:u32, count:u32, type:u32, offset:u32)
-    ///   [...] data section
+    ///   \[0\] u32: version
+    ///   \[1\] u32: entry_count
+    ///   \[2\] u32: data_size
+    ///   \[3..3+entry_count*4\] entries (tag_id:u32, count:u32, type:u32, offset:u32)
+    ///   \[...\] data section
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
 
