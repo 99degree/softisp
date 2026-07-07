@@ -10,7 +10,7 @@ use cam_isp::engine::select_engine;
 
 /// Frame processing function type (matches AndroidCameraAdapter expectation).
 pub type FrameProcessor =
-    Arc<dyn Fn(&[u8], u32, u32, i32) -> Result<Vec<u8>, String> + Send + Sync>;
+    Arc<dyn Fn(&[u8], u32, u32, i32) -> Result<Vec<u8>, cam_isp::error::IspError> + Send + Sync>;
 
 /// Build a default ISP pipeline for raw-to-RGBA conversion and return
 /// a `FrameProcessor` closure — no Android dependency.
@@ -21,7 +21,7 @@ pub fn create_isp_processor(
     width: u32,
     height: u32,
     target_width: u32,
-) -> Result<FrameProcessor, String> {
+) -> Result<FrameProcessor, cam_isp::error::IspError> {
     use cam_isp::blocks;
 
     // 1. Build default block chain
@@ -60,8 +60,8 @@ pub fn create_isp_processor(
     use cam_isp::engine::IspEngine;
     let processor: FrameProcessor = Arc::new(move |data: &[u8], w: u32, h: u32, _fmt: i32| {
         let proc_start = std::time::Instant::now();
-        let mut guard = engine.lock().map_err(|e| format!("Lock failed: {}", e))?;
-        let eng = guard.as_mut().ok_or("Engine taken")?;
+        let mut guard = engine.lock().map_err(|e| cam_isp::error::IspError::Pipeline(format!("Lock failed: {}", e)))?;
+        let eng = guard.as_mut().ok_or(cam_isp::error::IspError::Config("Engine taken".into()))?;
         let mut params = cam_isp::engine::ProcessParams::new(w, h, data);
         params.target_width = target_width;
         params.sensor_max = 65535.0;

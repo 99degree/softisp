@@ -149,6 +149,7 @@ pub mod provider;
 pub mod device;
 pub mod session;
 pub mod types;
+pub mod error;
 pub mod callback;
 pub mod service;
 pub mod isp_session;
