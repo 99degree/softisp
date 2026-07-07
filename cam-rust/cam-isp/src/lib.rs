@@ -62,6 +62,7 @@ pub mod pipeline_diff;
 pub mod temporal;
 pub mod gpu_watchdog;
 pub mod npu;
+pub mod format_convert;
 
 use std::sync::Once;
 use log::info;
