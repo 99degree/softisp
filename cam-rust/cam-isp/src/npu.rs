@@ -289,9 +289,16 @@ impl NpuManager {
             NpuEngine::Qnn(_) => unsafe { 
                 simulate_qnn_execution(&model, input_ptr, output_ptr) 
             },
-            // TODO: Add other vendor stubs
-            _ => Err(NpuError::Unsupported(
-                "Engine not yet supported".into()))
+            NpuEngine::Neuropilot(_) => unsafe {
+                simulate_mtk_execution(&model, input_ptr, output_ptr)
+            },
+            NpuEngine::Samsung(_) => unsafe {
+                simulate_samsung_execution(&model, input_ptr, output_ptr)
+            },
+            NpuEngine::HiSilicon(_) => {
+                Err(NpuError::Unsupported(
+                    "HiSilicon NPU not yet supported".into()))
+            }
         }?;
 
         let elapsed_us = start_us.elapsed().as_micros();
