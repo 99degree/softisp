@@ -173,6 +173,7 @@ version = "0.1.0"
 dependencies = [
  "cam-core",
  "cam-hal",
+ "cam-hal-android",
  "cam-hal-linux",
  "cam-isp",
  "cam-types",
