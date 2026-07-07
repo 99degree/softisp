@@ -116,7 +116,7 @@ impl PipelineManager {
     }
 
     /// Build or rebuild the pipeline.
-    pub fn build(&mut self) -> Result<(), String> {
+    pub fn build(&mut self) -> crate::error::IspResult<()> {
         let profile = self.profile;
         let target_w = self.target_width;
         let h = target_w as i64 * 9 / 16;
@@ -147,7 +147,7 @@ impl PipelineManager {
         // 4. Build engine with blocks
         let mut all_blocks: Vec<Box<dyn IspBlock>> = blocks;
         if all_blocks.is_empty() {
-            return Err("No blocks built from profile".to_string());
+            return Err(crate::error::IspError::Pipeline("No blocks built from profile".into()));
         }
         let head = all_blocks.remove(0);
         let mut combined: Vec<Box<dyn IspBlock>> = all_blocks;
@@ -173,7 +173,7 @@ impl PipelineManager {
         width: u32,
         height: u32,
         sensor_max: f32,
-    ) -> Result<PipelineResult, String> {
+    ) -> crate::error::IspResult<PipelineResult> {
         let t0 = Instant::now();
 
         let engine_guard = self.engine.lock().map_err(|e| format!("Engine lock: {}", e))?;

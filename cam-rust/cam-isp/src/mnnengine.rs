@@ -735,7 +735,7 @@ impl IspEngine for MnnEngine {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
     fn controller(&self) -> &Mutex<IspController> { &self.controller }
 
-    fn build(&mut self, head: Box<dyn IspBlock>, aux: Vec<Box<dyn IspBlock>>, _warp: Option<Box<dyn IspBlock>>, opset: i64) -> Result<(), String> {
+    fn build(&mut self, head: Box<dyn IspBlock>, aux: Vec<Box<dyn IspBlock>>, _warp: Option<Box<dyn IspBlock>>, opset: i64) -> crate::error::IspResult<()> {
         info!("MNN build backend={}", self.backend.id());
 
         #[cfg(feature = "mnn")]
@@ -758,7 +758,7 @@ impl IspEngine for MnnEngine {
 
                     let on = format!(".mnn_temp_{}.onnx", std::process::id());
                     let mn = on.replace(".onnx", ".mnn");
-                    std::fs::write(&on, &onnx).map_err(|e| format!("write: {}", e))?;
+                    std::fs::write(&on, &onnx).map_err(|e| crate::error::IspError::Io(format!("write: {}", e)))?;
                     // Save a copy for inspection
                     let _ = std::fs::copy(&on, ".mnn_last_pipeline.onnx");
                     let opts = MnnConvertOptions {
@@ -766,7 +766,8 @@ impl IspEngine for MnnEngine {
                         ..Default::default()
                     };
                     info!("preserve_input_type: {}, optimize_level: {}", self.preserve_input_type, opts.optimize_level);
-                    crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, Some(&opts)).map_err(|e| format!("convert: {}", e))?;
+                    crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, Some(&opts))
+                        .map_err(|e| crate::error::IspError::Conversion(format!("convert: {}", e)))?;
                     let _ = std::fs::remove_file(&on);
                     mn
                 }
@@ -788,11 +789,11 @@ impl IspEngine for MnnEngine {
 
             if !Path::new(&mnn).exists() {
                 error!("MNN model not found: {}", mnn);
-                return Err(format!("missing .mnn: {}", mnn));
+                return Err(crate::error::IspError::Mnn(format!("missing .mnn: {}", mnn)));
             }
             let interp = MnnInterpreterSafe::from_file(&mnn).ok_or_else(|| {
                 error!("Failed to load MNN model: {}", mnn);
-                format!("load fail: {}", mnn)
+                crate::error::IspError::Mnn(format!("load fail: {}", mnn))
             })?;
 
             // Use first session to probe model input type (before building pool)
@@ -807,7 +808,7 @@ impl IspEngine for MnnEngine {
                         None
                     }
                 })
-                .ok_or("probe session create fail (all backends exhausted)")?;
+                .ok_or(crate::error::IspError::Mnn("probe session create fail (all backends exhausted)".into()))?;
             let mut input_code = 0i32;
             let mut input_bits = 0i32;
             unsafe {
@@ -847,7 +848,7 @@ impl IspEngine for MnnEngine {
         Ok(())
     }
 
-    fn process(&self, p: &ProcessParams) -> Result<IspFrame, String> {
+    fn process(&self, p: &ProcessParams) -> crate::error::IspResult<IspFrame> {
         let w = p.width;
         let h = p.height;
         let buf = p.buf;
@@ -859,11 +860,11 @@ impl IspEngine for MnnEngine {
         let awb = p.awb_gains.as_ref();
         let bayer_pattern = p.bayer_pattern;
 
-        if !self.initialized { return Err("not init".into()); }
+        if !self.initialized { return Err(crate::error::IspError::Config("not init".into())); }
 
         #[cfg(feature = "mnn")]
         {
-            let pool = self.pool.as_ref().ok_or("no pool")?;
+            let pool = self.pool.as_ref().ok_or(crate::error::IspError::Config("no pool".into()))?;
             let slot = pool.acquire();
             let sess = &slot.sess;
             let interp = &pool.interp;
@@ -990,7 +991,7 @@ impl IspEngine for MnnEngine {
 
             if n <= 0 {
                 error!("MNN inference failed: {} (input={}x{}, path={})", n, w, h, path);
-                return Err(format!("MNN inference failed: {}", n));
+                return Err(crate::error::IspError::Mnn(format!("MNN inference failed: {}", n)));
             }
 
             info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts) prep={:?} infer={:?}",

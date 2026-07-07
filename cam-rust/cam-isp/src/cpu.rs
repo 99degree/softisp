@@ -80,7 +80,7 @@ impl IspEngine for CpuEngine {
         aux_blocks: Vec<Box<dyn IspBlock>>,
         _warp_block: Option<Box<dyn IspBlock>>,
         _opset_version: i64,
-    ) -> Result<(), String> {
+    ) -> crate::error::IspResult<()> {
         let n_aux = aux_blocks.len();
         let head_id = pipeline_head.id();
         info!("CpuEngine::build head={} aux={} blocks", head_id, n_aux);
@@ -91,7 +91,7 @@ impl IspEngine for CpuEngine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn process(&self, p: &ProcessParams) -> Result<IspFrame, String> {
+    fn process(&self, p: &ProcessParams) -> crate::error::IspResult<IspFrame> {
         let width = p.width;
         let height = p.height;
         let buf = p.buf;
@@ -103,7 +103,7 @@ impl IspEngine for CpuEngine {
 
         if !self.loaded {
             error!("CpuEngine::process called before build()");
-            return Err("Engine not initialized".to_string());
+            return Err(crate::error::IspError::Config("Engine not initialized".into()));
         }
         let t0 = Instant::now();
 
