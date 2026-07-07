@@ -11,7 +11,7 @@
 //! GridSample node specs:
 //! - Input: `[1,3,H,W]` float32 RGB image tensor
 //! - Grid: `[1,OH,OW,2]` float32 sampling grid in `[-1,1]` range
-//! - Mode: LINEAR, CLAMP
+//! - Mode: bilinear, border (ONNX standard)
 //! - Target: `[1,3,OH,OW]` out
 
 use crate::pipeline::IspBlock;
@@ -250,6 +250,16 @@ impl WarpGridBlock {
     fn needs_vflip(&self) -> bool {
         matches!(self.rotate_mode, 2 | 3 | 5)
     }
+
+    /// Return the effective input tensor name: `input_source` if set,
+    /// otherwise `graph_input_name()`.
+    fn effective_input(&self) -> String {
+        if self.input_source.is_empty() {
+            self.graph_input_name().unwrap_or("WarpGrid/frame").to_string()
+        } else {
+            self.input_source.clone()
+        }
+    }
 }
 
 impl IspBlock for WarpGridBlock {
@@ -277,7 +287,7 @@ impl IspBlock for WarpGridBlock {
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
-            &self.input_source,
+            &self.effective_input(),
             &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
               Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
     }
@@ -303,11 +313,11 @@ impl IspBlock for WarpGridBlock {
         let sampled = format!("{}/sampled", ns);
         nodes.push(Proto::node(
             "GridSample",
-            &[&self.input_source, &grid_input],
+            &[&self.effective_input(), &grid_input],
             &[&sampled],
             &[
-                Proto::attribute_string("mode", "LINEAR"),
-                Proto::attribute_string("padding_mode", "CLAMP"),
+                Proto::attribute_string("mode", "bilinear"),
+                Proto::attribute_string("padding_mode", "border"),
                 Proto::attribute_string("align_corners", "false"),
             ],
         ));
