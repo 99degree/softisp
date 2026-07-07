@@ -72,9 +72,12 @@ impl RawInputBlock {
 }
 
 impl IspBlock for RawInputBlock {
+    #[inline]
     fn id(&self) -> &str { &self.id }
     fn tensor_ns(&self) -> String { "RawInputBlock".to_string() }
+    #[inline]
     fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    #[inline]
     fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
     fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
     fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
@@ -82,7 +85,9 @@ impl IspBlock for RawInputBlock {
     fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
     fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
 
+    #[inline]
     fn graph_input_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    #[inline]
     fn input_elem_type(&self) -> i32 { self.elem_type }
 
     fn input_tensors(&self) -> Vec<String> { vec![] }
