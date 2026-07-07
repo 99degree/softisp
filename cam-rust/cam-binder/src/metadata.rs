@@ -315,7 +315,7 @@ impl CameraMetadata {
                 _ => return Err(format!("unknown type: {}", data_type)),
             };
 
-            let value_start = header_size + entries_size as usize + value_offset as usize;
+            let value_start = header_size + entries_size + value_offset;
             let value_end = value_start + (count as usize * type_size);
             let value = data[value_start..value_end].to_vec();
 
