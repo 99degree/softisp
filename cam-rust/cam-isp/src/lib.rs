@@ -58,6 +58,7 @@ pub mod optimizer;
 pub mod pipeline_diff;
 pub mod temporal;
 pub mod gpu_watchdog;
+pub mod npu;
 
 use std::sync::Once;
 use log::info;

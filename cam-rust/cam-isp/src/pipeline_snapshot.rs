@@ -9,7 +9,9 @@
 //!   // Later: fast restart without ONNX generation + conversion
 //!   let engine = snapshot.restore_engine()?;
 
-use std::path::{Path, PathBuf};
+#[cfg(feature = "mnn")]
+use std::path::Path;
+use std::path::PathBuf;
 
 pub struct PipelineSnapshot {
     pub onnx_bytes: Vec<u8>,
