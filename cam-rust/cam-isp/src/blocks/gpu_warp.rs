@@ -65,8 +65,8 @@ impl GpuWarpBlock {
     ///   9. Concat X,Y → grid [1,H,W,2]
     fn generate_grid_nodes(&self, ns: &str) -> Vec<Vec<u8>> {
         let mut nodes = Vec::new();
-        let h = self.output_height as i64;
-        let w = self.output_width as i64;
+        let _h = self.output_height as i64;
+        let _w = self.output_width as i64;
 
         // ── Step 1: Broadcast normalized coords ──
 

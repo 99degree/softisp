@@ -4,7 +4,11 @@
 //! after the main ISP pipeline. Parameters (k1, k2, k3, eis_x, eis_y)
 //! are set per-frame before inference.
 
-use log::{info, error, warn};
+#[cfg(feature = "mnn")]
+use log::info;
+#[cfg(feature = "mnn")]
+use log::error;
+#[cfg(feature = "mnn")]
 use crate::error::IspResult;
 #[cfg(feature = "mnn")]
 use crate::mnn::mnn_sys::{
