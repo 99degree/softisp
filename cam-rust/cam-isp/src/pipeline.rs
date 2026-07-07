@@ -1,5 +1,17 @@
 //! ISP pipeline types: block trait, frame, graph composer.
-//! Ported from com.camcore.isp.pipeline
+//!
+//! This module defines the core types for the ISP processing pipeline:
+//! - `IspBlock` trait: interface for processing blocks
+//! - `IspFrame`: output frame from the pipeline
+//! - `GraphComposer`: builds ONNX models from block chains
+//!
+//! # Pipeline Architecture
+//!
+//! ```text
+//! Raw Input → Block1 → Block2 → ... → BlockN → Output
+//!     ↓
+//!   Stats (AE, AWB, etc.)
+//! ```
 
 use std::collections::{HashMap, HashSet};
 use log::{info, warn};
@@ -8,15 +20,36 @@ use cam_types::FrameFormat;
 use crate::onnx::proto::Proto;
 
 /// Auxiliary outputs from ISP processing.
+///
+/// Contains statistics and metadata extracted during pipeline processing.
+/// These are used for 3A (AE, AWB, AF) control and diagnostics.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// let frame = engine.process(&params)?;
+/// if let Some(aux) = frame.aux_output {
+///     println!("AE gain: {:?}", aux.ae_gain);
+///     println!("AWB gains: {:?}", aux.wb_gains);
+/// }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct IspAuxOutput {
+    /// RGB channel means for AWB statistics
     pub channel_means: Option<[f32; 3]>,
+    /// Tone curve statistics
     pub tone_stats: Option<[f32; 3]>,
+    /// White balance gains [R, G, B]
     pub wb_gains: Option<[f32; 3]>,
+    /// RGB histogram (256 bins per channel)
     pub histogram: Option<Vec<f32>>,
+    /// Zone statistics for AE metering
     pub zone_stats: Option<Vec<f32>>,
+    /// Focus metric (higher = sharper)
     pub focus_metric: Option<f32>,
+    /// Correlated color temperature (Kelvin)
     pub cct: Option<f32>,
+    /// Auto-exposure gain
     pub ae_gain: Option<f32>,
     /// Calibration statistics `[24]` from quad-level Bayer analysis.
     pub calibration_stats: Option<[f32; 24]>,
@@ -31,13 +64,37 @@ pub struct IspAuxOutput {
 }
 
 /// ISP frame carrying pixel data.
+///
+/// Output from `IspEngine::process()`. Contains the processed image
+/// and optional auxiliary outputs (statistics, metadata).
+///
+/// # Layout
+///
+/// ```text
+/// IspFrame {
+///     data: [u8]           // Pixel data (format depends on OutputFormat)
+///     width: u32           // Width in pixels
+///     height: u32          // Height in pixels
+///     format: FrameFormat  // Pixel format
+///     float_data: Option   // Raw float data (if FloatRgb/FloatBgra)
+///     aux: Option          // Statistics and metadata
+///     timestamp_ns: u64    // Sensor capture timestamp
+///     *_duration_ns: u64   // Performance timing
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct IspFrame {
+    /// Processed pixel data
     pub data: Vec<u8>,
+    /// Width in pixels
     pub width: u32,
+    /// Height in pixels
     pub height: u32,
+    /// Pixel format of output data
     pub format: FrameFormat,
+    /// Raw float data (only for FloatRgb/FloatBgra formats)
     pub float_data: Option<Vec<f32>>,
+    /// Auxiliary outputs (statistics, metadata)
     pub aux: Option<IspAuxOutput>,
     /// Capture timestamp from sensor (ns since epoch, monotonic).
     pub timestamp_ns: u64,
