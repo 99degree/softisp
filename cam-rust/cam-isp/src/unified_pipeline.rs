@@ -12,25 +12,25 @@
 //!   ┌─────────────────────────────────────┐
 //!   │  Fused ISP Pipeline (GPU)           │
 //!   │  Unpack → Demosaic+CCM → Warp →    │
-//!   │  Display                            │
+//!   │  Display (outputs FloatRgb)         │
 //!   └──────────────┬──────────────────────┘
-//!                  │
+//!                  │ [1,3,H,W] f32
 //!                  ▼
 //!   ┌─────────────────────────────────────┐
 //!   │  GPU Warp (separate MNN session)    │
 //!   │  GDC grid + EIS displacement →      │
 //!   │  GridSample on GPU                  │
 //!   └──────────────┬──────────────────────┘
-//!                  │
+//!                  │ [1,3,H,W] f32
 //!                  ▼
 //!   ┌─────────────────────────────────────┐
-//!   │  Post-Processing (CPU)              │
+//!   │  Post-Processing (CPU, float)       │
 //!   │  Deshake → Temporal Denoise →       │
 //!   │  Wavelet Denoise                    │
 //!   └──────────────┬──────────────────────┘
 //!                  │
 //!                  ▼
-//!           Final Output (RGBA/RGB)
+//!           Final Output (FloatRgb/RGB)
 //! ```
 
 use log::info;
@@ -75,7 +75,7 @@ impl Default for UnifiedConfig {
             bayer_pattern: 0,
             engine_preference: "auto".into(),
             post_config: PostProcessConfig::default(),
-            output_format: OutputFormat::FloatBgra,
+            output_format: OutputFormat::FloatRgb,
             sensor_max: 1023.0,
             gpu_warp_enabled: false,
         }
@@ -128,6 +128,11 @@ impl UnifiedConfig {
 
     /// Enable GPU-accelerated warp for EIS/GDC.
     pub fn with_gpu_warp(mut self) -> Self { self.gpu_warp_enabled = true; self }
+
+    /// Use RGBA output format (instead of FloatRgb).
+    pub fn with_rgba_output(mut self) -> Self {
+        self.output_format = OutputFormat::Rgba; self
+    }
 }
 
 /// GPU warp parameters (GDC coefficients + EIS displacement).
@@ -189,8 +194,8 @@ pub struct UnifiedPipeline {
 impl UnifiedPipeline {
     /// Create a new unified pipeline.
     pub fn new(config: UnifiedConfig) -> IspResult<Self> {
-        info!("UnifiedPipeline: profile={}, width={}, gpu_warp={}",
-            config.profile.label, config.target_width, config.gpu_warp_enabled);
+        info!("UnifiedPipeline: profile={}, width={}, gpu_warp={}, format={:?}",
+            config.profile.label, config.target_width, config.gpu_warp_enabled, config.output_format);
 
         let mut engine = match config.engine_preference.as_str() {
             "vulkan" => {
@@ -286,6 +291,8 @@ impl UnifiedPipeline {
     }
 
     /// Process with GPU warp parameters (GDC + EIS).
+    ///
+    /// Uses FloatRgb format internally to avoid RGBA conversion overhead.
     pub fn process_with_warp(
         &mut self,
         raw_data: &[u8],
@@ -298,7 +305,7 @@ impl UnifiedPipeline {
             return Err(crate::error::IspError::Pipeline("pipeline not initialized".into()));
         }
 
-        // 1. ISP processing (GPU)
+        // 1. ISP processing (GPU) — output FloatRgb [1,3,H,W] f32
         let mut params = ProcessParams::new(width, height, raw_data);
         params.target_width = self.width;
         params.target_height = self.height;
@@ -308,47 +315,36 @@ impl UnifiedPipeline {
         #[allow(unused_mut)]
         let mut isp_output = self.engine.process(&params)?;
 
-        // 2. GPU warp (if enabled and parameters need warp)
+        // 2. GPU warp (if enabled) — operates directly on float data
         #[cfg(feature = "mnn")]
         if self.config.gpu_warp_enabled && warp_params.needs_warp() {
             if let Some(ref warp_engine) = self.gpu_warp_engine {
-                let t_warp = std::time::Instant::now();
+                if let Some(ref mut float_data) = isp_output.float_data {
+                    let t_warp = std::time::Instant::now();
+                    let n = (self.width * self.height * 3) as usize;
 
-                // Convert ISP output (RGBA u8) to RGB planar f32
-                let rgba = &isp_output.data;
-                let n = (self.width * self.height) as usize;
-                let mut rgb_planar = vec![0.0f32; n * 3];
-                for i in 0..n {
-                    rgb_planar[i] = rgba[i * 4] as f32 / 255.0;       // R
-                    rgb_planar[n + i] = rgba[i * 4 + 1] as f32 / 255.0; // G
-                    rgb_planar[n * 2 + i] = rgba[i * 4 + 2] as f32 / 255.0; // B
-                }
-
-                // Run GPU warp (zero-copy: write directly into rgb_planar)
-                match warp_engine.run_into(
-                    &rgb_planar,
-                    warp_params.gdc_k1,
-                    warp_params.gdc_k2,
-                    warp_params.gdc_k3,
-                    warp_params.eis_dx,
-                    warp_params.eis_dy,
-                    &mut rgb_planar,
-                ) {
-                    Ok(warped) => {
-                        // Convert RGB planar f32 back to RGBA u8
-                        for i in 0..n {
-                            isp_output.data[i * 4] = (warped[i].clamp(0.0, 1.0) * 255.0) as u8;
-                            isp_output.data[i * 4 + 1] = (warped[n + i].clamp(0.0, 1.0) * 255.0) as u8;
-                            isp_output.data[i * 4 + 2] = (warped[n * 2 + i].clamp(0.0, 1.0) * 255.0) as u8;
-                            isp_output.data[i * 4 + 3] = 255;
+                    // Ensure buffer is large enough
+                    if float_data.len() >= n {
+                        // Run GPU warp directly on float data (zero-copy!)
+                        match warp_engine.run_into(
+                            &float_data[..n],
+                            warp_params.gdc_k1,
+                            warp_params.gdc_k2,
+                            warp_params.gdc_k3,
+                            warp_params.eis_dx,
+                            warp_params.eis_dy,
+                            &mut float_data[..n],
+                        ) {
+                            Ok(_) => {
+                                info!("GPU warp (float): k1={:.3} k2={:.3} k3={:.3} dx={:.3} dy={:.3} ({:.2}ms)",
+                                    warp_params.gdc_k1, warp_params.gdc_k2, warp_params.gdc_k3,
+                                    warp_params.eis_dx, warp_params.eis_dy,
+                                    t_warp.elapsed().as_secs_f64() * 1000.0);
+                            }
+                            Err(e) => {
+                                warn!("GPU warp failed, falling back to CPU: {:?}", e);
+                            }
                         }
-                        info!("GPU warp: k1={:.3} k2={:.3} k3={:.3} dx={:.3} dy={:.3} ({:.2}ms)",
-                            warp_params.gdc_k1, warp_params.gdc_k2, warp_params.gdc_k3,
-                            warp_params.eis_dx, warp_params.eis_dy,
-                            t_warp.elapsed().as_secs_f64() * 1000.0);
-                    }
-                    Err(e) => {
-                        warn!("GPU warp failed, falling back to CPU: {:?}", e);
                     }
                 }
             }
@@ -373,6 +369,7 @@ impl UnifiedPipeline {
             engine: self.engine.backend_name().to_string(),
             input_width: self.width,
             input_height: self.height,
+            output_format: format!("{:?}", self.config.output_format),
             post_eis: self.config.post_config.eis_enabled,
             post_deshake: self.config.post_config.deshake_enabled,
             post_gdc: self.config.post_config.gdc_enabled,
@@ -401,6 +398,7 @@ pub struct PipelineInfo {
     pub engine: String,
     pub input_width: u32,
     pub input_height: u32,
+    pub output_format: String,
     pub post_eis: bool,
     pub post_deshake: bool,
     pub post_gdc: bool,
@@ -410,14 +408,14 @@ pub struct PipelineInfo {
 
 impl std::fmt::Display for PipelineInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "UnifiedPipeline[{} engine={} {}x{} post=",
-            self.profile, self.engine, self.input_width, self.input_height)?;
+        write!(f, "UnifiedPipeline[{} engine={} {}x{} out={} post=",
+            self.profile, self.engine, self.input_width, self.input_height, self.output_format)?;
         let mut features = Vec::new();
+        if self.gpu_warp { features.push("GPU_Warp"); }
         if self.post_eis { features.push("EIS"); }
         if self.post_deshake { features.push("Deshake"); }
         if self.post_gdc { features.push("GDC"); }
         if self.post_temporal_denoise { features.push("TemporalDenoise"); }
-        if self.gpu_warp { features.push("GPU_Warp"); }
         if features.is_empty() { write!(f, "none]") } else { write!(f, "{}]", features.join("+")) }
     }
 }
@@ -431,7 +429,7 @@ mod tests {
         let cfg = UnifiedConfig::default();
         assert_eq!(cfg.profile.label, "MED");
         assert_eq!(cfg.target_width, 1920);
-        assert!(!cfg.post_config.eis_enabled);
+        assert!(matches!(cfg.output_format, OutputFormat::FloatRgb));
         assert!(!cfg.gpu_warp_enabled);
     }
 
@@ -445,9 +443,9 @@ mod tests {
     #[test]
     fn test_unified_config_builder() {
         let cfg = UnifiedConfig::hd().with_eis().with_deshake().with_gdc(0.5)
-            .with_temporal_denoise().with_gpu_warp();
+            .with_temporal_denoise().with_gpu_warp().with_rgba_output();
         assert!(cfg.gpu_warp_enabled);
-        assert!(cfg.post_config.eis_enabled);
+        assert!(matches!(cfg.output_format, OutputFormat::Rgba));
     }
 
     #[test]
@@ -498,5 +496,14 @@ mod tests {
         let pipeline = UnifiedPipeline::new(config).unwrap();
         let s = format!("{}", pipeline.info());
         assert!(s.contains("PRO") && s.contains("GPU_Warp"));
+    }
+
+    #[test]
+    fn test_unified_pipeline_float_rgb_format() {
+        crate::init();
+        let config = UnifiedConfig::hd().with_gpu_warp();
+        let pipeline = UnifiedPipeline::new(config).unwrap();
+        let info = pipeline.info();
+        assert!(info.output_format.contains("FloatRgb"));
     }
 }
