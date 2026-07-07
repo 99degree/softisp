@@ -80,6 +80,12 @@ impl HeapAllocator {
     }
 }
 
+impl Default for HeapAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BufferAllocator for HeapAllocator {
     fn name(&self) -> &'static str {
         "heap"

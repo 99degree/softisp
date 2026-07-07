@@ -24,7 +24,15 @@ impl ApplicationHolder {
             camera_adapter: Arc::new(Mutex::new(None)),
         }
     }
+}
 
+impl Default for ApplicationHolder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ApplicationHolder {
     /// Initialize ISP pipeline only.
     pub fn init_pipeline(&self) -> Result<(), String> {
         info!("Initializing ISP pipeline...");
