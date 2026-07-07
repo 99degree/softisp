@@ -18,6 +18,7 @@ pub mod ae;
 pub mod profile;
 pub mod config;
 pub mod fused;
+pub mod unified_pipeline;
 pub mod manager;
 pub mod warp;
 #[cfg(feature = "mnn")]
