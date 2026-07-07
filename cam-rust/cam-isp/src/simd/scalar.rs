@@ -18,10 +18,12 @@ impl Scalar {
 }
 
 impl SimdEngine for Scalar {
+    #[inline]
     fn name(&self) -> &'static str {
         "scalar"
     }
 
+    #[inline]
     fn normalize_u16_to_f32(&self, input: &[u16], output: &mut [f32], max_val: f32) {
         assert_eq!(input.len(), output.len());
         let recip = 1.0 / max_val;
@@ -30,6 +32,7 @@ impl SimdEngine for Scalar {
         }
     }
 
+    #[inline]
     fn apply_ccm(&self, rgb: &[f32], matrix: &[f32; 9]) -> Vec<f32> {
         let count = rgb.len() / 3;
         let mut out = vec![0.0f32; rgb.len()];
