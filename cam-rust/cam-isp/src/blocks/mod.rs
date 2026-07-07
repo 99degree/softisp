@@ -79,7 +79,8 @@ mod hdr_debayer;
 mod blc50;
 mod watermark;
 mod super_res;
-mod runtime_warp;
+pub mod runtime_warp;
+pub mod gpu_warp;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -128,6 +129,7 @@ pub use hdr_debayer::HdrDebayerBlock;
 pub use blc50::Blc50Block;
 pub use watermark::WatermarkBlock;
 pub use runtime_warp::RuntimeWarpBlock;
+pub use gpu_warp::GpuWarpBlock;
 pub use super_res::SuperResBlock;
 
 /// Register all built-in blocks with the engine registry.
