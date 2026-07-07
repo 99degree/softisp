@@ -163,4 +163,81 @@ mod tests {
         let result = pipe.process(&ProcessParams::new(32, 32, &raw));
         assert!(result.is_ok(), "process failed: {:?}", result.err());
     }
+
+    #[test]
+    fn test_fused_pipeline_with_all_profiles() {
+        crate::init();
+        
+        let profiles = vec![
+            (PipelineProfile::LITE, "LITE"),
+            (PipelineProfile::MED, "MED"),
+            (PipelineProfile::HEAVY, "HEAVY"),
+            (PipelineProfile::PRO, "PRO"),
+        ];
+        
+        for (profile, name) in profiles {
+            let blocks = profile.build_blocks(64, 0);
+            let pipe = FusedPipeline::build_with_engine(
+                blocks,
+                Box::new(crate::cpu::CpuEngine::new())
+            );
+            assert!(pipe.is_ok(), "{} profile build failed: {:?}", name, pipe.err());
+            
+            let pipe = pipe.unwrap();
+            assert!(pipe.is_loaded(), "{} profile not loaded", name);
+            
+            // Test processing with a small frame
+            let raw = vec![128u8; 64 * 64 * 2];
+            let params = ProcessParams::new(64, 64, &raw);
+            let result = pipe.process(&params);
+            assert!(result.is_ok(), "{} profile process failed: {:?}", name, result.err());
+            
+            let frame = result.unwrap();
+            assert_eq!(frame.width, 64, "{} profile width mismatch", name);
+            assert_eq!(frame.height, 64, "{} profile height mismatch", name);
+            
+            println!("{}: OK - {} bytes output", name, frame.data.len());
+        }
+    }
+
+    #[test]
+    fn test_fused_pipeline_with_postprocess() {
+        use crate::postprocess::{PostProcessConfig, PostProcessPipeline};
+        
+        crate::init();
+        
+        // Build fused pipeline
+        let profile = PipelineProfile::LITE;
+        let blocks = profile.build_blocks(64, 0);
+        let pipe = FusedPipeline::build_with_engine(
+            blocks,
+            Box::new(crate::cpu::CpuEngine::new())
+        ).unwrap();
+        
+        // Create postprocess pipeline with all features enabled
+        let post_config = PostProcessConfig {
+            eis_enabled: true,
+            deshake_enabled: true,
+            gdc_enabled: true,
+            hdr_enabled: false, // needs multiple exposures
+            temporal_denoise_enabled: true,
+            ..Default::default()
+        };
+        let mut post_pipeline = PostProcessPipeline::new(post_config);
+        
+        // Process frame through fused pipeline
+        let raw = vec![128u8; 64 * 64 * 2];
+        let params = ProcessParams::new(64, 64, &raw);
+        let frame = pipe.process(&params).unwrap();
+        
+        // Process through postprocess pipeline
+        let post_result = post_pipeline.process(&frame);
+        assert!(post_result.is_ok(), "Postprocess failed: {:?}", post_result.err());
+        
+        let output = post_result.unwrap();
+        assert_eq!(output.width, 64);
+        assert_eq!(output.height, 64);
+        
+        println!("Fused + Postprocess: OK - {} bytes output", output.data.len());
+    }
 }
