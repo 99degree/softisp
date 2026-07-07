@@ -3,8 +3,17 @@
 //! Provides a pure-Rust implementation of the camera HAL interface
 //! using the rscam V4L2 wrapper.
 //!
-//! ## Features
+//! # Features
 //! - `v4l2` - Enable V4L2 backend (requires rscam crate)
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! use cam_hal_linux::create_v4l2_adapter;
+//!
+//! let adapter = create_v4l2_adapter("/dev/video0")
+//!     .expect("Failed to create V4L2 adapter");
+//! ```
 
 #[cfg(feature = "v4l2")]
 pub mod v4l2;
@@ -18,7 +27,15 @@ use log::warn;
 use cam_hal::camera::ICameraAdapter;
 
 /// Create a Linux V4L2 camera adapter.
+/// Create a Linux V4L2 camera adapter.
+///
 /// Returns None if V4L2 feature is not enabled or no camera found.
+///
+/// # Arguments
+/// * `device_path` - Path to V4L2 device (e.g., "/dev/video0")
+///
+/// # Returns
+/// Some(adapter) if successful, None otherwise.
 pub fn create_v4l2_adapter(_device_path: &str) -> Option<Box<dyn ICameraAdapter>> {
     #[cfg(feature = "v4l2")]
     {
@@ -34,6 +51,11 @@ pub fn create_v4l2_adapter(_device_path: &str) -> Option<Box<dyn ICameraAdapter>
 }
 
 /// List available V4L2 camera devices.
+///
+/// Scans /dev/video* for available camera devices.
+///
+/// # Returns
+/// List of device paths (e.g., ["/dev/video0", "/dev/video1"])
 pub fn list_v4l2_devices() -> Vec<String> {
     #[cfg(feature = "v4l2")]
     {
