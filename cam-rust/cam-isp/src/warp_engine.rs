@@ -66,14 +66,15 @@ impl GpuWarpEngine {
         })
     }
 
-    /// Run warp inference.
+    /// Run warp inference into a pre-allocated output buffer.
     ///
     /// `frame`: RGB planar float data [1,3,H,W] in [0,1] range.
     /// `k1,k2,k3`: GDC radial distortion coefficients.
     /// `eis_x,eis_y`: EIS displacement in normalized [-1,1] coords.
+    /// `out`: pre-allocated output buffer (must be H*W*3 elements).
     ///
-    /// Returns: warped RGB planar float data [1,3,H,W].
-    pub fn run(
+    /// Returns slice of `out` with warped data.
+    pub fn run_into(
         &self,
         frame: &[f32],
         k1: f32,
@@ -81,7 +82,8 @@ impl GpuWarpEngine {
         k3: f32,
         eis_x: f32,
         eis_y: f32,
-    ) -> IspResult<Vec<f32>> {
+        out: &mut [f32],
+    ) -> crate::error::IspResult<&mut [f32]> {
         if !self.initialized {
             return Err(crate::error::IspError::Config("warp engine not init".into()));
         }
@@ -90,15 +92,18 @@ impl GpuWarpEngine {
         let w = self.width as usize;
         let n = h * w;
 
+        if out.len() < n * 3 {
+            return Err(crate::error::IspError::InvalidInput(
+                format!("output buffer too small: {} < {}", out.len(), n * 3)));
+        }
+
         // Set main frame input
         if let Some(input) = self.interp.get_first_input(&self.session) {
-            // Resize tensor to match input
             let _ = input.set_shape(
                 self.interp.as_ptr(),
                 self.session.as_ptr(),
                 &[1, 3, h as i32, w as i32],
             );
-            // Copy frame data
             if let Some(bytes) = input.as_bytes_mut() {
                 let copy_len = (frame.len() * 4).min(bytes.len());
                 unsafe {
@@ -111,41 +116,55 @@ impl GpuWarpEngine {
             }
         }
 
-        // Set GDC coefficients as extra inputs
+        // Set GDC coefficients
         self.set_const_f32("GpuWarp/gdc_k1", k1);
         self.set_const_f32("GpuWarp/gdc_k2", k2);
         self.set_const_f32("GpuWarp/gdc_k3", k3);
 
-        // Build EIS grid [1,1,H,W] — flat displacement
+        // Set EIS grid
         let eis_grid_x: Vec<f32> = vec![eis_x; n];
         let eis_grid_y: Vec<f32> = vec![eis_y; n];
         self.set_const_f32_grid("GpuWarp/eis_x", &eis_grid_x, h, w);
         self.set_const_f32_grid("GpuWarp/eis_y", &eis_grid_y, h, w);
 
-        // Resize session for current input shapes
+        // Resize + Run
         self.session.resize()
             .map_err(|e| crate::error::IspError::Mnn(format!("warp resize: {}", e)))?;
-
-        // Run inference
         self.session.run()
             .map_err(|e| crate::error::IspError::Mnn(format!("warp inference: {}", e)))?;
 
-        // Read output
+        // Read output directly into caller's buffer
         let output = self.interp.get_first_output(&self.session)
             .ok_or_else(|| crate::error::IspError::Mnn("warp output missing".into()))?;
-
         let out_bytes = output.as_bytes()
-            .ok_or_else(|| crate::error::IspError::Mnn("warp output host ptr null".into()))?;
+            .ok_or_else(|| crate::error::IspError::Mnn("warp output null".into()))?;
 
-        // Convert bytes to f32 slice
-        let out_f32 = unsafe {
-            std::slice::from_raw_parts(
-                out_bytes.as_ptr() as *const f32,
-                out_bytes.len() / 4,
-            )
-        };
+        let copy_bytes = (n * 3 * 4).min(out_bytes.len()).min(out.len() * 4);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                out_bytes.as_ptr(),
+                out.as_mut_ptr() as *mut u8,
+                copy_bytes,
+            );
+        }
 
-        Ok(out_f32.to_vec())
+        Ok(&mut out[..n * 3])
+    }
+
+    /// Run warp inference (allocates output buffer).
+    pub fn run(
+        &self,
+        frame: &[f32],
+        k1: f32,
+        k2: f32,
+        k3: f32,
+        eis_x: f32,
+        eis_y: f32,
+    ) -> crate::error::IspResult<Vec<f32>> {
+        let n = (self.width * self.height * 3) as usize;
+        let mut out = vec![0.0f32; n];
+        self.run_into(frame, k1, k2, k3, eis_x, eis_y, &mut out)?;
+        Ok(out)
     }
 
     /// Set a scalar float constant as input tensor.
