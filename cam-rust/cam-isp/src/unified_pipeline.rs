@@ -33,7 +33,9 @@
 //!           Final Output (RGBA/RGB)
 //! ```
 
-use log::{info, warn};
+use log::info;
+#[cfg(feature = "mnn")]
+use log::warn;
 use crate::error::IspResult;
 use crate::pipeline::{IspFrame, IspBlock, GraphComposer};
 use crate::engine::{IspEngine, ProcessParams, OutputFormat, select_engine};
@@ -322,14 +324,15 @@ impl UnifiedPipeline {
                     rgb_planar[n * 2 + i] = rgba[i * 4 + 2] as f32 / 255.0; // B
                 }
 
-                // Run GPU warp
-                match warp_engine.run(
+                // Run GPU warp (zero-copy: write directly into rgb_planar)
+                match warp_engine.run_into(
                     &rgb_planar,
                     warp_params.gdc_k1,
                     warp_params.gdc_k2,
                     warp_params.gdc_k3,
                     warp_params.eis_dx,
                     warp_params.eis_dy,
+                    &mut rgb_planar,
                 ) {
                     Ok(warped) => {
                         // Convert RGB planar f32 back to RGBA u8
