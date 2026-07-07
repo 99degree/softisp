@@ -38,6 +38,7 @@ pub mod mnn_converter;
 #[cfg(feature = "mnn")]
 #[cfg(feature = "mnn_buffer")]
 pub mod mnn_buffer;
+pub mod warp_engine;
 
 pub mod ccm_engine;
 pub mod eis;
