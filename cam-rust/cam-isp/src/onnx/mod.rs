@@ -295,7 +295,7 @@ macro_rules! register_onnx_engine {
             cam_isp::engine::EngineFactory {
                 name: $backend.id(),
                 priority: $backend.priority(),
-                create_fn: || Box::new(cam_isp::onnx::OnnxEngine::new($backend)),
+                create_fn: Box::new(|| Box::new(cam_isp::onnx::OnnxEngine::new($backend))),
             }
         );
     };
