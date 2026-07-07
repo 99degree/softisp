@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 use std::collections::HashMap;
-use log::{info, warn};
+use log::info;
 
 /// NPU accelerator vendor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -88,23 +88,23 @@ pub enum NpuEngine {
 #[derive(Debug)]
 pub struct NpuModel {
     /// Vendor-specific model pointer
-    model_ptr: *mut std::ffi::c_void,
+    _model_ptr: *mut std::ffi::c_void,
     /// Vendor that created this model
     vendor: NpuVendor,
     /// Input shape (NCHW)
     input_shape: Vec<u32>,
     /// Input channel order (BGR, RGB, BGRA)
-    input_layout: String,
+    _input_layout: String,
     /// Output shape (NCHW)
-    output_shape: Vec<u32>,
+    _output_shape: Vec<u32>,
     /// Scale factor for dequantization
-    output_scale: f32,
+    _output_scale: f32,
     /// Zero point for dequantization
-    output_zero: i8,
+    _output_zero: i8,
     /// Model FLOPS
     flops: f64,
     /// Model size (MB)
-    model_size: f32,
+    _model_size: f32,
 }
 
 /// Offload task descriptor
@@ -116,15 +116,15 @@ pub struct NpuJob {
     /// Input tensor ptr
     input_ptr: *mut u8,
     /// Input quantized to INT8
-    input_scale: f32,
+    _input_scale: f32,
     /// Input quant zero point
-    input_zero: i8,
+    _input_zero: i8,
     /// Output tensor ptr
     output_ptr: *mut u8,
     /// On completion callback
     callback: Box<dyn FnOnce(Result<(), NpuError>) + Send>,
     /// Hang timeout ms
-    timeout_secs: u32,
+    _timeout_secs: u32,
 }
 
 /// NPU error category
@@ -167,11 +167,11 @@ impl std::error::Error for NpuError {}
 /// NPU Offload Manager
 pub struct NpuManager {
     /// Active NPU engines (indexed by vendor)
-    engines: HashMap<NpuVendor, Vec<Arc<NpuEngine>>>,
+    _engines: HashMap<NpuVendor, Vec<Arc<NpuEngine>>>,
     /// Supported quantized models (id → instruction)
     models: HashMap<String, Arc<NpuModel>>,
     /// Device-specific configuration
-    config: NpuConfig,
+    _config: NpuConfig,
     /// Total offload FLOPS executed
     offload_ops: std::sync::atomic::AtomicU64,
 }
@@ -200,9 +200,9 @@ impl NpuManager {
     /// Create new manager
     pub fn new(config: NpuConfig) -> Self {
         Self {
-            engines: HashMap::new(),
+            _engines: HashMap::new(),
             models: HashMap::new(),
-            config,
+            _config: config,
             offload_ops: std::sync::atomic::AtomicU64::new(0),
         }
     }
@@ -258,22 +258,22 @@ impl NpuManager {
         
         // For now: simulate successful model
         let model = Arc::new(NpuModel {
-            model_ptr: std::ptr::null_mut(),
+            _model_ptr: std::ptr::null_mut(),
             vendor,
             input_shape: vec![1, 384, 384, 3], // HWC layout
-            input_layout: "RGB".into(),
-            output_shape: vec![1, 256, 256, 16],
-            output_scale: 0.028f32,
-            output_zero: -128,
+            _input_layout: "RGB".into(),
+            _output_shape: vec![1, 256, 256, 16],
+            _output_scale: 0.028f32,
+            _output_zero: -128,
             flops: 4.5e9,
-            model_size: 1.8,
+            _model_size: 1.8,
         });
         self.models.insert(model_id.into(), model.clone());
         Ok(model)
     }
 
     /// Execute offloaded inference
-    pub fn offload_inference(&self, mut job: NpuJob) -> Result<(), NpuError> {
+    pub fn offload_inference(&self, job: NpuJob) -> Result<(), NpuError> {
         let start_us = std::time::Instant::now();
         let engine = &*job.engine;
         let model = job.model;
@@ -287,7 +287,7 @@ impl NpuManager {
         // SAFETY: hw-boundary only. Real production uses safe binding-generated API.
         match engine {
             NpuEngine::Qnn(_) => unsafe { 
-                simulate_qnn_execution(&*model, input_ptr, output_ptr) 
+                simulate_qnn_execution(&model, input_ptr, output_ptr) 
             },
             // TODO: Add other vendor stubs
             _ => Err(NpuError::Unsupported(
@@ -321,6 +321,7 @@ unsafe fn simulate_qnn_execution(
     Ok(())
 }
 
+#[allow(dead_code)]
 unsafe fn simulate_mtk_execution(
     _model: &NpuModel,
     _input_ptr: *mut u8,
@@ -329,6 +330,7 @@ unsafe fn simulate_mtk_execution(
     Ok(()) // stub
 }
 
+#[allow(dead_code)]
 unsafe fn simulate_samsung_execution(
     _model: &NpuModel,
     _input_ptr: *mut u8,
@@ -370,6 +372,12 @@ pub struct NpuStats {
 /// Quantization manager
 pub struct QuantizationManager {
     managers: HashMap<String, NpuManager>,
+}
+
+impl Default for QuantizationManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl QuantizationManager {

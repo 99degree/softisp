@@ -28,6 +28,7 @@ const MOTION_SMOOTHING_ALPHA: f32 = 0.08;
 /// Fraction of frame cropped to hide black borders from warp (0..1).
 const CROP_FRACTION: f32 = 0.08;
 
+#[allow(dead_code)]
 /// Maximum pixel shift per axis (clamp to avoid excessive crop).
 const MAX_SHIFT_PX: f32 = 64.0;
 
