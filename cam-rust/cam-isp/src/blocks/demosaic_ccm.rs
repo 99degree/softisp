@@ -138,6 +138,16 @@ impl DemosaicCcmBlock {
         let blc = [0.0, 0.0, 0.0, 0.0];
         self.fuse_weights_ext(ccm_matrix, &wb, &blc, 1.0).0
     }
+
+    /// Return the effective input tensor name: `input_source` if set,
+    /// otherwise `graph_input_name()`.
+    fn effective_input(&self) -> String {
+        if self.input_source.is_empty() {
+            self.graph_input_name().unwrap_or("DemosaicCcmBlock/frame").to_string()
+        } else {
+            self.input_source.clone()
+        }
+    }
 }
 
 impl IspBlock for DemosaicCcmBlock {
@@ -179,7 +189,7 @@ impl IspBlock for DemosaicCcmBlock {
                 Proto::tensor_dim_param("W"),
             ]
         };
-        Some(Proto::value_info(&self.input_source, &dims, 1)) // FLOAT input
+        Some(Proto::value_info(&self.effective_input(), &dims, 1)) // FLOAT input
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
@@ -203,12 +213,13 @@ impl IspBlock for DemosaicCcmBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        let inp = self.effective_input();
         vec![
             // Single Conv1×1 with runtime-fused weights.
             // Weights are pre-divided by sensor_max and incorporate BLC+WB.
             Proto::node(
                 "Conv",
-                &[&self.input_source, &format!("{}/w", ns), &format!("{}/b", ns)],
+                &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
                 &[&format!("{}/conv_out", ns)],
                 &[
                     Proto::attribute_ints("kernel_shape", &[1, 1]),

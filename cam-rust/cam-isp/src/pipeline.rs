@@ -523,6 +523,10 @@ impl GraphComposer {
     /// Wire each block's input_source to the previous block's frame_tensor.
     /// Must be called before `compose_from_vec`.
     pub fn wire_blocks(blocks: &mut [Box<dyn IspBlock>]) {
+        // Set the head block's input_source to its graph_input_name
+        if let Some(name) = blocks[0].graph_input_name().map(|s| s.to_string()) {
+            blocks[0].set_input_source(&name);
+        }
         for i in 1..blocks.len() {
             let prev = blocks[i - 1].frame_tensor().unwrap_or("--").to_string();
             blocks[i].set_input_source(&prev);
