@@ -165,6 +165,16 @@ impl DisplayBlock {
     fn can_pack_two_pixels(&self) -> bool {
         self.output_format == OutputFormat::PackedRgb && self.pack_two_pixels && self.in_h.is_some() && self.in_w.is_some()
     }
+
+    /// Return the effective input tensor name: `input_source` if set,
+    /// otherwise `graph_input_name()`.
+    fn effective_input(&self) -> String {
+        if self.input_source.is_empty() {
+            self.graph_input_name().unwrap_or("DisplayBlock/frame").to_string()
+        } else {
+            self.input_source.clone()
+        }
+    }
 }
 
 impl DisplayBlock {
@@ -215,10 +225,10 @@ impl IspBlock for DisplayBlock {
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         match (self.in_h, self.in_w) {
-            (Some(h), Some(w)) => Some(Proto::value_info(&self.input_source,
+            (Some(h), Some(w)) => Some(Proto::value_info(&self.effective_input(),
                 &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
                   Proto::tensor_dim_value(h), Proto::tensor_dim_value(w)], 1)),
-            _ => Some(Proto::value_info(&self.input_source,
+            _ => Some(Proto::value_info(&self.effective_input(),
                 &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
                   Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1)),
         }
@@ -255,7 +265,7 @@ impl IspBlock for DisplayBlock {
             let zero = format!("{}/zero", ns);
             let one = format!("{}/one", ns);
             return vec![
-                Proto::node("Pow", &[&self.input_source, &gamma_exp], &[&gamma], &[]),
+                Proto::node("Pow", &[&self.effective_input(), &gamma_exp], &[&gamma], &[]),
                 Proto::node("Clip", &[&gamma, &zero, &one], &[final_output], &[]),
             ];
         }
@@ -263,16 +273,16 @@ impl IspBlock for DisplayBlock {
         let mut nodes: Vec<Vec<u8>> = Vec::new();
         // Keep intermediate tensor names alive across the function scope
         let mut tensor_pool: Vec<String> = Vec::new();
-        let mut prev = self.input_source.as_str();
+        let mut prev = self.effective_input();
 
         // 90° or 270°: transpose to swap H ↔ W
         if self.swaps_dims() {
             let transposed = format!("{}/transposed", ns);
             nodes.push(Proto::node("Transpose",
-                &[prev], &[&transposed],
+                &[&prev], &[&transposed],
                 &[Proto::attribute_ints("perm", &[0, 1, 3, 2])]));
             tensor_pool.push(transposed);
-            prev = tensor_pool.last().unwrap().as_str();
+            prev = tensor_pool.last().unwrap().clone();
         }
 
         // Horizontal flip on W (axis 3)
@@ -287,10 +297,10 @@ impl IspBlock for DisplayBlock {
             let axes = format!("{}/hflip_axes", ns);
             let steps = format!("{}/hflip_steps", ns);
             nodes.push(Proto::node("Slice",
-                &[prev, &starts, &ends, &axes, &steps],
+                &[&prev, &starts, &ends, &axes, &steps],
                 &[&hflipped], &[]));
             tensor_pool.push(hflipped);
-            prev = tensor_pool.last().unwrap().as_str();
+            prev = tensor_pool.last().unwrap().clone();
         }
 
         // Vertical flip on H (axis 2)
@@ -301,10 +311,10 @@ impl IspBlock for DisplayBlock {
             let axes = format!("{}/vflip_axes", ns);
             let steps = format!("{}/vflip_steps", ns);
             nodes.push(Proto::node("Slice",
-                &[prev, &starts, &ends, &axes, &steps],
+                &[&prev, &starts, &ends, &axes, &steps],
                 &[&vflipped], &[]));
             tensor_pool.push(vflipped);
-            prev = tensor_pool.last().unwrap().as_str();
+            prev = tensor_pool.last().unwrap().clone();
         }
 
         // Final: apply output format conversion
@@ -312,14 +322,14 @@ impl IspBlock for DisplayBlock {
         match self.output_format {
             FloatRgb => {
                 // Identity — Mul(1.0) for float [0,1] RGB
-                if prev != final_output {
-                    nodes.push(Proto::node("Mul", &[prev, &scale], &[final_output], &[]));
+                if prev != *final_output {
+                    nodes.push(Proto::node("Mul", &[&prev, &scale], &[final_output], &[]));
                 }
             }
             Float16Rgb => {
                 // Float RGB [0,1] → Cast(FLOAT→FLOAT16)
                 let f32_out = format!("{}/f32", ns);
-                nodes.push(Proto::node("Mul", &[prev, &scale], &[&f32_out], &[]));
+                nodes.push(Proto::node("Mul", &[&prev, &scale], &[&f32_out], &[]));
                 tensor_pool.push(f32_out);
                 let f32_ref = tensor_pool.last().unwrap().as_str();
                 nodes.push(Proto::node("Cast", &[f32_ref], &[final_output],
@@ -331,7 +341,7 @@ impl IspBlock for DisplayBlock {
                 let conv_b = format!("{}/conv_b", ns);
                 let conv_out = format!("{}/conv_out", ns);
                 let f32_out = format!("{}/f32", ns);
-                nodes.push(Proto::node("Conv", &[prev, &conv_w, &conv_b], &[&conv_out],
+                nodes.push(Proto::node("Conv", &[&prev, &conv_w, &conv_b], &[&conv_out],
                     &[Proto::attribute_ints("kernel_shape", &[1, 1]),
                       Proto::attribute_int("group", 1)]));
                 tensor_pool.push(conv_out);
@@ -346,13 +356,13 @@ impl IspBlock for DisplayBlock {
                 let conv_w = format!("{}/conv_w", ns);
                 let conv_b = format!("{}/conv_b", ns);
                 let conv_out = format!("{}/conv_out", ns);
-                nodes.push(Proto::node("Conv", &[prev, &conv_w, &conv_b], &[&conv_out],
+                nodes.push(Proto::node("Conv", &[&prev, &conv_w, &conv_b], &[&conv_out],
                     &[Proto::attribute_ints("kernel_shape", &[1, 1]),
                       Proto::attribute_int("group", 1)]));
                 tensor_pool.push(conv_out);
-                prev = tensor_pool.last().unwrap().as_str();
-                if prev != final_output {
-                    nodes.push(Proto::node("Identity", &[prev], &[final_output], &[]));
+                prev = tensor_pool.last().unwrap().clone();
+                if prev != *final_output {
+                    nodes.push(Proto::node("Identity", &[&prev], &[final_output], &[]));
                 }
             }
             PackedRgb => {
@@ -363,7 +373,7 @@ impl IspBlock for DisplayBlock {
                     let cast_out = format!("{}/cast", ns);
 
                     nodes.push(Proto::node("Conv",
-                        &[prev, &pack_w, &pack_b], &[&conv_out],
+                        &[&prev, &pack_w, &pack_b], &[&conv_out],
                         &[Proto::attribute_ints("kernel_shape", &[1, 2]),
                           Proto::attribute_ints("strides", &[1, 2]),
                           Proto::attribute_ints("pads", &[0, 0, 0, 0]),
@@ -381,7 +391,7 @@ impl IspBlock for DisplayBlock {
                     let wweighted = format!("{}/wweighted", ns);
                     let rsum = format!("{}/rsum", ns);
                     let cast_out = format!("{}/cast", ns);
-                    nodes.push(Proto::node("Mul", &[prev, &scale_255], &[&scaled], &[]));
+                    nodes.push(Proto::node("Mul", &[&prev, &scale_255], &[&scaled], &[]));
                     nodes.push(Proto::node("Mul", &[&scaled, &pack_w], &[&wweighted], &[]));
                     nodes.push(Proto::node("ReduceSum", &[&wweighted], &[&rsum],
                         &[Proto::attribute_ints("axes", &[1]), Proto::attribute_int("keepdims", 1)]));
@@ -400,7 +410,7 @@ impl IspBlock for DisplayBlock {
             let pp_scale = format!("{}/pp_scale", ns);
             // Input is [1,3,H,W] float [0,1] — just multiply by 1.0 (identity)
             // This gives us a clean float tensor for post-processing
-            nodes.push(Proto::node("Mul", &[&self.input_source, &pp_scale], &[pp_tensor], &[]));
+            nodes.push(Proto::node("Mul", &[&self.effective_input(), &pp_scale], &[pp_tensor], &[]));
         }
 
         nodes
