@@ -1,0 +1,72 @@
+#version 450
+// isp.yuv420_convert — [1,3,H,W] float RGB → I420 YUV420 planar
+// Output layout (flat buffer):
+//   Y plane: [0 .. H*W-1]                  — full resolution, uint8
+//   U plane: [H*W .. H*W + H/2*W/2 - 1]   — half resolution, uint8
+//   V plane: [H*W*5/4 .. H*W*5/4 + H/2*W/2 - 1] — half resolution, uint8
+// BT.601 coefficients.
+// Uniforms: [0]=W, [1]=H
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std140, set = 0, binding = 0) readonly uniform Param { uint W; uint H; };
+layout(std140, set = 0, binding = 1) readonly buffer  InBuf  { float in_data[]; };
+layout(std140, set = 0, binding = 2) writeonly buffer OutBuf { uint   out_data[]; };
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    if (x >= W || y >= H) return;
+
+    uint spatial = y * W + x;
+    float r = in_data[0 * H * W + spatial];
+    float g = in_data[1 * H * W + spatial];
+    float b = in_data[2 * H * W + spatial];
+
+    // BT.601 RGB → YUV
+    float yf =  0.299 * r + 0.587 * g + 0.114 * b;
+    float uf = -0.169 * r - 0.331 * g + 0.500 * b + 0.5;
+    float vf =  0.500 * r - 0.419 * g - 0.081 * b + 0.5;
+
+    uint yv = clamp(uint(yf * 255.0 + 0.5), 0u, 255u);
+    uint uv = clamp(uint(uf * 255.0 + 0.5), 0u, 255u);
+    uint vv = clamp(uint(vf * 255.0 + 0.5), 0u, 255u);
+
+    // Write Y plane (full resolution)
+    out_data[spatial] = yv;
+
+    // Write U/V planes (half resolution, averaged from 2×2 block)
+    if ((x & 1u) == 0u && (y & 1u) == 0u) {
+        uint hw = W >> 1u;
+        uint hh = H >> 1u;
+        uint half_idx = (y >> 1u) * hw + (x >> 1u);
+        uint y_offset = H * W;
+        uint uv_offset = y_offset + (hh * hw);
+
+        // Average 2×2 block for chroma subsampling
+        // Sample 4 neighbors (clamp at edges)
+        uint x1 = min(x + 1u, W - 1u);
+        uint y1 = min(y + 1u, H - 1u);
+
+        float sum_u = 0.0;
+        float sum_v = 0.0;
+        for (uint dy = 0u; dy < 2u; dy++) {
+            for (uint dx = 0u; dx < 2u; dx++) {
+                uint sx = x + dx;
+                uint sy = y + dy;
+                if (sx < W && sy < H) {
+                    uint si = sy * W + sx;
+                    float rr = in_data[0 * H * W + si];
+                    float gg = in_data[1 * H * W + si];
+                    float bb = in_data[2 * H * W + si];
+                    sum_u += -0.169 * rr - 0.331 * gg + 0.500 * bb + 0.5;
+                    sum_v +=  0.500 * rr - 0.419 * gg - 0.081 * bb + 0.5;
+                }
+            }
+        }
+        float uf_avg = sum_u * 0.25;
+        float vf_avg = sum_v * 0.25;
+
+        out_data[y_offset + half_idx]  = clamp(uint(uf_avg * 255.0 + 0.5), 0u, 255u);
+        out_data[uv_offset + half_idx] = clamp(uint(vf_avg * 255.0 + 0.5), 0u, 255u);
+    }
+}
