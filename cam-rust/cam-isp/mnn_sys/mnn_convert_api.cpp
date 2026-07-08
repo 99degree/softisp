@@ -9,6 +9,7 @@
     Then link with libMNNConvertDeps.so when building the final binary. */
 
 #include <string>
+#include <cstdio>
 #include "config.hpp"
 #include "cli.hpp"
 

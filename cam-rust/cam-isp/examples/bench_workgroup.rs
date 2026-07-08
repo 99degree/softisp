@@ -1,73 +1,48 @@
-//! Benchmark workgroup sizes using MNN Vulkan backend.
-//! Tests: query optimal, set preset, set explicit.
-//!
-//! Usage: cargo run --example bench_workgroup -p cam-isp --features mnn
-
-use cam_isp::mnnengine::{MnnEngine, MnnBackend};
-use std::time::Instant;
+use cam_isp::profile::PipelineProfile;
+use cam_isp::engine::{OutputFormat, ProcessParams};
 
 fn main() {
-    println!("=== Workgroup Size Benchmark ===\n");
-
-    let _engine = MnnEngine::new(MnnBackend::Vulkan);
-    let (opt_x, opt_y) = MnnEngine::query_optimal_workgroup();
-    println!("GPU optimal workgroup: {}x{}\n", opt_x, opt_y);
-
-    let sizes = vec![
-        ("16x16", 16u32, 16u32),
-        ("32x8",  32, 8),
-        ("8x32",  8, 32),
-        ("32x16", 32, 16),
-        ("64x4",  64, 4),
-        ("optimal", opt_x, opt_y),
+    cam_isp::cpu::register_cpu_engine();
+    cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
+    
+    let profiles = [
+        ("LITE", PipelineProfile::LITE),
+        ("MED", PipelineProfile::MED),
+        ("HEAVY", PipelineProfile::HEAVY),
     ];
-
-    let model_path = std::env::args().nth(1)
-        .unwrap_or_else(|| "/data/local/tmp/test_model.mnn".into());
-
-    unsafe {
-        use cam_isp::mnn_sys;
-        use std::ffi::CString;
-
-        let c_model = CString::new(model_path.as_str()).unwrap();
-        let interp = mnn_sys::mnn_interpreter_create_from_file(c_model.as_ptr());
-        if interp.is_null() {
-            eprintln!("Failed to load: {}", model_path);
-            return;
-        }
-
-        println!("{:>10} {:>10} {:>10}", "Size", "Avg(ms)", "FPS");
-        println!("{:>10} {:>10} {:>10}", "----", "-------", "---");
-
-        for (name, wx, wy) in &sizes {
-            let session = mnn_sys::mnn_session_create(interp, mnn_sys::MnnBackendType::Vulkan, 1);
-            if session.is_null() { continue; }
-
-            // Set workgroup
-            mnn_sys::MNNVulkanSetSessionWorkgroup(session as *mut _, *wx as i32, *wy as i32);
-
-            // Init
-            mnn_sys::mnn_session_run(interp, session);
-
+    
+    for (prof_name, mut profile) in profiles {
+        profile.output_format = OutputFormat::FloatRgb;
+        
+        for &(w, h, label) in &[(1280, 720, "HD"), (1920, 1080, "FHD"), (3840, 2160, "4K")] {
+            let mut blocks = profile.build_blocks(w, 0);
+            cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
+            let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+            let _onnx = cam_isp::pipeline::GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
+            let mut block_vec = blocks;
+            let head = block_vec.remove(0);
+            let aux = block_vec;
+            let mut engine = cam_isp::engine::select_engine_by_name("mnn_vulkan").unwrap();
+            engine.build(head, aux, None, 21).unwrap();
+            
+            let raw: Vec<u8> = vec![128; (w as usize * h as usize * 2) as usize];
+            let params = ProcessParams::new(w, h, &raw);
+            
             // Warmup
-            for _ in 0..3 {
-                mnn_sys::mnn_session_run(interp, session);
+            for _ in 0..20 {
+                let _ = engine.process(&params);
             }
-
-            // Benchmark
-            let iters = 20;
-            let start = Instant::now();
+            
+            // Timed runs
+            let iters = if w * h > 2_000_000 { 50 } else { 200 };
+            let start = std::time::Instant::now();
             for _ in 0..iters {
-                mnn_sys::mnn_session_run(interp, session);
+                let _ = engine.process(&params);
             }
-            let avg_ms = start.elapsed().as_secs_f64() * 1000.0 / iters as f64;
-            let fps = 1000.0 / avg_ms;
-
-            println!("{:>10} {:>10.2} {:>10.1}", name, avg_ms, fps);
-
-            mnn_sys::mnn_session_release(interp, session);
+            let elapsed_us = start.elapsed().as_micros() / iters as u128;
+            
+            println!("{:<7} {:<4} {:>5}us ({:>5} FPS) [{}x{}]", 
+                prof_name, label, elapsed_us, 1_000_000 / elapsed_us.max(1), w, h);
         }
-
-        mnn_sys::mnn_interpreter_destroy(interp);
     }
 }
