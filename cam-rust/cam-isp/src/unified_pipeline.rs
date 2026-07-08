@@ -39,6 +39,7 @@ use log::warn;
 use crate::error::IspResult;
 use crate::pipeline::{IspFrame, IspBlock, GraphComposer};
 use crate::engine::{IspEngine, ProcessParams, OutputFormat, select_engine};
+use crate::pipeline_helper::{build_engine, build_engine_with};
 use crate::postprocess::{PostProcessConfig, PostProcessPipeline};
 use crate::profile::PipelineProfile;
 use crate::blocks::gpu_warp::GpuWarpBlock;
