@@ -1,0 +1,90 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// isp.unpack_packed — INT32 packed → 4ch float Bayer in one GPU dispatch.
+//
+// Input:  INT32[1, 1, H_in, W_in] — packed 16-bit sensor data
+//         Each INT32 word stores: low 16 bits = pixel(2y, x), high 16 bits = pixel(2y+1, x)
+//         H_in must be even.
+//
+// Output: FP32[1, 4, H_in/2, W_in] — 4 Bayer channels
+//         ch0 = R,  ch1 = Gr, ch2 = Gb, ch3 = B
+//
+// Uniforms:
+//   u.x = output W (= input W_in)
+//   u.y = output H (= input H_in / 2)
+//   u.z = input stride W (= input W_in)
+//   u.w = input H
+//   u2.x = sensor_max (float, e.g. 65535.0 for 16-bit)
+//   u2.y = valid_bits (10 or 12)
+//   u2.z = blc_r (black level correction, per-channel)
+//   u2.w = blc_gr
+
+layout(set = 0, binding = 0, std430) readonly buffer InputBuf { int data[]; } inp;
+layout(set = 0, binding = 1, std430) buffer OutputBuf { float vals[]; } otp;
+
+layout(set = 0, binding = 2) uniform UBO {
+    ivec4 dims;     // outW, outH, inStrideW, inH
+    vec4 params;    // sensor_max, valid_bits, blc_r, blc_gr
+    vec4 params2;   // blc_gb, blc_b, wb_r, wb_gr
+    vec4 params3;   // wb_gb, wb_b, reserved, reserved
+} ub;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    if (pos.x >= ub.dims.x || pos.y >= ub.dims.y) return;
+
+    // Each output pixel (pos.x, pos.y) reads TWO packed INT32 words:
+    //   row_even = pos.y * 2
+    //   row_odd  = pos.y * 2 + 1
+    int row_even = pos.y * 2;
+    int row_odd  = row_even + 1;
+
+    int idx_even = row_even * ub.dims.z + pos.x;
+    int idx_odd  = row_odd  * ub.dims.z + pos.x;
+
+    int packed_even = inp.data[idx_even];
+    int packed_odd  = inp.data[idx_odd];
+
+    // Extract 16-bit pixels from packed INT32 words
+    // low 16 bits  = pixel at (row, 2*col)
+    // high 16 bits = pixel at (row, 2*col+1)
+    int r_raw  = packed_even & 0xFFFF;            // R:  low 16 of row 2y
+    int gr_raw = (packed_even >> 16) & 0xFFFF;    // Gr: high 16 of row 2y
+    int gb_raw = packed_odd & 0xFFFF;             // Gb: low 16 of row 2y+1
+    int b_raw  = (packed_odd >> 16) & 0xFFFF;     // B:  high 16 of row 2y+1
+
+    float smax = ub.params.x;
+
+    // Normalize to [0, 1]
+    float r  = float(r_raw)  / smax;
+    float gr = float(gr_raw) / smax;
+    float gb = float(gb_raw) / smax;
+    float b  = float(b_raw)  / smax;
+
+    // BLC: subtract per-channel black level (encoded in const buffer)
+    // blc = {blc_r, blc_gr, blc_gb, blc_b} in params2.xy and params3.xy
+    r  -= ub.params.z;    // blc_r
+    gr -= ub.params.w;    // blc_gr
+    gb -= ub.params2.x;   // blc_gb
+    b  -= ub.params2.y;   // blc_b
+
+    // WB: multiply per-channel white balance gains
+    r  *= ub.params2.z;   // wb_r
+    gr *= ub.params2.w;   // wb_gr
+    gb *= ub.params3.x;   // wb_gb
+    b  *= ub.params3.y;   // wb_b
+
+    // Clamp to [0, 1]
+    r  = clamp(r,  0.0, 1.0);
+    gr = clamp(gr, 0.0, 1.0);
+    gb = clamp(gb, 0.0, 1.0);
+    b  = clamp(b,  0.0, 1.0);
+
+    // Write 4 channels: [R, Gr, Gb, B]
+    int out_base = (pos.y * ub.dims.x + pos.x) * 4;
+    otp.vals[out_base + 0] = r;
+    otp.vals[out_base + 1] = gr;
+    otp.vals[out_base + 2] = gb;
+    otp.vals[out_base + 3] = b;
+}
