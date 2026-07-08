@@ -5,7 +5,9 @@
 //! the best available engine, and processes frames with named parameters.
 
 use crate::engine::{IspEngine, ProcessParams, select_engine};
+use crate::error::IspResult;
 use crate::pipeline::{IspBlock, IspFrame};
+use crate::pipeline_helper::{build_engine, build_engine_with};
 
 /// A fused ISP pipeline wrapping a backend engine.
 ///
@@ -24,47 +26,23 @@ impl FusedPipeline {
         blocks: Vec<Box<dyn IspBlock>>,
         _target_width: u32,
     ) -> crate::error::IspResult<Self> {
-        eprintln!("FusedPipeline::build: blocks={}", blocks.len());
-        if blocks.is_empty() {
-            return Err(crate::error::IspError::Pipeline("No blocks provided".into()));
-        }
-        
-        // Link blocks: set prev/next pointers
-        let mut blocks = blocks;
-        for i in 0..blocks.len() {
-            if i > 0 {
-                // Take the previous block, clone it into a Box for set_prev
-                // We need to create a new Box from the reference
-                let _prev_block = &blocks[i-1];
-                // This is tricky - we need to pass a Box<dyn IspBlock> to set_prev
-                // but we can't create one from &Box<dyn IspBlock>
-                // For now, let's skip the linking and rely on compose_from_vec
-            }
-        }
-        
-        // Split into head + aux_blocks
-        let head = blocks.remove(0);
-        let aux_blocks = blocks;
-        
-        let mut engine = select_engine().ok_or(crate::error::IspError::Config("No engine available".into()))?;
-        engine.build(head, aux_blocks, None, 21)?;
-        Ok(Self { engine, loaded: true })
+        let engine = build_engine(blocks)?;
+        Ok(Self {
+            engine,
+            loaded: true,
+        })
     }
 
     /// Build using a specific engine.
     pub fn build_with_engine(
         blocks: Vec<Box<dyn IspBlock>>,
-        mut engine: Box<dyn IspEngine>,
+        engine: Box<dyn IspEngine>,
     ) -> crate::error::IspResult<Self> {
-        if blocks.is_empty() {
-            return Err(crate::error::IspError::Pipeline("No blocks provided".into()));
-        }
-        let mut blocks = blocks;
-        let head = blocks.remove(0);
-        let aux_blocks = blocks;
-        
-        engine.build(head, aux_blocks, None, 21)?;
-        Ok(Self { engine, loaded: true })
+        let engine = build_engine_with(blocks, engine)?;
+        Ok(Self {
+            engine,
+            loaded: true,
+        })
     }
 
     /// Create directly from an existing engine.
@@ -77,11 +55,24 @@ impl FusedPipeline {
     ///
     /// Named parameters for convenience — delegates to the backend engine.
     #[allow(clippy::too_many_arguments)]
-    pub fn process(&self, params: &ProcessParams) -> crate::error::IspResult<IspFrame> {
+    pub fn process(&self, params: &ProcessParams) -> IspResult<IspFrame> {
         if !self.loaded {
-            return Err(crate::error::IspError::Pipeline("Pipeline not loaded — call build() first".into()));
+            return Err(crate::error::IspError::Pipeline(
+                "Pipeline not loaded — call build() first".into(),
+            ));
         }
         self.engine.process(params)
+    }
+
+    /// Process raw Bayer data directly.
+    pub fn process_bayer(
+        &mut self,
+        raw_data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> IspResult<IspFrame> {
+        let mut params = ProcessParams::new(width, height, raw_data);
+        self.process(&params)
     }
 
     /// The backend engine.
@@ -115,9 +106,15 @@ mod tests {
         crate::init();
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(32, 0);
-
-        let pipeline = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()));
-        assert!(pipeline.is_ok(), "Build failed: {:?}", pipeline.err());
+        let pipeline = FusedPipeline::build_with_engine(
+            blocks,
+            Box::new(crate::cpu::CpuEngine::new()),
+        );
+        assert!(
+            pipeline.is_ok(),
+            "Build failed: {:?}",
+            pipeline.err()
+        );
         let pipe = pipeline.unwrap();
         assert!(pipe.is_loaded());
         assert_eq!(pipe.backend_name(), "CPU");
@@ -137,7 +134,11 @@ mod tests {
         crate::init();
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(32, 0);
-        let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new())).unwrap();
+        let pipe = FusedPipeline::build_with_engine(
+            blocks,
+            Box::new(crate::cpu::CpuEngine::new()),
+        )
+        .unwrap();
         let _engine = pipe.into_engine();
     }
 
@@ -147,7 +148,11 @@ mod tests {
         let profile = PipelineProfile::MED;
         let blocks = profile.build_blocks(32, 0);
         let pipe = FusedPipeline::build(blocks, 32);
-        assert!(pipe.is_ok(), "MED profile build failed: {:?}", pipe.err());
+        assert!(
+            pipe.is_ok(),
+            "MED profile build failed: {:?}",
+            pipe.err()
+        );
         let p = pipe.unwrap();
         assert!(p.is_loaded());
         assert!(!p.engine().backend_name().is_empty());
@@ -158,86 +163,83 @@ mod tests {
         crate::init();
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(32, 0);
-        let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new())).unwrap();
+        let pipe = FusedPipeline::build_with_engine(
+            blocks,
+            Box::new(crate::cpu::CpuEngine::new()),
+        )
+        .unwrap();
         let raw = vec![0u8; 32 * 32 * 2];
         let result = pipe.process(&ProcessParams::new(32, 32, &raw));
-        assert!(result.is_ok(), "process failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "process failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn test_fused_pipeline_with_all_profiles() {
         crate::init();
-        
         let profiles = vec![
             (PipelineProfile::LITE, "LITE"),
             (PipelineProfile::MED, "MED"),
             (PipelineProfile::HEAVY, "HEAVY"),
             (PipelineProfile::PRO, "PRO"),
         ];
-        
         for (profile, name) in profiles {
             let blocks = profile.build_blocks(64, 0);
             let pipe = FusedPipeline::build_with_engine(
                 blocks,
-                Box::new(crate::cpu::CpuEngine::new())
+                Box::new(crate::cpu::CpuEngine::new()),
             );
-            assert!(pipe.is_ok(), "{} profile build failed: {:?}", name, pipe.err());
-            
+            assert!(
+                pipe.is_ok(),
+                "{} profile build failed: {:?}",
+                name,
+                pipe.err()
+            );
             let pipe = pipe.unwrap();
             assert!(pipe.is_loaded(), "{} profile not loaded", name);
-            
             // Test processing with a small frame
             let raw = vec![128u8; 64 * 64 * 2];
             let params = ProcessParams::new(64, 64, &raw);
             let result = pipe.process(&params);
-            assert!(result.is_ok(), "{} profile process failed: {:?}", name, result.err());
-            
+            assert!(
+                result.is_ok(),
+                "{} profile process failed: {:?}",
+                name,
+                result.err()
+            );
             let frame = result.unwrap();
             assert_eq!(frame.width, 64, "{} profile width mismatch", name);
             assert_eq!(frame.height, 64, "{} profile height mismatch", name);
-            
-            println!("{}: OK - {} bytes output", name, frame.data.len());
+            println!(
+                "{}: OK - {} bytes output",
+                name,
+                frame.data.len()
+            );
         }
     }
 
     #[test]
-    fn test_fused_pipeline_with_postprocess() {
-        use crate::postprocess::{PostProcessConfig, PostProcessPipeline};
-        
+    fn test_fused_pipeline_process_bayer() {
         crate::init();
-        
-        // Build fused pipeline
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(64, 0);
-        let pipe = FusedPipeline::build_with_engine(
+        let mut pipe = FusedPipeline::build_with_engine(
             blocks,
-            Box::new(crate::cpu::CpuEngine::new())
-        ).unwrap();
-        
-        // Create postprocess pipeline with all features enabled
-        let post_config = PostProcessConfig {
-            eis_enabled: true,
-            deshake_enabled: true,
-            gdc_enabled: true,
-            hdr_enabled: false, // needs multiple exposures
-            temporal_denoise_enabled: true,
-            ..Default::default()
-        };
-        let mut post_pipeline = PostProcessPipeline::new(post_config);
-        
-        // Process frame through fused pipeline
+            Box::new(crate::cpu::CpuEngine::new()),
+        )
+        .unwrap();
         let raw = vec![128u8; 64 * 64 * 2];
-        let params = ProcessParams::new(64, 64, &raw);
-        let frame = pipe.process(&params).unwrap();
-        
-        // Process through postprocess pipeline
-        let post_result = post_pipeline.process(&frame);
-        assert!(post_result.is_ok(), "Postprocess failed: {:?}", post_result.err());
-        
-        let output = post_result.unwrap();
-        assert_eq!(output.width, 64);
-        assert_eq!(output.height, 64);
-        
-        println!("Fused + Postprocess: OK - {} bytes output", output.data.len());
+        let result = pipe.process_bayer(&raw, 64, 64);
+        assert!(
+            result.is_ok(),
+            "process_bayer failed: {:?}",
+            result.err()
+        );
+        let frame = result.unwrap();
+        assert_eq!(frame.width, 64);
+        assert_eq!(frame.height, 64);
     }
 }
