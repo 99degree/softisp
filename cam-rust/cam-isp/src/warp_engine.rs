@@ -74,7 +74,7 @@ impl GpuWarpEngine {
     /// `out`: pre-allocated output buffer (must be H*W*3 elements).
     ///
     /// Returns slice of `out` with warped data.
-    pub fn run_into(
+    pub fn run_into<'a>(
         &self,
         frame: &[f32],
         k1: f32,
@@ -82,8 +82,8 @@ impl GpuWarpEngine {
         k3: f32,
         eis_x: f32,
         eis_y: f32,
-        out: &mut [f32],
-    ) -> crate::error::IspResult<&mut [f32]> {
+        out: &'a mut [f32],
+    ) -> crate::error::IspResult<&'a mut [f32]> {
         if !self.initialized {
             return Err(crate::error::IspError::Config("warp engine not init".into()));
         }
