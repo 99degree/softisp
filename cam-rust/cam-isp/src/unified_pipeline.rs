@@ -341,9 +341,13 @@ impl UnifiedPipeline {
 
                     // Ensure buffer is large enough
                     if float_data.len() >= n {
-                        // Run GPU warp directly on float data (zero-copy!)
+                        // Copy input data for GPU warp (can't use same buffer for input/output)
+                        let mut input_copy = vec![0.0f32; n];
+                        input_copy.copy_from_slice(&float_data[..n]);
+
+                        // Run GPU warp
                         match warp_engine.run_into(
-                            &float_data[..n],
+                            &input_copy,
                             warp_params.gdc_k1,
                             warp_params.gdc_k2,
                             warp_params.gdc_k3,
