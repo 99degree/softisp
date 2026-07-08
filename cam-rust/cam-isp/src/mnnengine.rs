@@ -990,8 +990,10 @@ impl IspEngine for MnnEngine {
             let t_infer_elapsed = t_infer_start.elapsed();
 
             if n <= 0 {
-                error!("MNN inference failed: {} (input={}x{}, path={})", n, w, h, path);
-                return Err(crate::error::IspError::Mnn(format!("MNN inference failed: {}", n)));
+                error!("MNN inference failed: n={} (input={}x{}, output_name='DisplayBlock/frame', path={})", n, w, h, path);
+                error!("  This usually means the MNN IspChainFusion pass computed wrong output dimensions.");
+                error!("  Check that RawInputBlock has concrete_h and concrete_w set (not -1).");
+                return Err(crate::error::IspError::Mnn(format!("MNN inference failed: n={} (input={}x{})", n, w, h)));
             }
 
             info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts) prep={:?} infer={:?}",

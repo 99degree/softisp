@@ -14,7 +14,7 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
-use log::{info, warn};
+use log::{info, warn, error};
 use cam_types::FrameFormat;
 
 use crate::onnx::proto::Proto;
@@ -323,6 +323,13 @@ impl GraphComposer {
         // but we only have & references, the caller must set input_source
         // properly before calling this function.
         // We validate the input_source is set to the previous block's frame_tensor.
+        
+        // Validate pipeline (warnings only — callers may not call wire_blocks)
+        let issues = Self::validate_pipeline(pipeline);
+        if !issues.is_empty() {
+            warn!("{}: Pipeline validation ({} issues): {}",
+                Self::TAG, issues.len(), issues.join("; "));
+        }
 
         // 3. Index all produced tensor names
         let mut produced_by = HashMap::new();
@@ -418,8 +425,7 @@ impl GraphComposer {
                 }
             }
 
-            // Graph output: any block can declare graph outputs (→ field 12).
-            // All blocks register outputs to prevent MNN DCE from removing them.
+            // Graph output: all non-head blocks register outputs to prevent MNN DCE.
             let is_tail = std::ptr::eq(*blk as *const _, pipeline_tail as *const _);
             let is_head = std::ptr::eq(*blk as *const _, pipeline_head as *const _);
             if let Some(name) = blk.graph_output_name() {
