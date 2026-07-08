@@ -64,6 +64,12 @@ impl RawInputBlock {
         self
     }
     
+    /// Set concrete height.
+    pub fn with_concrete_height(mut self, h: i64) -> Self {
+        self.concrete_h = Some(h);
+        self
+    }
+    
     /// Set element type: 1=FLOAT, 6=INT32 (default).
     pub fn with_elem_type(mut self, t: i32) -> Self {
         self.elem_type = t;
