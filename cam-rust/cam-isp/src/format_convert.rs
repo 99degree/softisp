@@ -15,6 +15,8 @@
 
 use crate::engine::OutputFormat;
 use crate::onnx::proto::Proto;
+#[allow(unused_imports)]
+use log::{info, warn};
 
 /// GPU-accelerated format converter.
 ///
@@ -34,7 +36,8 @@ pub struct FormatConvertEngine {
 impl FormatConvertEngine {
     /// Create format converter for given dimensions and output format.
     pub fn new(width: u32, height: u32, output_format: OutputFormat) -> crate::error::IspResult<Self> {
-        use crate::mnn::{MnnBackendType, MnnConvertOptions, convert_onnx_to_mnn, MnnInterpreterSafe};
+        use crate::mnnengine::{MnnBackendType, MnnInterpreterSafe};
+        use crate::mnn_converter::{MnnConvertOptions, convert_onnx_to_mnn};
 
         info!("FormatConvertEngine: {}×{} → {:?}", width, height, output_format);
 
