@@ -443,6 +443,11 @@ extern "C" int mnn_run_with_output(
 
     // Return element count for the output tensor
     auto out_shape = out_tensor->shape();
+    fprintf(stderr, "[mnn_run_with_output] output '%s' shape=[", output_name ? output_name : "<null>");
+    for (int i = 0; i < (int)out_shape.size(); i++) {
+        fprintf(stderr, "%s%d", i > 0 ? "," : "", out_shape[i]);
+    }
+    fprintf(stderr, "] dims=%d\n", (int)out_shape.size());
     int out_total = 1;
     for (auto d : out_shape) out_total *= d;
     return out_total < max_out ? out_total : max_out;
