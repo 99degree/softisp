@@ -261,8 +261,39 @@ impl PipelineProfile {
         output_format: OutputFormat::PackedRgb,
     };
 
+    /// Unified profile — full ISP pipeline with all blocks enabled.
+    /// Combines raw input, unpack, BLC, CCM, white balance, demosaic,
+    /// tone, FCS, LDCI, EE, and display output.
+    pub const UNIFIED: Self = Self {
+        label: "UNIFIED",
+        level: PipelineLevel::Heavy,
+        use_unpack: false,
+        use_fcs: true,
+        use_ldci: true,
+        use_ee: true,
+        use_bad_pixel: true,
+        demosaic_quality: DemosaicQuality::Standard,
+        use_local_contrast: false,
+        use_unsharp: false,
+        use_lsc: true,
+        use_warp: false,
+        use_hdr: false,
+        use_fused_unpack: true,
+        use_demosaic_ccm: true,
+        use_fused_tone: true,
+        rotate_mode: 0,
+        use_zone_stats: true,
+        use_channel_means: true,
+        use_tone_stats: true,
+        use_histogram: true,
+        stats_downscale_max: 0,
+        pipeline_downscale_target: 0,
+        eis_margin: 0.0,
+        output_format: OutputFormat::PackedRgb,
+    };
+
     /// All built-in profiles.
-    pub const ALL: [Self; 5] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::TEST];
+    pub const ALL: [Self; 6] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::TEST, Self::UNIFIED];
 
     /// Create a custom profile with override flags.
     pub const fn custom(
@@ -332,11 +363,15 @@ impl PipelineProfile {
         let packed_w = (target_width / 2) as i64;
 
         // RawInputBlock (always first)
+        let concrete_h = (target_width as f64 / 16.0 * 9.0).round() as i64; // 16:9
+        assert!(concrete_h > 0, "HEAVY profile: concrete_h must be > 0, got {} for width {}", concrete_h, target_width);
+        assert!(packed_w > 0, "HEAVY profile: packed_w must be > 0, got {} for width {}", packed_w, target_width);
         if self.use_unpack || self.use_fused_unpack {
             // Packed INT32 input (true zero-copy)
             blocks.push(Box::new(RawInputBlock::new()
                 .with_elem_type(6)  // INT32
-                .with_concrete_width(packed_w)));
+                .with_concrete_width(packed_w)
+                .with_concrete_height(concrete_h)));
 
             if self.use_fused_unpack {
                 // ── Fused: unpack + normalize + CFA + BLC (single block) ──
@@ -356,7 +391,8 @@ impl PipelineProfile {
         } else {
             // Legacy FLOAT input
             blocks.push(Box::new(RawInputBlock::new()
-                .with_concrete_width(full_w)));
+                .with_concrete_width(full_w)
+                .with_concrete_height(concrete_h)));
             blocks.push(Box::new(NormalizeBlock::new()));
             if self.use_bad_pixel {
                 blocks.push(Box::new(BlcBlock::new()));
@@ -464,11 +500,13 @@ impl PipelineProfile {
         }
 
         // ── Display output + orientation transform (fused) ──
-        let display_h = (target_width as f64 / 1.5).round() as i64; // 16:9 approx
+        // Note: do NOT set concrete dims here. The ISP pipeline may work at
+        // half resolution (e.g. 540×480 from 1080×960 packed input), and
+        // concrete ONNX output dims would conflict with the ISP Extra op's
+        // output_shape, causing MNN to produce [0,0,0,0] output tensors.
         blocks.push(Box::new(DisplayBlock::new(target_width)
             .with_rotate(self.rotate_mode)
-            .with_output_format(self.output_format)
-            .with_concrete_dims(display_h, target_width as i64)));
+            .with_output_format(self.output_format)));
 
         info!("  blocks: {} total", blocks.len());
         for (i, b) in blocks.iter().enumerate() {
