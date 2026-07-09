@@ -11,7 +11,7 @@ onnxruntime>=1.15.0
 onnxconverter-common>=1.14.0
 
 # Quantization
-onnxruntime-tools>=1.15.0
+onnxruntime-tools>=1.7.0
 
 # Image processing
 opencv-python>=4.8.0
