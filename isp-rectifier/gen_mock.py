@@ -123,6 +123,8 @@ def export_onnx(model, output_path, metadata_dim=11, opset=13):
     import onnx
     onnx_model = onnx.load(output_path)
     onnx.checker.check_model(onnx_model)
+    # Re-save to ensure self-contained (no external .onnx.data)
+    onnx.save(onnx_model, output_path)
     size_kb = os.path.getsize(output_path) / 1024
     print(f"✅ FP32 saved: {output_path} ({size_kb:.1f} KB)")
     return output_path
