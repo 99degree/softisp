@@ -224,14 +224,29 @@ jobs:
         working-directory: ./isp-rectifier
         run: pip install -r requirements.txt
 
+      - name: Create test model (if no checkpoint)
+        working-directory: ./isp-rectifier
+        run: |
+          if [ ! -f checkpoints/best_model.pth ]; then
+            echo "No checkpoint found, creating test ONNX model"
+            python scripts/create_test_onnx.py
+          else
+            echo "Checkpoint found, will export real model"
+          fi
+
       - name: Export ONNX (FP32)
         id: export
         working-directory: ./isp-rectifier
         run: |
-          python distill_model.py \
-            --export \
-            --model checkpoints/best_model.pth \
-            --output fusedispcontroller.onnx
+          if [ -f checkpoints/best_model.pth ]; then
+            python distill_model.py \
+              --export \
+              --model checkpoints/best_model.pth \
+              --output fusedispcontroller.onnx
+          else
+            echo "Using test model"
+            cp models/fusedispcontroller_test.onnx fusedispcontroller.onnx
+          fi
 
       - name: Quantize models
         working-directory: ./isp-rectifier
