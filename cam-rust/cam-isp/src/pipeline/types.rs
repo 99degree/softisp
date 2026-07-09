@@ -14,7 +14,7 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
-use log::{info, warn, error};
+use log::{info, warn};
 use cam_types::FrameFormat;
 
 use crate::onnx::proto::Proto;

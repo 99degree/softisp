@@ -4,11 +4,11 @@
 //! Provides a simpler API for PipelineManager: accepts blocks, builds
 //! the best available engine, and processes frames with named parameters.
 
-use crate::engine::{IspEngine, ProcessParams, select_engine};
+use crate::engine::{IspEngine, ProcessParams};
 use crate::error::IspResult;
 use crate::pipeline::{IspBlock, IspFrame};
 use crate::pipeline::build::{build_engine, build_engine_with};
-use crate::pipeline::traits::ProcessPipeline;
+use crate::pipeline::traits::{ProcessPipeline, BuildablePipeline};
 
 /// A fused ISP pipeline wrapping a backend engine.
 ///
@@ -17,47 +17,32 @@ use crate::pipeline::traits::ProcessPipeline;
 pub struct FusedPipeline {
     /// The selected backend engine.
     engine: Box<dyn IspEngine>,
-    /// Whether the model is loaded.
-    loaded: bool,
 }
 
 impl FusedPipeline {
-    /// Build a new fused pipeline, auto-selecting the best backend.
-    pub fn build(
-        blocks: Vec<Box<dyn IspBlock>>,
-        _target_width: u32,
-    ) -> crate::error::IspResult<Self> {
-        let engine = build_engine(blocks)?;
-        Ok(Self {
-            engine,
-            loaded: true,
-        })
-    }
-
     /// Build using a specific engine.
     pub fn build_with_engine(
         blocks: Vec<Box<dyn IspBlock>>,
         engine: Box<dyn IspEngine>,
-    ) -> crate::error::IspResult<Self> {
+    ) -> IspResult<Self> {
         let engine = build_engine_with(blocks, engine)?;
-        Ok(Self {
-            engine,
-            loaded: true,
-        })
+        Ok(Self { engine })
     }
 
     /// Create directly from an existing engine.
     pub fn from_engine(engine: Box<dyn IspEngine>) -> Self {
-        let loaded = engine.is_loaded();
-        Self { engine, loaded }
+        Self { engine }
     }
 
-    /// Process a raw Bayer frame through the pipeline.
-    ///
-    /// Named parameters for convenience — delegates to the backend engine.
-    #[allow(clippy::too_many_arguments)]
-    pub fn process(&self, params: &ProcessParams) -> IspResult<IspFrame> {
-        if !self.loaded {
+    /// Take ownership of the engine.
+    pub fn into_engine(self) -> Box<dyn IspEngine> {
+        self.engine
+    }
+}
+
+impl ProcessPipeline for FusedPipeline {
+    fn process(&self, params: &ProcessParams) -> IspResult<IspFrame> {
+        if !self.engine.is_loaded() {
             return Err(crate::error::IspError::Pipeline(
                 "Pipeline not loaded — call build() first".into(),
             ));
@@ -65,35 +50,21 @@ impl FusedPipeline {
         self.engine.process(params)
     }
 
-    /// Process raw Bayer data directly.
-    pub fn process_bayer(
-        &mut self,
-        raw_data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> IspResult<IspFrame> {
-        let mut params = ProcessParams::new(width, height, raw_data);
-        self.process(&params)
-    }
-
-    /// The backend engine.
-    pub fn engine(&self) -> &dyn IspEngine {
+    fn engine(&self) -> &dyn IspEngine {
         self.engine.as_ref()
     }
 
-    /// Backend name.
-    pub fn backend_name(&self) -> &str {
-        self.engine.backend_name()
+    fn is_loaded(&self) -> bool {
+        self.engine.is_loaded()
     }
+}
 
-    /// Whether the pipeline model is loaded.
-    pub fn is_loaded(&self) -> bool {
-        self.loaded
-    }
+impl BuildablePipeline for FusedPipeline {
+    type Output = Self;
 
-    /// Take ownership of the engine.
-    pub fn into_engine(self) -> Box<dyn IspEngine> {
-        self.engine
+    fn build(blocks: Vec<Box<dyn IspBlock>>) -> IspResult<Self> {
+        let engine = build_engine(blocks)?;
+        Ok(Self { engine })
     }
 }
 
@@ -126,7 +97,6 @@ mod tests {
         crate::init();
         let engine = Box::new(crate::cpu::CpuEngine::new());
         let pipe = FusedPipeline::from_engine(engine);
-        // from_engine wraps an existing engine, so is_loaded depends on engine state
         assert_eq!(pipe.backend_name(), "CPU");
     }
 
@@ -148,7 +118,7 @@ mod tests {
         crate::init();
         let profile = PipelineProfile::MED;
         let blocks = profile.build_blocks(32, 0);
-        let pipe = FusedPipeline::build(blocks, 32);
+        let pipe = FusedPipeline::build(blocks);
         assert!(
             pipe.is_ok(),
             "MED profile build failed: {:?}",
@@ -170,7 +140,8 @@ mod tests {
         )
         .unwrap();
         let raw = vec![0u8; 32 * 32 * 2];
-        let result = pipe.process(&ProcessParams::new(32, 32, &raw));
+        let params = ProcessParams::new(32, 32, &raw);
+        let result = pipe.process(&params);
         assert!(
             result.is_ok(),
             "process failed: {:?}",
@@ -201,7 +172,6 @@ mod tests {
             );
             let pipe = pipe.unwrap();
             assert!(pipe.is_loaded(), "{} profile not loaded", name);
-            // Test processing with a small frame
             let raw = vec![128u8; 64 * 64 * 2];
             let params = ProcessParams::new(64, 64, &raw);
             let result = pipe.process(&params);
@@ -242,24 +212,5 @@ mod tests {
         let frame = result.unwrap();
         assert_eq!(frame.width, 64);
         assert_eq!(frame.height, 64);
-    }
-}
-
-impl ProcessPipeline for FusedPipeline {
-    fn process(&self, params: &ProcessParams) -> IspResult<IspFrame> {
-        if !self.loaded {
-            return Err(crate::error::IspError::Pipeline(
-                "Pipeline not loaded — call build() first".into(),
-            ));
-        }
-        self.engine.process(params)
-    }
-
-    fn engine(&self) -> &dyn IspEngine {
-        self.engine.as_ref()
-    }
-
-    fn is_loaded(&self) -> bool {
-        self.loaded
     }
 }
