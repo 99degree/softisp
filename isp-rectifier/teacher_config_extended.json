@@ -1,0 +1,32 @@
+{
+  "awb": {
+    "repo_path": "/path/to/time-aware-awb",
+    "type": "time_aware_awb",
+    "description": "Time-Aware AWB - predicts WB gains [R, G, B] from histogram + capture metadata"
+  },
+  "ccm": {
+    "repo_path": "/path/to/CCMNet",
+    "type": "ccmnet",
+    "description": "CCMNet - predicts 3x3 Color Correction Matrix from histogram + CCT"
+  },
+  "tone": {
+    "repo_path": "/path/to/modularneuralisp",
+    "type": "modular_isp_tone",
+    "description": "Modular Neural ISP Tone - predicts 7-parameter tone curve"
+  },
+  "zoom": {
+    "repo_path": "/path/to/modularneuralisp",
+    "type": "modular_isp_zoom",
+    "description": "Modular Neural ISP Zoom - predicts digital zoom factor"
+  },
+  "hdr": {
+    "repo_path": "/path/to/HDRNet",
+    "type": "hdrnet",
+    "description": "HDRNet - predicts tone curve params for HDR/exposure correction (adapted for metadata input)"
+  },
+  "denoise": {
+    "repo_path": "/path/to/DnCNN",
+    "type": "dncnn",
+    "description": "DnCNN - predicts noise level / denoising strength from histogram"
+  }
+}

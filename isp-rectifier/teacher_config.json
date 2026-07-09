@@ -1,0 +1,26 @@
+{
+  "awb": {
+    "model_file": "models/awb/model.py",
+    "weights_file": "models/awb/awb_pretrained.pth",
+    "class_name": "AWBNet",
+    "description": "Time-Aware Auto White Balance - predicts WB gains [R, G, B]"
+  },
+  "ccm": {
+    "model_file": "models/ccm/model.py",
+    "weights_file": "models/ccm/ccm_pretrained.pth",
+    "class_name": "CCMNet",
+    "description": "Color Correction Matrix Network - predicts 3x3 CCM matrix"
+  },
+  "tone": {
+    "model_file": "models/tone/model.py",
+    "weights_file": "models/tone/tone_pretrained.pth",
+    "class_name": "ToneNet",
+    "description": "Neural Tone Mapping - predicts tone curve parameters (7 values)"
+  },
+  "zoom": {
+    "model_file": "models/zoom/model.py",
+    "weights_file": "models/zoom/zoom_pretrained.pth",
+    "class_name": "ZoomNet",
+    "description": "Neural Zoom/Crop - predicts zoom factor (1 value)"
+  }
+}
