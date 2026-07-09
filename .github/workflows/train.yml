@@ -252,12 +252,7 @@ jobs:
         run: |
           # Quantize if not already done by export step
           if [ ! -f fusedispcontroller_int8.onnx ]; then
-            python -c "
-import onnxruntime.quantization as q
-from onnxruntime.quantization import quantize_dynamic, QuantType
-quantize_dynamic('fusedispcontroller.onnx', 'fusedispcontroller_int8.onnx', weight_type=QuantType.QInt8)
-print('INT8 quantized')
-"
+            python -c 'from onnxruntime.quantization import quantize_dynamic, QuantType; quantize_dynamic("fusedispcontroller.onnx", "fusedispcontroller_int8.onnx", weight_type=QuantType.QInt8); print("INT8 quantized")'
           fi
 
       - name: Validate INT8 quantization
