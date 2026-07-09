@@ -83,25 +83,29 @@ jobs:
       - name: Generate/Collect teacher dataset
         id: dataset
         working-directory: ./isp-rectifier
+        env:
+          TEACHER_CCMNET: ${{ github.event.inputs.teacher_ccmnet || '' }}
+          TEACHER_AWB: ${{ github.event.inputs.teacher_awb || '' }}
+          TEACHER_ISP: ${{ github.event.inputs.teacher_isp || '' }}
+          SYNTHETIC_SAMPLES: ${{ github.event.inputs.synthetic_samples || '5000' }}
         run: |
-          if [ -f "${{ github.event.inputs.teacher_ccmnet }}" ] && [ -f "${{ github.event.inputs.teacher_awb }}" ] && [ -f "${{ github.event.inputs.teacher_isp }}" ]; then
+          if [ -n "$TEACHER_CCMNET" ] && [ -f "$TEACHER_CCMNET" ] && \
+             [ -n "$TEACHER_AWB" ] && [ -f "$TEACHER_AWB" ] && \
+             [ -n "$TEACHER_ISP" ] && [ -f "$TEACHER_ISP" ]; then
             echo "Using real teacher models"
             python collect_teacher_dataset_production.py \
               --input-dir ./data/dng_frames \
               --metadata-dir ./data/metadata \
               --output-dir teacher_dataset \
-              --ccmnet-weights ${{ github.event.inputs.teacher_ccmnet }} \
-              --awb-weights ${{ github.event.inputs.teacher_awb }} \
-              --isp-tuning-weights ${{ github.event.inputs.teacher_isp }} \
+              --ccmnet-weights "$TEACHER_CCMNET" \
+              --awb-weights "$TEACHER_AWB" \
+              --isp-tuning-weights "$TEACHER_ISP" \
               --batch-size 64
           else
-            echo "Generating synthetic dataset (${{ github.event.inputs.synthetic_samples }} samples)"
+            echo "Generating synthetic dataset ($SYNTHETIC_SAMPLES samples)"
             python collect_teacher_dataset_production.py \
-              --synthetic ${{ github.event.inputs.synthetic_samples }} \
-              --output-dir teacher_dataset \
-              --ccmnet-weights ${{ github.event.inputs.teacher_ccmnet }} \
-              --awb-weights ${{ github.event.inputs.teacher_awb }} \
-              --isp-tuning-weights ${{ github.event.inputs.teacher_isp }}
+              --synthetic $SYNTHETIC_SAMPLES \
+              --output-dir teacher_dataset
           fi
           
           # Output dataset info
@@ -164,16 +168,19 @@ jobs:
         id: train
         working-directory: ./isp-rectifier
         env:
-          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          EPOCHS: ${{ github.event.inputs.epochs || '50' }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size || '32' }}
+          LR: ${{ github.event.inputs.learning_rate || '0.001' }}
+          USE_GPU: ${{ github.event.inputs.use_gpu || 'false' }}
         run: |
           python distill_model.py \
             --train \
             --dataset teacher_dataset/teacher_dataset.npz \
-            --epochs ${{ github.event.inputs.epochs }} \
-            --batch-size ${{ github.event.inputs.batch_size }} \
-            --lr ${{ github.event.inputs.learning_rate }} \
+            --epochs $EPOCHS \
+            --batch-size $BATCH_SIZE \
+            --lr $LR \
             --checkpoint-dir checkpoints \
-            --device ${{ github.event.inputs.use_gpu == 'true' && 'cuda' || 'cpu' }}
+            --device $([ "$USE_GPU" = "true" ] && echo "cuda" || echo "cpu")
 
           # Extract best model info
           python -c "
