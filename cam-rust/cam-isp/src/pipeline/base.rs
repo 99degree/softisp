@@ -19,7 +19,7 @@ pub struct EnginePipeline {
 
 impl EnginePipeline {
     /// Create a new engine pipeline.
-    pub fn new(mut engine: Box<dyn IspEngine>, loaded: bool) -> Self {
+    pub fn new(engine: Box<dyn IspEngine>, loaded: bool) -> Self {
         Self { engine, loaded }
     }
 
@@ -32,7 +32,7 @@ impl EnginePipeline {
     /// Build from blocks using auto-selected engine.
     pub fn build(
         blocks: Vec<Box<dyn super::IspBlock>>,
-        target_width: u32,
+        _target_width: u32,
     ) -> IspResult<Self> {
         if blocks.is_empty() {
             return Err(crate::error::IspError::Pipeline(

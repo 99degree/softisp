@@ -39,7 +39,6 @@ use log::warn;
 use crate::error::IspResult;
 use crate::pipeline::{IspFrame, IspBlock, GraphComposer};
 use crate::engine::{IspEngine, ProcessParams, OutputFormat, select_engine};
-use crate::pipeline::build::{build_engine, build_engine_with};
 use crate::pipeline::traits::ProcessPipeline;
 use crate::postprocess::{PostProcessConfig, PostProcessPipeline};
 use crate::profile::PipelineProfile;
@@ -102,11 +101,13 @@ impl UnifiedConfig {
 
     /// Create a config for 4K with PRO profile and full post-processing.
     pub fn pro() -> Self {
-        let mut post = PostProcessConfig::default();
-        post.eis_enabled = true;
-        post.deshake_enabled = true;
-        post.gdc_enabled = true;
-        post.temporal_denoise_enabled = true;
+        let post = PostProcessConfig {
+            eis_enabled: true,
+            deshake_enabled: true,
+            gdc_enabled: true,
+            temporal_denoise_enabled: true,
+            ..Default::default()
+        };
         Self { profile: PipelineProfile::PRO, target_width: 3840, post_config: post, ..Default::default() }
     }
 
@@ -276,7 +277,7 @@ impl UnifiedPipeline {
 
         // GPU format converter for float→target format
         #[cfg(feature = "mnn")]
-        let format_converter = if config.output_format != crate::engine::OutputFormat::FloatRgb {
+        let format_converter = if config.output_format != OutputFormat::FloatRgb {
             match crate::format_convert::FormatConvertEngine::new(w, h, config.output_format) {
                 Ok(e) => { info!("UnifiedPipeline: GPU format converter ready for {:?}", config.output_format); Some(e) }
                 Err(e) => { warn!("GPU format converter init failed: {:?}", e); None }
@@ -328,7 +329,7 @@ impl UnifiedPipeline {
         params.target_width = self.width;
         params.target_height = self.height;
         params.sensor_max = self.config.sensor_max;
-        params.output_format = self.config.output_format.clone();
+        params.output_format = self.config.output_format;
 
         #[allow(unused_mut)]
         let mut isp_output = self.engine.process(&params)?;
