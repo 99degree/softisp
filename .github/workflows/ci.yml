@@ -1,0 +1,268 @@
+name: ISP Rectifier CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'isp-rectifier/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'isp-rectifier/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      run_training:
+        description: 'Run full training pipeline'
+        required: false
+        default: 'false'
+
+env:
+  PYTHON_VERSION: '3.10'
+  RUST_VERSION: 'stable'
+
+jobs:
+  lint-and-test:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./isp-rectifier
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: isp-rectifier/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pre-commit ruff mypy pytest pytest-cov
+
+      - name: Run pre-commit hooks
+        run: pre-commit run --all-files
+
+      - name: Run type checking
+        run: mypy src/ --ignore-missing-imports
+
+      - name: Run Python tests
+        run: pytest tests/ -v --cov=src --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./isp-rectifier/coverage.xml
+          flags: python
+
+  train-model:
+    name: Train Student Model
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.event_name == 'workflow_dispatch' || github.event.inputs.run_training == 'true'
+    defaults:
+      run:
+        working-directory: ./isp-rectifier
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check for teacher weights
+        run: |
+          if [ ! -f models/ccmnet.pth ] || [ ! -f models/time_aware_awb.pth ] || [ ! -f models/neural_isp_tuning.pth ]; then
+            echo "::warning::Teacher model weights not found in models/ directory"
+            echo "Generating synthetic dataset for testing..."
+          fi
+
+      - name: Collect teacher dataset
+        run: |
+          python collect_teacher_dataset_production.py \
+            --synthetic 5000 \
+            --output-dir teacher_dataset \
+            --ccmnet-weights models/ccmnet.pth \
+            --awb-weights models/time_aware_awb.pth \
+            --isp-tuning-weights models/neural_isp_tuning.pth
+
+      - name: Train student model
+        run: |
+          python distill_model.py \
+            --train \
+            --dataset teacher_dataset/teacher_dataset.npz \
+            --epochs 50 \
+            --batch-size 32 \
+            --lr 1e-3 \
+            --checkpoint-dir checkpoints
+
+      - name: Export ONNX
+        run: |
+          python distill_model.py \
+            --export \
+            --model checkpoints/best_model.pth \
+            --output fusedispcontroller.onnx \
+            --quantize
+
+      - name: Validate quantization
+        run: |
+          python batch_validate_quantization.py \
+            --fp32_model fusedispcontroller.onnx \
+            --quant_model fusedispcontroller_int8.onnx \
+            --samples 1000 \
+            --output-dir validation_int8
+
+          python batch_validate_quantization.py \
+            --fp32_model fusedispcontroller.onnx \
+            --quant_model fusedispcontroller_fp16.onnx \
+            --samples 1000 \
+            --output-dir validation_fp16
+
+      - name: Check thresholds
+        run: python check_thresholds.py --strict
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-models
+          path: |
+            isp-rectifier/fusedispcontroller.onnx
+            isp-rectifier/fusedispcontroller_int8.onnx
+            isp-rectifier/fusedispcontroller_fp16.onnx
+            isp-rectifier/checkpoints/best_model.pth
+            isp-rectifier/checkpoints/history.json
+
+  rust-build:
+    name: Rust Build & Test
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    defaults:
+      run:
+        working-directory: ./cam-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Run tests
+        run: cargo test --release
+
+  integration-test:
+    name: Integration Test (ONNX + Rust)
+    runs-on: ubuntu-latest
+    needs: [rust-build, train-model]
+    defaults:
+      run:
+        working-directory: ./isp-rectifier
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models
+          path: ./
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run integration test
+        run: |
+          cd ../cam-rust
+          cargo test --release --features onnx-runtime test_onnx_inference
+
+  docker-build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [integration-test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/isp-rectifier
+          tags: |
+            type=ref,event=branch
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./isp-rectifier
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.event_name == 'release'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models
+          path: ./release_assets/
+
+      - name: Create model release archive
+        run: |
+          cd release_assets
+          tar -czf fusedispcontroller-${{ github.event.release.tag_name }}.tar.gz \
+            fusedispcontroller.onnx \
+            fusedispcontroller_int8.onnx \
+            fusedispcontroller_fp16.onnx
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release_assets/fusedispcontroller-${{ github.event.release.tag_name }}.tar.gz
