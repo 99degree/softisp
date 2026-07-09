@@ -372,7 +372,7 @@ jobs:
         run: pip install onnxruntime onnx numpy tqdm
 
       - name: Benchmark ONNX Runtime
-        working-directory: ./models
+        working-directory: ./models/isp-rectifier
         run: |
           python -c "
           import onnxruntime as ort
@@ -382,7 +382,7 @@ jobs:
           for model_name in ['fusedispcontroller.onnx', 'fusedispcontroller_int8.onnx', 'fusedispcontroller_fp16.onnx']:
               sess = ort.InferenceSession(model_name)
               hist = np.random.randn(1, 256).astype(np.float32)
-              meta = np.random.randn(1, 267).astype(np.float32)
+              meta = np.random.randn(1, 11).astype(np.float32)
               
               # Warmup
               for _ in range(10):
