@@ -3,11 +3,9 @@
 //! Wraps `isp_rectifier::OptimizedInference` with automatic fallback
 //! to the rule-based `IspController` when the model is unavailable or fails.
 
-use log::{info, warn};
 
 use crate::isp_params::*;
 use crate::isp_controller::IspController;
-use crate::error::IspResult;
 use crate::pipeline::IspFrame;
 
 /// Neural controller with fallback to rule-based controller.
@@ -136,6 +134,7 @@ impl NeuralController {
         })
     }
     
+    #[cfg(feature = "rectifier")]
     fn compute_histogram(&self, frame: &IspFrame) -> IspResult<Vec<u32>> {
         let mut histogram = vec![0u32; 256];
         

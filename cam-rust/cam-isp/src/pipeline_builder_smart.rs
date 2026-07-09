@@ -6,7 +6,7 @@
 use crate::engine::{IspEngine, select_engine};
 use crate::error::IspResult;
 use crate::pipeline::{IspBlock, IspFrame};
-use crate::pipeline::build::{build_engine, build_engine_with};
+use crate::pipeline::build::build_engine;
 use crate::pipeline::traits::ProcessPipeline;
 use crate::profile::PipelineProfile;
 use crate::frame_rate::{FrameRateController, FrameRateStats};
@@ -193,7 +193,9 @@ impl SmartPipelineConfig {
 }
 
 /// Smart pipeline builder that optimizes for HW limits.
+#[allow(dead_code)]
 pub struct SmartPipelineBuilder {
+    #[allow(dead_code)]
     config: SmartPipelineConfig,
     /// Blocks to include.
     blocks: Vec<Box<dyn IspBlock>>,
@@ -203,7 +205,7 @@ pub struct SmartPipelineBuilder {
     estimated_complexity: f64,
     /// Estimated memory usage in bytes.
     estimated_memory: usize,
-    /// Estimated ONNX size in bytes.
+    #[allow(dead_code)]
     estimated_onnx_size: usize,
 }
 
@@ -350,18 +352,21 @@ impl SmartPipelineBuilder {
 }
 
 /// Smart pipeline with frame rate control.
+#[allow(dead_code)]
 pub struct SmartPipeline {
     /// The underlying engine.
     engine: Box<dyn IspEngine>,
     /// Frame rate controller.
     fps_controller: FrameRateController,
     /// Configuration used.
+    #[allow(dead_code)]
     config: SmartPipelineConfig,
     /// Estimated complexity.
     estimated_complexity: f64,
     /// Estimated memory usage.
     estimated_memory: usize,
     /// Estimated ONNX size.
+    #[allow(dead_code)]
     estimated_onnx_size: usize,
 }
 
