@@ -229,7 +229,7 @@ jobs:
         run: |
           if [ ! -f checkpoints/best_model.pth ]; then
             echo "No checkpoint found, creating mock ONNX model"
-            python gen_mock_onnx.py -o fusedispcontroller.onnx --test
+            python gen_mock.py -o fusedispcontroller.onnx --all --benchmark
           else
             echo "Checkpoint found, will export real model"
           fi
