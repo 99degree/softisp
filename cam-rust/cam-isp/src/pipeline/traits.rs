@@ -19,7 +19,7 @@ pub trait ProcessPipeline {
         width: u32,
         height: u32,
     ) -> IspResult<IspFrame> {
-        let mut params = ProcessParams::new(width, height, raw_data);
+        let params = ProcessParams::new(width, height, raw_data);
         self.process(&params)
     }
 
@@ -46,7 +46,7 @@ pub trait BuildablePipeline {
     /// Build from blocks with target width.
     fn build_with_size(
         blocks: Vec<Box<dyn super::IspBlock>>,
-        target_width: u32,
+        _target_width: u32,
     ) -> IspResult<Self::Output> {
         Self::build(blocks)
     }
