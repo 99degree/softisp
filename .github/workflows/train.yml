@@ -240,7 +240,7 @@ jobs:
         run: |
           if [ -f checkpoints/best_model.pth ]; then
             python distill_model.py \
-              --export \
+              --export --quantize \
               --model checkpoints/best_model.pth \
               --output fusedispcontroller.onnx
           else
@@ -250,18 +250,23 @@ jobs:
       - name: Quantize models
         working-directory: ./isp-rectifier
         run: |
-          python distill_model.py \
-            --quantize \
-            --model fusedispcontroller.onnx \
-            --output fusedispcontroller_int8.onnx
+          # Quantize if not already done by export step
+          if [ ! -f fusedispcontroller_int8.onnx ]; then
+            python -c "
+import onnxruntime.quantization as q
+from onnxruntime.quantization import quantize_dynamic, QuantType
+quantize_dynamic('fusedispcontroller.onnx', 'fusedispcontroller_int8.onnx', weight_type=QuantType.QInt8)
+print('INT8 quantized')
+"
+          fi
 
       - name: Validate INT8 quantization
         id: validate_int8
         working-directory: ./isp-rectifier
         run: |
           python batch_validate_quantization.py \
-            --fp32_model fusedispcontroller.onnx \
-            --quant_model fusedispcontroller_int8.onnx \
+            --fp32-model fusedispcontroller.onnx \
+            --quant-model fusedispcontroller_int8.onnx \
             --samples 1000 \
             --output-dir validation_int8
 
@@ -269,8 +274,8 @@ jobs:
         working-directory: ./isp-rectifier
         run: |
           python batch_validate_quantization.py \
-            --fp32_model fusedispcontroller.onnx \
-            --quant_model fusedispcontroller_fp16.onnx \
+            --fp32-model fusedispcontroller.onnx \
+            --quant-model fusedispcontroller_fp16.onnx \
             --samples 1000 \
             --output-dir validation_fp16
 
