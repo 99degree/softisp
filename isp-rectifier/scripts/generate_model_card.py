@@ -69,7 +69,7 @@ def generate_model_card(
 - **Scheduler**: Cosine Annealing
 - **Epochs**: {epoch}
 - **Best Val Loss**: {val_loss:.6f}
-- **Training Samples**: {dataset_info.get('num_samples', 'N/A'):,}
+- **Training Samples**: {dataset_info.get('num_samples', 'N/A')}
 
 ## Input Features (267 dimensions)
 | Index | Feature | Description | Normalization |
@@ -134,10 +134,10 @@ import onnxruntime as ort
 import numpy as np
 
 session = ort.InferenceSession("fusedispcontroller_int8.onnx")
-outputs = session.run(None, {
+outputs = session.run(None, {{
     "histogram": histogram.astype(np.float32).reshape(1, -1),
     "metadata": metadata.astype(np.float32).reshape(1, -1),
-})
+}})
 ```
 
 ## Register Mapping
