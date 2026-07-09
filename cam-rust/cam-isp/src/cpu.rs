@@ -336,6 +336,7 @@ impl IspEngine for CpuEngine {
         info!("CpuEngine: frame processed ({} bytes) total={:?}", out_bytes.len(), t_total);
 
         Ok(IspFrame {
+            params: crate::isp_params::IspParams::default(),
             width: out_width,
             height,
             format: cam_types::FrameFormat::Rgba8888,
