@@ -859,6 +859,17 @@ impl IspEngine for MnnEngine {
         let bayer = p.bayer_gains.as_ref();
         let awb = p.awb_gains.as_ref();
         let bayer_pattern = p.bayer_pattern;
+        
+        // If isp_params is available, override individual fields
+        // This allows per-frame controller params to flow through
+        let (override_ccm, override_tone, override_bayer) = if let Some(ref params) = p.isp_params {
+            (Some(&params.ccm.matrix), Some(&params.tone), Some(&[params.wb.r, params.wb.g, params.wb.g, params.wb.b]))
+        } else {
+            (None, None, None)
+        };
+        let ccm = override_ccm.unwrap_or(ccm);
+        let tone = override_tone.unwrap_or(tone);
+        let bayer = override_bayer.unwrap_or(bayer);
 
         if !self.initialized { return Err(crate::error::IspError::Config("not init".into())); }
 
