@@ -39,7 +39,8 @@ use log::warn;
 use crate::error::IspResult;
 use crate::pipeline::{IspFrame, IspBlock, GraphComposer};
 use crate::engine::{IspEngine, ProcessParams, OutputFormat, select_engine};
-use crate::pipeline_helper::{build_engine, build_engine_with};
+use crate::pipeline::build::{build_engine, build_engine_with};
+use crate::pipeline::traits::ProcessPipeline;
 use crate::postprocess::{PostProcessConfig, PostProcessPipeline};
 use crate::profile::PipelineProfile;
 use crate::blocks::gpu_warp::GpuWarpBlock;
@@ -537,9 +538,10 @@ mod tests {
     #[test]
     fn test_unified_pipeline_process() {
         crate::init();
-        let mut pipeline = UnifiedPipeline::new(UnifiedConfig::hd()).unwrap();
+        let pipeline = UnifiedPipeline::new(UnifiedConfig::hd()).unwrap();
         let raw = vec![128u8; 1280 * 720 * 2];
-        let result = pipeline.process(&raw, 1280, 720);
+        let params = ProcessParams::new(1280, 720, &raw);
+        let result = pipeline.process(&params);
         assert!(result.is_ok(), "Process failed: {:?}", result.err());
         let frame = result.unwrap();
         assert!(frame.width > 0 && !frame.data.is_empty());
@@ -580,5 +582,19 @@ mod tests {
         let pipeline = UnifiedPipeline::new(config).unwrap();
         let info = pipeline.info();
         assert!(info.output_format.contains("FloatRgb"));
+    }
+}
+
+impl ProcessPipeline for UnifiedPipeline {
+    fn process(&self, params: &ProcessParams) -> IspResult<IspFrame> {
+        self.engine.process(params)
+    }
+
+    fn engine(&self) -> &dyn IspEngine {
+        self.engine.as_ref()
+    }
+
+    fn is_loaded(&self) -> bool {
+        self.initialized
     }
 }

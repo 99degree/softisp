@@ -10,7 +10,6 @@
 pub mod engine;
 pub mod error;
 pub mod pipeline;
-pub mod pipeline_helper;
 pub mod pipeline_snapshot;
 pub mod blocks;
 pub mod cpu;
