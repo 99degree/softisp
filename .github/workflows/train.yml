@@ -228,8 +228,8 @@ jobs:
         working-directory: ./isp-rectifier
         run: |
           if [ ! -f checkpoints/best_model.pth ]; then
-            echo "No checkpoint found, creating test ONNX model"
-            python scripts/create_test_onnx.py
+            echo "No checkpoint found, creating mock ONNX model"
+            python gen_mock_onnx.py -o fusedispcontroller.onnx --test
           else
             echo "Checkpoint found, will export real model"
           fi
@@ -244,8 +244,7 @@ jobs:
               --model checkpoints/best_model.pth \
               --output fusedispcontroller.onnx
           else
-            echo "Using test model"
-            cp models/fusedispcontroller_test.onnx fusedispcontroller.onnx
+            echo "Using mock model from previous step"
           fi
 
       - name: Quantize models
