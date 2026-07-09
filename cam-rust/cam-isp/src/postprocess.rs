@@ -256,6 +256,7 @@ impl PostProcessPipeline {
         {
             // No post-processing — return float data directly
             let frame = IspFrame {
+                params: crate::isp_params::IspParams::default(),
                 data: vec![],
                 width,
                 height,
@@ -335,6 +336,7 @@ impl PostProcessPipeline {
         }
 
         let frame = IspFrame {
+                params: crate::isp_params::IspParams::default(),
             data: u8_rgba,
             width: w,
             height: h,

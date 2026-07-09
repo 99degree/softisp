@@ -295,6 +295,7 @@ mod tests {
     fn test_controller_analyze_empty_frame() {
         let mut controller = IspController::new();
         let frame = IspFrame {
+            params: IspParams::default(),
             width: 100,
             height: 100,
             data: vec![],
