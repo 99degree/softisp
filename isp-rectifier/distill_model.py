@@ -353,7 +353,12 @@ def export_to_onnx(
     import onnx
     onnx_model = onnx.load(output_path)
     onnx.checker.check_model(onnx_model)
-    print("✅ ONNX model verified")
+    
+    # Re-save to ensure self-contained (no external data)
+    # If external .onnx.data was created, this embeds it back
+    onnx.save(onnx_model, output_path)
+    size = Path(output_path).stat().st_size / 1024
+    print(f"✅ Model saved self-contained ({size:.1f} KB)")
 
 
 def quantize_onnx(fp32_path: str, int8_path: str, fp16_path: str):
