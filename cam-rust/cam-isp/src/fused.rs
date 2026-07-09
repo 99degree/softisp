@@ -7,7 +7,8 @@
 use crate::engine::{IspEngine, ProcessParams, select_engine};
 use crate::error::IspResult;
 use crate::pipeline::{IspBlock, IspFrame};
-use crate::pipeline_helper::{build_engine, build_engine_with};
+use crate::pipeline::build::{build_engine, build_engine_with};
+use crate::pipeline::traits::ProcessPipeline;
 
 /// A fused ISP pipeline wrapping a backend engine.
 ///
@@ -241,5 +242,24 @@ mod tests {
         let frame = result.unwrap();
         assert_eq!(frame.width, 64);
         assert_eq!(frame.height, 64);
+    }
+}
+
+impl ProcessPipeline for FusedPipeline {
+    fn process(&self, params: &ProcessParams) -> IspResult<IspFrame> {
+        if !self.loaded {
+            return Err(crate::error::IspError::Pipeline(
+                "Pipeline not loaded — call build() first".into(),
+            ));
+        }
+        self.engine.process(params)
+    }
+
+    fn engine(&self) -> &dyn IspEngine {
+        self.engine.as_ref()
+    }
+
+    fn is_loaded(&self) -> bool {
+        self.loaded
     }
 }

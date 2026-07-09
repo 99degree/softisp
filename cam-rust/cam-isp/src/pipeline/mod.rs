@@ -6,5 +6,9 @@
 //! - `GraphComposer`: builds ONNX models from block chains
 
 pub mod base;
+pub mod build;
 pub mod types;
+pub mod traits;
 pub use types::*;
+pub use traits::*;
+pub use build::*;

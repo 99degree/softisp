@@ -1,11 +1,11 @@
-//! Pipeline helper module — shared utilities for ISP pipelines.
+//! Pipeline build module — shared engine building utilities.
 //!
-//! Provides common helper functions used by both `FusedPipeline`
-//! and `UnifiedPipeline` to reduce code duplication.
+//! Provides common helper functions for building ISP engines from blocks.
+//! Used by both `FusedPipeline` and `UnifiedPipeline`.
 
-use crate::engine::{IspEngine, ProcessParams, select_engine};
+use crate::engine::{IspEngine, select_engine};
 use crate::error::IspResult;
-use crate::pipeline::IspBlock;
+use super::IspBlock;
 
 /// Build an ISP engine from blocks using auto-selected backend.
 ///
@@ -46,3 +46,6 @@ pub fn build_engine_with(
     engine.build(head, aux_blocks, None, 21)?;
     Ok(engine)
 }
+
+/// Common result type for pipeline operations.
+pub type PipelineResult<T> = IspResult<T>;
