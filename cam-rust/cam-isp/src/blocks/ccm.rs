@@ -16,6 +16,10 @@ pub struct CcmBlock {
     instance: String,
     in_ch: i64,
     out_ch: i64,
+    /// 3x3 color correction matrix (row-major: [R,R,R, G,G,G, B,B,B])
+    matrix: [f32; 9],
+    /// Per-channel bias
+    bias: [f32; 3],
 }
 impl Default for CcmBlock {
     fn default() -> Self { Self::new() }
@@ -40,6 +44,10 @@ impl CcmBlock {
             instance: inst,
             in_ch: 3,  // default: RGB input
             out_ch: 3, // default: RGB output
+            matrix: [1.0, 0.0, 0.0,  // R row
+                     0.0, 1.0, 0.0,  // G row
+                     0.0, 0.0, 1.0], // B row
+            bias: [0.0; 3],
         }
     }
     /// Set input and output channel count.
@@ -90,7 +98,7 @@ impl IspBlock for CcmBlock {
         identity.truncate(actual_size);
         
         vec![
-            Proto::tensor_proto_float(&format!("{}/matrix", ns), &[self.out_ch, self.in_ch, 1, 1], &identity),
+            Proto::tensor_proto_float(&format!("{}/matrix", ns), &[self.out_ch, self.in_ch, 1, 1], &self.matrix),
             Proto::tensor_proto_float(&format!("{}/bias", ns), &[self.out_ch], &vec![0.0; self.out_ch as usize]),
             Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
             Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
