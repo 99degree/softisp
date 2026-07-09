@@ -153,7 +153,7 @@ jobs:
         run: |
           python -c "
           import numpy as np
-          data = np.load('teacher_dataset/teacher_dataset.npz')
+          data = np.load('teacher_dataset/teacher_dataset.npz', allow_pickle=True)
           print(f'Keys: {list(data.keys())}')
           for k, v in data.items():
               if hasattr(v, 'shape'):
