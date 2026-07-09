@@ -1,0 +1,133 @@
+name: Release & Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+
+jobs:
+  build-release:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r isp-rectifier/requirements.txt
+          pip install onnx onnxruntime onnxconverter-common
+
+      - name: Download trained model
+        run: |
+          # Model should be uploaded as release asset or from artifacts
+          mkdir -p models
+          echo "Model artifacts should be available from training workflow"
+
+      - name: Export final ONNX
+        run: |
+          cd isp-rectifier
+          python distill_model.py --export \
+            --model ../models/best_model.pth \
+            --output ../models/fusedispcontroller.onnx
+
+      - name: Quantize models
+        run: |
+          cd isp-rectifier
+          python quantize.py ../models/fusedispcontroller.onnx
+
+      - name: Validate quantized models
+        run: |
+          cd isp-rectifier
+          python batch_validate_quantization.py \
+            --fp32_model ../models/fusedispcontroller.onnx \
+            --quant_model ../models/fusedispcontroller_int8.onnx \
+            --samples 5000
+
+      - name: Check thresholds
+        run: |
+          cd isp-rectifier
+          python check_thresholds.py --strict
+
+      - name: Package release
+        run: |
+          cd models
+          tar -czf ../fusedispcontroller-${{ github.event.release.tag_name }}.tar.gz \
+            fusedispcontroller.onnx \
+            fusedispcontroller_int8.onnx \
+            fusedispcontroller_fp16.onnx \
+            schema.json
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            fusedispcontroller-${{ github.event.release.tag_name }}.tar.gz
+            models/schema.json
+            models/dataset_info.json
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build-release
+    if: github.event_name == 'release'
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build package
+        run: |
+          cd isp-rectifier
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: isp-rectifier/dist/
+
+  publish-docker:
+    name: Publish Docker Image
+    runs-on: ubuntu-latest
+    needs: build-release
+    if: github.event_name == 'release'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./isp-rectifier
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/isp-rectifier:${{ github.event.release.tag_name }}
+            ghcr.io/${{ github.repository }}/isp-rectifier:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
