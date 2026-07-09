@@ -12,6 +12,7 @@ rand = "0.8"
 libloading = "0.8"
 libc = "0.2"
 tempfile = "3.8"
+isp-rectifier = { path = "../../isp-rectifier", optional = true }
 
 [build-dependencies]
 cc = "1"
@@ -65,6 +66,7 @@ default = []
 mnn_buffer = []
 ort = ["dep:ort"]
 mnn = ["mnn_buffer"]
+rectifier = ["isp-rectifier"]
 
 [dependencies.ort]
 version = "2.0.0-rc.12"
