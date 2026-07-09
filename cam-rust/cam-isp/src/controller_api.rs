@@ -35,28 +35,28 @@ pub trait ControllerApi {
 /// Wrapper enum for concrete controller types.
 pub enum Controller {
     /// Rule-based controller (always available).
-    RuleBased(crate::isp_controller::IspController),
+    RuleBased(Box<crate::isp_controller::IspController>),
     /// Neural controller with fallback (requires `rectifier` feature).
-    Neural(crate::neural_controller::NeuralController),
+    Neural(Box<crate::neural_controller::NeuralController>),
 }
 
 impl Controller {
     /// Create rule-based controller.
     pub fn rule_based() -> Self {
-        Self::RuleBased(crate::isp_controller::IspController::new())
+        Self::RuleBased(Box::default())
     }
     
     /// Create neural controller (without model).
     pub fn neural() -> Self {
-        Self::Neural(crate::neural_controller::NeuralController::new())
+        Self::Neural(Box::default())
     }
     
     /// Create neural controller with model.
-    pub fn neural_with_model(model_path: &str) -> Self {
+    pub fn neural_with_model(_model_path: &str) -> Self {
         #[cfg(feature = "rectifier")]
-        { Self::Neural(crate::neural_controller::NeuralController::with_model(model_path)) }
+        { Self::Neural(Box::new(crate::neural_controller::NeuralController::with_model(model_path))) }
         #[cfg(not(feature = "rectifier"))]
-        { Self::Neural(crate::neural_controller::NeuralController::new()) }
+        { Self::Neural(Box::default()) }
     }
 }
 
@@ -78,10 +78,10 @@ impl ControllerApi for Controller {
     fn load_model(&mut self, model_path: &str) -> bool {
         match self {
             Self::RuleBased(_) => false,
-            Self::Neural(c) => {
+            Self::Neural(_c) => {
                 #[cfg(feature = "rectifier")]
                 {
-                    *c = crate::neural_controller::NeuralController::with_model(model_path);
+                    **c = crate::neural_controller::NeuralController::with_model(model_path);
                     c.has_model()
                 }
                 #[cfg(not(feature = "rectifier"))]
