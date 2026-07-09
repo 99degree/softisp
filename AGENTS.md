@@ -127,6 +127,9 @@ All project documentation is in markdown. Reference these files before asking qu
 
 ### Core Architecture
 - `cam-isp/docs/PIPELINE_BLOCKS.md` — **All pipeline blocks with ONNX input/output tensor specs**
+- `isp-rectifier/MODEL_SPECIFICATION.md` — **Neural ISP controller model spec (267→20)**
+- `isp-rectifier/RUST_API_STATUS.md` — **Rust API for rectifier integration**
+- `isp-rectifier/TEACHER_ANALYSIS.md` — **Teacher model analysis (AWB/CCM)**
 - `cam-isp/docs/DEBAYER_DESIGN.md` — Bayer demosaic algorithm design and comparison
 - `cam-isp/docs/UNPACK_IMPLEMENTATION_SUMMARY.md` — INT32→FLOAT unpack implementation
 - `cam-isp/docs/UNPACK_PERFORMANCE.md` — Unpack block performance analysis
@@ -155,6 +158,8 @@ All project documentation is in markdown. Reference these files before asking qu
 ### Quick Reference
 ```
 Block I/O Reference:    cam-isp/docs/PIPELINE_BLOCKS.md
+Neural Controller:      isp-rectifier/MODEL_SPECIFICATION.md
+Rust API:               isp-rectifier/RUST_API_STATUS.md
 Pipeline Profiles:     docs/profiles-technical.md
 MNN/Vulkan Setup:      docs/MNN_VULKAN_GUIDE.md
 Performance Numbers:   PERFORMANCE_BENCHMARK.md
