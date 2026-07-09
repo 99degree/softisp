@@ -43,6 +43,7 @@ on:
     paths:
       - 'isp-rectifier/distill_model.py'
       - 'isp-rectifier/collect_teacher_dataset_production.py'
+      - 'isp-rectifier/requirements.txt'
       - 'isp-rectifier/models/**'
 
 jobs:
