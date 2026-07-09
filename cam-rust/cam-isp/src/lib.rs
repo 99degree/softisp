@@ -40,6 +40,7 @@ pub mod mnn_buffer;
 pub mod warp_engine;
 pub mod frame_rate;
 pub mod pipeline_builder_smart;
+pub mod pipeline_config;
 
 pub mod ccm_engine;
 pub mod eis;
