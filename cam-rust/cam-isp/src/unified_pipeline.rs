@@ -182,6 +182,8 @@ pub struct UnifiedPipeline {
     config: UnifiedConfig,
     engine: Box<dyn IspEngine>,
     post_pipeline: PostProcessPipeline,
+    /// ISP controller for parameter-driven processing.
+    controller: crate::isp_controller::IspController,
     /// GPU warp block (for ONNX generation).
     gpu_warp: Option<GpuWarpBlock>,
     /// GPU warp ONNX model bytes.
@@ -202,6 +204,9 @@ impl UnifiedPipeline {
     pub fn new(config: UnifiedConfig) -> IspResult<Self> {
         info!("UnifiedPipeline: profile={}, width={}, gpu_warp={}, format={:?}",
             config.profile.label, config.target_width, config.gpu_warp_enabled, config.output_format);
+
+        // Initialize controller with default parameters
+        let controller = crate::isp_controller::IspController::new();
 
         let mut engine = match config.engine_preference.as_str() {
             "vulkan" => {
@@ -288,10 +293,14 @@ impl UnifiedPipeline {
 
         let post_pipeline = PostProcessPipeline::new(config.post_config.clone());
 
+        // Initialize controller with default parameters
+        let controller = crate::isp_controller::IspController::new();
+
         Ok(Self {
             config,
             engine,
             post_pipeline,
+            controller,
             gpu_warp,
             gpu_warp_onnx,
             #[cfg(feature = "mnn")]
@@ -302,6 +311,16 @@ impl UnifiedPipeline {
             height: h,
             initialized: true,
         })
+    }
+
+    /// Get a mutable reference to the ISP controller.
+    pub fn controller_mut(&mut self) -> &mut crate::isp_controller::IspController {
+        &mut self.controller
+    }
+
+    /// Get a reference to the ISP controller.
+    pub fn controller(&self) -> &crate::isp_controller::IspController {
+        &self.controller
     }
 
     /// Process a raw frame through the full pipeline.
@@ -323,6 +342,21 @@ impl UnifiedPipeline {
         if !self.initialized {
             return Err(crate::error::IspError::Pipeline("pipeline not initialized".into()));
         }
+
+        // 0. Controller analysis: analyze frame and update parameters
+        let frame_for_analysis = crate::pipeline::types::IspFrame {
+            data: raw_data.to_vec(),
+            width,
+            height,
+            format: cam_types::FrameFormat::RawSensor,
+            float_data: None,
+            aux: None,
+            timestamp_ns: 0,
+            prep_duration_ns: 0,
+            inference_duration_ns: 0,
+            total_duration_ns: 0,
+        };
+        let _isp_params = self.controller.analyze_and_update(&frame_for_analysis);
 
         // 1. ISP processing (GPU) — output FloatRgb [1,3,H,W] f32
         let mut params = ProcessParams::new(width, height, raw_data);
