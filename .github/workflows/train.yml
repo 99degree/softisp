@@ -193,14 +193,6 @@ jobs:
             isp-rectifier/teacher_dataset/dataset_info.json
           retention-days: 30
 
-      - name: Log metrics to W&B
-        if: env.WANDB_API_KEY != ''
-        uses: wandb/wandb-action@v1
-        with:
-          project: isp-rectifier
-          entity: ${{ secrets.WANDB_ENTITY }}
-          name: run-${{ github.run_id }}
-
   export-and-validate:
     name: Export ONNX & Validate
     runs-on: ubuntu-latest
