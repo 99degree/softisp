@@ -286,3 +286,18 @@ mod tests {
         assert!((smoothed.wb.b - 0.85).abs() < 0.01);
     }
 }
+
+impl crate::controller_api::ControllerApi for NeuralController {
+    fn analyze_and_update(&mut self, frame: &IspFrame) -> IspParams {
+        self.analyze_and_update(frame)
+    }
+    
+    fn has_model(&self) -> bool {
+        self.has_model()
+    }
+    
+    fn last_params(&self) -> Option<&IspParams> {
+        self.last_params.as_ref()
+    }
+}
+

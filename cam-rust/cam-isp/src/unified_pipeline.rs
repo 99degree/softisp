@@ -34,7 +34,6 @@
 //! ```
 
 use log::info;
-#[cfg(feature = "mnn")]
 use log::warn;
 use crate::error::IspResult;
 use crate::pipeline::{IspFrame, IspBlock, GraphComposer};
@@ -44,6 +43,7 @@ use crate::postprocess::{PostProcessConfig, PostProcessPipeline};
 use crate::profile::PipelineProfile;
 use crate::blocks::gpu_warp::GpuWarpBlock;
 use crate::onnx::proto::Proto;
+use crate::controller_api::ControllerApi;
 #[cfg(feature = "mnn")]
 use crate::warp_engine::GpuWarpEngine;
 
@@ -182,8 +182,8 @@ pub struct UnifiedPipeline {
     config: UnifiedConfig,
     engine: Box<dyn IspEngine>,
     post_pipeline: PostProcessPipeline,
-    /// ISP controller for parameter-driven processing (neural with fallback).
-    controller: crate::neural_controller::NeuralController,
+    /// ISP controller for parameter-driven processing (unified API).
+    controller: crate::controller_api::Controller,
     /// GPU warp block (for ONNX generation).
     gpu_warp: Option<GpuWarpBlock>,
     /// GPU warp ONNX model bytes.
@@ -205,8 +205,8 @@ impl UnifiedPipeline {
         info!("UnifiedPipeline: profile={}, width={}, gpu_warp={}, format={:?}",
             config.profile.label, config.target_width, config.gpu_warp_enabled, config.output_format);
 
-        // Initialize neural controller with fallback
-        let controller = crate::neural_controller::NeuralController::new();
+        // Initialize controller (neural with fallback)
+        let controller = crate::controller_api::Controller::neural();
 
         let mut engine = match config.engine_preference.as_str() {
             "vulkan" => {
@@ -293,8 +293,8 @@ impl UnifiedPipeline {
 
         let post_pipeline = PostProcessPipeline::new(config.post_config.clone());
 
-        // Initialize neural controller with fallback
-        let controller = crate::neural_controller::NeuralController::new();
+        // Initialize controller (neural with fallback)
+        let controller = crate::controller_api::Controller::neural();
 
         Ok(Self {
             config,
@@ -313,26 +313,37 @@ impl UnifiedPipeline {
         })
     }
 
-    /// Get a mutable reference to the neural controller.
-    pub fn controller_mut(&mut self) -> &mut crate::neural_controller::NeuralController {
+    /// Get a mutable reference to the controller.
+    pub fn controller_mut(&mut self) -> &mut crate::controller_api::Controller {
         &mut self.controller
     }
 
-    /// Get a reference to the neural controller.
-    pub fn controller(&self) -> &crate::neural_controller::NeuralController {
+    /// Get a reference to the controller.
+    pub fn controller(&self) -> &crate::controller_api::Controller {
         &self.controller
     }
 
     /// Load neural model for ISP parameter prediction.
-    #[cfg(feature = "rectifier")]
-    pub fn load_rectifier_model(&mut self, model_path: &str) -> IspResult<()> {
-        self.controller = crate::neural_controller::NeuralController::with_model(model_path);
-        if self.controller.has_model() {
-            info!("UnifiedPipeline: loaded rectifier model from {}", model_path);
-            Ok(())
+    pub fn load_model(&mut self, model_path: &str) -> bool {
+        let loaded = self.controller.load_model(model_path);
+        if loaded {
+            info!("UnifiedPipeline: loaded model from {}", model_path);
         } else {
-            Err(IspError::Pipeline(format!("Failed to load rectifier model from {}", model_path)))
+            warn!("UnifiedPipeline: failed to load model from {}", model_path);
         }
+        loaded
+    }
+
+    /// Switch to rule-based controller.
+    pub fn use_rule_based_controller(&mut self) {
+        self.controller = crate::controller_api::Controller::rule_based();
+        info!("UnifiedPipeline: switched to rule-based controller");
+    }
+
+    /// Switch to neural controller.
+    pub fn use_neural_controller(&mut self) {
+        self.controller = crate::controller_api::Controller::neural();
+        info!("UnifiedPipeline: switched to neural controller");
     }
 
     /// Process a raw frame through the full pipeline.

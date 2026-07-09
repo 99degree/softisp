@@ -310,3 +310,13 @@ mod tests {
         assert!(params.tone.brightness.abs() < 0.01);
     }
 }
+
+impl crate::controller_api::ControllerApi for IspController {
+    fn analyze_and_update(&mut self, frame: &IspFrame) -> IspParams {
+        self.analyze_and_update(frame).clone()
+    }
+    
+    fn last_params(&self) -> Option<&IspParams> {
+        Some(self.params())
+    }
+}
