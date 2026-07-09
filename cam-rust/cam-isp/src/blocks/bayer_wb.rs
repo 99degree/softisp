@@ -32,6 +32,16 @@ impl BayerWbBlock {
         self.gains = [r, g1, g2, b];
         self
     }
+    /// Set gains at runtime (mutates existing block).
+    pub fn set_gains(&mut self, r: f32, g1: f32, g2: f32, b: f32) {
+        self.gains = [r, g1, g2, b];
+    }
+    
+    /// Get current gains.
+    pub fn gains(&self) -> [f32; 4] {
+        self.gains
+    }
+    
     /// Returns true when gains are identity (no-op).
     fn is_identity_gains(&self) -> bool {
         self.gains.iter().all(|g| (*g - 1.0f32).abs() < 1e-6)
