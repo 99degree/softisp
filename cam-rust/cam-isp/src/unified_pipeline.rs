@@ -206,7 +206,7 @@ impl UnifiedPipeline {
             config.profile.label, config.target_width, config.gpu_warp_enabled, config.output_format);
 
         // Initialize controller (neural with fallback)
-        let controller = crate::controller_api::Controller::neural();
+        let _controller = crate::controller_api::Controller::neural();
 
         let mut engine = match config.engine_preference.as_str() {
             "vulkan" => {

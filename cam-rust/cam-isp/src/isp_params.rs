@@ -405,8 +405,10 @@ pub struct FaceInfo {
 
 /// Scene classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum SceneType {
     /// General scene.
+    #[default]
     General,
     /// Portrait (face detected).
     Portrait,
@@ -418,11 +420,6 @@ pub enum SceneType {
     Hdr,
 }
 
-impl Default for SceneType {
-    fn default() -> Self {
-        Self::General
-    }
-}
 
 #[cfg(test)]
 mod tests {
