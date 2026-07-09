@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # Python training environment
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: trainer
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./:/app
+      - ./models:/app/models
+      - ./teacher_dataset:/app/teacher_dataset
+      - ./checkpoints:/app/checkpoints
+      - ./plots:/app/plots
+    working_dir: /app
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONPATH=/app
+    command: bash
+    # For training: docker compose run --rm trainer python distill_model.py --train --dataset teacher_dataset/teacher_dataset.npz --epochs 100
+
+  # Rust build environment
+  rust-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: rust-builder
+    volumes:
+      - ./:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    working_dir: /app
+    command: cargo build --release --features onnx-runtime
+
+  # Runtime inference service
+  inference:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/app/models:ro
+    ports:
+      - "8080:8080"  # For potential gRPC/REST API
+    environment:
+      - MODEL_PATH=/app/models/fusedispcontroller_int8.onnx
+      - RUST_LOG=info
+    command: ./bin/isp-rectifier --serve --port 8080
+
+  # Development environment with all tools
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    volumes:
+      - ./:/app
+      - cargo-cache:/root/.cargo/registry
+      - target-cache:/app/target
+    working_dir: /app
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    command: bash
+    stdin_open: true
+    tty: true
+
+volumes:
+  cargo-cache:
+  target-cache:
