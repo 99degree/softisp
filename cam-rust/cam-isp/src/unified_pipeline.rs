@@ -367,7 +367,8 @@ impl UnifiedPipeline {
         }
 
         // 0. Controller analysis: analyze frame and update parameters
-        let frame_for_analysis = crate::pipeline::types::IspFrame {
+        let mut frame_for_analysis = crate::pipeline::types::IspFrame {
+            params: crate::isp_params::IspParams::default(),
             data: raw_data.to_vec(),
             width,
             height,
@@ -379,10 +380,14 @@ impl UnifiedPipeline {
             inference_duration_ns: 0,
             total_duration_ns: 0,
         };
-        let _isp_params = self.controller.analyze_and_update(&frame_for_analysis);
+        let isp_params = self.controller.analyze_and_update(&frame_for_analysis);
+        
+        // Store params in frame for inference-time use
+        frame_for_analysis.params = isp_params.clone();
 
         // 1. ISP processing (GPU) — output FloatRgb [1,3,H,W] f32
         let mut params = ProcessParams::new(width, height, raw_data);
+        params.isp_params = Some(isp_params);
         params.target_width = self.width;
         params.target_height = self.height;
         params.sensor_max = self.config.sensor_max;
@@ -461,6 +466,7 @@ impl UnifiedPipeline {
                                 converter.output_format(),
                                 t_fmt.elapsed().as_secs_f64() * 1000.0);
                             IspFrame {
+            params: crate::isp_params::IspParams::default(),
                                 data: out_buf,
                                 width: post_output.width,
                                 height: post_output.height,

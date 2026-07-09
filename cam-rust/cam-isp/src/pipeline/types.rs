@@ -18,6 +18,7 @@ use log::{info, warn};
 use cam_types::FrameFormat;
 
 use crate::onnx::proto::Proto;
+use crate::isp_params::IspParams;
 
 /// Auxiliary outputs from ISP processing.
 ///
@@ -96,6 +97,8 @@ pub struct IspFrame {
     pub float_data: Option<Vec<f32>>,
     /// Auxiliary outputs (statistics, metadata)
     pub aux: Option<IspAuxOutput>,
+    /// Per-frame ISP parameters from controller (WB, CCM, tone, etc.)
+    pub params: IspParams,
     /// Capture timestamp from sensor (ns since epoch, monotonic).
     pub timestamp_ns: u64,
     /// Frame preparation duration (ns) - time from capture to inference input ready.
@@ -116,6 +119,7 @@ impl IspFrame {
             format,
             float_data: None,
             aux: None,
+            params: IspParams::default(),
             timestamp_ns: 0,
             prep_duration_ns: 0,
             inference_duration_ns: 0,

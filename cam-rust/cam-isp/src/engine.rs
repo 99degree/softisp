@@ -133,6 +133,8 @@ pub struct ProcessParams<'a> {
     pub output_format: OutputFormat,
     /// Capture timestamp in nanoseconds (from HAL/framework). Passed through to IspFrame.
     pub timestamp_ns: u64,
+    /// Full ISP parameters from controller (WB, CCM, tone, etc.)
+    pub isp_params: Option<crate::isp_params::IspParams>,
 }
 
 impl<'a> ProcessParams<'a> {
@@ -143,6 +145,7 @@ impl<'a> ProcessParams<'a> {
             height,
             stride_width: width,
             buf,
+            isp_params: None,
             sensor_max: 1023.0,
             target_width: width,
             target_height: height,
