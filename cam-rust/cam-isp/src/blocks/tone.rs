@@ -8,6 +8,12 @@ use crate::onnx::proto::Proto;
 pub struct ToneBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String, pub input_source: String,
+    /// Contrast factor (1.0 = neutral)
+    contrast: f32,
+    /// Brightness offset (-1.0 to 1.0)
+    brightness: f32,
+    /// Gamma (1.0 = linear, 2.2 = sRGB-like)
+    gamma: f32,
 }
 impl Default for ToneBlock {
     fn default() -> Self {
@@ -16,7 +22,40 @@ impl Default for ToneBlock {
 }
 
 impl ToneBlock {
-    pub fn new() -> Self { Self { id: "tone".into(), prev: None, next: None, frame_tensor: "ToneBlock/frame".into(), input_source: String::new() } }
+    pub fn new() -> Self { 
+        Self { 
+            id: "tone".into(), prev: None, next: None, 
+            frame_tensor: "ToneBlock/frame".into(), 
+            input_source: String::new(),
+            contrast: 1.0,
+            brightness: 0.0,
+            gamma: 1.0,
+        } 
+    }
+    
+    /// Set contrast (1.0 = neutral, >1.0 = more contrast).
+    pub fn set_contrast(&mut self, contrast: f32) {
+        self.contrast = contrast;
+    }
+    
+    /// Set brightness offset (-1.0 to 1.0).
+    pub fn set_brightness(&mut self, brightness: f32) {
+        self.brightness = brightness;
+    }
+    
+    /// Set gamma (1.0 = linear).
+    pub fn set_gamma(&mut self, gamma: f32) {
+        self.gamma = gamma;
+    }
+    
+    /// Get current contrast.
+    pub fn contrast(&self) -> f32 { self.contrast }
+    
+    /// Get current brightness.
+    pub fn brightness(&self) -> f32 { self.brightness }
+    
+    /// Get current gamma.
+    pub fn gamma(&self) -> f32 { self.gamma }
 }
 impl IspBlock for ToneBlock {
     fn id(&self) -> &str { &self.id }
