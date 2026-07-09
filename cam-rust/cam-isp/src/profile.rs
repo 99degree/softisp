@@ -110,6 +110,14 @@ pub struct PipelineProfile {
     /// EIS margin fraction (0.05 = 5%). Passed to AdaptiveDownscaleBlock for
     /// reserving edge pixels for EIS/deshake warp shifts.
     pub eis_margin: f64,
+    /// Enable bilateral filter (edge-preserving noise reduction).
+    pub use_bilateral: bool,
+    /// Enable saturation control.
+    pub use_saturation: bool,
+    /// Enable vignetting correction.
+    pub use_vignetting: bool,
+    /// Enable color space conversion (HSV/LAB).
+    pub use_colorspace: bool,
     /// Output pixel format.
     pub output_format: OutputFormat,
 }
@@ -141,6 +149,10 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        use_bilateral: false,
+        use_saturation: false,
+        use_vignetting: false,
+        use_colorspace: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -170,6 +182,10 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        use_bilateral: false,
+        use_saturation: true,
+        use_vignetting: false,
+        use_colorspace: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -199,6 +215,10 @@ impl PipelineProfile {
         stats_downscale_max: 540,   // stats read from ~540p (downscaled from aux_hook_src)
         pipeline_downscale_target: 0,    // 0 = disabled; set to e.g. 1920 for perf measurement
         eis_margin: 0.0,
+        use_bilateral: true,
+        use_saturation: true,
+        use_vignetting: true,
+        use_colorspace: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -228,6 +248,10 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        use_bilateral: true,
+        use_saturation: true,
+        use_vignetting: true,
+        use_colorspace: true,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -258,6 +282,10 @@ impl PipelineProfile {
         stats_downscale_max: 0,    // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        use_bilateral: false,
+        use_saturation: false,
+        use_vignetting: false,
+        use_colorspace: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -289,6 +317,10 @@ impl PipelineProfile {
         stats_downscale_max: 0,
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
+        use_bilateral: true,
+        use_saturation: true,
+        use_vignetting: true,
+        use_colorspace: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -321,6 +353,10 @@ impl PipelineProfile {
         stats_downscale_max: u32,  // max pixel dimension for stats (0 = full res)
         pipeline_downscale_target: u32, // max pixel dimension for main pipeline (0 = full res)
         eis_margin: f64,         // EIS margin fraction (0.05 = 5%), default 0.0
+        use_bilateral: bool,     // bilateral filter (edge-preserving denoise)
+        use_saturation: bool,    // saturation control
+        use_vignetting: bool,    // vignetting correction
+        use_colorspace: bool,    // color space conversion
     ) -> Self {
         Self {
             label,
@@ -347,6 +383,10 @@ impl PipelineProfile {
             stats_downscale_max, // adaptive stats downscale
             pipeline_downscale_target, // main pipeline downscale target
             eis_margin,          // EIS margin fraction
+            use_bilateral,       // bilateral filter
+            use_saturation,      // saturation control
+            use_vignetting,      // vignetting correction
+            use_colorspace,      // color space conversion
             output_format: OutputFormat::PackedRgb,
         }
     }
@@ -497,6 +537,45 @@ impl PipelineProfile {
         } else {
             info!("  ee: IDENTITY");
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("ee")));
+        }
+
+        // ── Bilateral filter (edge-preserving noise reduction) ──
+        if self.use_bilateral {
+            info!("  bilateral: BilateralBlock");
+            blocks.push(Box::new(crate::blocks::BilateralBlock::new_default()));
+        } else {
+            info!("  bilateral: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("bilateral")));
+        }
+
+        // ── Vignetting correction ──
+        if self.use_vignetting {
+            info!("  vignetting: VignettingBlock");
+            blocks.push(Box::new(crate::blocks::VignettingBlock::new_default(
+                target_width as u32,
+                (target_width as f64 * 9.0 / 16.0) as u32,
+            )));
+        } else {
+            info!("  vignetting: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("vignetting")));
+        }
+
+        // ── Saturation control ──
+        if self.use_saturation {
+            info!("  saturation: SaturationBlock");
+            blocks.push(Box::new(crate::blocks::SaturationBlock::new_default()));
+        } else {
+            info!("  saturation: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("saturation")));
+        }
+
+        // ── Color space conversion (HSV/LAB) ──
+        if self.use_colorspace {
+            info!("  colorspace: ColorSpaceBlock");
+            blocks.push(Box::new(crate::blocks::ColorSpaceBlock::rgb_to_hsv()));
+        } else {
+            info!("  colorspace: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("colorspace")));
         }
 
         // ── Display output + orientation transform (fused) ──
@@ -670,15 +749,15 @@ mod tests {
     #[test]
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 0);
-        // LITE: always has 12 main-chain blocks (identity placeholders for disabled features)
-        assert_eq!(blocks.len(), 12, "LITE (fused, demosaic_ccm) should have 12 blocks, got {}", blocks.len());
+        // LITE: always has 16 main-chain blocks (identity placeholders for disabled features)
+        assert_eq!(blocks.len(), 16, "LITE (fused, demosaic_ccm) should have 16 blocks, got {}", blocks.len());
     }
 
     #[test]
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
-        // HEAVY: all blocks present (no identity placeholders)
-        assert_eq!(blocks.len(), 12, "HEAVY (fused, demosaic_ccm) should have 12 blocks, got {}", blocks.len());
+        // HEAVY: all 16 main blocks present (4 new: bilateral, vignetting, saturation, colorspace)
+        assert_eq!(blocks.len(), 16, "HEAVY (fused, demosaic_ccm) should have 16 blocks, got {}", blocks.len());
     }
 
     #[test]
@@ -696,6 +775,10 @@ mod tests {
             0,     // stats_downscale_max
             0,     // pipeline_downscale_target
             0.0,   // eis_margin
+            true,  // use_bilateral
+            true,  // use_saturation
+            true,  // use_vignetting
+            false, // use_colorspace
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -722,17 +805,21 @@ mod tests {
             0,     // stats_downscale_max
             0,     // pipeline_downscale_target
             0.0,   // eis_margin
+            false, // use_bilateral
+            false, // use_saturation
+            false, // use_vignetting
+            false, // use_colorspace
         );
         let blocks = p.build_blocks(128, 0);
-        assert_eq!(blocks.len(), 15, "Legacy should have 15 blocks (all with identity placeholders), got {}", blocks.len());
+        assert_eq!(blocks.len(), 19, "Legacy should have 19 blocks (all with identity placeholders), got {}", blocks.len());
         assert_eq!(blocks[0].id(), "raw_input");
         assert_eq!(blocks[1].id(), "normalize", "Second block should be Normalize (no Unpack)");
     }
 
     #[test]
     fn test_block_count() {
-        assert_eq!(PipelineProfile::LITE.block_count(), 15, "LITE: 12 main + 3 stats (includes CalibrationBlock)");
-        assert_eq!(PipelineProfile::HEAVY.block_count(), 17, "HEAVY: 12 main + 5 stats (includes CalibrationBlock)");
+        assert_eq!(PipelineProfile::LITE.block_count(), 19, "LITE: 16 main + 3 stats");
+        assert_eq!(PipelineProfile::HEAVY.block_count(), 21, "HEAVY: 16 main + 5 stats");
     }
 
     #[test]
