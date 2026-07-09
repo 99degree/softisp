@@ -1,0 +1,59 @@
+[package]
+name = "isp-rectifier"
+version = "0.1.0"
+edition = "2021"
+description = "ISP Rectifier - Distilled controller for image signal processing pipeline"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/softisp"
+categories = ["embedded", "hardware-support", "image-processing"]
+keywords = ["isp", "camera", "image-processing", "onnx", "distillation"]
+
+[features]
+default = ["onnx-runtime"]
+onnx-runtime = ["tract-onnx", "tract-core", "tract-data", "tract-hir", "tract-linalg"]
+# serde is now a required dependency
+python-bindings = ["pyo3"]
+
+[dependencies]
+# ONNX Runtime via tract
+tract-onnx = { version = "0.20", features = ["default"], optional = true }
+tract-core = { version = "0.20", optional = true }
+tract-data = { version = "0.20", optional = true }
+tract-hir = { version = "0.20", optional = true }
+tract-linalg = { version = "0.20", optional = true }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", optional = true }
+bincode = { version = "1.3", optional = true }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+pyo3 = { version = "0.21", optional = true }
+
+# Logging
+log = "0.4"
+env_logger = { version = "0.10", optional = true }
+
+# Image processing (optional)
+image = { version = "0.24", optional = true, features = ["png"] }
+
+# Math
+nalgebra = { version = "0.32", optional = true }
+
+[dev-dependencies]
+approx = "0.5"
+proptest = "1.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+lto = true
+opt-level = 3

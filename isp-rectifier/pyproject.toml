@@ -1,0 +1,106 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isp-rectifier"
+version = "0.1.0"
+description = "ISP Parameter Rectifier - Distilled neural controller for image signal processing"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "ISP Rectifier Team", email = "team@example.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "numpy>=1.24.0",
+    "tqdm>=4.65.0",
+    "onnx>=1.14.0",
+    "onnxruntime>=1.15.0",
+    "onnxconverter-common>=1.13.0",
+    "opencv-python>=4.8.0",
+    "rawpy>=0.18.0",
+    "matplotlib>=3.7.0",
+]
+optional-dependencies = {
+    "dev" = [
+        "pytest>=7.4.0",
+        "pytest-cov>=4.1.0",
+        "mypy>=1.5.0",
+        "ruff>=0.1.0",
+        "pre-commit>=3.5.0",
+    ],
+    "quant" = [
+        "onnxruntime-tools>=1.15.0",
+        "onnxruntime-quantization>=1.15.0",
+    ],
+    "wandb" = [
+        "wandb>=0.15.0",
+    ],
+}
+
+[project.urls]
+Homepage = "https://github.com/your-org/softisp"
+Repository = "https://github.com/your-org/softisp"
+Issues = "https://github.com/your-org/softisp/issues"
+
+[project.scripts]
+collect-dataset = "collect_teacher_dataset_production:main"
+train = "distill_model:main"
+validate = "batch_validate_quantization:main"
+check = "check_thresholds:main"
+quantize = "quantize:main"
+model-card = "scripts.generate_model_card:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["isp_rectifier*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers --tb=short"
+markers = [
+    "slow: marks tests as slow",
+    "gpu: marks tests requiring GPU",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "UP", "W", "C90", "ANN", "T20"]
+ignore = ["ANN101", "ANN102", "T201", "T203"]
+exclude = [".git", "__pycache__", "build", "dist", "*.egg-info"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*", "scripts/*"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "def __repr__", "raise AssertionError", "raise NotImplementedError"]
