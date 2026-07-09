@@ -339,7 +339,7 @@ def main():
     
     # Print sample for verification
     print("\n📋 Sample output (first sample):")
-    data = np.load(Path(args.output) / "teacher_dataset.npz")
+    data = np.load(Path(args.output) / "teacher_dataset.npz", allow_pickle=True)
     print(f"  WB gains: {data['wb_targets'][0]}")
     print(f"  CCM: {data['ccm_targets'][0].reshape(3,3)}")
     print(f"  Tone curve: {data['tone_targets'][0]}")

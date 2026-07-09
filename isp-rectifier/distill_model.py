@@ -155,7 +155,7 @@ def distillation_loss(
 
 def load_teacher_dataset(dataset_path: str) -> Tuple[DataLoader, int]:
     """Load teacher dataset from NPZ file."""
-    data = np.load(dataset_path)
+    data = np.load(dataset_path, allow_pickle=True)
     
     # Inputs: histogram + metadata concatenated
     # We need to split them back
