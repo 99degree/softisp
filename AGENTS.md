@@ -127,6 +127,7 @@ All project documentation is in markdown. Reference these files before asking qu
 
 ### Core Architecture
 - `cam-isp/docs/PIPELINE_BLOCKS.md` — **All pipeline blocks with ONNX input/output tensor specs**
+- `cam-isp/src/controller_api.rs` — **Unified controller API (ControllerApi trait)**
 - `isp-rectifier/MODEL_SPECIFICATION.md` — **Neural ISP controller model spec (267→20)**
 - `isp-rectifier/RUST_API_STATUS.md` — **Rust API for rectifier integration**
 - `isp-rectifier/TEACHER_ANALYSIS.md` — **Teacher model analysis (AWB/CCM)**
@@ -158,8 +159,9 @@ All project documentation is in markdown. Reference these files before asking qu
 ### Quick Reference
 ```
 Block I/O Reference:    cam-isp/docs/PIPELINE_BLOCKS.md
-Neural Controller:      isp-rectifier/MODEL_SPECIFICATION.md
-Rust API:               isp-rectifier/RUST_API_STATUS.md
+Controller API:         cam-isp/src/controller_api.rs
+Neural Model Spec:      isp-rectifier/MODEL_SPECIFICATION.md
+Rust API Status:        isp-rectifier/RUST_API_STATUS.md
 Pipeline Profiles:     docs/profiles-technical.md
 MNN/Vulkan Setup:      docs/MNN_VULKAN_GUIDE.md
 Performance Numbers:   PERFORMANCE_BENCHMARK.md
