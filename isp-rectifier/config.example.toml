@@ -1,0 +1,72 @@
+# ISP Rectifier Configuration
+# Copy to config.toml and modify as needed
+
+[model]
+# Path to ONNX model (relative to executable or absolute)
+model_path = "models/fusedispcontroller_int8.onnx"
+
+# ONNX Runtime providers (in order of preference)
+# Options: CPUExecutionProvider, CUDAExecutionProvider, TensorrtExecutionProvider, 
+#          CoreMLExecutionProvider, OpenVINOExecutionProvider
+providers = ["CPUExecutionProvider"]
+
+# Number of intra-op threads for CPU inference
+intra_op_threads = 1
+
+# Enable model optimization (constant folding, etc.)
+optimize = true
+
+# Clamp outputs to safe register ranges
+clamp_outputs = true
+
+[registers]
+# Safe limits for ISP register values
+# WB gains: Q4.12 format (1.0 = 4096)
+wb_gain_min = 0.1    # 410 in Q4.12
+wb_gain_max = 10.0   # 40960 in Q4.12
+
+# CCM: Q4.12 signed format
+ccm_min = -2.0
+ccm_max = 2.0
+
+# Tone curve LUT: Q0.16 unsigned (0-65535)
+tone_curve_min = 0.0
+tone_curve_max = 1.0
+
+# Zoom factor: Q4.12
+zoom_min = 1.0
+zoom_max = 4.0
+
+[inference]
+# Batch size for inference (1 for real-time)
+batch_size = 1
+
+# Warmup runs before timing
+warmup_runs = 10
+
+# Benchmark runs
+benchmark_runs = 100
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Enable structured JSON logging
+json = false
+
+# Log to file
+file = ""
+
+[hardware]
+# ISP hardware interface
+# Options: "vulkan", "v4l2", "custom"
+interface = "custom"
+
+# Device path for V4L2
+device_path = "/dev/video0"
+
+# Vulkan device selection
+vulkan_device_index = 0
+
+# Custom shared library for register writing
+custom_lib_path = ""

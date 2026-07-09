@@ -1,0 +1,363 @@
+name: Train ISP Student Model
+
+on:
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: 'Number of training epochs'
+        required: false
+        default: '100'
+      batch_size:
+        description: 'Batch size'
+        required: false
+        default: '32'
+      learning_rate:
+        description: 'Learning rate'
+        required: false
+        default: '0.001'
+      use_gpu:
+        description: 'Use GPU runner (self-hosted)'
+        required: false
+        default: 'false'
+      synthetic_samples:
+        description: 'Number of synthetic samples (if no real data)'
+        required: false
+        default: '10000'
+      teacher_ccmnet:
+        description: 'Path to CCMNet weights'
+        required: false
+        default: 'models/ccmnet.pth'
+      teacher_awb:
+        description: 'Path to Time-Aware AWB weights'
+        required: false
+        default: 'models/time_aware_awb.pth'
+      teacher_isp:
+        description: 'Path to Neural ISP Tuning weights'
+        required: false
+        default: 'models/neural_isp_tuning.pth'
+
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly on Sunday 2 AM
+
+  push:
+    paths:
+      - 'isp-rectifier/distill_model.py'
+      - 'isp-rectifier/collect_teacher_dataset_production.py'
+      - 'isp-rectifier/models/**'
+
+jobs:
+  prepare-data:
+    name: Prepare Teacher Dataset
+    runs-on: ${{ github.event.inputs.use_gpu == 'true' && 'self-hosted-gpu' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    outputs:
+      dataset_path: ${{ steps.dataset.outputs.path }}
+      num_samples: ${{ steps.dataset.outputs.num_samples }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: isp-rectifier/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./isp-rectifier
+        run: |
+          pip install -r requirements.txt
+          pip install gdown  # For downloading from Google Drive if needed
+
+      - name: Download teacher weights (if URLs provided)
+        if: env.TEACHER_WEIGHTS_URL != ''
+        working-directory: ./isp-rectifier
+        run: |
+          mkdir -p models
+          echo "Downloading teacher weights from $TEACHER_WEIGHTS_URL"
+          gdown --folder "$TEACHER_WEIGHTS_URL" -O models/
+
+      - name: Generate/Collect teacher dataset
+        id: dataset
+        working-directory: ./isp-rectifier
+        run: |
+          if [ -f "${{ github.event.inputs.teacher_ccmnet }}" ] && [ -f "${{ github.event.inputs.teacher_awb }}" ] && [ -f "${{ github.event.inputs.teacher_isp }}" ]; then
+            echo "Using real teacher models"
+            python collect_teacher_dataset_production.py \
+              --input-dir ./data/dng_frames \
+              --metadata-dir ./data/metadata \
+              --output-dir teacher_dataset \
+              --ccmnet-weights ${{ github.event.inputs.teacher_ccmnet }} \
+              --awb-weights ${{ github.event.inputs.teacher_awb }} \
+              --isp-tuning-weights ${{ github.event.inputs.teacher_isp }} \
+              --batch-size 64
+          else
+            echo "Generating synthetic dataset (${{ github.event.inputs.synthetic_samples }} samples)"
+            python collect_teacher_dataset_production.py \
+              --synthetic ${{ github.event.inputs.synthetic_samples }} \
+              --output-dir teacher_dataset \
+              --ccmnet-weights ${{ github.event.inputs.teacher_ccmnet }} \
+              --awb-weights ${{ github.event.inputs.teacher_awb }} \
+              --isp-tuning-weights ${{ github.event.inputs.teacher_isp }}
+          fi
+          
+          # Output dataset info
+          python -c "
+          import json
+          with open('teacher_dataset/dataset_info.json') as f:
+              info = json.load(f)
+          print(f'path=teacher_dataset')
+          print(f'num_samples={info[\"num_samples\"]}')
+          " >> $GITHUB_OUTPUT
+
+      - name: Upload dataset artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teacher-dataset
+          path: isp-rectifier/teacher_dataset/
+          retention-days: 7
+
+  train:
+    name: Train Student Model
+    runs-on: ${{ github.event.inputs.use_gpu == 'true' && 'self-hosted-gpu' || 'ubuntu-latest' }}
+    needs: prepare-data
+    timeout-minutes: 180
+    outputs:
+      best_model_path: ${{ steps.train.outputs.model_path }}
+      best_val_loss: ${{ steps.train.outputs.val_loss }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dataset
+        uses: actions/download-artifact@v4
+        with:
+          name: teacher-dataset
+          path: ./isp-rectifier/teacher_dataset
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: isp-rectifier/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./isp-rectifier
+        run: pip install -r requirements.txt
+
+      - name: Verify dataset
+        working-directory: ./isp-rectifier
+        run: |
+          python -c "
+          import numpy as np
+          data = np.load('teacher_dataset/teacher_dataset.npz')
+          print(f'Keys: {list(data.keys())}')
+          for k, v in data.items():
+              if hasattr(v, 'shape'):
+                  print(f'  {k}: {v.shape} {v.dtype}')
+          "
+
+      - name: Train model
+        id: train
+        working-directory: ./isp-rectifier
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+        run: |
+          python distill_model.py \
+            --train \
+            --dataset teacher_dataset/teacher_dataset.npz \
+            --epochs ${{ github.event.inputs.epochs }} \
+            --batch-size ${{ github.event.inputs.batch_size }} \
+            --lr ${{ github.event.inputs.learning_rate }} \
+            --checkpoint-dir checkpoints \
+            --device ${{ github.event.inputs.use_gpu == 'true' && 'cuda' || 'cpu' }}
+
+          # Extract best model info
+          python -c "
+          import torch
+          ckpt = torch.load('checkpoints/best_model.pth', map_location='cpu')
+          print(f'model_path=checkpoints/best_model.pth')
+          print(f'val_loss={ckpt[\"val_loss\"]:.6f}')
+          print(f'epoch={ckpt[\"epoch\"]}')
+          " >> $GITHUB_OUTPUT
+
+      - name: Upload training artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-output
+          path: |
+            isp-rectifier/checkpoints/
+            isp-rectifier/teacher_dataset/dataset_info.json
+          retention-days: 30
+
+      - name: Log metrics to W&B
+        if: env.WANDB_API_KEY != ''
+        uses: wandb/wandb-action@v1
+        with:
+          project: isp-rectifier
+          entity: ${{ secrets.WANDB_ENTITY }}
+          name: run-${{ github.run_id }}
+
+  export-and-validate:
+    name: Export ONNX & Validate
+    runs-on: ubuntu-latest
+    needs: train
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download training output
+        uses: actions/download-artifact@v4
+        with:
+          name: training-output
+          path: ./isp-rectifier
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        working-directory: ./isp-rectifier
+        run: pip install -r requirements.txt
+
+      - name: Export ONNX (FP32)
+        id: export
+        working-directory: ./isp-rectifier
+        run: |
+          python distill_model.py \
+            --export \
+            --model checkpoints/best_model.pth \
+            --output fusedispcontroller.onnx
+
+      - name: Quantize models
+        working-directory: ./isp-rectifier
+        run: |
+          python distill_model.py \
+            --quantize \
+            --model fusedispcontroller.onnx \
+            --output fusedispcontroller_int8.onnx
+
+      - name: Validate INT8 quantization
+        id: validate_int8
+        working-directory: ./isp-rectifier
+        run: |
+          python batch_validate_quantization.py \
+            --fp32_model fusedispcontroller.onnx \
+            --quant_model fusedispcontroller_int8.onnx \
+            --samples 1000 \
+            --output-dir validation_int8
+
+      - name: Validate FP16 quantization
+        working-directory: ./isp-rectifier
+        run: |
+          python batch_validate_quantization.py \
+            --fp32_model fusedispcontroller.onnx \
+            --quant_model fusedispcontroller_fp16.onnx \
+            --samples 1000 \
+            --output-dir validation_fp16
+
+      - name: Check thresholds
+        working-directory: ./isp-rectifier
+        run: python check_thresholds.py --strict
+
+      - name: Generate model card
+        id: model_card
+        working-directory: ./isp-rectifier
+        run: |
+          python scripts/generate_model_card.py \
+            --model fusedispcontroller.onnx \
+            --int8 fusedispcontroller_int8.onnx \
+            --fp16 fusedispcontroller_fp16.onnx \
+            --checkpoint checkpoints/best_model.pth \
+            --dataset teacher_dataset/dataset_info.json \
+            --output MODEL_CARD.md
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-models
+          path: |
+            isp-rectifier/fusedispcontroller.onnx
+            isp-rectifier/fusedispcontroller_int8.onnx
+            isp-rectifier/fusedispcontroller_fp16.onnx
+            isp-rectifier/checkpoints/best_model.pth
+            isp-rectifier/checkpoints/history.json
+            isp-rectifier/MODEL_CARD.md
+          retention-days: 90
+
+      - name: Create model release (on tag)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            isp-rectifier/fusedispcontroller.onnx
+            isp-rectifier/fusedispcontroller_int8.onnx
+            isp-rectifier/fusedispcontroller_fp16.onnx
+            isp-rectifier/MODEL_CARD.md
+          generate_release_notes: true
+
+  benchmark:
+    name: Benchmark Inference
+    runs-on: ubuntu-latest
+    needs: export-and-validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download models
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models
+          path: ./models
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install onnxruntime onnx numpy tqdm
+
+      - name: Benchmark ONNX Runtime
+        working-directory: ./models
+        run: |
+          python -c "
+          import onnxruntime as ort
+          import numpy as np
+          import time
+
+          for model_name in ['fusedispcontroller.onnx', 'fusedispcontroller_int8.onnx', 'fusedispcontroller_fp16.onnx']:
+              sess = ort.InferenceSession(model_name)
+              hist = np.random.randn(1, 256).astype(np.float32)
+              meta = np.random.randn(1, 267).astype(np.float32)
+              
+              # Warmup
+              for _ in range(10):
+                  sess.run(None, {'histogram': hist, 'metadata': meta})
+              
+              # Benchmark
+              times = []
+              for _ in range(100):
+                  start = time.perf_counter()
+                  sess.run(None, {'histogram': hist, 'metadata': meta})
+                  times.append(time.perf_counter() - start)
+              
+              print(f'{model_name}: {np.mean(times)*1000:.2f} ms avg, {np.std(times)*1000:.2f} ms std')
+          "
+
+      - name: Comment benchmark results
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('benchmark_output.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## 🏎️ Inference Benchmark Results\n```\n' + output + '\n```'
+            })
