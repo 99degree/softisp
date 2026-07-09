@@ -182,8 +182,8 @@ pub struct UnifiedPipeline {
     config: UnifiedConfig,
     engine: Box<dyn IspEngine>,
     post_pipeline: PostProcessPipeline,
-    /// ISP controller for parameter-driven processing.
-    controller: crate::isp_controller::IspController,
+    /// ISP controller for parameter-driven processing (neural with fallback).
+    controller: crate::neural_controller::NeuralController,
     /// GPU warp block (for ONNX generation).
     gpu_warp: Option<GpuWarpBlock>,
     /// GPU warp ONNX model bytes.
@@ -205,8 +205,8 @@ impl UnifiedPipeline {
         info!("UnifiedPipeline: profile={}, width={}, gpu_warp={}, format={:?}",
             config.profile.label, config.target_width, config.gpu_warp_enabled, config.output_format);
 
-        // Initialize controller with default parameters
-        let controller = crate::isp_controller::IspController::new();
+        // Initialize neural controller with fallback
+        let controller = crate::neural_controller::NeuralController::new();
 
         let mut engine = match config.engine_preference.as_str() {
             "vulkan" => {
@@ -293,8 +293,8 @@ impl UnifiedPipeline {
 
         let post_pipeline = PostProcessPipeline::new(config.post_config.clone());
 
-        // Initialize controller with default parameters
-        let controller = crate::isp_controller::IspController::new();
+        // Initialize neural controller with fallback
+        let controller = crate::neural_controller::NeuralController::new();
 
         Ok(Self {
             config,
@@ -313,14 +313,26 @@ impl UnifiedPipeline {
         })
     }
 
-    /// Get a mutable reference to the ISP controller.
-    pub fn controller_mut(&mut self) -> &mut crate::isp_controller::IspController {
+    /// Get a mutable reference to the neural controller.
+    pub fn controller_mut(&mut self) -> &mut crate::neural_controller::NeuralController {
         &mut self.controller
     }
 
-    /// Get a reference to the ISP controller.
-    pub fn controller(&self) -> &crate::isp_controller::IspController {
+    /// Get a reference to the neural controller.
+    pub fn controller(&self) -> &crate::neural_controller::NeuralController {
         &self.controller
+    }
+
+    /// Load neural model for ISP parameter prediction.
+    #[cfg(feature = "rectifier")]
+    pub fn load_rectifier_model(&mut self, model_path: &str) -> IspResult<()> {
+        self.controller = crate::neural_controller::NeuralController::with_model(model_path);
+        if self.controller.has_model() {
+            info!("UnifiedPipeline: loaded rectifier model from {}", model_path);
+            Ok(())
+        } else {
+            Err(IspError::Pipeline(format!("Failed to load rectifier model from {}", model_path)))
+        }
     }
 
     /// Process a raw frame through the full pipeline.
