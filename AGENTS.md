@@ -127,6 +127,7 @@ All project documentation is in markdown. Reference these files before asking qu
 
 ### Core Architecture
 - `cam-isp/docs/PIPELINE_BLOCKS.md` — **All pipeline blocks with ONNX input/output tensor specs**
+- `cam-isp/docs/CONTROLLER_API.md` — **Unified controller API documentation**
 - `cam-isp/src/controller_api.rs` — **Unified controller API (ControllerApi trait)**
 - `isp-rectifier/MODEL_SPECIFICATION.md` — **Neural ISP controller model spec (267→20)**
 - `isp-rectifier/RUST_API_STATUS.md` — **Rust API for rectifier integration**
