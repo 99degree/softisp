@@ -81,8 +81,8 @@ impl ControllerApi for Controller {
             Self::Neural(_c) => {
                 #[cfg(feature = "rectifier")]
                 {
-                    **c = crate::neural_controller::NeuralController::with_model(model_path);
-                    c.has_model()
+                    **_c = crate::neural_controller::NeuralController::with_model(model_path);
+                    _c.has_model()
                 }
                 #[cfg(not(feature = "rectifier"))]
                 {
@@ -92,10 +92,125 @@ impl ControllerApi for Controller {
             }
         }
     }
+    
+    fn last_params(&self) -> Option<&IspParams> {
+        match self {
+            Self::RuleBased(c) => c.last_params(),
+            Self::Neural(c) => c.last_params(),
+        }
+    }
 }
 
 impl Default for Controller {
     fn default() -> Self {
         Self::rule_based()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::IspFrame;
+    use cam_types::FrameFormat;
+    
+    fn create_test_frame() -> IspFrame {
+        IspFrame {
+            width: 64,
+            height: 48,
+            data: vec![128; 64 * 48 * 2],
+            format: FrameFormat::RawSensor,
+            float_data: None,
+            aux: None,
+            timestamp_ns: 1000,
+            prep_duration_ns: 0,
+            inference_duration_ns: 0,
+            total_duration_ns: 0,
+        }
+    }
+    
+    #[test]
+    fn test_controller_rule_based() {
+        let mut controller = Controller::rule_based();
+        assert!(!controller.has_model());
+        
+        let frame = create_test_frame();
+        let params = controller.analyze_and_update(&frame);
+        
+        assert!(params.wb.r > 0.0);
+        assert!(params.wb.g > 0.0);
+        assert!(params.wb.b > 0.0);
+    }
+    
+    #[test]
+    fn test_controller_neural() {
+        let mut controller = Controller::neural();
+        assert!(!controller.has_model()); // No model loaded
+        
+        let frame = create_test_frame();
+        let params = controller.analyze_and_update(&frame);
+        
+        // Should fallback to rule-based
+        assert!(params.wb.r > 0.0);
+    }
+    
+    #[test]
+    fn test_controller_default() {
+        let mut controller = Controller::default();
+        
+        let frame = create_test_frame();
+        let params = controller.analyze_and_update(&frame);
+        
+        assert!(params.wb.r > 0.0);
+    }
+    
+    #[test]
+    fn test_controller_load_model() {
+        let mut controller = Controller::neural();
+        
+        // Try to load non-existent model (should fail gracefully)
+        let result = controller.load_model("nonexistent.onnx");
+        assert!(!result);
+        assert!(!controller.has_model());
+    }
+    
+    #[test]
+    fn test_controller_last_params() {
+        let mut controller = Controller::rule_based();
+        
+        // IspController has default params from init
+        assert!(controller.last_params().is_some());
+        
+        let frame = create_test_frame();
+        let params1 = controller.analyze_and_update(&frame);
+        
+        // After analysis, params should be updated
+        let params2 = controller.last_params().unwrap();
+        assert_eq!(params1.wb.r, params2.wb.r);
+    }
+    
+    #[test]
+    fn test_controller_multiple_frames() {
+        let mut controller = Controller::rule_based();
+        let frame = create_test_frame();
+        
+        // Process multiple frames
+        let params1 = controller.analyze_and_update(&frame);
+        let params2 = controller.analyze_and_update(&frame);
+        
+        // Params should be similar (same input)
+        assert!((params1.wb.r - params2.wb.r).abs() < 0.1);
+    }
+    
+    #[test]
+    fn test_controller_api_trait() {
+        fn process_frame<C: ControllerApi>(controller: &mut C, frame: &IspFrame) -> IspParams {
+            controller.analyze_and_update(frame)
+        }
+        
+        let mut controller = Controller::rule_based();
+        let frame = create_test_frame();
+        
+        let params = process_frame(&mut controller, &frame);
+        assert!(params.wb.r > 0.0);
     }
 }
