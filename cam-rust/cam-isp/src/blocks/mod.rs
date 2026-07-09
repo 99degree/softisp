@@ -81,6 +81,9 @@ mod watermark;
 mod super_res;
 pub mod runtime_warp;
 pub mod gpu_warp;
+pub mod bilateral;
+pub mod saturation;
+pub mod vignetting;
 
 pub use raw_input::RawInputBlock;
 pub use normalize::NormalizeBlock;
@@ -131,6 +134,9 @@ pub use watermark::WatermarkBlock;
 pub use runtime_warp::RuntimeWarpBlock;
 pub use gpu_warp::GpuWarpBlock;
 pub use super_res::SuperResBlock;
+pub use bilateral::BilateralBlock;
+pub use saturation::SaturationBlock;
+pub use vignetting::VignettingBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
