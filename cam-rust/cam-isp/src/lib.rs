@@ -17,6 +17,7 @@ pub mod isp_params;
 pub mod isp_controller;
 pub mod neural_controller;
 pub mod controller_api;
+pub mod rectifier_model;
 pub mod ae;
 pub mod profile;
 pub mod config;
