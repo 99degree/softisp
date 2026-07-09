@@ -14,6 +14,7 @@ fn create_test_frame() -> IspFrame {
         format: FrameFormat::RawSensor,
         float_data: None,
         aux: None,
+        params: cam_isp::isp_params::IspParams::default(),
         timestamp_ns: 1000,
         prep_duration_ns: 0,
         inference_duration_ns: 0,
