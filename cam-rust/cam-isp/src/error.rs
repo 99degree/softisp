@@ -1,6 +1,7 @@
 //! Error types for the ISP pipeline.
 
 use std::fmt;
+use crate::pipeline::builder::PipelineError;
 
 /// ISP pipeline error type.
 ///
@@ -114,5 +115,35 @@ mod tests {
         let err = IspError::Mnn("test".into());
         let cloned = err.clone();
         assert_eq!(format!("{}", err), format!("{}", cloned));
+    }
+}
+
+impl From<PipelineError> for IspError {
+    fn from(e: PipelineError) -> Self {
+        match e {
+            PipelineError::EmptyPipeline => Self::Pipeline("empty pipeline".into()),
+            PipelineError::InvalidResolution(w, h) => {
+                Self::Config(format!("invalid resolution: {}x{}", w, h))
+            }
+            PipelineError::ValidationFailed(issues) => {
+                Self::Pipeline(format!("validation failed: {}", issues.join("; ")))
+            }
+            PipelineError::ComposeFailed(msg) => Self::Pipeline(msg),
+            PipelineError::ConvertFailed(msg) => Self::Conversion(msg),
+            PipelineError::IoError(msg) => Self::Io(msg),
+        }
+    }
+}
+
+// Additional From implementations for common patterns
+impl From<std::num::ParseIntError> for IspError {
+    fn from(e: std::num::ParseIntError) -> Self {
+        Self::Config(format!("parse error: {}", e))
+    }
+}
+
+impl From<std::num::ParseFloatError> for IspError {
+    fn from(e: std::num::ParseFloatError) -> Self {
+        Self::Config(format!("parse error: {}", e))
     }
 }
