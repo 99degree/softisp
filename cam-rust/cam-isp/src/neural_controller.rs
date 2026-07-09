@@ -300,6 +300,7 @@ mod tests {
     
     fn create_test_frame() -> IspFrame {
         IspFrame {
+            params: IspParams::default(),
             width: 64,
             height: 48,
             data: vec![128; 64 * 48 * 2],
