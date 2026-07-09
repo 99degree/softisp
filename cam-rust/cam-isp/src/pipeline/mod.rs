@@ -1,14 +1,23 @@
-//! ISP pipeline types: block trait, frame, graph composer.
+//! ISP pipeline module — complete pipeline infrastructure.
 //!
-//! This module defines the core types for the ISP processing pipeline:
-//! - `IspBlock` trait: interface for processing blocks
-//! - `IspFrame`: output frame from the pipeline
-//! - `GraphComposer`: builds ONNX models from block chains
+//! This module defines all types and utilities for the ISP processing pipeline:
+//! - Core types: `IspBlock`, `IspFrame`, `GraphComposer`
+//! - Traits: `ProcessPipeline`, `BuildablePipeline`
+//! - Builder: fluent API for constructing pipelines
+//! - Diff: compare pipeline configurations
+//! - Snapshot: save/restore pipeline state for fast restart
 
 pub mod base;
 pub mod build;
-pub mod types;
+pub mod builder;
+pub mod diff;
+pub mod snapshot;
 pub mod traits;
+pub mod types;
+
 pub use types::*;
 pub use traits::*;
 pub use build::*;
+pub use builder::PipelineBuilder;
+pub use diff::PipelineDiff;
+pub use snapshot::PipelineSnapshot;
