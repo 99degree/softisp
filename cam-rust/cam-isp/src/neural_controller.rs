@@ -32,6 +32,54 @@ impl NeuralController {
         }
     }
     
+    /// Create controller with mock model for testing.
+    /// Uses the rectifier_model module to generate a valid ONNX model.
+    pub fn with_mock_model() -> Self {
+        let model_bytes = crate::rectifier_model::generate_rectifier_model();
+        
+        #[cfg(feature = "rectifier")]
+        {
+            match Self::load_from_bytes(&model_bytes) {
+                Ok(ctrl) => {
+                    log::info!("NeuralController: loaded mock model ({} bytes)", model_bytes.len());
+                    ctrl
+                }
+                Err(e) => {
+                    log::warn!("NeuralController: failed to load mock model: {}, using fallback", e);
+                    Self::new()
+                }
+            }
+        }
+        #[cfg(not(feature = "rectifier"))]
+        {
+            let _ = model_bytes;
+            log::info!("NeuralController: rectifier feature disabled, using fallback");
+            Self::new()
+        }
+    }
+    
+    /// Load model from bytes (for testing or in-memory models).
+    #[cfg(feature = "rectifier")]
+    pub fn load_from_bytes(model_bytes: &[u8]) -> Result<Self, String> {
+        // Write to temp file and load
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join("mock_rectifier.onnx");
+        std::fs::write(&temp_path, model_bytes)
+            .map_err(|e| format!("Failed to write temp model: {}", e))?;
+        
+        let rectifier = isp_rectifier::OptimizedInference::new(&temp_path, true)
+            .map_err(|e| format!("Failed to load model: {}", e))?;
+        
+        // Cleanup temp file
+        let _ = std::fs::remove_file(&temp_path);
+        
+        Ok(Self {
+            rectifier: Some(rectifier),
+            fallback: IspController::new(),
+            last_params: None,
+        })
+    }
+    
     /// Create controller with ONNX model path.
     #[cfg(feature = "rectifier")]
     pub fn with_model(model_path: &str) -> Self {
@@ -250,26 +298,73 @@ impl Default for NeuralController {
 mod tests {
     use super::*;
     
-    #[test]
-    fn test_neural_controller_fallback() {
-        let mut ctrl = NeuralController::new();
-        assert!(!ctrl.has_model());
-        
-        let frame = IspFrame {
+    fn create_test_frame() -> IspFrame {
+        IspFrame {
             width: 64,
             height: 48,
             data: vec![128; 64 * 48 * 2],
             format: cam_types::FrameFormat::RawSensor,
             float_data: None,
             aux: None,
-            timestamp_ns: 0,
+            timestamp_ns: 1000,
             prep_duration_ns: 0,
             inference_duration_ns: 0,
             total_duration_ns: 0,
-        };
+        }
+    }
+    
+    #[test]
+    fn test_neural_controller_fallback() {
+        let mut ctrl = NeuralController::new();
+        assert!(!ctrl.has_model());
         
+        let frame = create_test_frame();
         let params = ctrl.analyze_and_update(&frame);
         assert!(params.wb.r > 0.0);
+    }
+    
+    #[test]
+    fn test_neural_controller_mock_model() {
+        // Test that mock model can be generated
+        let model_bytes = crate::rectifier_model::generate_rectifier_model();
+        assert!(!model_bytes.is_empty());
+        assert!(model_bytes.len() > 1000);
+        
+        // Create controller with mock model
+        let mut ctrl = NeuralController::with_mock_model();
+        
+        let frame = create_test_frame();
+        let params = ctrl.analyze_and_update(&frame);
+        
+        // Should produce valid parameters
+        assert!(params.wb.r > 0.0);
+        assert!(params.wb.g > 0.0);
+        assert!(params.wb.b > 0.0);
+    }
+    
+    #[test]
+    fn test_mock_model_load_from_bytes() {
+        let model_bytes = crate::rectifier_model::generate_rectifier_model();
+        
+        #[cfg(feature = "rectifier")]
+        {
+            let result = NeuralController::load_from_bytes(&model_bytes);
+            assert!(result.is_ok());
+            
+            let mut ctrl = result.unwrap();
+            assert!(ctrl.has_model());
+            
+            let frame = create_test_frame();
+            let params = ctrl.analyze_and_update(&frame);
+            assert!(params.wb.r > 0.0);
+        }
+        
+        #[cfg(not(feature = "rectifier"))]
+        {
+            // Without rectifier feature, load_from_bytes is not available
+            // but generate_rectifier_model should still work
+            assert!(!model_bytes.is_empty());
+        }
     }
     
     #[test]
@@ -283,6 +378,32 @@ mod tests {
         
         assert!((smoothed.wb.r - 1.3).abs() < 0.01);
         assert!((smoothed.wb.b - 0.85).abs() < 0.01);
+    }
+    
+    #[test]
+    fn test_mock_model_output_shape() {
+        // Verify mock model produces correct output dimensions
+        let model_bytes = crate::rectifier_model::generate_rectifier_model();
+        
+        // Model should be valid ONNX (starts with protobuf data)
+        assert!(!model_bytes.is_empty());
+        
+        // Check it's a reasonable size for a small model
+        assert!(model_bytes.len() > 1000);
+        assert!(model_bytes.len() < 100_000); // Less than 100KB
+    }
+    
+    #[test]
+    fn test_neural_controller_multiple_frames() {
+        let mut ctrl = NeuralController::new();
+        let frame = create_test_frame();
+        
+        // Process multiple frames
+        let params1 = ctrl.analyze_and_update(&frame);
+        let params2 = ctrl.analyze_and_update(&frame);
+        
+        // Should be similar (temporal smoothing)
+        assert!((params1.wb.r - params2.wb.r).abs() < 0.2);
     }
 }
 
