@@ -10,7 +10,6 @@
 pub mod engine;
 pub mod error;
 pub mod pipeline;
-pub mod pipeline_snapshot;
 pub mod blocks;
 pub mod cpu;
 pub mod controller;
@@ -56,9 +55,7 @@ pub mod isp_ops;
 pub mod stats;
 pub mod simd;
 pub mod serializer;
-pub mod pipeline_builder;
 pub mod optimizer;
-pub mod pipeline_diff;
 pub mod temporal;
 pub mod gpu_watchdog;
 pub mod npu;
