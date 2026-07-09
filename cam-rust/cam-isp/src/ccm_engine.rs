@@ -139,8 +139,8 @@ pub fn sanitize_ccm(
     let mut cct_ref_value = 0i32;
     let has_flags = flags.is_some();
     let has_cct_ref = cct_ref.is_some();
-    if has_flags { flag_value = **flags.as_ref().unwrap(); }
-    if has_cct_ref { cct_ref_value = **cct_ref.as_ref().unwrap(); }
+    if let Some(f) = flags.as_ref() { flag_value = **f; }
+    if let Some(c) = cct_ref.as_ref() { cct_ref_value = **c; }
 
     macro_rules! or_flag {
         ($bit:expr) => {
