@@ -217,7 +217,7 @@ impl IspBlock for RuntimeWarpBlock {
         let mut inits = vec![];
 
         // Grid initializer (identity if not set)
-        let grid = self.grid.as_ref().map(|g| g.as_slice()).unwrap_or(&[]);
+        let grid = self.grid.as_deref().unwrap_or(&[]);
 
         if !grid.is_empty() {
             inits.push(Proto::tensor_proto_float(

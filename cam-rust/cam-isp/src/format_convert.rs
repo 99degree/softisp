@@ -13,7 +13,9 @@
 //!         or [1, 3, H, W] f16 Float16RGB [0,1]
 //! ```
 
+#[cfg(feature = "mnn")]
 use crate::engine::OutputFormat;
+#[cfg(feature = "mnn")]
 use crate::onnx::proto::Proto;
 #[allow(unused_imports)]
 use log::{info, warn};
@@ -128,6 +130,7 @@ impl FormatConvertEngine {
 /// Build a standalone ONNX model for format conversion.
 ///
 /// Uses the same Conv(1×1)/Mul/Cast pattern as DisplayBlock.
+#[cfg(feature = "mnn")]
 fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
     use OutputFormat::*;
 
@@ -137,7 +140,7 @@ fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
 
     let mut nodes: Vec<Vec<u8>> = Vec::new();
     let mut inits: Vec<Vec<u8>> = Vec::new();
-    let mut prev = input.to_string();
+    let prev = input.to_string();
 
     // Input: [1, 3, H, W] f32
     let vi = Proto::value_info(input, &[
@@ -251,9 +254,10 @@ fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "mnn"))]
 mod tests {
     use super::*;
+    use crate::engine::OutputFormat;
 
     #[test]
     fn test_format_convert_onnx_rgba() {
