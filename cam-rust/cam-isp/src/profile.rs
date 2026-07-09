@@ -552,7 +552,7 @@ impl PipelineProfile {
         if self.use_vignetting {
             info!("  vignetting: VignettingBlock");
             blocks.push(Box::new(crate::blocks::VignettingBlock::new_default(
-                target_width as u32,
+                target_width,
                 (target_width as f64 * 9.0 / 16.0) as u32,
             )));
         } else {

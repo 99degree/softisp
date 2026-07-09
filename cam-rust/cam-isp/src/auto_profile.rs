@@ -7,12 +7,11 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::blocks::*;
-use crate::engine::{IspEngine, ProcessParams, OutputFormat, select_engine};
+use crate::engine::{IspEngine, ProcessParams, select_engine};
 use crate::error::IspResult;
-use crate::pipeline::{IspBlock, IspFrame, GraphComposer};
+use crate::pipeline::{IspBlock, IspFrame};
 use crate::pipeline::traits::ProcessPipeline;
-use crate::pipeline_config::{PipelineConfig, BlockConfig, PipelineProfiler, BlockProfile};
-use crate::profile::PipelineProfile;
+use crate::pipeline_config::{PipelineConfig, BlockConfig, PipelineProfiler};
 
 /// Auto-profile configuration — automatically optimized for HW.
 pub struct AutoProfile {
@@ -323,7 +322,7 @@ impl AutoProfile {
 
     /// Profile the pipeline to measure actual performance.
     pub fn profile(&mut self, params: &ProcessParams, iterations: usize) -> IspResult<()> {
-        let mut pipeline = self.build()?;
+        let pipeline = self.build()?;
 
         // Warmup
         for _ in 0..10 {
