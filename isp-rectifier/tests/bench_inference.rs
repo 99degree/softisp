@@ -64,6 +64,24 @@ fn bench_model(name: &str, path: &PathBuf) {
 }
 
 #[test]
+fn bench_light_model() {
+    let path = models_dir().join("fusedispcontroller_light.onnx");
+    bench_model("LIGHT-FP32", &path);
+}
+
+#[test]
+fn bench_light_int8_model() {
+    let path = models_dir().join("fusedispcontroller_light_int8.onnx");
+    bench_model("LIGHT-INT8", &path);
+}
+
+#[test]
+fn bench_light_fp16_model() {
+    // FP16 models require FP16 support in tract, which is limited
+    eprintln!("Skipping LIGHT-FP16: tract FP16 support is limited");
+}
+
+#[test]
 fn bench_medium_model() {
     let path = models_dir().join("fusedispcontroller_medium.onnx");
     bench_model("MEDIUM-FP32", &path);
@@ -106,6 +124,8 @@ fn bench_all_models_comparison() {
     
     for (name, filename) in [
         // FP16 skipped: tract doesn't support FP16 properly
+        ("LIT-FP32", "fusedispcontroller_light.onnx"),
+        ("LIT-INT8", "fusedispcontroller_light_int8.onnx"),
         ("MED-FP32", "fusedispcontroller_medium.onnx"),
         ("MED-INT8", "fusedispcontroller_medium_int8.onnx"),
         ("FP32", "fusedispcontroller.onnx"),
