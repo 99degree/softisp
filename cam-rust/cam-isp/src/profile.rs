@@ -353,14 +353,14 @@ impl PipelineProfile {
         stats_downscale_max: 0,
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
-        use_bilateral: false,   // CPU-only, not GPU-fused
+        use_bilateral: false,   // Uses non-standard ONNX ops (GaussianBlur, Sobel)
         use_saturation: true,
-        use_vignetting: false,  // CPU-only, not GPU-fused
-        use_colorspace: false,  // CPU-only, not GPU-fused
+        use_vignetting: false,  // Uses non-standard ONNX ops (Range)
+        use_colorspace: false,  // Uses non-standard ONNX ops (ReduceMax, ReduceMin)
         use_gamma: true,
         use_sharpen: true,
-        use_wavelet_denoise: false, // CPU-only, not GPU-fused
-        use_auto_contrast: false,   // CPU-only, not GPU-fused
+        use_wavelet_denoise: false, // Uses non-standard ONNX ops (AveragePool with dynamic shapes)
+        use_auto_contrast: true,   // GPU-accelerated via ISP op (Add/Sub/Mul chain)
         use_normalize: true,
         output_format: OutputFormat::PackedRgb,
     };
