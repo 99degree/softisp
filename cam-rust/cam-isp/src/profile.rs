@@ -118,6 +118,16 @@ pub struct PipelineProfile {
     pub use_vignetting: bool,
     /// Enable color space conversion (HSV/LAB).
     pub use_colorspace: bool,
+    /// Enable gamma correction.
+    pub use_gamma: bool,
+    /// Enable sharpening (unsharp mask).
+    pub use_sharpen: bool,
+    /// Enable wavelet denoising.
+    pub use_wavelet_denoise: bool,
+    /// Enable auto contrast adjustment.
+    pub use_auto_contrast: bool,
+    /// Enable normalization (zero-mean, unit-variance).
+    pub use_normalize: bool,
     /// Output pixel format.
     pub output_format: OutputFormat,
 }
@@ -153,6 +163,11 @@ impl PipelineProfile {
         use_saturation: false,
         use_vignetting: false,
         use_colorspace: false,
+        use_gamma: false,
+        use_sharpen: false,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -186,6 +201,11 @@ impl PipelineProfile {
         use_saturation: true,
         use_vignetting: false,
         use_colorspace: false,
+        use_gamma: false,
+        use_sharpen: false,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -219,6 +239,11 @@ impl PipelineProfile {
         use_saturation: true,
         use_vignetting: true,
         use_colorspace: false,
+        use_gamma: true,
+        use_sharpen: true,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -252,6 +277,11 @@ impl PipelineProfile {
         use_saturation: true,
         use_vignetting: true,
         use_colorspace: true,
+        use_gamma: true,
+        use_sharpen: true,
+        use_wavelet_denoise: true,
+        use_auto_contrast: true,
+        use_normalize: false,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -286,12 +316,17 @@ impl PipelineProfile {
         use_saturation: false,
         use_vignetting: false,
         use_colorspace: false,
+        use_gamma: false,
+        use_sharpen: false,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
         output_format: OutputFormat::PackedRgb,
     };
 
     /// Unified profile — full ISP pipeline with all blocks enabled.
     /// Combines raw input, unpack, BLC, CCM, white balance, demosaic,
-    /// tone, FCS, LDCI, EE, and display output.
+    /// tone, FCS, LDCI, EE, and all post-processing blocks.
     pub const UNIFIED: Self = Self {
         label: "UNIFIED",
         level: PipelineLevel::Heavy,
@@ -320,7 +355,12 @@ impl PipelineProfile {
         use_bilateral: true,
         use_saturation: true,
         use_vignetting: true,
-        use_colorspace: false,
+        use_colorspace: true,
+        use_gamma: true,
+        use_sharpen: true,
+        use_wavelet_denoise: true,
+        use_auto_contrast: true,
+        use_normalize: true,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -357,6 +397,11 @@ impl PipelineProfile {
         use_saturation: bool,    // saturation control
         use_vignetting: bool,    // vignetting correction
         use_colorspace: bool,    // color space conversion
+        use_gamma: bool,         // gamma correction
+        use_sharpen: bool,       // sharpening
+        use_wavelet_denoise: bool, // wavelet denoising
+        use_auto_contrast: bool, // auto contrast
+        use_normalize: bool,     // normalization
     ) -> Self {
         Self {
             label,
@@ -387,6 +432,11 @@ impl PipelineProfile {
             use_saturation,      // saturation control
             use_vignetting,      // vignetting correction
             use_colorspace,      // color space conversion
+            use_gamma,           // gamma correction
+            use_sharpen,         // sharpening
+            use_wavelet_denoise, // wavelet denoising
+            use_auto_contrast,   // auto contrast
+            use_normalize,       // normalization
             output_format: OutputFormat::PackedRgb,
         }
     }
@@ -578,6 +628,42 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("colorspace")));
         }
 
+        // ── Gamma correction ──
+        if self.use_gamma {
+            info!("  gamma: GammaBlock");
+            blocks.push(Box::new(crate::blocks::GammaBlock::new(2.2)));  // sRGB gamma
+        } else {
+            info!("  gamma: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("gamma")));
+        }
+
+        // ── Sharpening (unsharp mask) ──
+        if self.use_sharpen {
+            info!("  sharpen: SharpenBlock");
+            blocks.push(Box::new(crate::blocks::SharpenBlock::new(0.5)));  // 50% strength
+        } else {
+            info!("  sharpen: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("sharpen")));
+        }
+
+        // ── Wavelet denoising ──
+        if self.use_wavelet_denoise {
+            info!("  wavelet_denoise: WaveletDenoiseBlock");
+            blocks.push(Box::new(crate::blocks::WaveletDenoiseBlock::new()));
+        } else {
+            info!("  wavelet_denoise: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("wavelet_denoise")));
+        }
+
+        // ── Auto contrast ──
+        if self.use_auto_contrast {
+            info!("  auto_contrast: AutoContrastBlock");
+            blocks.push(Box::new(crate::blocks::AutoContrastBlock::new(1.0)));  // 1.0 = auto
+        } else {
+            info!("  auto_contrast: IDENTITY");
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new("auto_contrast")));
+        }
+
         // ── Display output + orientation transform (fused) ──
         // Note: do NOT set concrete dims here. The ISP pipeline may work at
         // half resolution (e.g. 540×480 from 1080×960 packed input), and
@@ -750,14 +836,14 @@ mod tests {
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 0);
         // LITE: always has 16 main-chain blocks (identity placeholders for disabled features)
-        assert_eq!(blocks.len(), 16, "LITE (fused, demosaic_ccm) should have 16 blocks, got {}", blocks.len());
+        assert_eq!(blocks.len(), 20, "LITE (fused, demosaic_ccm) should have 20 blocks (15 main + 5 postproc identity), got {}", blocks.len());
     }
 
     #[test]
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
         // HEAVY: all 16 main blocks present (4 new: bilateral, vignetting, saturation, colorspace)
-        assert_eq!(blocks.len(), 16, "HEAVY (fused, demosaic_ccm) should have 16 blocks, got {}", blocks.len());
+        assert_eq!(blocks.len(), 20, "HEAVY (fused, demosaic_ccm) should have 20 blocks (15 main + 5 postproc), got {}", blocks.len());
     }
 
     #[test]
@@ -779,6 +865,11 @@ mod tests {
             true,  // use_saturation
             true,  // use_vignetting
             false, // use_colorspace
+            true,  // use_gamma
+            true,  // use_sharpen
+            false, // use_wavelet_denoise
+            false, // use_auto_contrast
+            false, // use_normalize
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -809,17 +900,22 @@ mod tests {
             false, // use_saturation
             false, // use_vignetting
             false, // use_colorspace
+            false, // use_gamma
+            false, // use_sharpen
+            false, // use_wavelet_denoise
+            false, // use_auto_contrast
+            false, // use_normalize
         );
         let blocks = p.build_blocks(128, 0);
-        assert_eq!(blocks.len(), 19, "Legacy should have 19 blocks (all with identity placeholders), got {}", blocks.len());
+        assert_eq!(blocks.len(), 23, "Legacy should have 23 blocks (all with identity placeholders), got {}", blocks.len());
         assert_eq!(blocks[0].id(), "raw_input");
         assert_eq!(blocks[1].id(), "normalize", "Second block should be Normalize (no Unpack)");
     }
 
     #[test]
     fn test_block_count() {
-        assert_eq!(PipelineProfile::LITE.block_count(), 19, "LITE: 16 main + 3 stats");
-        assert_eq!(PipelineProfile::HEAVY.block_count(), 21, "HEAVY: 16 main + 5 stats");
+        assert_eq!(PipelineProfile::LITE.block_count(), 23, "LITE: 20 main + 3 stats");
+        assert_eq!(PipelineProfile::HEAVY.block_count(), 25, "HEAVY: 20 main + 5 stats");
     }
 
     #[test]
