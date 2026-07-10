@@ -101,7 +101,7 @@ impl IspBlock for SaturationBlock {
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        vec![("saturation/scale".into(), 1, vec![3])]
     }
 }
 
