@@ -410,7 +410,7 @@ jobs:
             echo '**Note**: Generated from mock model. No real training checkpoint available.' >> MODEL_CARD.md
           fi
 
-      - name: Upload model artifacts
+      - name: Upload model artifacts (individual)
         uses: actions/upload-artifact@v4
         with:
           name: trained-models
@@ -429,6 +429,31 @@ jobs:
             isp-rectifier/MODEL_CARD.md
           retention-days: 90
 
+      - name: Create all-in-one zip
+        run: |
+          mkdir -p dist
+          cp isp-rectifier/fusedispcontroller.onnx dist/
+          cp isp-rectifier/fusedispcontroller_int8.onnx dist/
+          cp isp-rectifier/fusedispcontroller_fp16.onnx dist/
+          cp isp-rectifier/fusedispcontroller_light.onnx dist/
+          cp isp-rectifier/fusedispcontroller_light_int8.onnx dist/
+          cp isp-rectifier/fusedispcontroller_light_fp16.onnx dist/
+          cp isp-rectifier/fusedispcontroller_medium.onnx dist/
+          cp isp-rectifier/fusedispcontroller_medium_int8.onnx dist/
+          cp isp-rectifier/fusedispcontroller_medium_fp16.onnx dist/
+          cp isp-rectifier/checkpoints/best_model.pth dist/ 2>/dev/null || true
+          cp isp-rectifier/checkpoints/history.json dist/ 2>/dev/null || true
+          cp isp-rectifier/MODEL_CARD.md dist/
+          cd dist && zip -r ../isp-rectifier-models.zip . && cd ..
+          ls -lh isp-rectifier-models.zip
+
+      - name: Upload all-in-one zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: isp-rectifier-models-zip
+          path: isp-rectifier-models.zip
+          retention-days: 90
+
       - name: Create model release (on tag)
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
@@ -444,6 +469,7 @@ jobs:
             isp-rectifier/fusedispcontroller_medium_int8.onnx
             isp-rectifier/fusedispcontroller_medium_fp16.onnx
             isp-rectifier/MODEL_CARD.md
+            isp-rectifier-models.zip
           generate_release_notes: true
 
   benchmark:
