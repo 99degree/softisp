@@ -444,6 +444,7 @@ impl UnifiedPipeline {
                 isp_output.height,
                 isp_output.aux.clone(),
                 isp_output.timestamp_ns,
+                Some(isp_output.params.clone()),
             ).map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
         } else {
             // u8 path: use process
@@ -466,7 +467,7 @@ impl UnifiedPipeline {
                                 converter.output_format(),
                                 t_fmt.elapsed().as_secs_f64() * 1000.0);
                             IspFrame {
-            params: crate::isp_params::IspParams::default(),
+            params: post_output.params.clone(),
                                 data: out_buf,
                                 width: post_output.width,
                                 height: post_output.height,
