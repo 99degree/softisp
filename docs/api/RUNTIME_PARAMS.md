@@ -10,6 +10,8 @@ but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.
 
 ## `auto_contrast` — Adaptive contrast S-curve — center/stretch/uncenter
 
+### Runtime Parameters (`extra_inputs()`)
+
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `half` | contrast=1.5 | [1] | FLOAT | 0.5 | 0.5 constant for center/uncenter S-curve. |
@@ -19,20 +21,47 @@ but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.
 | `zero` | contrast=1.5, highlight_compress=0.1 | [1] | FLOAT | 0.0 | Clip lower bound. Conditional: only when highlight_compress > 0.01. |
 | `one` | contrast=1.5, highlight_compress=0.1 | [1] | FLOAT | 1.0 | Clip upper bound. Conditional: only when highlight_compress > 0.01. |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,3,-1,-1] | FLOAT | RGB input [1,3,H,W] FLOAT |
+| `AutoContrastBlock/frame` | Output | [1,3,-1,-1] | FLOAT | Auto-contrast output [1,3,H,W] FLOAT |
+
 ## `bayer_wb` — Bayer white balance — per-channel gain
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `gains` | rggb | [1,4,1,1] | FLOAT | [1.0, 1.0, 1.0, 1.0] | RGGB channel gains for Bayer white balance |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,1,-1,-1] | FLOAT | Bayer input [1,1,H,W] FLOAT |
+| `BayerWbBlock/frame` | Output | [1,1,-1,-1] | FLOAT | Bayer WB output [1,1,H,W] FLOAT |
+
 ## `demosaic_ccm` — Fused demosaic + CCM
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `w` | rggb | [3,4,1,1] | FLOAT | 4×3×1×1 weights, 3×1 bias | CCM convolution weights: shape [3,4,1,1] for 3×4 color correction matrix |
 | `b` | rggb | [3] | FLOAT | 4×3×1×1 weights, 3×1 bias | CCM bias: shape [3] for per-channel offset |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,1,-1,-1] | INT32 | Packed Bayer input [1,1,H,W] INT32 |
+| `DemosaicCcmBlock/frame` | Output | [1,3,-1,-1] | FLOAT | Demosaiced RGB [1,3,H,W] FLOAT |
+
 ## `display` — Display format conversion (FloatRgb)
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
@@ -43,14 +72,32 @@ but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.
 | `(none)` | Argb | scalar | UNKNOWN | - | ARGB uses fixed Conv weights — no runtime params. |
 | `(none)` | PackedRgb | scalar | UNKNOWN | - | PackedRgb uses fixed weights — no runtime params. |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,3,-1,-1] | FLOAT | RGB input [1,3,H,W] FLOAT |
+| `DisplayBlock/frame` | Output | [1,1,-1,-1] | INT32 | Packed INT32 [1,1,H,W/2] — two pixels per word |
+
 ## `fcs` — Film contrast stretch — Mul+Add per-channel
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `gain` | default | [3] | FLOAT | [1.0, 1.0, 1.0] | Per-channel gain [R,G,B]. 1.0 = identity |
 | `bias` | default | [3] | FLOAT | [0.0, 0.0, 0.0] | Per-channel bias [R,G,B]. 0.0 = identity |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,3,-1,-1] | FLOAT | RGB input [1,3,H,W] FLOAT |
+| `FcsBlock/frame` | Output | [1,3,-1,-1] | FLOAT | FCS output [1,3,H,W] FLOAT |
+
 ## `gamma` — Gamma correction — pow(x, 1/γ) + clamp + optional shadow lift
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
@@ -60,37 +107,89 @@ but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.
 | `lift` | gamma=2.2, shadow_lift=0.05 | [1] | FLOAT | 0.05 | Shadow lift offset (~0.01-0.10). Conditional: only when shadow_lift > 0. |
 | `norm` | gamma=2.2, shadow_lift=0.05 | [1] | FLOAT | 1.0 | Shadow lift re-normalize factor. Conditional: only when shadow_lift > 0. |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,3,-1,-1] | FLOAT | RGB input [1,3,H,W] FLOAT |
+| `GammaBlock/frame` | Output | [1,3,-1,-1] | FLOAT | Gamma-corrected RGB [1,3,H,W] FLOAT |
+
 ## `ldci` — Local contrast enhancement (adaptive tone mapping)
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `strength` | default | [1] | FLOAT | 1.0 | Local contrast strength. 1.0 = default |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,3,-1,-1] | FLOAT | RGB input [1,3,H,W] FLOAT |
+| `LdciBlock/frame` | Output | [1,3,-1,-1] | FLOAT | LDCI output [1,3,H,W] FLOAT |
+
 ## `normalize` — INT32→FLOAT + Div by sensor max
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `max_val` | default | [1] | FLOAT | 65535.0 | Sensor max value (65535 for 16-bit) |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,1,-1,-1] | INT32 | Packed INT32 input [1,1,H,W] |
+| `NormalizeBlock/frame` | Output | [1,1,-1,-1] | FLOAT | Normalized FLOAT [1,1,H,W] [0,1] |
+
 ## `saturation` — Saturation control — per-channel RGB factor
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `scale` | default | [3] | FLOAT | [1.0, 1.0, 1.0] | Per-channel saturation scale [R,G,B]. 1.0 = identity |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,3,-1,-1] | FLOAT | RGB input [1,3,H,W] FLOAT |
+| `SaturationBlock/frame` | Output | [1,3,-1,-1] | FLOAT | Saturated RGB [1,3,H,W] FLOAT |
+
 ## `sharpen` — Unsharp mask sharpening
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `strength` | strength=0.5 | [1] | FLOAT | 0.5 | Sharpening strength. 0=off, 0.5=moderate, 1.0=strong |
 
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,3,-1,-1] | FLOAT | RGB input [1,3,H,W] FLOAT |
+| `SharpenBlock/frame` | Output | [1,3,-1,-1] | FLOAT | Sharpened RGB [1,3,H,W] FLOAT |
+
 ## `tone` — Tone mapping — contrast/brightness/gamma S-curve
+
+### Runtime Parameters (`extra_inputs()`)
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
 | `contrast` | default | [1] | FLOAT | 1.0 | Contrast factor (1.0 = identity) |
 | `brightness` | default | [1] | FLOAT | 0.0 | Brightness offset (-1..1) |
 | `gamma_recip` | default | [1] | FLOAT | 1.0 | Gamma reciprocal (1/γ) |
+
+### Input / Output Tensors
+
+| Tensor | I/O | Shape | Type | Description |
+|---|---|---|---|---|
+| `prev/frame` | Input | [1,3,-1,-1] | FLOAT | RGB input [1,3,H,W] FLOAT |
+| `ToneBlock/frame` | Output | [1,3,-1,-1] | FLOAT | Tone-mapped RGB [1,3,H,W] FLOAT |
 
 ## Notes
 
@@ -101,3 +200,4 @@ but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.
 - **Shape convention**: `scalar` = rank-0 tensor; `[N]` = 1D; `[H,W]` = 2D
 - **Data type**: All runtime params are FLOAT (32-bit).
 - **Tensor naming**: `{Namespace}/{suffix}`. Namespace = block's `tensor_ns()`.
+- **Dynamic dims**: `-1` denotes dynamic (H/W) resolved at inference time.
