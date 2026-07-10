@@ -88,7 +88,6 @@ impl IspBlock for WaveletDenoiseBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
         let mut nodes = Vec::new();
 
         // Simplified wavelet denoise: Just use box filter (AveragePool)

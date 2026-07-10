@@ -82,31 +82,26 @@ impl IspBlock for SaturationBlock {
     fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        // Saturation: Scale color channels
         let input = if self.input_source.is_empty() { "saturation/input" } else { &self.input_source };
-        let nodes = vec![
-            // Scale color channels
+        vec![
             Proto::node(
                 "Mul",
-                &[input, &format!("saturation/scale_{}", self.saturation)],
+                &[input, "saturation/scale"],
                 &["saturation/output"],
                 &[],
             ),
-        ];
-
-        nodes
+        ]
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        // Create saturation scale tensor
         let scale = vec![self.saturation; 3];
         vec![
-            Proto::tensor_proto_float(
-                &format!("saturation/scale_{}", self.saturation),
-                &[3],
-                &scale,
-            ),
+            Proto::tensor_proto_float("saturation/scale", &[3], &scale),
         ]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        vec![]
     }
 }
 
