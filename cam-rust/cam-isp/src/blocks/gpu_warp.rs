@@ -1,28 +1,46 @@
-//! GpuWarpBlock — Fully GPU grid computation + GPU GridSample.
+//! # GpuWarpBlock — Fully GPU-Accelerated Warp Pipeline
+//!
+//! ## Overview
 //!
 //! Computes GDC grid entirely on GPU using ONNX ops, then applies
 //! GridSample. Parameters (k1, k2, k3, EIS displacement) are
 //! provided as runtime ONNX inputs.
 //!
-//! # Architecture
+//! ## Architecture
 //!
 //! ```text
-//! GPU: Compute GDC grid from k1, k2, k3 inputs
-//!      Compose with EIS grid
-//!      GridSample(image, grid) → warped output
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                    GPU Warp Pipeline                           │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                                                                 │
+ //! │  Runtime Inputs: k1, k2, k3, eis_dx, eis_dy                   │
+//! │       ↓                                                         │
+//! │  GPU: Compute GDC grid from distortion coefficients             │
+//! │       ↓                                                         │
+//! │  GPU: Compose with EIS displacement grid                        │
+//! │       ↓                                                         │
+//! │  GPU: GridSample(image, composed_grid) → warped output          │
+//! │                                                                 │
+ //! │  All operations run on GPU — zero CPU involvement.             │
+//! │                                                                 │
+ //! └─────────────────────────────────────────────────────────────────┘
 //!
-//! All operations run on GPU — zero CPU involvement.
-//! ```
+//! ## Deshake Integration
 //!
-//! # Comparison with RuntimeWarpBlock
+//! For GPU-accelerated deshake, this block can be used with
+//! `DeshakeGpuPipeline` which runs the entire stabilization
+//! pipeline (grayscale → pyramid → motion estimation → warp) on GPU.
 //!
-//! | Feature | RuntimeWarpBlock | GpuWarpBlock |
-//! |---------|------------------|--------------|
-//! | Grid compute | CPU | GPU (ONNX ops) |
-//! | GridSample | GPU | GPU |
-//! | Latency | ~1ms CPU + GPU | GPU only |
-//! | Flexibility | High (any grid) | Fixed GDC model |
-//! | ONNX complexity | Simple | Complex (many ops) |
+//! ## Comparison with Other Warp Blocks
+//!
+//! | Feature | WarpGridBlock | RuntimeWarpBlock | GpuWarpBlock |
+//! |---------|---------------|------------------|--------------|
+//! | Grid source | Pre-computed | CPU (per-frame) | GPU (ONNX ops) |
+//! | GridSample | GPU | GPU | GPU |
+//! | Latency | ~0.5ms | ~1ms CPU + GPU | GPU only |
+//! | Flexibility | High | High | Fixed GDC model |
+//! | Lens shading | Yes (fused) | No | No |
+//! | Rotation/Flip | Yes | No | No |
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
