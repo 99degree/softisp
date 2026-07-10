@@ -326,7 +326,8 @@ impl PipelineProfile {
 
     /// Unified profile — full ISP pipeline with all blocks enabled.
     /// Combines raw input, unpack, BLC, CCM, white balance, demosaic,
-    /// tone, FCS, LDCI, EE, and all post-processing blocks.
+    /// tone, FCS, LDCI, EE, and post-processing blocks.
+    /// Note: bilateral, vignetting, colorspace are CPU-only, not GPU-fused.
     pub const UNIFIED: Self = Self {
         label: "UNIFIED",
         level: PipelineLevel::Heavy,
@@ -352,14 +353,14 @@ impl PipelineProfile {
         stats_downscale_max: 0,
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
-        use_bilateral: true,
+        use_bilateral: false,   // CPU-only, not GPU-fused
         use_saturation: true,
-        use_vignetting: true,
-        use_colorspace: true,
+        use_vignetting: false,  // CPU-only, not GPU-fused
+        use_colorspace: false,  // CPU-only, not GPU-fused
         use_gamma: true,
         use_sharpen: true,
-        use_wavelet_denoise: true,
-        use_auto_contrast: true,
+        use_wavelet_denoise: false, // CPU-only, not GPU-fused
+        use_auto_contrast: false,   // CPU-only, not GPU-fused
         use_normalize: true,
         output_format: OutputFormat::PackedRgb,
     };
