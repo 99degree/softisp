@@ -1417,6 +1417,8 @@ impl IspEngine for MnnEngine {
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
             let mut frame = IspFrame::new(tw, oh as u32, FrameFormat::Rgba8888);
             frame.data = data_out;
+            // Propagate controller params from ProcessParams to output frame
+            frame.params = p.isp_params.clone().unwrap_or_default();
             // Stats are fed into the controller above (not returned in IspAuxOutput).
             // The controller modifies its internal state for the next frame.
             frame.aux = Some(IspAuxOutput {
