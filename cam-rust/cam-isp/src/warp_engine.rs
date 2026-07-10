@@ -7,12 +7,10 @@
 #[cfg(feature = "mnn")]
 use log::info;
 #[cfg(feature = "mnn")]
-use log::error;
-#[cfg(feature = "mnn")]
 use crate::error::IspResult;
 #[cfg(feature = "mnn")]
 use crate::mnn::mnn_sys::{
-    MnnInterpreterSafe, MnnSessionSafe, MnnTensorSafe,
+    MnnInterpreterSafe, MnnSessionSafe,
     MnnBackendType,
 };
 #[cfg(feature = "mnn")]

@@ -94,6 +94,10 @@ impl IspBlock for SharpenBlock {
         vec![Proto::tensor_proto_float_scalar(
             &format!("{}/strength", self.tensor_ns()), self.strength)]
     }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        vec![]
+    }
 }
 
 #[cfg(test)]
