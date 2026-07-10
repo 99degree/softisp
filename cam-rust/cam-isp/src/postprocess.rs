@@ -239,6 +239,7 @@ impl PostProcessPipeline {
         height: u32,
         aux: Option<IspAuxOutput>,
         timestamp_ns: u64,
+        params: Option<crate::isp_params::IspParams>,
     ) -> Result<IspFrame, String> {
         let n = (width * height) as usize;
         if float_data.len() < n * 3 {
@@ -256,7 +257,7 @@ impl PostProcessPipeline {
         {
             // No post-processing — return float data directly
             let frame = IspFrame {
-                params: crate::isp_params::IspParams::default(),
+                params: params.unwrap_or_default(),
                 data: vec![],
                 width,
                 height,
@@ -336,7 +337,7 @@ impl PostProcessPipeline {
         }
 
         let frame = IspFrame {
-                params: crate::isp_params::IspParams::default(),
+                params: params.unwrap_or_default(),
             data: u8_rgba,
             width: w,
             height: h,
