@@ -174,6 +174,20 @@ impl IspBlock for GammaBlock {
 
         inits
     }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        let mut extras = vec![
+            (format!("{}/inv_gamma", ns), 1, vec![1]),
+            (format!("{}/min", ns), 1, vec![1]),
+            (format!("{}/max", ns), 1, vec![1]),
+        ];
+        if self.shadow_lift > 0.0 {
+            extras.push((format!("{}/lift", ns), 1, vec![1]));
+            extras.push((format!("{}/norm", ns), 1, vec![1]));
+        }
+        extras
+    }
 }
 
 #[cfg(test)]

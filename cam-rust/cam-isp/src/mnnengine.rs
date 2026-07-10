@@ -88,6 +88,9 @@ impl SessionPool {
             "saturation/scale",
             "Sharpen/strength",
             "LdciBlock/strength",
+            "FcsBlock/gain",
+            "FcsBlock/bias",
+            "NormalizeBlock/max_val",
         ];
         let mut slots = VecDeque::with_capacity(n);
         for _ in 0..n {
@@ -746,6 +749,29 @@ impl MnnEngine {
         if let Some(t) = find(pool, "LdciBlock/strength") {
             if let Some(bytes) = t.as_bytes_mut() {
                 let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+        // FcsBlock/gain [3,1,1] — per-channel gain (default: identity)
+        if let Some(t) = find(pool, "FcsBlock/gain") {
+            if let Some(bytes) = t.as_bytes_mut() {
+                let gain_default = [1.0f32, 1.0, 1.0];
+                let src = unsafe { std::slice::from_raw_parts(gain_default.as_ptr() as *const u8, 12) };
+                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+            }
+        }
+        // FcsBlock/bias [3,1,1] — per-channel bias (default: zero)
+        if let Some(t) = find(pool, "FcsBlock/bias") {
+            if let Some(bytes) = t.as_bytes_mut() {
+                let bias_default = [0.0f32, 0.0, 0.0];
+                let src = unsafe { std::slice::from_raw_parts(bias_default.as_ptr() as *const u8, 12) };
+                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+            }
+        }
+        // NormalizeBlock/max_val [1] — max value for division (default: 65535)
+        if let Some(t) = find(pool, "NormalizeBlock/max_val") {
+            if let Some(bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&65535.0f32 as *const f32) as *const u8, 4) };
                 if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
             }
         }

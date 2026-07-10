@@ -79,8 +79,11 @@ impl IspBlock for FcsBlock {
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        // No runtime inputs — gain/bias baked into model
-        vec![]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/gain", ns), 1, vec![3, 1, 1]),
+            (format!("{}/bias", ns), 1, vec![3, 1, 1]),
+        ]
     }
 }
 
