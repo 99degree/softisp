@@ -96,7 +96,7 @@ impl IspBlock for SharpenBlock {
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        vec![(format!("{}/strength", self.tensor_ns()), 1, vec![1])]
     }
 }
 
