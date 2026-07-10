@@ -430,15 +430,17 @@ jobs:
           retention-days: 90
 
       - name: Create all-in-one zip
+        continue-on-error: true
         run: |
           mkdir -p dist
-          # Copy all ONNX models (full, medium, light x FP32/INT8/FP16)
-          cp isp-rectifier/*.onnx dist/
+          # Copy all ONNX models that exist (full, medium, light x FP32/INT8/FP16)
+          shopt -s nullglob
+          cp isp-rectifier/*.onnx dist/ 2>/dev/null || true
           # Copy training metadata and model card (if they exist)
           cp isp-rectifier/checkpoints/best_model.pth dist/ 2>/dev/null || true
           cp isp-rectifier/checkpoints/history.json dist/ 2>/dev/null || true
           cp isp-rectifier/MODEL_CARD.md dist/ 2>/dev/null || true
-          # Create zip
+          # Create zip with all files
           cd dist && zip -r ../isp-rectifier-models.zip . && cd ..
           ls -lh isp-rectifier-models.zip
 
@@ -448,6 +450,7 @@ jobs:
           name: isp-rectifier-models-zip
           path: isp-rectifier-models.zip
           retention-days: 90
+          if-no-files-found: warn
 
       - name: Create model release (on tag)
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
