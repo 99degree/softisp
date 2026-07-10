@@ -38,6 +38,7 @@ RawInput(INT16 [1,1,H,W])
 ## Key Features
 
 - **637 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
+- **Runtime-feedable parameters**: 11 blocks expose 29 per-frame inputs via `extra_inputs()` — saturation, sharpen, contrast, gamma, WB gains, CCM weights, tone curve, display gamma, and more. Conditional tensors only present when active. See [`docs/api/RUNTIME_PARAMS.md`](../docs/api/RUNTIME_PARAMS.md).
 - **MnnEngine** — Vulkan GPU acceleration (4K→FHD 57.7 FPS)
 - **IspChainFusion** — 12 fusion rules (R1–R12b), 32+ ops → 12 dispatches
 - **PipelineBuilder** — Fluent API: `.unpack().demosaic().gamma().sharpen().display().compose()`
@@ -76,6 +77,9 @@ cargo run --example gen_onnx -p cam-isp --features mnn
 
 # Camera → ISP integration
 cargo run --example camera_isp --features mnn -p cam-isp -- --width 640 --height 480
+
+# Generate runtime parameter API docs (no MNN required)
+cargo run --release --example gen_api_docs -p cam-isp
 
 # Streaming benchmark
 cargo run --example bench_4k_to_fhd -p cam-isp --features mnn
@@ -214,6 +218,15 @@ tests/
 - ONNX model generator (pure Rust proto encoder)
 - GeneticOptimizer, FastPredictor, RegressionModel, LearnerStore
 - 36 examples all compile
+
+## Documentation
+
+| Doc | Path |
+|-----|------|
+| Runtime Parameters API | [`docs/api/RUNTIME_PARAMS.md`](../docs/api/RUNTIME_PARAMS.md) |
+| Controller API | [`docs/api/CONTROLLER_API.md`](../docs/api/CONTROLLER_API.md) |
+| Pipeline Blocks I/O | [`cam-isp/docs/PIPELINE_BLOCKS.md`](cam-isp/docs/PIPELINE_BLOCKS.md) |
+| Architecture Overview | [`docs/architecture/ARCHITECTURE.md`](../docs/architecture/ARCHITECTURE.md) |
 
 ## Build Requirements
 
