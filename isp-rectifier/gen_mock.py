@@ -29,11 +29,11 @@ import numpy as np
 class ISPDistilledModel(nn.Module):
     """
     Full-sized Distilled ISP Controller Model (~1.2M params).
-    Input:  histogram (B, 256) + metadata (B, 11)
+    Input:  histogram (B, 256) + metadata (B, 52)
     Output: wb (B, 3) + ccm (B, 9) + tone (B, 7) + zoom (B, 1)
     """
 
-    def __init__(self, metadata_dim: int = 11):
+    def __init__(self, metadata_dim: int = 52):
         super().__init__()
 
         # Histogram backbone: 1D CNN
@@ -101,11 +101,11 @@ class ISPLightModel(nn.Module):
     """
     Lightweight Distilled ISP Controller Model (~118K params).
     ~10x smaller than ISPDistilledModel for embedded/mobile deployment.
-    Input:  histogram (B, 256) + metadata (B, 11)
+    Input:  histogram (B, 256) + metadata (B, 52)
     Output: wb (B, 3) + ccm (B, 9) + tone (B, 7) + zoom (B, 1)
     """
 
-    def __init__(self, metadata_dim: int = 11):
+    def __init__(self, metadata_dim: int = 52):
         super().__init__()
 
         # Histogram backbone: 1D CNN (half channels, smaller kernels)
@@ -166,11 +166,11 @@ class ISPMediumModel(nn.Module):
     """
     Medium-weight Distilled ISP Controller Model (~350K params).
     ~3x smaller than full, ~3x larger than light. Balanced for most targets.
-    Input:  histogram (B, 256) + metadata (B, 11)
+    Input:  histogram (B, 256) + metadata (B, 52)
     Output: wb (B, 3) + ccm (B, 9) + tone (B, 7) + zoom (B, 1)
     """
 
-    def __init__(self, metadata_dim: int = 11):
+    def __init__(self, metadata_dim: int = 52):
         super().__init__()
 
         self.hist_backbone = nn.Sequential(
@@ -226,7 +226,7 @@ class ISPMediumModel(nn.Module):
         }
 
 
-def export_onnx(model, output_path, metadata_dim=11, opset=13):
+def export_onnx(model, output_path, metadata_dim=52, opset=13):
     """Export to ONNX."""
     model.eval()
     dummy_hist = torch.randn(1, 256)
@@ -312,7 +312,7 @@ def main():
     parser.add_argument("--fp16", action="store_true", help="Also generate FP16 quantized")
     parser.add_argument("--all", action="store_true", help="Generate FP32 + INT8 + FP16")
     parser.add_argument("--benchmark", action="store_true", help="Run latency benchmark")
-    parser.add_argument("--metadata-dim", type=int, default=11, help="Metadata input dim (default: 11)")
+    parser.add_argument("--metadata-dim", type=int, default=52, help="Metadata input dim (default: 52)")
     parser.add_argument("--light", action="store_true", help="Use lightweight model (~118K params)")
     parser.add_argument("--medium", action="store_true", help="Use medium-weight model (~350K params)")
     args = parser.parse_args()
