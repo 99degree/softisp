@@ -1,0 +1,67 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) readonly uniform image2D input_img;
+layout(set = 0, binding = 1, rgba32f) writeonly uniform image2D output_img;
+
+layout(set = 0, binding = 2) uniform Params {
+    int mode;  // 0=RGB2HSV, 1=HSV2RGB
+} params;
+
+vec3 rgb2hsv(vec3 rgb) {
+    float maxc = max(rgb.r, max(rgb.g, rgb.b));
+    float minc = min(rgb.r, min(rgb.g, rgb.b));
+    float d = maxc - minc;
+    
+    float h = 0.0;
+    if (d > 0.001) {
+        if (maxc == rgb.r) h = (rgb.g - rgb.b) / d;
+        else if (maxc == rgb.g) h = 2.0 + (rgb.b - rgb.r) / d;
+        else h = 4.0 + (rgb.r - rgb.g) / d;
+        h *= 60.0;
+        if (h < 0.0) h += 360.0;
+    }
+    
+    float s = (maxc > 0.001) ? d / maxc : 0.0;
+    float v = maxc;
+    
+    return vec3(h / 360.0, s, v);
+}
+
+vec3 hsv2rgb(vec3 hsv) {
+    float h = hsv.x * 360.0;
+    float s = hsv.y;
+    float v = hsv.z;
+    
+    float c = v * s;
+    float x = c * (1.0 - abs(mod(h / 60.0, 2.0) - 1.0));
+    float m = v - c;
+    
+    vec3 rgb;
+    if (h < 60.0) rgb = vec3(c, x, 0.0);
+    else if (h < 120.0) rgb = vec3(x, c, 0.0);
+    else if (h < 180.0) rgb = vec3(0.0, c, x);
+    else if (h < 240.0) rgb = vec3(0.0, x, c);
+    else if (h < 300.0) rgb = vec3(x, 0.0, c);
+    else rgb = vec3(c, 0.0, x);
+    
+    return rgb + m;
+}
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_img);
+    
+    if (pos.x >= size.x || pos.y >= size.y) return;
+    
+    vec3 color = imageLoad(input_img, pos).rgb;
+    vec3 result;
+    
+    if (params.mode == 0) {
+        result = rgb2hsv(color);
+    } else {
+        result = hsv2rgb(color);
+    }
+    
+    imageStore(output_img, pos, vec4(result, 1.0));
+}
