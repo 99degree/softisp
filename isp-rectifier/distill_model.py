@@ -267,7 +267,12 @@ def distillation_loss(
         temporal_loss = 0.0
         for key in student_output:
             if key in prev_student_output:
-                temporal_loss += nn.MSELoss()(student_output[key], prev_student_output[key])
+                # Handle variable batch sizes (last batch may be smaller)
+                curr = student_output[key]
+                prev = prev_student_output[key]
+                min_batch = min(curr.shape[0], prev.shape[0])
+                if min_batch > 0:
+                    temporal_loss += nn.MSELoss()(curr[:min_batch], prev[:min_batch])
         loss += lambda_temporal * temporal_loss
     
     return loss
