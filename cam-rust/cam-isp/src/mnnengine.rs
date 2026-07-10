@@ -863,13 +863,19 @@ impl IspEngine for MnnEngine {
         // If isp_params is available, override individual fields
         // This allows per-frame controller params to flow through
         let (override_ccm, override_tone, override_bayer) = if let Some(ref params) = p.isp_params {
-            (Some(&params.ccm.matrix), Some(&params.tone), Some(&[params.wb.r, params.wb.g, params.wb.g, params.wb.b]))
+            let tone = cam_types::ToneParams {
+                contrast: params.tone.contrast,
+                brightness: params.tone.brightness,
+                gamma_recip: params.tone.gamma,
+                ..Default::default()
+            };
+            (Some(&params.ccm.matrix), Some(tone), Some(&[params.wb.r, params.wb.g, params.wb.g, params.wb.b]))
         } else {
             (None, None, None)
         };
-        let ccm = override_ccm.unwrap_or(ccm);
-        let tone = override_tone.unwrap_or(tone);
-        let bayer = override_bayer.unwrap_or(bayer);
+        let ccm = override_ccm.or(ccm);
+        let tone = override_tone.as_ref().unwrap_or(tone);
+        let bayer = override_bayer.or(bayer);
 
         if !self.initialized { return Err(crate::error::IspError::Config("not init".into())); }
 

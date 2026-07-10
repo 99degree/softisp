@@ -72,3 +72,7 @@ rectifier = ["isp-rectifier"]
 version = "2.0.0-rc.12"
 optional = true
 
+
+[[example]]
+name = "stress_unified_4k"
+required-features = ["mnn"]
