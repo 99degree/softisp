@@ -35,6 +35,8 @@ class ISPDistilledModel(nn.Module):
     Input:
         - histogram: (B, 256)  # 256-bin histogram
         - metadata: (B, N)     # Flattened metadata (CCT, WB, 3A, etc.)
+           v1.2: N=11 (267 total)
+           v1.3: N=52 (308 total) with teacher extras
     Output:
         - wbgains: (B, 3)      # WB gains [R, G, B]
         - ccm: (B, 9)          # CCM matrix (flattened 3x3)
@@ -42,7 +44,7 @@ class ISPDistilledModel(nn.Module):
         - zoom_factor: (B, 1)  # Zoom factor
     """
     
-    def __init__(self, metadata_dim: int = 267):
+    def __init__(self, metadata_dim: int = 308):
         super().__init__()
         
         # Histogram backbone: 1D CNN
@@ -385,12 +387,12 @@ class ISPLightModel(nn.Module):
     """
     Lightweight Distilled ISP Controller Model.
     ~8-10x fewer parameters than ISPDistilledModel for embedded/mobile deployment.
-    
+
     Input:  histogram (B, 256) + metadata (B, N)
     Output: wbgains (B, 3) + ccm (B, 9) + tonecurve (B, 7) + zoom_factor (B, 1)
     """
 
-    def __init__(self, metadata_dim: int = 267):
+    def __init__(self, metadata_dim: int = 308):
         super().__init__()
 
         # Histogram backbone: 1D CNN (half channels vs full model)
@@ -481,7 +483,7 @@ class ISPMediumModel(nn.Module):
     Output: wbgains (B, 3) + ccm (B, 9) + tonecurve (B, 7) + zoom_factor (B, 1)
     """
 
-    def __init__(self, metadata_dim: int = 267):
+    def __init__(self, metadata_dim: int = 308):
         super().__init__()
 
         # Histogram backbone: 1D CNN (12→24→48 channels)
