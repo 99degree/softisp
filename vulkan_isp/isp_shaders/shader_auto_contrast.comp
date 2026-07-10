@@ -1,0 +1,37 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) readonly uniform image2D input_img;
+layout(set = 0, binding = 1, rgba32f) writeonly uniform image2D output_img;
+
+layout(set = 0, binding = 2) uniform Params {
+    float shadow_lift;
+    float contrast;
+    float highlight_compress;
+} params;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_img);
+    
+    if (pos.x >= size.x || pos.y >= size.y) return;
+    
+    vec3 color = imageLoad(input_img, pos).rgb;
+    
+    // Shadow lift
+    color += params.shadow_lift;
+    
+    // Contrast stretch
+    color = (color - 0.5) * params.contrast + 0.5;
+    
+    // Highlight compression
+    if (params.highlight_compress > 0.0) {
+        float max_c = max(color.r, max(color.g, color.b));
+        if (max_c > 0.5) {
+            float compress = 1.0 - params.highlight_compress * (max_c - 0.5);
+            color *= compress;
+        }
+    }
+    
+    imageStore(output_img, pos, vec4(clamp(color, 0.0, 1.0), 1.0));
+}

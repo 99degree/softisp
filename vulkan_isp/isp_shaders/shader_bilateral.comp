@@ -1,0 +1,42 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) readonly uniform image2D input_img;
+layout(set = 0, binding = 1, rgba32f) writeonly uniform image2D output_img;
+
+layout(set = 0, binding = 2) uniform Params {
+    float sigma_spatial;
+    float sigma_range;
+    int radius;
+} params;
+
+float gaussian(float x, float sigma) {
+    return exp(-x * x / (2.0 * sigma * sigma));
+}
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_img);
+    
+    if (pos.x >= size.x || pos.y >= size.y) return;
+    
+    vec3 center = imageLoad(input_img, pos).rgb;
+    vec3 sum = vec3(0.0);
+    float weight_sum = 0.0;
+    
+    for (int dy = -params.radius; dy <= params.radius; dy++) {
+        for (int dx = -params.radius; dx <= params.radius; dx++) {
+            ivec2 p = clamp(pos + ivec2(dx, dy), ivec2(0), size - 1);
+            vec3 samp = imageLoad(input_img, p).rgb;
+            
+            float spatial_w = gaussian(float(dx * dx + dy * dy), params.sigma_spatial);
+            float range_w = gaussian(length(samp - center), params.sigma_range);
+            float w = spatial_w * range_w;
+            
+            sum += samp * w;
+            weight_sum += w;
+        }
+    }
+    
+    imageStore(output_img, pos, vec4(sum / weight_sum, 1.0));
+}
