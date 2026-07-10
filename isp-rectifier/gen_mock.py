@@ -315,12 +315,17 @@ def main():
     parser.add_argument("--metadata-dim", type=int, default=52, help="Metadata input dim (default: 52)")
     parser.add_argument("--light", action="store_true", help="Use lightweight model (~118K params)")
     parser.add_argument("--medium", action="store_true", help="Use medium-weight model (~350K params)")
+    parser.add_argument("--film", action="store_true", help="Use FiLM skin-tone conditioning model")
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     base = args.output.replace(".onnx", "")
 
-    if args.light:
+    if args.film:
+        from film_model import FiLMISPDistilledModel
+        model_cls = FiLMISPDistilledModel
+        model_type = "film"
+    elif args.light:
         model_cls = ISPLightModel
         model_type = "light"
     elif args.medium:
