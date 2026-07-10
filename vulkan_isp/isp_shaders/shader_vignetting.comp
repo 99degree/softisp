@@ -1,0 +1,18 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) readonly uniform image2D input_img;
+layout(set = 0, binding = 1, rgba32f) writeonly uniform image2D output_img;
+layout(set = 0, binding = 2, rgba32f) readonly uniform image2D gain_map;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_img);
+    
+    if (pos.x >= size.x || pos.y >= size.y) return;
+    
+    vec4 color = imageLoad(input_img, pos);
+    vec4 gain = imageLoad(gain_map, pos);
+    
+    imageStore(output_img, pos, color * gain);
+}
