@@ -1,24 +1,56 @@
-//! RuntimeWarpBlock — CPU grid computation + GPU GridSample.
+//! # RuntimeWarpBlock — CPU Grid + GPU Warp
+//!
+//! ## Overview
 //!
 //! Computes GDC/EIS grid on CPU from runtime parameters, then feeds
 //! the grid to ONNX GridSample for GPU-accelerated warping.
 //!
-//! # Architecture
+//! ## Architecture
 //!
 //! ```text
-//! CPU: Compute GDC grid from k1, k2, k3 coefficients
-//!      Compose with EIS displacement grid
-//!      → grid tensor [1, H, W, 2]
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                    Hybrid CPU/GPU Pipeline                     │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                                                                 │
+ //! │  CPU: Compute GDC grid from k1, k2, k3 coefficients            │
+//! │       ↓                                                         │
+//! │  CPU: Compose with EIS displacement grid (from DeshakeEngine)   │
+//! │       ↓                                                         │
+//! │  CPU: → grid tensor [1, H, W, 2]                               │
+//! │       ↓                                                         │
+//! │  GPU: GridSample(image, grid) → warped output                   │
+//! │                                                                 │
+ //! └─────────────────────────────────────────────────────────────────┘
 //!
-//! GPU: GridSample(image, grid) → warped output
+//! ## Deshake Integration
+//!
+//! This block is ideal for CPU-based deshake where:
+//! 1. `DeshakeEngine` computes motion vector on CPU
+//! 2. Motion vector is converted to EIS grid on CPU
+//! 3. Grid is composed with GDC grid on CPU
+//! 4. Final warp runs on GPU via GridSample
+//!
+//! ```rust
+//! use cam_isp::deshake::DeshakeEngine;
+//! use cam_isp::blocks::RuntimeWarpBlock;
+//!
+//! let mut deshake = DeshakeEngine::new(3840, 2160);
+//! let mut warp = RuntimeWarpBlock::new(1920, 1080);
+//!
+//! // Per-frame:
+//! let motion = deshake.estimate_motion(&prev, &curr);
+//! let eis_grid = deshake.motion_to_grid(motion, 1920, 1080);
+//! let combined_grid = warp.compose_gdc_and_eis(0.1, 0.05, 0.01, eis_grid);
+//! warp.set_grid(combined_grid);
 //! ```
 //!
-//! # Benefits
+//! ## Benefits
 //!
 //! - **Simple ONNX**: Only GridSample op, no grid computation in graph
 //! - **Runtime parameters**: k1, k2, k3, EIS grid provided per-frame
 //! - **GPU warp**: Actual interpolation runs on GPU
 //! - **CPU grid**: Fast math (< 1ms for 4K), updates per-frame
+//! - **GDC caching**: Avoids recomputing grid when k1,k2,k3 unchanged
 
 use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;

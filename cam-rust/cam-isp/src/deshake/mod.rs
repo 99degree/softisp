@@ -1,12 +1,55 @@
-//! Deshake — software-based video stabilization via block-matching motion estimation.
+//! # Deshake — Software Video Stabilization
 //!
-//! Split into atomic helper modules:
-//! - `motion` — block matching, diamond search, weighted median
-//! - `warp` — bilinear interpolation, crop, border handling
-//! - `gpu_pipeline` — MNN-based GPU acceleration
+//! ## Overview
 //!
-//! Uses frame-to-frame block matching to compute a global motion vector (translation)
-//! between consecutive frames, then applies inverse warp with trajectory smoothing.
+//! Software-based video stabilization using block-matching motion estimation.
+//! Computes per-frame translation vectors and applies inverse warp with
+//! trajectory smoothing to remove camera shake.
+//!
+//! ## Integration with WarpGridBlock
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                    Deshake Pipeline                            │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                                                                 │
+ //! │  Frame N-1 ─┐                                                  │
+//! │              ├→ DeshakeEngine::estimate_motion()                │
+//! │  Frame N ───┘    │                                              │
+//! │                   ↓                                              │
+//! │            Motion Vector (dx, dy)                               │
+//! │                   ↓                                              │
+//! │            Motion Smoothing (EMA filter)                        │
+//! │                   ↓                                              │
+//! │            Grid Generation (motion_to_grid())                   │
+//! │                   ↓                                              │
+//! │            WarpGridBlock (GPU: GridSample)                      │
+//! │                   ↓                                              │
+//! │            Stabilized Frame                                     │
+//! │                                                                 │
+//! └─────────────────────────────────────────────────────────────────┘
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use cam_isp::deshake::DeshakeEngine;
+//! use cam_isp::blocks::WarpGridBlock;
+//!
+//! // CPU-based deshake
+//! let mut deshake = DeshakeEngine::new(3840, 2160);
+//! let motion = deshake.estimate_motion(&prev_frame, &curr_frame);
+//! let grid = deshake.motion_to_grid(motion, 1920, 1080);
+//! let warp = WarpGridBlock::new(1920, 1080).with_grid(Some(grid));
+//!
+//! // GPU-accelerated deshake (entire pipeline on GPU)
+//! let gpu_deshake = DeshakeGpuPipeline::new();
+//! ```
+//!
+//! ## Modules
+//!
+//! - `motion` — Block matching, diamond search, weighted median
+//! - `warp` — Bilinear interpolation, crop, border handling
+//! - `gpu_pipeline` — MNN-based GPU acceleration for entire pipeline
 
 pub mod gpu_pipeline;
 pub mod motion;
