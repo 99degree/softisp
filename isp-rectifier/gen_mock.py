@@ -28,7 +28,7 @@ import numpy as np
 
 class ISPDistilledModel(nn.Module):
     """
-    Distilled ISP Controller Model. (Copied from distill_model.py for standalone use)
+    Full-sized Distilled ISP Controller Model (~1.2M params).
     Input:  histogram (B, 256) + metadata (B, 11)
     Output: wb (B, 3) + ccm (B, 9) + tone (B, 7) + zoom (B, 1)
     """
@@ -83,6 +83,71 @@ class ISPDistilledModel(nn.Module):
         self.ccm_head = nn.Sequential(nn.Linear(256, 128), nn.ReLU(), nn.Linear(128, 9))
         self.tone_head = nn.Sequential(nn.Linear(256, 64), nn.ReLU(), nn.Linear(64, 7))
         self.zoom_head = nn.Sequential(nn.Linear(256, 32), nn.ReLU(), nn.Linear(32, 1))
+
+    def forward(self, histogram: torch.Tensor, metadata: torch.Tensor):
+        hist_feat = self.hist_backbone(histogram.unsqueeze(1))
+        meta_feat = self.meta_backbone(metadata)
+        combined = torch.cat([hist_feat, meta_feat], dim=1)
+        fused = self.fusion(combined)
+        return {
+            "wb": self.wb_head(fused),
+            "ccm": self.ccm_head(fused),
+            "tone": self.tone_head(fused),
+            "zoom": self.zoom_head(fused),
+        }
+
+
+class ISPLightModel(nn.Module):
+    """
+    Lightweight Distilled ISP Controller Model (~118K params).
+    ~10x smaller than ISPDistilledModel for embedded/mobile deployment.
+    Input:  histogram (B, 256) + metadata (B, 11)
+    Output: wb (B, 3) + ccm (B, 9) + tone (B, 7) + zoom (B, 1)
+    """
+
+    def __init__(self, metadata_dim: int = 11):
+        super().__init__()
+
+        # Histogram backbone: 1D CNN (half channels, smaller kernels)
+        self.hist_backbone = nn.Sequential(
+            nn.Conv1d(1, 8, kernel_size=5, padding=2),
+            nn.BatchNorm1d(8),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Conv1d(8, 16, kernel_size=3, padding=1),
+            nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Conv1d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(16),
+            nn.Flatten(),
+        )
+
+        # Metadata backbone: narrow MLP
+        self.meta_backbone = nn.Sequential(
+            nn.Linear(metadata_dim, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Linear(64, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+        )
+
+        # Fusion
+        combined_dim = 32 * 16 + 128  # 640
+        self.fusion = nn.Sequential(
+            nn.Linear(combined_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+        )
+
+        # Multi-head outputs
+        self.wb_head = nn.Sequential(nn.Linear(128, 32), nn.ReLU(), nn.Linear(32, 3))
+        self.ccm_head = nn.Sequential(nn.Linear(128, 64), nn.ReLU(), nn.Linear(64, 9))
+        self.tone_head = nn.Sequential(nn.Linear(128, 32), nn.ReLU(), nn.Linear(32, 7))
+        self.zoom_head = nn.Sequential(nn.Linear(128, 16), nn.ReLU(), nn.Linear(16, 1))
 
     def forward(self, histogram: torch.Tensor, metadata: torch.Tensor):
         hist_feat = self.hist_backbone(histogram.unsqueeze(1))
@@ -184,13 +249,16 @@ def main():
     parser.add_argument("--all", action="store_true", help="Generate FP32 + INT8 + FP16")
     parser.add_argument("--benchmark", action="store_true", help="Run latency benchmark")
     parser.add_argument("--metadata-dim", type=int, default=11, help="Metadata input dim (default: 11)")
+    parser.add_argument("--light", action="store_true", help="Use lightweight model (~10x smaller)")
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     base = args.output.replace(".onnx", "")
 
-    print(f"Creating mock ISP Rectifier model...")
-    model = ISPDistilledModel(metadata_dim=args.metadata_dim)
+    model_cls = ISPLightModel if args.light else ISPDistilledModel
+    model_type = "light" if args.light else "full"
+    print(f"Creating mock ISP Rectifier model ({model_type})...")
+    model = model_cls(metadata_dim=args.metadata_dim)
 
     # Count params
     n_params = sum(p.numel() for p in model.parameters())
