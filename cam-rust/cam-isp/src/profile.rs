@@ -128,6 +128,16 @@ pub struct PipelineProfile {
     pub use_auto_contrast: bool,
     /// Enable normalization (zero-mean, unit-variance).
     pub use_normalize: bool,
+    /// Enable tiled rendering for high-resolution output (e.g., 4K→4K).
+    /// When true, the output is split into tiles processed independently.
+    pub use_tiled_rendering: bool,
+    /// Number of tiles horizontally (e.g., 2 for 4K→4K with 2×2 tiles).
+    pub tile_count_x: u32,
+    /// Number of tiles vertically (e.g., 2 for 4K→4K with 2×2 tiles).
+    pub tile_count_y: u32,
+    /// Overlap pixels between tiles for convolution boundary handling.
+    /// Set to kernel_radius for convolution-based blocks (e.g., 2 for 5×5).
+    pub tile_overlap: u32,
     /// Output pixel format.
     pub output_format: OutputFormat,
 }
@@ -168,6 +178,10 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -206,6 +220,10 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -244,6 +262,10 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -282,6 +304,10 @@ impl PipelineProfile {
         use_wavelet_denoise: true,
         use_auto_contrast: true,
         use_normalize: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -321,6 +347,10 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -362,6 +392,10 @@ impl PipelineProfile {
         use_wavelet_denoise: true, // Simplified: AveragePool denoise
         use_auto_contrast: true,   // GPU-accelerated via ISP op
         use_normalize: true,
+        use_tiled_rendering: true,  // Enable for 4K→4K
+        tile_count_x: 2,
+        tile_count_y: 2,
+        tile_overlap: 2,
         output_format: OutputFormat::PackedRgb,
     };
 
@@ -403,6 +437,12 @@ impl PipelineProfile {
         use_wavelet_denoise: bool, // wavelet denoising
         use_auto_contrast: bool, // auto contrast
         use_normalize: bool,     // normalization
+        use_tiled_rendering: bool, // enable tiled rendering for high-res output
+        tile_count_x: u32,       // horizontal tile count (e.g., 2 for 4K→4K)
+        tile_count_y: u32,       // vertical tile count (e.g., 2 for 4K→4K)
+        tile_overlap: u32,       // overlap pixels between tiles for convolution
+        tile_count: u32,         // number of tiles for tiled rendering (1=disabled, 4=2x2)
+        tile_overlap: u32,       // overlap pixels between tiles for convolution
     ) -> Self {
         Self {
             label,
@@ -438,6 +478,10 @@ impl PipelineProfile {
             use_wavelet_denoise, // wavelet denoising
             use_auto_contrast,   // auto contrast
             use_normalize,       // normalization
+            use_tiled_rendering, // enable tiled rendering
+            tile_count_x,        // horizontal tile count
+            tile_count_y,        // vertical tile count
+            tile_overlap,        // overlap pixels
             output_format: OutputFormat::PackedRgb,
         }
     }
