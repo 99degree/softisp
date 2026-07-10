@@ -264,7 +264,7 @@ impl CameraDeviceSession {
 
     /// Build the ISP pipeline for the given resolution.
     fn build_isp_pipeline(&self, width: u32, height: u32) -> Result<IspPipelineState, String> {
-        use cam_isp::pipeline_builder::PipelineBuilder;
+        use cam_isp::pipeline::PipelineBuilder;
 
         // Build the standard ISP pipeline:
         // Unpack → Demosaic → Display (minimal for GPU execution)
