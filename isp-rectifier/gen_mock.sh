@@ -24,7 +24,7 @@ echo ""
 echo "Models generated:"
 ls -lh models/*.onnx 2>/dev/null || echo "  (none)"
 
-# Create all-in-one zip
+# Create all-in-one zip with all ONNX models
 if ls models/*.onnx 1>/dev/null 2>&1; then
   mkdir -p dist
   cp models/*.onnx dist/
@@ -34,4 +34,6 @@ if ls models/*.onnx 1>/dev/null 2>&1; then
   echo "All-in-one zip: models/isp-rectifier-models.zip"
   ls -lh models/isp-rectifier-models.zip
   rm -rf dist
+else
+  echo "No ONNX files to zip."
 fi
