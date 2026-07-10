@@ -55,7 +55,7 @@ class TestTypes:
         )
         
         vec = metadata.to_vector()
-        assert vec.shape == (267,)
+        assert vec.shape == (308,)
         assert np.allclose(vec[:256], 1.0)
         assert abs(vec[256] - 0.65) < 0.01  # CCT normalized
     
@@ -99,14 +99,14 @@ class TestModelArchitecture:
         """Create model instance."""
         # Import here to avoid torch dependency if not testing
         from distill_model import ISPDistilledModel
-        return ISPDistilledModel(metadata_dim=267)
+        return ISPDistilledModel(metadata_dim=308)
     
     def test_model_forward(self, model):
         """Test model forward pass."""
         model.eval()
         with torch.no_grad():
             histogram = torch.randn(2, 256)
-            metadata = torch.randn(2, 267)
+            metadata = torch.randn(2, 308)
             
             outputs = model(histogram, metadata)
             
@@ -182,11 +182,11 @@ class TestONNXExport:
         """Test model exports to valid ONNX."""
         from distill_model import ISPDistilledModel, export_to_onnx
         
-        model = ISPDistilledModel(metadata_dim=267)
+        model = ISPDistilledModel(metadata_dim=308)
         model.eval()
         
         dummy_hist = torch.randn(1, 256)
-        dummy_meta = torch.randn(1, 267)
+        dummy_meta = torch.randn(1, 308)
         
         onnx_path = tmp_path / "test_model.onnx"
         export_to_onnx(model, str(onnx_path), (dummy_hist, dummy_meta))

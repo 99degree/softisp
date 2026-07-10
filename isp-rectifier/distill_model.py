@@ -44,7 +44,7 @@ class ISPDistilledModel(nn.Module):
         - zoom_factor: (B, 1)  # Zoom factor
     """
     
-    def __init__(self, metadata_dim: int = 308):
+    def __init__(self, metadata_dim: int = 52):
         super().__init__()
         
         # Histogram backbone: 1D CNN
@@ -392,7 +392,7 @@ class ISPLightModel(nn.Module):
     Output: wbgains (B, 3) + ccm (B, 9) + tonecurve (B, 7) + zoom_factor (B, 1)
     """
 
-    def __init__(self, metadata_dim: int = 308):
+    def __init__(self, metadata_dim: int = 52):
         super().__init__()
 
         # Histogram backbone: 1D CNN (half channels vs full model)
@@ -483,7 +483,7 @@ class ISPMediumModel(nn.Module):
     Output: wbgains (B, 3) + ccm (B, 9) + tonecurve (B, 7) + zoom_factor (B, 1)
     """
 
-    def __init__(self, metadata_dim: int = 308):
+    def __init__(self, metadata_dim: int = 52):
         super().__init__()
 
         # Histogram backbone: 1D CNN (12→24→48 channels)
@@ -567,7 +567,7 @@ class ISPMediumModel(nn.Module):
         }
 
 
-def get_model(model_type: str = "full", metadata_dim: int = 267) -> nn.Module:
+def get_model(model_type: str = "full", metadata_dim: int = 52) -> nn.Module:
     """Factory function for ISP models.
 
     Args:
@@ -594,6 +594,7 @@ def main():
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Checkpoint directory")
     parser.add_argument("--light", action="store_true", help="Use lightweight model (~118K params)")
     parser.add_argument("--medium", action="store_true", help="Use medium-weight model (~350K params)")
+    parser.add_argument("--metadata-dim", type=int, default=52, help="Metadata input dim (default: 52)")
     parser.add_argument("--export", action="store_true", help="Export to ONNX")
     parser.add_argument("--model", type=str, default="checkpoints/best_model.pth", help="Model checkpoint to export")
     parser.add_argument("--output", type=str, default="fusedispcontroller.onnx", help="ONNX output path")
@@ -638,7 +639,7 @@ def main():
     if args.export:
         # Load model
         checkpoint = torch.load(args.model, map_location="cpu")
-        metadata_dim = checkpoint.get('metadata_dim', 267)
+        metadata_dim = checkpoint.get('metadata_dim', 52)
 
         model = get_model(model_type, metadata_dim=metadata_dim)
         model.load_state_dict(checkpoint['model_state_dict'])
