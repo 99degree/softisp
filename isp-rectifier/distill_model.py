@@ -250,7 +250,14 @@ def distillation_loss(
                 # Normalize weights to sum to batch_size
                 weight = weight / weight.mean().clamp(min=1e-6)
                 se = (student_output[key] - teacher_output[key]).pow(2).mean(dim=tuple(range(1, student_output[key].dim())))
-                base_loss = (weight * se).mean()
+                # Handle variable batch sizes (last batch may be smaller)
+                min_batch = min(weight.shape[0], se.shape[0])
+                if min_batch > 0:
+                    base_loss = (weight[:min_batch] * se[:min_batch]).mean()
+                else:
+                    base_loss = nn.MSELoss()(student_output[key], teacher_output[key])
+            else:
+                base_loss = nn.MSELoss()(student_output[key], teacher_output[key])
             
             loss += weights[key] * base_loss
     
