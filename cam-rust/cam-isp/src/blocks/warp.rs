@@ -61,18 +61,18 @@ use crate::onnx::proto::Proto;
 
 /// # WarpGridBlock — Unified Geometric Correction Block
 ///
-//! Fuses multiple geometric operations into a single GPU dispatch:
-//!
-//! - **EIS (Electronic Image Stabilization)**: Per-frame sampling grid
-//!   from `DeshakeEngine` or external gyro-based stabilizer
-//! - **GDC (Geometric Distortion Correction)**: Radial lens distortion
-//!   correction using OpenCV model (k1, k2, k3 coefficients)
-//! - **Lens Shading Correction**: Radial gain LUT multiplied into output
-//!   (fused with warp for zero extra GPU cost)
-//! - **Rotation**: 90°/180°/270° via Transpose
-//! - **Flip**: Horizontal/vertical via Slice
-//!
-//! ## Deshake Integration
+/// Fuses multiple geometric operations into a single GPU dispatch:
+///
+/// - **EIS (Electronic Image Stabilization)**: Per-frame sampling grid
+///   from `DeshakeEngine` or external gyro-based stabilizer
+/// - **GDC (Geometric Distortion Correction)**: Radial lens distortion
+///   correction using OpenCV model (k1, k2, k3 coefficients)
+/// - **Lens Shading Correction**: Radial gain LUT multiplied into output
+///   (fused with warp for zero extra GPU cost)
+/// - **Rotation**: 90°/180°/270° via Transpose
+/// - **Flip**: Horizontal/vertical via Slice
+///
+/// ## Deshake Integration
 ///
 /// For software-based stabilization, use `DeshakeEngine` to compute
 /// motion vectors, then convert to a grid and pass via `with_grid()`:
