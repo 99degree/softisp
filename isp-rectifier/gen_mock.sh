@@ -33,4 +33,5 @@ if ls models/*.onnx 1>/dev/null 2>&1; then
   echo ""
   echo "All-in-one zip: models/isp-rectifier-models.zip"
   ls -lh models/isp-rectifier-models.zip
+  rm -rf dist
 fi
