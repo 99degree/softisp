@@ -48,7 +48,7 @@ class CCMNet(nn.Module):
     Color Correction Matrix Network.
     Replace with actual CCMNet architecture from your repo.
     """
-    def __init__(self, input_dim: int = 267):
+    def __init__(self, input_dim: int = 308):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 512),
@@ -71,7 +71,7 @@ class TimeAwareAWB(nn.Module):
     Time-Aware Auto White Balance Network.
     Replace with actual Time-Aware AWB architecture from your repo.
     """
-    def __init__(self, input_dim: int = 267):
+    def __init__(self, input_dim: int = 308):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 256),
@@ -94,7 +94,7 @@ class NeuralISPTuning(nn.Module):
     Neural ISP Tuning Network (tone curve + zoom).
     Replace with actual Neural ISP Tuning architecture from your repo.
     """
-    def __init__(self, input_dim: int = 267):
+    def __init__(self, input_dim: int = 308):
         super().__init__()
         self.backbone = nn.Sequential(
             nn.Linear(input_dim, 512),
@@ -139,7 +139,7 @@ class TeacherModelLoader:
         awb_weights: Optional[str] = None,
         isp_tuning_weights: Optional[str] = None,
         device: str = "cuda",
-        input_dim: int = 267,
+        input_dim: int = 308,
     ):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.input_dim = input_dim
