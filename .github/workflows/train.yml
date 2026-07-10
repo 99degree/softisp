@@ -371,8 +371,14 @@ jobs:
       - name: Install dependencies
         run: pip install onnxruntime onnx numpy tqdm
 
+      - name: Copy models to flat directory
+        run: |
+          mkdir -p ./benchmark_models
+          find ./models -name '*.onnx' -type f -exec cp -v {} ./benchmark_models/ \;
+          ls -la ./benchmark_models/
+
       - name: Benchmark ONNX Runtime
-        working-directory: ./models/isp-rectifier
+        working-directory: ./benchmark_models
         run: |
           python -c "
           import onnxruntime as ort
