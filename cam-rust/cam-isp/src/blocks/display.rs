@@ -550,7 +550,21 @@ impl IspBlock for DisplayBlock {
         inits
     }
 
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        let mut extras = Vec::new();
+        // scale is only used in nodes() for FloatRgb/FP16Rgb/postprocess paths
+        if self.is_identity() || self.output_format == OutputFormat::Float16Rgb || self.postprocess_output.is_some() {
+            extras.push((format!("{}/scale", ns), 1, vec![1]));
+        }
+        // gamma_exp, zero, one only for FloatRgb identity path
+        if self.is_identity() {
+            extras.push((format!("{}/gamma_exp", ns), 1, vec![1]));
+            extras.push((format!("{}/zero", ns), 1, vec![1]));
+            extras.push((format!("{}/one", ns), 1, vec![1]));
+        }
+        extras
+    }
 }
 
 #[cfg(test)]
