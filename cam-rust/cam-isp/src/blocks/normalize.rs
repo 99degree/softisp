@@ -73,6 +73,10 @@ impl IspBlock for NormalizeBlock {
             Proto::tensor_proto_float_scalar(&format!("{}/max_val", self.tensor_ns()), 65535.0),
         ]
     }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        vec![(format!("{}/max_val", self.tensor_ns()), 1, vec![1])]
+    }
 }
 
 #[cfg(test)]
