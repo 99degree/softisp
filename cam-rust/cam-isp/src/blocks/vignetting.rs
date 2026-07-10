@@ -19,6 +19,8 @@ pub struct VignettingBlock {
     pub strength: f32,
     /// Falloff exponent (higher = sharper falloff).
     pub falloff: f32,
+    /// Input tensor name (set by wire_blocks).
+    input_source: String,
 }
 
 impl VignettingBlock {
@@ -31,6 +33,7 @@ impl VignettingBlock {
             center_y: 0.5,
             strength,
             falloff: 2.0,
+            input_source: String::new(),
         }
     }
 
@@ -66,7 +69,7 @@ impl IspBlock for VignettingBlock {
         Some("vignetting/input")
     }
 
-    fn set_input_source(&mut self, _name: &str) {}
+    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
 
     fn frame_tensor(&self) -> Option<&str> {
         Some("vignetting/output")
@@ -87,6 +90,7 @@ impl IspBlock for VignettingBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         // Vignetting correction: Create radial gain map
         // Gain = 1.0 / (1.0 - strength * (r/r_max)^falloff)
+        let input = if self.input_source.is_empty() { "vignetting/input" } else { &self.input_source };
         
         let nodes = vec![
             // Create coordinate grid
@@ -103,7 +107,7 @@ impl IspBlock for VignettingBlock {
             // Apply vignetting gain
             Proto::node(
                 "Mul",
-                &["vignetting/input", "vignetting/gain_map"],
+                &[input, "vignetting/gain_map"],
                 &["vignetting/output"],
                 &[],
             ),

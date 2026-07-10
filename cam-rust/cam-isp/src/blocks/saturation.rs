@@ -11,6 +11,8 @@ pub struct SaturationBlock {
     pub saturation: f32,
     /// Vibrance (smart saturation that protects skin tones).
     pub vibrance: f32,
+    /// Input tensor name (set by wire_blocks).
+    input_source: String,
 }
 
 impl SaturationBlock {
@@ -19,6 +21,7 @@ impl SaturationBlock {
         Self {
             saturation,
             vibrance: 0.0,
+            input_source: String::new(),
         }
     }
 
@@ -27,6 +30,7 @@ impl SaturationBlock {
         Self {
             saturation,
             vibrance,
+            input_source: String::new(),
         }
     }
 
@@ -56,10 +60,10 @@ impl IspBlock for SaturationBlock {
     }
 
     fn input_source(&self) -> Option<&str> {
-        Some("saturation/input")
+        if self.input_source.is_empty() { Some("saturation/input") } else { Some(&self.input_source) }
     }
 
-    fn set_input_source(&mut self, _name: &str) {}
+    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
 
     fn frame_tensor(&self) -> Option<&str> {
         Some("saturation/output")
@@ -79,11 +83,12 @@ impl IspBlock for SaturationBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         // Saturation: Scale color channels
+        let input = if self.input_source.is_empty() { "saturation/input" } else { &self.input_source };
         let nodes = vec![
             // Scale color channels
             Proto::node(
                 "Mul",
-                &["saturation/input", &format!("saturation/scale_{}", self.saturation)],
+                &[input, &format!("saturation/scale_{}", self.saturation)],
                 &["saturation/output"],
                 &[],
             ),

@@ -13,6 +13,8 @@ pub struct BilateralBlock {
     pub sigma_range: f32,
     /// Kernel size (must be odd).
     pub kernel_size: u32,
+    /// Input tensor name (set by wire_blocks).
+    input_source: String,
 }
 
 impl BilateralBlock {
@@ -22,6 +24,7 @@ impl BilateralBlock {
             sigma_spatial,
             sigma_range,
             kernel_size,
+            input_source: String::new(),
         }
     }
 
@@ -54,7 +57,7 @@ impl IspBlock for BilateralBlock {
         Some("bilateral/input")
     }
 
-    fn set_input_source(&mut self, _name: &str) {}
+    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
 
     fn frame_tensor(&self) -> Option<&str> {
         Some("bilateral/output")
@@ -74,11 +77,12 @@ impl IspBlock for BilateralBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         // Bilateral filter: Approximate with weighted Gaussian + edge mask
+        let input = if self.input_source.is_empty() { "bilateral/input" } else { &self.input_source };
         let nodes = vec![
             // Gaussian blur for spatial smoothing
             Proto::node(
                 "GaussianBlur",
-                &["bilateral/input"],
+                &[input],
                 &["bilateral/blurred"],
                 &[
                     Proto::attribute_float("sigma", self.sigma_spatial),
@@ -88,7 +92,7 @@ impl IspBlock for BilateralBlock {
             // Edge detection for range weighting
             Proto::node(
                 "Sobel",
-                &["bilateral/input"],
+                &[input],
                 &["bilateral/edges"],
                 &[],
             ),
