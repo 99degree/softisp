@@ -32,7 +32,7 @@ class QuantizationValidator:
         self,
         fp32_model: str,
         quant_model: str,
-        input_shape: Tuple[int, int] = (1, 267),
+        input_shape: Tuple[int, int] = (1, 308),
         providers: List[str] = None,
     ):
         self.fp32_session = ort.InferenceSession(fp32_model, providers=providers)
@@ -93,7 +93,7 @@ class QuantizationValidator:
                 np.random.uniform(0.0, 0.3),             # noise
             ], dtype=np.float32)
             
-            # Combine: 256 + 11 = 267
+            # Combine: 256 + 52 = 308
             features = np.concatenate([hist, meta])
             
             samples.append({
