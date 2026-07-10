@@ -322,6 +322,48 @@ jobs:
           retention-days: 90
       # === End lightweight model ===
 
+      # === Medium-weight model (~350K params, ~3x smaller than full) ===
+      - name: Export medium model (FP32)
+        working-directory: ./isp-rectifier
+        continue-on-error: true
+        run: |
+          python gen_mock.py --medium -o fusedispcontroller_medium.onnx --benchmark
+
+      - name: Upload medium FP32 model
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: model-medium-fp32
+          path: isp-rectifier/fusedispcontroller_medium.onnx
+          retention-days: 90
+
+      - name: Quantize medium INT8
+        working-directory: ./isp-rectifier
+        continue-on-error: true
+        run: python quantize_model.py int8 fusedispcontroller_medium.onnx fusedispcontroller_medium_int8.onnx
+
+      - name: Upload medium INT8 model
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: model-medium-int8
+          path: isp-rectifier/fusedispcontroller_medium_int8.onnx
+          retention-days: 90
+
+      - name: Quantize medium FP16
+        working-directory: ./isp-rectifier
+        continue-on-error: true
+        run: python quantize_model.py fp16 fusedispcontroller_medium.onnx fusedispcontroller_medium_fp16.onnx
+
+      - name: Upload medium FP16 model
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: model-medium-fp16
+          path: isp-rectifier/fusedispcontroller_medium_fp16.onnx
+          retention-days: 90
+      # === End medium-weight model ===
+
       - name: Validate INT8 quantization
         id: validate_int8
         working-directory: ./isp-rectifier
@@ -379,6 +421,9 @@ jobs:
             isp-rectifier/fusedispcontroller_light.onnx
             isp-rectifier/fusedispcontroller_light_int8.onnx
             isp-rectifier/fusedispcontroller_light_fp16.onnx
+            isp-rectifier/fusedispcontroller_medium.onnx
+            isp-rectifier/fusedispcontroller_medium_int8.onnx
+            isp-rectifier/fusedispcontroller_medium_fp16.onnx
             isp-rectifier/checkpoints/best_model.pth
             isp-rectifier/checkpoints/history.json
             isp-rectifier/MODEL_CARD.md
@@ -395,6 +440,9 @@ jobs:
             isp-rectifier/fusedispcontroller_light.onnx
             isp-rectifier/fusedispcontroller_light_int8.onnx
             isp-rectifier/fusedispcontroller_light_fp16.onnx
+            isp-rectifier/fusedispcontroller_medium.onnx
+            isp-rectifier/fusedispcontroller_medium_int8.onnx
+            isp-rectifier/fusedispcontroller_medium_fp16.onnx
             isp-rectifier/MODEL_CARD.md
           generate_release_notes: true
 
@@ -435,8 +483,13 @@ jobs:
 
           for model_name in ['fusedispcontroller.onnx', 'fusedispcontroller_int8.onnx', 'fusedispcontroller_fp16.onnx']:
               sess = ort.InferenceSession(model_name)
-              hist = np.random.randn(1, 256).astype(np.float32)
-              meta = np.random.randn(1, 11).astype(np.float32)
+              is_fp16 = 'fp16' in model_name
+              if is_fp16:
+                  hist = np.random.randn(1, 256).astype(np.float16)
+                  meta = np.random.randn(1, 11).astype(np.float16)
+              else:
+                  hist = np.random.randn(1, 256).astype(np.float32)
+                  meta = np.random.randn(1, 11).astype(np.float32)
               
               # Warmup
               for _ in range(10):
