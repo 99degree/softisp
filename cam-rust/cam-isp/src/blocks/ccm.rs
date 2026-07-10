@@ -8,7 +8,7 @@ use crate::onnx::proto::Proto;
 
 /// CcmBlock — Color Correction Matrix via per-channel Conv(1×1).
 ///
-/// Applies user-configurable 3×3 color correction matrix to transform
+/// Applies user-configurable color correction matrix to transform
 /// sensor RGB → sRGB. Parameters hot-swappable at runtime.
 pub struct CcmBlock {
     pub id: String, pub prev: Option<Box<dyn IspBlock>>, pub next: Option<Box<dyn IspBlock>>,
@@ -16,10 +16,10 @@ pub struct CcmBlock {
     instance: String,
     in_ch: i64,
     out_ch: i64,
-    /// 3x3 color correction matrix (row-major: [R,R,R, G,G,G, B,B,B])
-    matrix: [f32; 9],
+    /// Color correction matrix (row-major: [out_ch * in_ch])
+    matrix: Vec<f32>,
     /// Per-channel bias
-    bias: [f32; 3],
+    bias: Vec<f32>,
 }
 impl Default for CcmBlock {
     fn default() -> Self { Self::new() }
@@ -44,10 +44,10 @@ impl CcmBlock {
             instance: inst,
             in_ch: 3,  // default: RGB input
             out_ch: 3, // default: RGB output
-            matrix: [1.0, 0.0, 0.0,  // R row
+            matrix: vec![1.0, 0.0, 0.0,  // R row
                      0.0, 1.0, 0.0,  // G row
                      0.0, 0.0, 1.0], // B row
-            bias: [0.0; 3],
+            bias: vec![0.0; 3],
         }
     }
     /// Set input and output channel count.
@@ -55,6 +55,11 @@ impl CcmBlock {
     pub fn with_channels(mut self, ch: i64) -> Self {
         self.in_ch = ch;
         self.out_ch = ch;
+        self.matrix = vec![0.0; (ch * ch) as usize];
+        for i in 0..ch as usize {
+            self.matrix[i * (ch as usize + 1)] = 1.0; // identity diagonal
+        }
+        self.bias = vec![0.0; ch as usize];
         self
     }
 }
