@@ -80,71 +80,13 @@ fn bench_rule_based_controller() {
 }
 
 #[test]
-fn bench_neural_controller_multi_frame() {
-    let mut ctrl = NeuralController::with_mock_model();
-    
-    // Benchmark over 100 frames (simulating 3 seconds at 30fps)
-    let iterations = 100;
-    let start = Instant::now();
-    for i in 0..iterations {
-        let mut frame = create_test_frame();
-        frame.timestamp_ns = i * 33_333_333; // 30fps timestamps
-        let _ = ctrl.analyze_and_update(&frame);
-    }
-    let elapsed = start.elapsed();
-    
-    let avg_ms = elapsed.as_millis() as f64 / iterations as f64;
-    let fps = 1000.0 / avg_ms;
-    
-    println!("\n=== Neural Controller Multi-Frame Benchmark ===");
-    println!("Frames: {}", iterations);
-    println!("Total time: {:?}", elapsed);
-    println!("Average: {:.2} ms/frame ({:.0} FPS)", avg_ms, fps);
-    println!("===============================================\n");
-}
-
-#[test]
-fn bench_params_flow() {
-    let mut ctrl = NeuralController::with_mock_model();
-    let mut frame = create_test_frame();
-    
-    // Warmup
-    for _ in 0..10 {
-        let params = ctrl.analyze_and_update(&frame);
-        frame.params = params;
-    }
-    
-    // Benchmark full flow: analyze → store → use
-    let iterations = 100;
-    let start = Instant::now();
-    for _ in 0..iterations {
-        let params = ctrl.analyze_and_update(&frame);
-        frame.params = params;
-        // Simulate engine reading params
-        let _ = frame.params.wb.r;
-        let _ = frame.params.ccm.matrix;
-        let _ = frame.params.tone.contrast;
-    }
-    let elapsed = start.elapsed();
-    
-    let avg_us = elapsed.as_micros() as f64 / iterations as f64;
-    let fps = 1_000_000.0 / avg_us;
-    
-    println!("\n=== Full Params Flow Benchmark ===");
-    println!("Iterations: {}", iterations);
-    println!("Total time: {:?}", elapsed);
-    println!("Average: {:.2} µs/frame ({:.0} FPS)", avg_us, fps);
-    println!("==================================\n");
-}
-
-#[test]
-fn bench_comparison_all_controllers() {
+fn bench_comparison() {
     let frame = create_test_frame();
+    let iterations = 100;
     
     // Neural controller
     let mut neural = NeuralController::with_mock_model();
     for _ in 0..10 { let _ = neural.analyze_and_update(&frame); }
-    let iterations = 100;
     let start = Instant::now();
     for _ in 0..iterations { let _ = neural.analyze_and_update(&frame); }
     let neural_time = start.elapsed();
