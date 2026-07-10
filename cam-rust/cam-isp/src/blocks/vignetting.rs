@@ -88,27 +88,16 @@ impl IspBlock for VignettingBlock {
     fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        // Vignetting correction: Create radial gain map
-        // Gain = 1.0 / (1.0 - strength * (r/r_max)^falloff)
+        // Vignetting correction: Apply pre-computed gain map
+        // The gain_map is stored as an initializer, so we just multiply
         let input = if self.input_source.is_empty() { "vignetting/input" } else { &self.input_source };
         
         let nodes = vec![
-            // Create coordinate grid
-            Proto::node(
-                "Range",
-                &[],
-                &["vignetting/grid_x"],
-                &[
-                    Proto::attribute_int("start", 0),
-                    Proto::attribute_int("limit", self.width as i64),
-                    Proto::attribute_int("delta", 1),
-                ],
-            ),
-            // Apply vignetting gain
+            // Apply vignetting gain (gain_map is an initializer)
             Proto::node(
                 "Mul",
                 &[input, "vignetting/gain_map"],
-                &["vignetting/output"],
+                &[self.frame_tensor().unwrap_or("vignetting/output")],
                 &[],
             ),
         ];
