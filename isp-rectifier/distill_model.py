@@ -381,6 +381,105 @@ def quantize_onnx(fp32_path: str, int8_path: str, fp16_path: str):
         print(f"⚠️ FP16 quantization failed: {e}")
 
 
+class ISPLightModel(nn.Module):
+    """
+    Lightweight Distilled ISP Controller Model.
+    ~8-10x fewer parameters than ISPDistilledModel for embedded/mobile deployment.
+    
+    Input:  histogram (B, 256) + metadata (B, N)
+    Output: wbgains (B, 3) + ccm (B, 9) + tonecurve (B, 7) + zoom_factor (B, 1)
+    """
+
+    def __init__(self, metadata_dim: int = 267):
+        super().__init__()
+
+        # Histogram backbone: 1D CNN (half channels vs full model)
+        self.hist_backbone = nn.Sequential(
+            nn.Conv1d(1, 8, kernel_size=5, padding=2),
+            nn.BatchNorm1d(8),
+            nn.ReLU(),
+            nn.MaxPool1d(2),  # 256 -> 128
+            nn.Conv1d(8, 16, kernel_size=3, padding=1),
+            nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.MaxPool1d(2),  # 128 -> 64
+            nn.Conv1d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(16),  # -> 16
+            nn.Flatten(),  # 32 * 16 = 512
+        )
+
+        # Metadata backbone: narrow MLP
+        self.meta_backbone = nn.Sequential(
+            nn.Linear(metadata_dim, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Linear(64, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+        )
+
+        # Combined feature dimension
+        hist_out_dim = 32 * 16  # 512
+        meta_out_dim = 128
+        combined_dim = hist_out_dim + meta_out_dim  # 640
+
+        # Shared fusion layer (single layer, no intermediate 512)
+        self.fusion = nn.Sequential(
+            nn.Linear(combined_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+        )
+
+        # Multi-head outputs (simpler heads)
+        self.wb_head = nn.Sequential(
+            nn.Linear(128, 32),
+            nn.ReLU(),
+            nn.Linear(32, 3),
+        )
+
+        self.ccm_head = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 9),
+        )
+
+        self.tone_head = nn.Sequential(
+            nn.Linear(128, 32),
+            nn.ReLU(),
+            nn.Linear(32, 7),
+        )
+
+        self.zoom_head = nn.Sequential(
+            nn.Linear(128, 16),
+            nn.ReLU(),
+            nn.Linear(16, 1),
+        )
+
+    def forward(self, histogram: torch.Tensor, metadata: torch.Tensor) -> Dict[str, torch.Tensor]:
+        hist_features = self.hist_backbone(histogram.unsqueeze(1))
+        meta_features = self.meta_backbone(metadata)
+        combined = torch.cat([hist_features, meta_features], dim=1)
+        fused = self.fusion(combined)
+
+        return {
+            "wbgains": self.wb_head(fused),
+            "ccm": self.ccm_head(fused),
+            "tonecurve": self.tone_head(fused),
+            "zoom_factor": self.zoom_head(fused),
+        }
+
+
+def get_model(model_type: str = "full", metadata_dim: int = 267) -> nn.Module:
+    """Factory function for ISP models."""
+    if model_type == "light":
+        model = ISPLightModel(metadata_dim=metadata_dim)
+    else:
+        model = ISPDistilledModel(metadata_dim=metadata_dim)
+    return model
+
+
 def main():
     parser = argparse.ArgumentParser(description="Distilled ISP Controller Training & Export")
     parser.add_argument("--train", action="store_true", help="Train the model")
@@ -390,27 +489,32 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--device", type=str, default="auto", help="Device (cuda/cpu/auto)")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Checkpoint directory")
+    parser.add_argument("--light", action="store_true", help="Use lightweight model (ISPLightModel)")
     parser.add_argument("--export", action="store_true", help="Export to ONNX")
     parser.add_argument("--model", type=str, default="checkpoints/best_model.pth", help="Model checkpoint to export")
     parser.add_argument("--output", type=str, default="fusedispcontroller.onnx", help="ONNX output path")
     parser.add_argument("--quantize", action="store_true", help="Quantize exported ONNX model")
-    
+
     args = parser.parse_args()
-    
+
     if args.device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
     else:
         device = args.device
-    
+
+    model_type = "light" if args.light else "full"
+
     if args.train:
         # Load dataset
         dataset, metadata_dim = load_teacher_dataset(args.dataset)
-        
+
         # Initialize model
-        model = ISPDistilledModel(metadata_dim=metadata_dim)
-        print(f"Model initialized with metadata_dim={metadata_dim}")
-        print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
-        
+        model = get_model(model_type, metadata_dim=metadata_dim)
+        n_params = sum(p.numel() for p in model.parameters())
+        model_name = model.__class__.__name__
+        print(f"{model_name} initialized with metadata_dim={metadata_dim}")
+        print(f"Parameters: {n_params:,}")
+
         # Train
         model = train_model(
             model=model,
@@ -421,24 +525,24 @@ def main():
             device=device,
             checkpoint_dir=args.checkpoint_dir,
         )
-    
+
     if args.export:
         # Load model
         checkpoint = torch.load(args.model, map_location="cpu")
         metadata_dim = checkpoint.get('metadata_dim', 267)
-        
-        model = ISPDistilledModel(metadata_dim=metadata_dim)
+
+        model = get_model(model_type, metadata_dim=metadata_dim)
         model.load_state_dict(checkpoint['model_state_dict'])
-        
+
         # Export ONNX
         export_to_onnx(model, args.output, metadata_dim)
-        
+
         # Quantize if requested
         if args.quantize:
             int8_path = args.output.replace(".onnx", "_int8.onnx")
             fp16_path = args.output.replace(".onnx", "_fp16.onnx")
             quantize_onnx(args.output, int8_path, fp16_path)
-    
+
     if not args.train and not args.export:
         parser.print_help()
 
