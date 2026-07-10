@@ -76,3 +76,6 @@ optional = true
 [[example]]
 name = "stress_unified_4k"
 required-features = ["mnn"]
+
+[[example]]
+name = "gen_api_docs"
