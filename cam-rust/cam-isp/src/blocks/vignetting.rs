@@ -66,7 +66,7 @@ impl IspBlock for VignettingBlock {
     }
 
     fn input_source(&self) -> Option<&str> {
-        Some("vignetting/input")
+        if self.input_source.is_empty() { Some("vignetting/input") } else { Some(&self.input_source) }
     }
 
     fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
