@@ -176,6 +176,23 @@ impl IspBlock for AutoContrastBlock {
 
         inits
     }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        let mut extras = Vec::new();
+        if self.shadow_lift > 0.01 {
+            extras.push((format!("{}/lift", ns), 1, vec![1]));
+        }
+        if (self.contrast - 1.0).abs() > 0.01 {
+            extras.push((format!("{}/half", ns), 1, vec![1]));
+            extras.push((format!("{}/contrast_w", ns), 1, vec![1]));
+        }
+        if self.highlight_compress > 0.01 || (self.contrast - 1.0).abs() > 0.01 {
+            extras.push((format!("{}/zero", ns), 1, vec![1]));
+            extras.push((format!("{}/one", ns), 1, vec![1]));
+        }
+        extras
+    }
 }
 
 #[cfg(test)]
