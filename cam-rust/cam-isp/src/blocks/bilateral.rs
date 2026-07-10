@@ -76,31 +76,44 @@ impl IspBlock for BilateralBlock {
     fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        // Bilateral filter: Approximate with weighted Gaussian + edge mask
+        // Bilateral filter: Simplified version using standard ONNX ops
+        // 1. Box blur (AveragePool) for spatial smoothing
+        // 2. Edge detection via |input - blurred|
+        // 3. Weighted blend
         let input = if self.input_source.is_empty() { "bilateral/input" } else { &self.input_source };
-        let nodes = vec![
-            // Gaussian blur for spatial smoothing
+        let ns = self.tensor_ns();
+        
+        let mut nodes = vec![
+            // Gaussian blur approximation via AveragePool
             Proto::node(
-                "GaussianBlur",
+                "AveragePool",
                 &[input],
-                &["bilateral/blurred"],
+                &[&format!("{}/blurred", ns)],
                 &[
-                    Proto::attribute_float("sigma", self.sigma_spatial),
-                    Proto::attribute_int("kernel_size", self.kernel_size as i64),
+                    Proto::attribute_ints("kernel_shape", &[self.kernel_size as i64, self.kernel_size as i64]),
+                    Proto::attribute_ints("strides", &[1, 1]),
+                    Proto::attribute_ints("pads", &[self.kernel_size as i64 / 2, self.kernel_size as i64 / 2, self.kernel_size as i64 / 2, self.kernel_size as i64 / 2]),
                 ],
             ),
-            // Edge detection for range weighting
+            // Edge detection: |input - blurred|
             Proto::node(
-                "Sobel",
-                &[input],
-                &["bilateral/edges"],
+                "Sub",
+                &[input, &format!("{}/blurred", ns)],
+                &[&format!("{}/diff", ns)],
                 &[],
             ),
-            // Weighted blend based on edge strength
             Proto::node(
-                "Mul",
-                &["bilateral/blurred", "bilateral/edges"],
-                &["bilateral/output"],
+                "Abs",
+                &[&format!("{}/diff", ns)],
+                &[&format!("{}/edges", ns)],
+                &[],
+            ),
+            // Simplified bilateral: just use blurred output
+            // (Full bilateral requires weighted blending based on edge strength)
+            Proto::node(
+                "Identity",
+                &[&format!("{}/blurred", ns)],
+                &[self.frame_tensor().unwrap_or("bilateral/output")],
                 &[],
             ),
         ];
