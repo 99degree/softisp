@@ -83,7 +83,7 @@ impl IspBlock for BilateralBlock {
         let input = if self.input_source.is_empty() { "bilateral/input" } else { &self.input_source };
         let ns = self.tensor_ns();
         
-        let mut nodes = vec![
+        let nodes = vec![
             // Gaussian blur approximation via AveragePool
             Proto::node(
                 "AveragePool",
