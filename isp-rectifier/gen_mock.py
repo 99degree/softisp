@@ -162,6 +162,70 @@ class ISPLightModel(nn.Module):
         }
 
 
+class ISPMediumModel(nn.Module):
+    """
+    Medium-weight Distilled ISP Controller Model (~350K params).
+    ~3x smaller than full, ~3x larger than light. Balanced for most targets.
+    Input:  histogram (B, 256) + metadata (B, 11)
+    Output: wb (B, 3) + ccm (B, 9) + tone (B, 7) + zoom (B, 1)
+    """
+
+    def __init__(self, metadata_dim: int = 11):
+        super().__init__()
+
+        self.hist_backbone = nn.Sequential(
+            nn.Conv1d(1, 12, kernel_size=7, padding=3),
+            nn.BatchNorm1d(12),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Conv1d(12, 24, kernel_size=5, padding=2),
+            nn.BatchNorm1d(24),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Conv1d(24, 48, kernel_size=3, padding=1),
+            nn.BatchNorm1d(48),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(16),
+            nn.Flatten(),
+        )
+
+        self.meta_backbone = nn.Sequential(
+            nn.Linear(metadata_dim, 96),
+            nn.BatchNorm1d(96),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(96, 192),
+            nn.BatchNorm1d(192),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+        )
+
+        combined_dim = 48 * 16 + 192
+        self.fusion = nn.Sequential(
+            nn.Linear(combined_dim, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+        )
+
+        self.wb_head = nn.Sequential(nn.Linear(256, 48), nn.ReLU(), nn.Linear(48, 3))
+        self.ccm_head = nn.Sequential(nn.Linear(256, 96), nn.ReLU(), nn.Linear(96, 9))
+        self.tone_head = nn.Sequential(nn.Linear(256, 48), nn.ReLU(), nn.Linear(48, 7))
+        self.zoom_head = nn.Sequential(nn.Linear(256, 24), nn.ReLU(), nn.Linear(24, 1))
+
+    def forward(self, histogram: torch.Tensor, metadata: torch.Tensor):
+        hist_feat = self.hist_backbone(histogram.unsqueeze(1))
+        meta_feat = self.meta_backbone(metadata)
+        combined = torch.cat([hist_feat, meta_feat], dim=1)
+        fused = self.fusion(combined)
+        return {
+            "wb": self.wb_head(fused),
+            "ccm": self.ccm_head(fused),
+            "tone": self.tone_head(fused),
+            "zoom": self.zoom_head(fused),
+        }
+
+
 def export_onnx(model, output_path, metadata_dim=11, opset=13):
     """Export to ONNX."""
     model.eval()
@@ -249,14 +313,22 @@ def main():
     parser.add_argument("--all", action="store_true", help="Generate FP32 + INT8 + FP16")
     parser.add_argument("--benchmark", action="store_true", help="Run latency benchmark")
     parser.add_argument("--metadata-dim", type=int, default=11, help="Metadata input dim (default: 11)")
-    parser.add_argument("--light", action="store_true", help="Use lightweight model (~10x smaller)")
+    parser.add_argument("--light", action="store_true", help="Use lightweight model (~118K params)")
+    parser.add_argument("--medium", action="store_true", help="Use medium-weight model (~350K params)")
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     base = args.output.replace(".onnx", "")
 
-    model_cls = ISPLightModel if args.light else ISPDistilledModel
-    model_type = "light" if args.light else "full"
+    if args.light:
+        model_cls = ISPLightModel
+        model_type = "light"
+    elif args.medium:
+        model_cls = ISPMediumModel
+        model_type = "medium"
+    else:
+        model_cls = ISPDistilledModel
+        model_type = "full"
     print(f"Creating mock ISP Rectifier model ({model_type})...")
     model = model_cls(metadata_dim=args.metadata_dim)
 
