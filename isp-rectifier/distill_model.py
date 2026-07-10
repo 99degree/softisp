@@ -349,11 +349,19 @@ def train_model(
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
     
     # Histogram jitter augmentation
-    def jitter_histogram(hist, meta, wb_t, ccm_t, tone_t, zoom_t):
-        if hist_jitter > 0 and model.training:
-            noise = torch.randn_like(hist) * hist_jitter
-            hist = (hist + noise).clamp(0)
-        return hist, meta, wb_t, ccm_t, tone_t, zoom_t
+    def jitter_histogram(batch):
+        if hist_jitter > 0:
+            # batch is list of (hist, meta, wb_t, ccm_t, tone_t, zoom_t)
+            jittered = []
+            for hist, meta, wb_t, ccm_t, tone_t, zoom_t in batch:
+                if random.random() < 0.5:  # 50% chance
+                    noise = torch.randn_like(hist) * hist_jitter
+                    hist = (hist + noise).clamp(0)
+                jittered.append((hist, meta, wb_t, ccm_t, tone_t, zoom_t))
+            # Default collate
+            return torch.utils.data.default_collate(jittered)
+        else:
+            return torch.utils.data.default_collate(batch)
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, collate_fn=jitter_histogram)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
@@ -426,7 +434,7 @@ def train_model(
         # Validation with skin-tone bin metrics
         model.eval()
         val_loss = 0.0
-        skin_tone_bins = torch.linspace(0, 1, skin_tone_bins + 1, device=device)
+        skin_tone_bin_edges = torch.linspace(0, 1, skin_tone_bins + 1, device=device)
         bin_losses = {i: [] for i in range(skin_tone_bins)}
         bin_counts = {i: 0 for i in range(skin_tone_bins)}
         
@@ -443,14 +451,21 @@ def train_model(
                 }
                 
                 student_output = model(hist, meta)
-                loss = distillation_loss(student_output, teacher_output)
+                loss = distillation_loss(
+                    student_output, teacher_output,
+                    metadata=meta,
+                    confidence=confidence,
+                    prev_student_output=prev_output,
+                    lambda_hue=0.1,
+                    lambda_temporal=0.05,
+                )
                 val_loss += loss.item()
                 
                 # Skin-tone bin metrics
                 if "skin_tone" in student_output:
                     skin_tone = student_output["skin_tone"].squeeze(-1)
                     for i in range(skin_tone_bins):
-                        mask = (skin_tone >= skin_tone_bins[i]) & (skin_tone < skin_tone_bins[i+1])
+                        mask = (skin_tone >= skin_tone_bin_edges[i]) & (skin_tone < skin_tone_bin_edges[i+1])
                         if mask.any():
                             bin_loss = nn.MSELoss(reduction='none')(student_output["wbgains"][mask], wb_t.to(device)[mask]).mean()
                             bin_losses[i].append(bin_loss.item())
@@ -471,7 +486,7 @@ def train_model(
             for i in range(skin_tone_bins):
                 if bin_counts[i] > 0:
                     avg_loss = sum(bin_losses[i]) / len(bin_losses[i])
-                    print(f"  Skin bin {i} [{skin_tone_bins[i]:.2f}-{skin_tone_bins[i+1]:.2f}]: loss={avg_loss:.6f} (n={bin_counts[i]})")
+                    print(f"  Skin bin {i} [{skin_tone_bin_edges[i]:.2f}-{skin_tone_bin_edges[i+1]:.2f}]: loss={avg_loss:.6f} (n={bin_counts[i]})")
             history["skin_tone_bins"].append({i: sum(bin_losses[i])/len(bin_losses[i]) if bin_losses[i] else 0 for i in range(skin_tone_bins)})
         
         # Save best model
