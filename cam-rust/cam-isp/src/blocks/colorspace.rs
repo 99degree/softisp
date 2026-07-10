@@ -74,14 +74,18 @@ impl IspBlock for ColorSpaceBlock {
     }
 
     fn input_source(&self) -> Option<&str> {
-        Some(match self.conversion {
-            ColorSpace::RgbToHsv => "rgb_to_hsv/input",
-            ColorSpace::HsvToRgb => "hsv_to_rgb/input",
-            ColorSpace::RgbToLab => "rgb_to_lab/input",
-            ColorSpace::LabToRgb => "lab_to_rgb/input",
-            ColorSpace::RgbToYCbCr => "rgb_to_ycbcr/input",
-            ColorSpace::YCbCrToRgb => "ycbcr_to_rgb/input",
-        })
+        if self.input_source.is_empty() {
+            Some(match self.conversion {
+                ColorSpace::RgbToHsv => "rgb_to_hsv/input",
+                ColorSpace::HsvToRgb => "hsv_to_rgb/input",
+                ColorSpace::RgbToLab => "rgb_to_lab/input",
+                ColorSpace::LabToRgb => "lab_to_rgb/input",
+                ColorSpace::RgbToYCbCr => "rgb_to_ycbcr/input",
+                ColorSpace::YCbCrToRgb => "ycbcr_to_rgb/input",
+            })
+        } else {
+            Some(&self.input_source)
+        }
     }
 
     fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
