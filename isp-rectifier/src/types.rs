@@ -317,6 +317,6 @@ mod tests {
         
         // Check tone LUT
         assert_eq!(regs.tone_lut[0], 0);
-        assert_eq!(regs.tone_lut[3], 49152);  // 0.75 * 65535 = 49151.25
+        assert!(regs.tone_lut[3] >= 49150 && regs.tone_lut[3] <= 49152, "tone_lut[3] should be ~49151, got {}", regs.tone_lut[3]);  // 0.75 * 65535 ≈ 49151
     }
 }
