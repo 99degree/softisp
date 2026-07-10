@@ -85,6 +85,9 @@ impl SessionPool {
             "ToneBlock/contrast",
             "ToneBlock/brightness",
             "ToneBlock/gamma_recip",
+            "saturation/scale",
+            "Sharpen/strength",
+            "LdciBlock/strength",
         ];
         let mut slots = VecDeque::with_capacity(n);
         for _ in 0..n {
@@ -721,6 +724,28 @@ impl MnnEngine {
         if let Some(t) = find(pool, "ToneBlock/gamma_recip") {
             if let Some(bytes) = t.as_bytes_mut() {
                 let src = unsafe { std::slice::from_raw_parts((&tone.gamma_recip as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+        // SaturationBlock/scale [3] — color saturation strength
+        if let Some(t) = find(pool, "saturation/scale") {
+            if let Some(bytes) = t.as_bytes_mut() {
+                let scale_default = [1.0f32, 1.0, 1.0];
+                let src = unsafe { std::slice::from_raw_parts(scale_default.as_ptr() as *const u8, 12) };
+                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+            }
+        }
+        // Sharpen/strength [1] — sharpening strength
+        if let Some(t) = find(pool, "Sharpen/strength") {
+            if let Some(bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+            }
+        }
+        // LdciBlock/strength [1] — local contrast strength
+        if let Some(t) = find(pool, "LdciBlock/strength") {
+            if let Some(bytes) = t.as_bytes_mut() {
+                let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
                 if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
             }
         }
