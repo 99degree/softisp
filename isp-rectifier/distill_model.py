@@ -35,12 +35,80 @@ from collections import defaultdict
 # FiLM model
 from film_model import FiLMISPDistilledModel, export_film_onnx
 
-# Import FiLM model
-try:
-    from film_model import FiLMISPDistilledModel
-    FILM_AVAILABLE = True
-except ImportError:
-    FILM_AVAILABLE = False
+# ============================================================
+# QAT (Quantization-Aware Training) Fake Quantization
+# ============================================================
+
+class FakeQuantize(nn.Module):
+    """Fake quantization for QAT - simulates INT8 during training."""
+    def __init__(self, num_bits=8, symmetric=True):
+        super().__init__()
+        self.num_bits = num_bits
+        self.symmetric = symmetric
+        self.register_buffer('scale', torch.tensor(1.0))
+        self.register_buffer('zero_point', torch.tensor(0))
+        self.observer_enabled = True
+    
+    def forward(self, x):
+        if self.training and self.observer_enabled:
+            if self.symmetric:
+                max_val = x.detach().abs().max()
+                self.scale = max_val / (2**(self.num_bits - 1) - 1)
+                self.zero_point = torch.tensor(0, device=x.device)
+            else:
+                min_val, max_val = x.detach().min(), x.detach().max()
+                self.scale = (max_val - min_val) / (2**self.num_bits - 1)
+                self.zero_point = torch.round(-min_val / self.scale).clamp(0, 2**self.num_bits - 1)
+        
+        scale = self.scale.clamp(min=1e-8)
+        x_q = torch.round(x / scale + self.zero_point)
+        if self.symmetric:
+            x_q = x_q.clamp(-(2**(self.num_bits-1)), 2**(self.num_bits-1)-1)
+        else:
+            x_q = x_q.clamp(0, 2**self.num_bits - 1)
+        x_dq = (x_q - self.zero_point) * scale
+        return x_dq
+    
+    def freeze(self):
+        self.observer_enabled = False
+    
+    def enable_observer(self):
+        self.observer_enabled = True
+
+
+class QATWrapper(nn.Module):
+    """Wrap any model for QAT by inserting fake quantizers at key points."""
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.quant_input = FakeQuantize()
+        self.quant_meta = FakeQuantize()
+        self.quant_fusion = FakeQuantize()
+    
+    def forward(self, histogram, metadata):
+        histogram = self.quant_input(histogram)
+        metadata = self.quant_meta(metadata)
+        output = self.model(histogram, metadata)
+        return output
+    
+    def freeze_bn(self):
+        for m in self.modules():
+            if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
+                m.eval()
+    
+    def freeze_quantizers(self):
+        for m in self.modules():
+            if isinstance(m, FakeQuantize):
+                m.freeze()
+    
+    def enable_observers(self):
+        for m in self.modules():
+            if isinstance(m, FakeQuantize):
+                m.enable_observer()
+
+
+# FiLM model
+from film_model import FiLMISPDistilledModel, export_film_onnx
 
 
 class ISPDistilledModel(nn.Module):
@@ -156,15 +224,51 @@ def distillation_loss(
     student_output: Dict[str, torch.Tensor],
     teacher_output: Dict[str, torch.Tensor],
     weights: Dict[str, float] = None,
+    metadata: torch.Tensor = None,
+    confidence: torch.Tensor = None,
+    prev_student_output: Dict[str, torch.Tensor] = None,
+    lambda_hue: float = 0.1,
+    lambda_temporal: float = 0.05,
+    confidence_weight: float = 1.0,
 ) -> torch.Tensor:
-    """Compute distillation loss between student and teacher outputs."""
+    """Compute distillation loss with hue-preserving and temporal terms."""
     if weights is None:
         weights = {"wbgains": 1.0, "ccm": 1.0, "tonecurve": 0.5, "zoom_factor": 0.5}
     
     loss = 0.0
+    mse = nn.MSELoss(reduction='none')
+    
+    # Per-head MSE loss with confidence weighting
     for key in student_output:
         if key in teacher_output:
-            loss += weights[key] * nn.MSELoss()(student_output[key], teacher_output[key])
+            base_loss = nn.MSELoss()(student_output[key], teacher_output[key])
+            
+            # Confidence weighting: weight by confidence if available
+            if confidence is not None:
+                # confidence: [B, 1] -> weight samples by confidence
+                weight = confidence.squeeze(-1)  # [B]
+                # Normalize weights to sum to batch_size
+                weight = weight / weight.mean().clamp(min=1e-6)
+                se = (student_output[key] - teacher_output[key]).pow(2).mean(dim=tuple(range(1, student_output[key].dim())))
+                base_loss = (weight * se).mean()
+            
+            loss += weights[key] * base_loss
+    
+    # Hue-preserving CCM loss (determinant ~1, trace ~3)
+    if "ccm" in student_output and lambda_hue > 0:
+        ccm = student_output["ccm"].view(-1, 3, 3)
+        det = torch.det(ccm)
+        trace = ccm.diagonal(dim1=-2, dim2=-1).sum(-1)
+        hue_loss = (det - 1.0).pow(2).mean() + (trace - 3.0).pow(2).mean() * 0.1
+        loss += lambda_hue * hue_loss
+    
+    # Temporal consistency loss
+    if prev_student_output is not None and lambda_temporal > 0:
+        temporal_loss = 0.0
+        for key in student_output:
+            if key in prev_student_output:
+                temporal_loss += nn.MSELoss()(student_output[key], prev_student_output[key])
+        loss += lambda_temporal * temporal_loss
     
     return loss
 
@@ -222,17 +326,36 @@ def train_model(
     val_split: float = 0.1,
     device: str = "cuda",
     checkpoint_dir: str = "checkpoints",
+    # New features
+    use_qat: bool = False,
+    lambda_hue: float = 0.1,
+    lambda_temporal: float = 0.05,
+    confidence_weight: float = 1.0,
+    hist_jitter: float = 0.05,
+    skin_tone_bins: int = 5,
 ) -> ISPDistilledModel:
-    """Train the distilled model."""
+    """Train the distilled model with advanced features."""
     device = torch.device(device if torch.cuda.is_available() else "cpu")
     model = model.to(device)
+    
+    # QAT support
+    if use_qat:
+        model = QATWrapper(model)
+        print("QAT enabled - fake quantization active")
     
     # Split train/val
     val_size = int(len(dataset) * val_split)
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
     
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    # Histogram jitter augmentation
+    def jitter_histogram(hist, meta, wb_t, ccm_t, tone_t, zoom_t):
+        if hist_jitter > 0 and model.training:
+            noise = torch.randn_like(hist) * hist_jitter
+            hist = (hist + noise).clamp(0)
+        return hist, meta, wb_t, ccm_t, tone_t, zoom_t
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, collate_fn=jitter_histogram)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -241,15 +364,27 @@ def train_model(
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     
     best_val_loss = float('inf')
-    history = {"train_loss": [], "val_loss": []}
+    history = {"train_loss": [], "val_loss": [], "skin_tone_bins": []}
+    skin_tone_metrics = defaultdict(list)
     
     print(f"Training on {device} for {epochs} epochs...")
     print(f"Train samples: {train_size}, Val samples: {val_size}")
+    if use_qat:
+        print("QAT enabled - INT8 quantization-aware training")
     
     for epoch in range(epochs):
         # Training
         model.train()
+        if use_qat and epoch >= epochs // 2:
+            # Freeze BN and quantizers in second half
+            if isinstance(model, QATWrapper):
+                model.freeze_bn()
+                if epoch == epochs // 2:
+                    model.freeze_quantizers()
+                    print(f"Epoch {epoch}: QAT quantizers frozen")
+        
         train_loss = 0.0
+        prev_output = None
         
         for hist, meta, wb_t, ccm_t, tone_t, zoom_t in train_loader:
             hist = hist.to(device)
@@ -264,17 +399,36 @@ def train_model(
             
             optimizer.zero_grad()
             student_output = model(hist, meta)
-            loss = distillation_loss(student_output, teacher_output)
+            
+            # Extract confidence from metadata (brightness * contrast)
+            brightness = meta[:, 8] if meta.shape[1] > 8 else torch.tensor(0.5, device=device)
+            contrast = meta[:, 9] if meta.shape[1] > 9 else torch.tensor(0.5, device=device)
+            confidence = (brightness * contrast).clamp(0.1, 1.0).unsqueeze(-1)
+            
+            loss = distillation_loss(
+                student_output, 
+                {"wbgains": wb_t.to(device), "ccm": ccm_t.to(device), 
+                 "tonecurve": tone_t.to(device), "zoom_factor": zoom_t.to(device)},
+                metadata=meta,
+                confidence=confidence,
+                prev_student_output=prev_output,
+                lambda_hue=0.1,
+                lambda_temporal=0.05,
+            )
             loss.backward()
             optimizer.step()
             
             train_loss += loss.item()
+            prev_output = {k: v.detach() for k, v in student_output.items()}
         
         train_loss /= len(train_loader)
         
-        # Validation
+        # Validation with skin-tone bin metrics
         model.eval()
         val_loss = 0.0
+        skin_tone_bins = torch.linspace(0, 1, skin_tone_bins + 1, device=device)
+        bin_losses = {i: [] for i in range(skin_tone_bins)}
+        bin_counts = {i: 0 for i in range(skin_tone_bins)}
         
         with torch.no_grad():
             for hist, meta, wb_t, ccm_t, tone_t, zoom_t in val_loader:
@@ -291,6 +445,16 @@ def train_model(
                 student_output = model(hist, meta)
                 loss = distillation_loss(student_output, teacher_output)
                 val_loss += loss.item()
+                
+                # Skin-tone bin metrics
+                if "skin_tone" in student_output:
+                    skin_tone = student_output["skin_tone"].squeeze(-1)
+                    for i in range(skin_tone_bins):
+                        mask = (skin_tone >= skin_tone_bins[i]) & (skin_tone < skin_tone_bins[i+1])
+                        if mask.any():
+                            bin_loss = nn.MSELoss(reduction='none')(student_output["wbgains"][mask], wb_t.to(device)[mask]).mean()
+                            bin_losses[i].append(bin_loss.item())
+                            bin_counts[i] += mask.sum().item()
         
         val_loss /= len(val_loader)
         scheduler.step()
@@ -298,7 +462,17 @@ def train_model(
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
         
-        print(f"Epoch {epoch+1:3d}/{epochs} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+        # Skin-tone bin metrics
+        print(f"Epoch {epoch+1:3d}/{epochs} | Train: {train_loss:.6f} | Val: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+        if use_qat and epoch >= epochs // 2:
+            print(f"  QAT: BN frozen, quantizers frozen")
+        
+        if bin_counts:
+            for i in range(skin_tone_bins):
+                if bin_counts[i] > 0:
+                    avg_loss = sum(bin_losses[i]) / len(bin_losses[i])
+                    print(f"  Skin bin {i} [{skin_tone_bins[i]:.2f}-{skin_tone_bins[i+1]:.2f}]: loss={avg_loss:.6f} (n={bin_counts[i]})")
+            history["skin_tone_bins"].append({i: sum(bin_losses[i])/len(bin_losses[i]) if bin_losses[i] else 0 for i in range(skin_tone_bins)})
         
         # Save best model
         if val_loss < best_val_loss:
@@ -308,7 +482,7 @@ def train_model(
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_loss': val_loss,
-                'metadata_dim': meta.shape[1],
+                'metadata_dim': 52,
             }, f"{checkpoint_dir}/best_model.pth")
             print(f"  ✅ Saved best model (val_loss: {val_loss:.6f})")
     
@@ -318,12 +492,16 @@ def train_model(
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'val_loss': val_loss,
-        'metadata_dim': meta.shape[1],
+        'metadata_dim': 52,
     }, f"{checkpoint_dir}/final_model.pth")
     
     # Save history
     with open(f"{checkpoint_dir}/history.json", 'w') as f:
         json.dump(history, f, indent=2)
+    
+    # QAT: freeze quantizers for final export
+    if use_qat and isinstance(model, QATWrapper):
+        model.freeze_quantizers()
     
     print(f"\nTraining complete! Best val loss: {best_val_loss:.6f}")
     return model
