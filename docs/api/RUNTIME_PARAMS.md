@@ -47,8 +47,8 @@ but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
-| `gain` | default | [3,1,1] | FLOAT | [1.0, 1.0, 1.0] | Per-channel gain [R,G,B]. 1.0 = identity |
-| `bias` | default | [3,1,1] | FLOAT | [0.0, 0.0, 0.0] | Per-channel bias [R,G,B]. 0.0 = identity |
+| `gain` | default | [3] | FLOAT | [1.0, 1.0, 1.0] | Per-channel gain [R,G,B]. 1.0 = identity |
+| `bias` | default | [3] | FLOAT | [0.0, 0.0, 0.0] | Per-channel bias [R,G,B]. 0.0 = identity |
 
 ## `gamma` — Gamma correction — pow(x, 1/γ) + clamp + optional shadow lift
 
