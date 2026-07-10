@@ -257,6 +257,10 @@ class MetadataExtractor:
                 if hasattr(raw, 'camera_whitebalance') and raw.camera_whitebalance is not None:
                     metadata["camera_wb"] = raw.camera_whitebalance.tolist()
                 
+                # Extended metadata for teacher models (v1.3+)
+                metadata.update(self._extract_time_aware_awb_extras(raw))
+                metadata.update(self._extract_ccmnet_extras(raw))
+                
                 return metadata
                 
         except Exception as e:
@@ -335,7 +339,83 @@ class MetadataExtractor:
         ]
         noise_levels = [np.std(p) for p in patches]
         return float(np.median(noise_levels) / (np.mean(raw_data) + 1e-6))
-    
+
+    def _extract_time_aware_awb_extras(self, raw) -> Dict[str, Any]:
+        """Extract Time-Aware AWB extra features: time, SNR, flash."""
+        extras = {}
+        
+        # Time features (12 dim) - sunrise/sunset probabilities + binary flags
+        if hasattr(raw, 'datetime') and raw.datetime:
+            import datetime
+            dt = datetime.datetime.fromtimestamp(raw.datetime)
+            hour = dt.hour + dt.minute / 60.0
+            sunrise = max(0.0, 1.0 - abs(hour - 6.5) / 3.0)
+            sunset = max(0.0, 1.0 - abs(hour - 18.5) / 3.0)
+            midnight = max(0.0, 1.0 - abs(hour - 0.0) / 6.0)
+            noon = max(0.0, 1.0 - abs(hour - 12.0) / 6.0)
+            extras["time_probs"] = [sunrise, sunset, noon, midnight, 0.0, 0.0]
+            extras["is_before"] = [1.0 if hour < 6.5 else 0.0,
+                                    1.0 if hour < 18.5 else 0.0,
+                                    1.0 if hour < 12.0 else 0.0,
+                                    1.0 if hour < 0.0 else 0.0,
+                                    0.0, 0.0]
+        else:
+            extras["time_probs"] = [0.0] * 6
+            extras["is_before"] = [0.0] * 6
+        
+        # SNR stats (2 dim) - R/G/B mean/std combined
+        raw_data = raw.raw_image_visible
+        if raw_data is not None and raw_data.size > 0:
+            h, w = raw_data.shape
+            patches = [
+                raw_data[:16, :16], raw_data[:16, -16:],
+                raw_data[-16:, :16], raw_data[-16:, -16:],
+                raw_data[h//2-8:h//2+8, w//2-8:w//2+8],
+            ]
+            means = [float(np.mean(p)) for p in patches]
+            stds = [float(np.std(p)) for p in patches]
+            extras["snr_mean"] = float(np.median(means))
+            extras["snr_std"] = float(np.median(stds))
+        else:
+            extras["snr_mean"] = 0.0
+            extras["snr_std"] = 0.0
+        
+        # Flash (1 dim)
+        if hasattr(raw, 'flash') and raw.flash is not None:
+            extras["flash"] = 1.0 if raw.flash else 0.0
+        else:
+            extras["flash"] = 0.0
+        
+        return extras
+
+    def _extract_ccmnet_extras(self, raw) -> Dict[str, Any]:
+        """Extract CCMNet extra features: CM1/CM2 matrices, CFE features."""
+        extras = {}
+        
+        # Color Matrix 1 & 2 (9 each = 18 dim)
+        if hasattr(raw, 'color_matrix_1') and raw.color_matrix_1 is not None:
+            extras["cm1"] = raw.color_matrix_1.flatten().tolist()
+        else:
+            extras["cm1"] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        
+        if hasattr(raw, 'color_matrix_2') and raw.color_matrix_2 is not None:
+            extras["cm2"] = raw.color_matrix_2.flatten().tolist()
+        else:
+            extras["cm2"] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        
+        # CFE features (8 dim) - learned features from CM1/CM2
+        cm1 = np.array(extras["cm1"]).reshape(3, 3)
+        cm2 = np.array(extras["cm2"]).reshape(3, 3)
+        diff = cm1 - cm2
+        extras["cfe_features"] = [
+            float(np.trace(cm1)), float(np.trace(cm2)),
+            float(np.trace(diff)), float(np.linalg.norm(diff)),
+            float(cm1[0,0]), float(cm1[1,1]), float(cm1[2,2]),
+            float(cm2[0,0]),
+        ]
+        
+        return extras
+
     def load_metadata_json(self, json_path: Path) -> Optional[Dict[str, Any]]:
         """Load metadata from JSON sidecar file."""
         try:
@@ -356,7 +436,9 @@ def build_feature_vector(
     normalize: bool = True,
 ) -> np.ndarray:
     """
-    Build the 267-dim feature vector matching the student model input.
+    Build the feature vector for student model input.
+    v1.2: 267 dim (256 hist + 11 meta)
+    v1.3: 308 dim (256 hist + 52 meta) with teacher extras
     Order must match training!
     """
     # Histogram: 256 bins
@@ -364,9 +446,9 @@ def build_feature_vector(
     if normalize and hist.sum() > 0:
         hist = hist / hist.sum() * 10000  # Normalize to fixed count
     
-    # Metadata features (11 dims)
-    meta_features = np.array([
-        metadata.get("cct", 6500.0) / 10000.0,  # Normalized CCT
+    # Base metadata (11 dims) - must match original order
+    base_meta = np.array([
+        metadata.get("cct", 6500.0) / 10000.0,
         *metadata.get("wb_gains", [1.0, 1.0, 1.0]),
         metadata.get("exposure_time", 0.033),
         metadata.get("iso_gain", 1.0),
@@ -377,7 +459,32 @@ def build_feature_vector(
         metadata.get("noise_level", 0.1),
     ], dtype=np.float32)
     
-    # Concatenate: 256 + 11 = 267
+    # Time-Aware AWB extras (15 dims)
+    time_probs = metadata.get("time_probs", [0.0] * 6)
+    is_before = metadata.get("is_before", [0.0] * 6)
+    snr_mean = metadata.get("snr_mean", 0.0)
+    snr_std = metadata.get("snr_std", 0.0)
+    flash = metadata.get("flash", 0.0)
+    awb_extras = np.array([
+        *time_probs,
+        *is_before,
+        snr_mean, snr_std, flash
+    ], dtype=np.float32)
+    
+    # CCMNet extras (26 dims)
+    cm1 = metadata.get("cm1", [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
+    cm2 = metadata.get("cm2", [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
+    cfe_features = metadata.get("cfe_features", [0.0] * 8)
+    ccm_extras = np.array([
+        *cm1,
+        *cm2,
+        *cfe_features
+    ], dtype=np.float32)
+    
+    # Concatenate all metadata
+    meta_features = np.concatenate([base_meta, awb_extras, ccm_extras])
+    
+    # Final feature vector: 256 + 11 + 15 + 26 = 308
     features = np.concatenate([hist, meta_features])
     return features
 
