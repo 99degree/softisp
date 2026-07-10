@@ -72,17 +72,17 @@ impl IspBlock for FcsBlock {
         let ns = self.tensor_ns();
         vec![
             // Per-channel gain: [R_gain, G_gain, B_gain]
-            // Shape [3, 1, 1] broadcasts over H,W
-            Proto::tensor_proto_float(&format!("{}/gain", ns), &[3, 1, 1], &[1.0, 1.0, 1.0]),
+            // Shape [3] broadcasts over H,W
+            Proto::tensor_proto_float(&format!("{}/gain", ns), &[3], &[1.0, 1.0, 1.0]),
             // Per-channel bias: [R_bias, G_bias, B_bias]
-            Proto::tensor_proto_float(&format!("{}/bias", ns), &[3, 1, 1], &[0.0, 0.0, 0.0]),
+            Proto::tensor_proto_float(&format!("{}/bias", ns), &[3], &[0.0, 0.0, 0.0]),
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/gain", ns), 1, vec![3, 1, 1]),
-            (format!("{}/bias", ns), 1, vec![3, 1, 1]),
+            (format!("{}/gain", ns), 1, vec![3]),
+            (format!("{}/bias", ns), 1, vec![3]),
         ]
     }
 }
