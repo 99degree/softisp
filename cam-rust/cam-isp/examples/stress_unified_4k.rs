@@ -10,7 +10,7 @@ fn main() {
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
     
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║  HEAVY Profile Stress Test: 4K Bayer → FHD ARGB8888        ║");
+    println!("║  UNIFIED Profile Stress Test: 4K Bayer → FHD ARGB8888      ║");
     println!("║  Neural Controller (Rule-Based) | 30s Duration              ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
     
@@ -22,8 +22,8 @@ fn main() {
     let duration_secs = 30;
     let bayer_pattern = 0; // RGGB
     
-    // Build HEAVY profile pipeline (UNIFIED has extra blocks causing issues)
-    let mut profile = PipelineProfile::HEAVY;
+    // Build UNIFIED profile pipeline (all post-processing blocks)
+    let mut profile = PipelineProfile::UNIFIED;
     profile.output_format = OutputFormat::Argb;
     
     println!("\n[1/4] Building pipeline...");
