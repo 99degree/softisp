@@ -27,6 +27,17 @@ import json
 from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
 import sys
+import os
+
+# FiLM model
+from film_model import FiLMISPDistilledModel, export_film_onnx
+
+# Import FiLM model
+try:
+    from film_model import FiLMISPDistilledModel
+    FILM_AVAILABLE = True
+except ImportError:
+    FILM_AVAILABLE = False
 
 
 class ISPDistilledModel(nn.Module):
@@ -571,13 +582,17 @@ def get_model(model_type: str = "full", metadata_dim: int = 52) -> nn.Module:
     """Factory function for ISP models.
 
     Args:
-        model_type: "full" (1.2M), "medium" (350K), or "light" (118K)
+        model_type: "full" (1.2M), "medium" (350K), "light" (118K), or "film" (FiLM skin-tone)
         metadata_dim: Metadata feature dimension
     """
     if model_type == "light":
         model = ISPLightModel(metadata_dim=metadata_dim)
     elif model_type == "medium":
         model = ISPMediumModel(metadata_dim=metadata_dim)
+    elif model_type == "film":
+        if not FILM_AVAILABLE:
+            raise ImportError("FiLM model not available. Ensure film_model.py is present.")
+        model = FiLMISPDistilledModel(metadata_dim=metadata_dim)
     else:
         model = ISPDistilledModel(metadata_dim=metadata_dim)
     return model
@@ -594,6 +609,7 @@ def main():
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Checkpoint directory")
     parser.add_argument("--light", action="store_true", help="Use lightweight model (~118K params)")
     parser.add_argument("--medium", action="store_true", help="Use medium-weight model (~350K params)")
+    parser.add_argument("--film", action="store_true", help="Use FiLM skin-tone conditioning")
     parser.add_argument("--metadata-dim", type=int, default=52, help="Metadata input dim (default: 52)")
     parser.add_argument("--export", action="store_true", help="Export to ONNX")
     parser.add_argument("--model", type=str, default="checkpoints/best_model.pth", help="Model checkpoint to export")
@@ -607,7 +623,9 @@ def main():
     else:
         device = args.device
 
-    if args.light:
+    if args.film:
+        model_type = "film"
+    elif args.light:
         model_type = "light"
     elif args.medium:
         model_type = "medium"
@@ -645,7 +663,10 @@ def main():
         model.load_state_dict(checkpoint['model_state_dict'])
 
         # Export ONNX
-        export_to_onnx(model, args.output, metadata_dim)
+        if model_type == "film":
+            export_film_onnx(model, args.output, metadata_dim)
+        else:
+            export_to_onnx(model, args.output, metadata_dim)
 
         # Quantize if requested
         if args.quantize:
