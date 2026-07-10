@@ -130,12 +130,35 @@ fn validate_input(input: &[f32; 267]) -> Result<(), InputError> {
 
 ## 📤 Output Specification
 
-| Head | Shape | Range | Activation | Target Block |
-|------|-------|-------|------------|--------------|
-| **WB gains** | [3] | [0.2, 5.0] | `exp(TanhClamp)` | BayerWbBlock.gains[0,2] (keep G=1.0) |
-| **CCM** | [9] | [-3.0, 3.0] | `TanhClamp` | CcmBlock.matrix (row-major) |
-| **Tone curve** | [7] | [0.0, 1.0] | `Sigmoid` | ToneLutBlock (7-point LUT) |
-| **Zoom** | [1] | [1.0, 4.0] | `ReLU+1` | ScaleBlocks.scale_factor |
+| Head | Shape | Range | Activation | Target Runtime Param(s) | Target Block |
+|------|-------|-------|------------|-------------------------|--------------|
+| **WB gains** | [3] | [0.2, 5.0] | `exp(TanhClamp)` | `bayer_wb.gains` [1,4,1,1] (RGGB) | BayerWbBlock |
+| **CCM** | [9] | [-3.0, 3.0] | `TanhClamp` | `demosaic_ccm.w` [3,4,1,1] + `b` [3] | DemosaicCcmBlock |
+| **Tone curve** | [7] | [0.0, 1.0] | `Sigmoid` | `tone.contrast/brightness/gamma_recip`, `fcs.gain/bias`, `gamma.inv_gamma/min/max` | ToneBlock, FcsBlock, GammaBlock |
+| **Zoom** | [1] | [1.0, 4.0] | `ReLU+1` | `scale` → AdaptiveDownscaleBlock.scale_factor | ScaleBlocks |
+
+> **Note**: Current model outputs 20 parameters (3+9+7+1). The runtime API exposes finer-grained controls (see `docs/api/RUNTIME_PARAMS.md`). The 7-point tone curve is internally mapped to multiple tone-related blocks (`tone`, `fcs`, `gamma`, `auto_contrast`). Future model versions (v1.3+) may expand output dimension to directly control all runtime params.
+
+### 🔄 Model Output → Runtime Parameter Mapping
+
+The 20 model outputs map to the fine-grained runtime params (RUNTIME_PARAMS.md) as follows:
+
+| Model Output | Runtime Param(s) | Block | Mapping Logic |
+|--------------|------------------|-------|---------------|
+| `wb[0:3]` | `bayer_wb.gains` [1,4,1,1] | BayerWbBlock | `gains = [wb_r, 1.0, wb_b, 1.0]` (RGGB, G=1.0 ref) |
+| `ccm[0:9]` | `demosaic_ccm.w` [3,4,1,1] + `b` [3] | DemosaicCcmBlock | 3×3 → 3×4: pad 4th column with 0; bias = 0 |
+| `tone[0]` | `tone.contrast` | ToneBlock | `contrast = tone[0]*2 - 1` → [-1,1] |
+| `tone[1]` | `tone.brightness` | ToneBlock | `brightness = tone[1]*2 - 1` → [-1,1] |
+| `tone[2]` | `tone.gamma_recip` | ToneBlock | `gamma_recip = tone[2]*0.5 + 0.5` → [0.5,1.0] |
+| `tone[3]` | `auto_contrast.contrast_w` | AutoContrastBlock | `contrast_w = tone[3]*1.5 + 0.5` → [0.5,2.0] |
+| `tone[4]` | `gamma.inv_gamma` | GammaBlock | `inv_gamma = tone[4]*0.5 + 0.25` → [0.25,0.75] |
+| `tone[5]` | `fcs.gain` [3] | SaturationBlock | `gain = [tone[5], tone[5], tone[5]]*2` → [0,2] |
+| `tone[6]` | `ldci.strength` | LdciBlock | `strength = tone[6]` → [0,1] |
+| `zoom[0]` | `scale_blocks.scale_factor` | ScaleBlocks | Direct pass-through |
+
+> **Note**: Additional runtime params (`normalize.max_val`, `saturation.scale`, `sharpen.strength`, `display.scale`, etc.) use fixed defaults or are controlled by separate heuristics. The model controls the core color/tone/zoom pipeline.
+
+---
 
 **Validation**: Output validation enforced via:
 ```rust

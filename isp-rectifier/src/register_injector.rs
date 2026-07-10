@@ -1,9 +1,11 @@
 //! Register Injector - Maps ISPOptimizedParams to hardware registers
+//! Maps model outputs (20 params) to runtime params (see RUNTIME_PARAMS.md) then to registers
 
 use crate::types::{ISPOptimizedParams, ISPRegisters, RegisterLimits};
 use std::fmt;
 
 /// Inject optimized parameters into ISP register structure
+/// Mapping: model outputs (20) → runtime params (RUNTIME_PARAMS.md) → hardware registers
 pub fn inject_registers(params: &ISPOptimizedParams, limits: &RegisterLimits) -> ISPRegisters {
     // First clamp parameters
     let mut clamped = params.clone();
