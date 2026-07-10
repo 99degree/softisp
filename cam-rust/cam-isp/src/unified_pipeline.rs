@@ -503,6 +503,243 @@ impl UnifiedPipeline {
         self.process(raw_data, bayer_width, bayer_height)
     }
 
+    /// Process using tiled rendering for high-resolution output (e.g., 4K→4K).
+    /// Splits the input into tiles with overlap, processes each tile independently,
+    /// and stitches the results together.
+    pub fn process_tiled(
+        &mut self,
+        raw_data: &[u8],
+        width: u32,
+        height: u32,
+        warp_params: &GpuWarpParams,
+    ) -> IspResult<IspFrame> {
+        if !self.initialized {
+            return Err(crate::error::IspError::Pipeline("pipeline not initialized".into()));
+        }
+
+        // Check if tiled rendering is enabled in profile
+        if !self.config.profile.use_tiled_rendering {
+            return self.process_with_warp(raw_data, width, height, warp_params);
+        }
+
+        let tile_x = self.config.profile.tile_count_x.max(1) as u32;
+        let tile_y = self.config.profile.tile_count_y.max(1) as u32;
+        let overlap = self.config.profile.tile_overlap as u32;
+
+        if tile_x == 1 && tile_y == 1 {
+            return self.process_with_warp(raw_data, width, height, warp_params);
+        }
+
+        info!("Tiled rendering: {}×{} tiles with {}px overlap", tile_x, tile_y, overlap);
+
+        // Calculate tile dimensions with overlap
+        let tile_w = (width + tile_x - 1) / tile_x;
+        let tile_h = (height + tile_y - 1) / tile_y;
+
+        // Output dimensions per tile (without overlap)
+        let out_tile_w = self.width / tile_x;
+        let out_tile_h = self.height / tile_y;
+
+        // Total output float data size: [1, 3, H, W]
+        let total_float_size = (self.width * self.height * 3) as usize;
+        let mut stitched_float = vec![0.0f32; total_float_size];
+
+        // Process each tile
+        for ty in 0..tile_y {
+            for tx in 0..tile_x {
+                // Input tile bounds with overlap
+                let in_x_start = (tx * tile_w).saturating_sub(overlap);
+                let in_y_start = (ty * tile_h).saturating_sub(overlap);
+                let in_x_end = ((tx + 1) * tile_w).min(width) + overlap;
+                let in_y_end = ((ty + 1) * tile_h).min(height) + overlap;
+
+                let tile_in_w = in_x_end - in_x_start;
+                let tile_in_h = in_y_end - in_y_start;
+
+                // Output tile bounds (without overlap)
+                let out_x_start = tx * out_tile_w;
+                let out_y_start = ty * out_tile_h;
+                let tile_out_w = out_tile_w;
+                let tile_out_h = out_tile_h;
+
+                info!("Processing tile ({},{}): in={}x{} out={}x{} at ({},{}) input offset=({},{})",
+                    tx, ty, tile_in_w, tile_in_h, tile_out_w, tile_out_h, out_x_start, out_y_start, in_x_start, in_y_start);
+
+                // Extract tile from raw data
+                let tile_raw = Self::extract_tile(raw_data, width, in_x_start, in_y_start, tile_in_w, tile_in_h);
+
+                // Process tile
+                let mut params = ProcessParams::new(tile_in_w, tile_in_h, &tile_raw);
+                params.isp_params = Some(self.controller.analyze_and_update(&crate::pipeline::types::IspFrame {
+                    params: crate::isp_params::IspParams::default(),
+                    data: tile_raw.clone(),
+                    width: tile_in_w,
+                    height: tile_in_h,
+                    format: cam_types::FrameFormat::RawSensor,
+                    float_data: None,
+                    aux: None,
+                    timestamp_ns: 0,
+                    prep_duration_ns: 0,
+                    inference_duration_ns: 0,
+                    total_duration_ns: 0,
+                }));
+                params.target_width = tile_out_w;
+                params.target_height = tile_out_h;
+                params.sensor_max = self.config.sensor_max;
+                params.output_format = self.config.output_format;
+
+                let mut tile_output = self.engine.process(&params)?;
+
+                // Apply GPU warp if enabled (per-tile)
+                #[cfg(feature = "mnn")]
+                if self.config.gpu_warp_enabled && warp_params.needs_warp() {
+                    if let Some(ref warp_engine) = self.gpu_warp_engine {
+                        if let Some(ref mut float_data) = tile_output.float_data {
+                            let n = (tile_out_w * tile_out_h * 3) as usize;
+                            if float_data.len() >= n {
+                                let mut input_copy = vec![0.0f32; n];
+                                input_copy.copy_from_slice(&float_data[..n]);
+                                let _ = warp_engine.run_into(
+                                    &input_copy,
+                                    warp_params.gdc_k1,
+                                    warp_params.gdc_k2,
+                                    warp_params.gdc_k3,
+                                    warp_params.eis_dx,
+                                    warp_params.eis_dy,
+                                    &mut float_data[..n],
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Stitch tile float data into output
+                if let Some(ref tile_float) = tile_output.float_data {
+                    Self::stitch_tile_f32(
+                        &mut stitched_float,
+                        tile_float,
+                        self.width,
+                        self.height,
+                        out_x_start,
+                        out_y_start,
+                        tile_out_w,
+                        tile_out_h,
+                    );
+                }
+            }
+        }
+
+        // Create stitched ISP output
+        let mut isp_output = IspFrame {
+            params: crate::isp_params::IspParams::default(),
+            float_data: Some(stitched_float),
+            width: self.width,
+            height: self.height,
+            format: cam_types::FrameFormat::NchwFloat,
+            data: vec![],
+            aux: None,
+            timestamp_ns: 0,
+            prep_duration_ns: 0,
+            inference_duration_ns: 0,
+            total_duration_ns: 0,
+        };
+
+        // Apply GPU warp on stitched result if needed
+        #[cfg(feature = "mnn")]
+        if self.config.gpu_warp_enabled && warp_params.needs_warp() {
+            if let Some(ref warp_engine) = self.gpu_warp_engine {
+                if let Some(ref mut float_data) = isp_output.float_data {
+                    let n = (self.width * self.height * 3) as usize;
+                    if float_data.len() >= n {
+                        let mut input_copy = vec![0.0f32; n];
+                        input_copy.copy_from_slice(&float_data[..n]);
+                        let _ = warp_engine.run_into(
+                            &input_copy,
+                            warp_params.gdc_k1,
+                            warp_params.gdc_k2,
+                            warp_params.gdc_k3,
+                            warp_params.eis_dx,
+                            warp_params.eis_dy,
+                            &mut float_data[..n],
+                        );
+                    }
+                }
+            }
+        }
+
+        // Run post-processing on stitched result
+        let post_output = if let Some(ref float_data) = isp_output.float_data {
+            self.post_pipeline.process_float(
+                float_data,
+                isp_output.width,
+                isp_output.height,
+                isp_output.aux.clone(),
+                isp_output.timestamp_ns,
+                None, // params not needed for post-processing
+            )?
+        } else {
+            self.post_pipeline.process(&isp_output)?
+        };
+
+        Ok(post_output)
+    }
+
+    /// Extract a tile from packed raw Bayer data (INT32 packed, half width).
+    fn extract_tile(
+        raw_data: &[u8],
+        full_width: u32,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Vec<u8> {
+        let packed_w = (full_width / 2) as usize;
+        let row_stride = packed_w * 4; // bytes per row (INT32 = 4 bytes)
+        let start_row = y as usize;
+        let start_col = (x / 2) as usize; // packed Bayer: 2 pixels per INT32
+        let tile_packed_w = (w / 2) as usize;
+
+        let mut tile = Vec::with_capacity((tile_in_h * row_stride) as usize);
+        for row in start_row..(start_row + h as usize) {
+            let row_start = row * row_stride + start_col * 4;
+            let row_end = row_start + tile_packed_w * 4;
+            if row_end <= raw_data.len() {
+                tile.extend_from_slice(&raw_data[row_start..row_end]);
+            }
+        }
+        tile
+    }
+
+    /// Stitch a tile of float data into the output buffer.
+    /// Input tile is [tile_out_w * tile_out_h * 3] f32 (planar RGB).
+    fn stitch_tile_f32(
+        output: &mut [f32],
+        tile: &[f32],
+        out_width: u32,
+        out_height: u32,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) {
+        let out_w = out_width as usize;
+        let tile_w = w as usize;
+        let tile_h = h as usize;
+
+        // Planar layout: R plane, then G plane, then B plane
+        let plane_size = out_w * out_height as usize;
+
+        for c in 0..3 {
+            let out_base = c * plane_size + (y as usize) * out_w + x as usize;
+            let tile_base = c * tile_w * tile_h;
+            for row in 0..tile_h {
+                let out_row = out_base + row * out_w;
+                let tile_row = tile_base + row * tile_w;
+                output[out_row..out_row + tile_w].copy_from_slice(&tile[tile_row..tile_row + tile_w]);
+            }
+        }
+    }
+
     /// Get pipeline info.
     pub fn info(&self) -> PipelineInfo {
         PipelineInfo {
@@ -530,38 +767,11 @@ impl UnifiedPipeline {
 
     /// Get GPU warp ONNX model.
     pub fn gpu_warp_onnx(&self) -> Option<&[u8]> { self.gpu_warp_onnx.as_deref() }
-}
 
-/// Pipeline information.
-#[derive(Debug, Clone)]
-pub struct PipelineInfo {
-    pub profile: String,
-    pub engine: String,
-    pub input_width: u32,
-    pub input_height: u32,
-    pub output_format: String,
-    pub post_eis: bool,
-    pub post_deshake: bool,
-    pub post_gdc: bool,
-    pub post_temporal_denoise: bool,
-    pub gpu_warp: bool,
-}
-
-impl std::fmt::Display for PipelineInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "UnifiedPipeline[{} engine={} {}x{} out={} post=",
-            self.profile, self.engine, self.input_width, self.input_height, self.output_format)?;
-        let mut features = Vec::new();
-        if self.gpu_warp { features.push("GPU_Warp"); }
-        if self.post_eis { features.push("EIS"); }
-        if self.post_deshake { features.push("Deshake"); }
-        if self.post_gdc { features.push("GDC"); }
-        if self.post_temporal_denoise { features.push("TemporalDenoise"); }
-        if features.is_empty() { write!(f, "none]") } else { write!(f, "{}]", features.join("+")) }
-    }
-}
-
-#[cfg(test)]
+    /// Extract a tile from raw Bayer data (packed INT32 format).
+    /// Raw data is INT32 where each pixel is 16-bit, packed 2 pixels per INT32.
+    /// Extract a tile from raw Bayer data (packed INT32 format).
+    /// Raw data is INT32 where each pixel is 16-bit, packed 2 pixels per INT32.
 mod tests {
     use super::*;
 
@@ -648,7 +858,6 @@ mod tests {
         let info = pipeline.info();
         assert!(info.output_format.contains("FloatRgb"));
     }
-}
 
 impl ProcessPipeline for UnifiedPipeline {
     fn process(&self, params: &ProcessParams) -> IspResult<IspFrame> {
@@ -663,3 +872,5 @@ impl ProcessPipeline for UnifiedPipeline {
         self.initialized
     }
 }
+
+/// Pipeline information.
