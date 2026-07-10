@@ -220,11 +220,46 @@ python batch_validate_quantization.py \
 
 ## 📄 License
 
-This project is part of the [softisp](https://github.com/99degree/softisp) camera ISP pipeline.
+### Code License
 
-**License:** MIT OR Apache-2.0
+The Rust/Python code in this repository is licensed under:
+- **MIT OR Apache-2.0** (your choice)
 
-**Models:** The pre-trained ONNX models are derived from teacher models trained on public datasets. See [TEACHER_DATASET.md](TEACHER_DATASET.md) for details.
+### Model License
+
+**⚠️ The pre-trained ONNX models are NOT MIT/Apache licensed.**
+
+The student models are distilled from teacher models with the following licenses:
+
+| Teacher Model | License |
+|---------------|--------|
+| CCMNet | Creative Commons Attribution-NonCommercial 4.0 (CC BY-NC 4.0) |
+| Time-Aware AWB | CC BY-NC 4.0 |
+| Neural ISP Tuning | CC BY-NC 4.0 |
+
+**Therefore, the distilled student models inherit the CC BY-NC 4.0 license:**
+- ✅ **Free for non-commercial use**
+- ✅ **Must give attribution**
+- ❌ **No commercial use without permission**
+
+### Attribution Required
+
+If you use these models, you must credit:
+```
+ISP Rectifier - Distilled ISP Controller
+https://github.com/99degree/softisp
+
+Based on teacher models:
+- CCMNet (Creative Commons Attribution-NonCommercial 4.0)
+- Time-Aware AWB (Creative Commons Attribution-NonCommercial 4.0)
+- Neural ISP Tuning (Creative Commons Attribution-NonCommercial 4.0)
+```
+
+### Commercial Use
+
+For commercial licensing, contact the original teacher model authors or retrain with your own data.
+
+See [TEACHER_DATASET.md](TEACHER_DATASET.md) and [TEACHER_ANALYSIS.md](TEACHER_ANALYSIS.md) for full license details.
 
 ## 🙏 Acknowledgments
 
