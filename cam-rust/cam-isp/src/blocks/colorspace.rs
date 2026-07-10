@@ -26,12 +26,14 @@ pub enum ColorSpace {
 pub struct ColorSpaceBlock {
     /// Conversion type.
     pub conversion: ColorSpace,
+    /// Input tensor name (set by wire_blocks).
+    input_source: String,
 }
 
 impl ColorSpaceBlock {
     /// Create with specific conversion.
     pub fn new(conversion: ColorSpace) -> Self {
-        Self { conversion }
+        Self { conversion, input_source: String::new() }
     }
 
     /// Create RGB to HSV converter.
@@ -82,7 +84,7 @@ impl IspBlock for ColorSpaceBlock {
         })
     }
 
-    fn set_input_source(&mut self, _name: &str) {}
+    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
 
     fn frame_tensor(&self) -> Option<&str> {
         Some(match self.conversion {
@@ -126,17 +128,18 @@ impl IspBlock for ColorSpaceBlock {
 impl ColorSpaceBlock {
     fn rgb_to_hsv_nodes(&self) -> Vec<Vec<u8>> {
         // RGB to HSV using max/min approach
+        let input = if self.input_source.is_empty() { format!("{}/input", self.id()) } else { self.input_source.clone() };
         vec![
             // Find max and min channels
             Proto::node(
                 "ReduceMax",
-                &[&format!("{}/input", self.id())],
+                &[&input],
                 &[&format!("{}/max", self.id())],
                 &[Proto::attribute_int("axes", 1), Proto::attribute_int("keepdims", 1)],
             ),
             Proto::node(
                 "ReduceMin",
-                &[&format!("{}/input", self.id())],
+                &[&input],
                 &[&format!("{}/min", self.id())],
                 &[Proto::attribute_int("axes", 1), Proto::attribute_int("keepdims", 1)],
             ),
