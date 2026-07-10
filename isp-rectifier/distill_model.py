@@ -471,10 +471,111 @@ class ISPLightModel(nn.Module):
         }
 
 
+class ISPMediumModel(nn.Module):
+    """
+    Medium-weight Distilled ISP Controller Model (~350K params).
+    ~3x smaller than ISPDistilledModel, ~3x larger than ISPLightModel.
+    Balanced size/accuracy trade-off for most deployment targets.
+
+    Input:  histogram (B, 256) + metadata (B, N)
+    Output: wbgains (B, 3) + ccm (B, 9) + tonecurve (B, 7) + zoom_factor (B, 1)
+    """
+
+    def __init__(self, metadata_dim: int = 267):
+        super().__init__()
+
+        # Histogram backbone: 1D CNN (12→24→48 channels)
+        self.hist_backbone = nn.Sequential(
+            nn.Conv1d(1, 12, kernel_size=7, padding=3),
+            nn.BatchNorm1d(12),
+            nn.ReLU(),
+            nn.MaxPool1d(2),  # 256 -> 128
+            nn.Conv1d(12, 24, kernel_size=5, padding=2),
+            nn.BatchNorm1d(24),
+            nn.ReLU(),
+            nn.MaxPool1d(2),  # 128 -> 64
+            nn.Conv1d(24, 48, kernel_size=3, padding=1),
+            nn.BatchNorm1d(48),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(16),  # -> 16
+            nn.Flatten(),  # 48 * 16 = 768
+        )
+
+        # Metadata backbone: medium MLP
+        self.meta_backbone = nn.Sequential(
+            nn.Linear(metadata_dim, 96),
+            nn.BatchNorm1d(96),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(96, 192),
+            nn.BatchNorm1d(192),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+        )
+
+        # Combined feature dimension
+        hist_out_dim = 48 * 16  # 768
+        meta_out_dim = 192
+        combined_dim = hist_out_dim + meta_out_dim  # 960
+
+        # Shared fusion layer
+        self.fusion = nn.Sequential(
+            nn.Linear(combined_dim, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+        )
+
+        # Multi-head outputs (medium heads)
+        self.wb_head = nn.Sequential(
+            nn.Linear(256, 48),
+            nn.ReLU(),
+            nn.Linear(48, 3),
+        )
+
+        self.ccm_head = nn.Sequential(
+            nn.Linear(256, 96),
+            nn.ReLU(),
+            nn.Linear(96, 9),
+        )
+
+        self.tone_head = nn.Sequential(
+            nn.Linear(256, 48),
+            nn.ReLU(),
+            nn.Linear(48, 7),
+        )
+
+        self.zoom_head = nn.Sequential(
+            nn.Linear(256, 24),
+            nn.ReLU(),
+            nn.Linear(24, 1),
+        )
+
+    def forward(self, histogram: torch.Tensor, metadata: torch.Tensor) -> Dict[str, torch.Tensor]:
+        hist_features = self.hist_backbone(histogram.unsqueeze(1))
+        meta_features = self.meta_backbone(metadata)
+        combined = torch.cat([hist_features, meta_features], dim=1)
+        fused = self.fusion(combined)
+
+        return {
+            "wbgains": self.wb_head(fused),
+            "ccm": self.ccm_head(fused),
+            "tonecurve": self.tone_head(fused),
+            "zoom_factor": self.zoom_head(fused),
+        }
+
+
 def get_model(model_type: str = "full", metadata_dim: int = 267) -> nn.Module:
-    """Factory function for ISP models."""
+    """Factory function for ISP models.
+
+    Args:
+        model_type: "full" (1.2M), "medium" (350K), or "light" (118K)
+        metadata_dim: Metadata feature dimension
+    """
     if model_type == "light":
         model = ISPLightModel(metadata_dim=metadata_dim)
+    elif model_type == "medium":
+        model = ISPMediumModel(metadata_dim=metadata_dim)
     else:
         model = ISPDistilledModel(metadata_dim=metadata_dim)
     return model
@@ -489,7 +590,8 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--device", type=str, default="auto", help="Device (cuda/cpu/auto)")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Checkpoint directory")
-    parser.add_argument("--light", action="store_true", help="Use lightweight model (ISPLightModel)")
+    parser.add_argument("--light", action="store_true", help="Use lightweight model (~118K params)")
+    parser.add_argument("--medium", action="store_true", help="Use medium-weight model (~350K params)")
     parser.add_argument("--export", action="store_true", help="Export to ONNX")
     parser.add_argument("--model", type=str, default="checkpoints/best_model.pth", help="Model checkpoint to export")
     parser.add_argument("--output", type=str, default="fusedispcontroller.onnx", help="ONNX output path")
@@ -502,7 +604,12 @@ def main():
     else:
         device = args.device
 
-    model_type = "light" if args.light else "full"
+    if args.light:
+        model_type = "light"
+    elif args.medium:
+        model_type = "medium"
+    else:
+        model_type = "full"
 
     if args.train:
         # Load dataset
