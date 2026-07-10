@@ -76,6 +76,12 @@ fn bench_medium_int8_model() {
 }
 
 #[test]
+fn bench_medium_fp16_model() {
+    // FP16 models require FP16 support in tract, which is limited
+    eprintln!("Skipping MEDIUM-FP16: tract FP16 support is limited");
+}
+
+#[test]
 fn bench_fp32_model() {
     let path = models_dir().join("fusedispcontroller.onnx");
     bench_model("FP32", &path);
@@ -99,11 +105,11 @@ fn bench_all_models_comparison() {
     let mut results = Vec::new();
     
     for (name, filename) in [
+        // FP16 skipped: tract doesn't support FP16 properly
         ("MED-FP32", "fusedispcontroller_medium.onnx"),
         ("MED-INT8", "fusedispcontroller_medium_int8.onnx"),
         ("FP32", "fusedispcontroller.onnx"),
         ("INT8", "fusedispcontroller_int8.onnx"),
-        // FP16 skipped: tract doesn't support FP16 properly
     ] {
         let path = models_dir().join(filename);
         if !path.exists() {
