@@ -54,7 +54,7 @@ impl IspBlock for BilateralBlock {
     }
 
     fn input_source(&self) -> Option<&str> {
-        Some("bilateral/input")
+        if self.input_source.is_empty() { Some("bilateral/input") } else { Some(&self.input_source) }
     }
 
     fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
