@@ -10,9 +10,10 @@ use std::path::Path;
 
 use cam_isp::blocks::*;
 use cam_isp::engine::OutputFormat;
+use cam_isp::onnx::proto::Proto;
 use cam_isp::pipeline::IspBlock;
 
-/// A documented runtime parameter.
+/// A documented runtime parameter (extra_input).
 struct DocParam {
     block_id: &'static str,
     block_desc: String,
@@ -21,6 +22,18 @@ struct DocParam {
     elem_type: i64,
     shape: Vec<i64>,
     default_val: String,
+    description: String,
+}
+
+/// A documented tensor (input/output of block).
+struct DocTensor {
+    block_id: &'static str,
+    block_desc: String,
+    config: String,
+    is_input: bool,
+    tensor_name: String,
+    elem_type: i64,
+    shape: Vec<i64>,
     description: String,
 }
 
@@ -41,8 +54,121 @@ fn shape_str(s: &[i64]) -> String {
     }
 }
 
-fn collect_params() -> Vec<DocParam> {
+/// Parse ONNX ValueInfoProto bytes to extract (name, elem_type, shape)
+fn parse_value_info(vi_bytes: &[u8]) -> (String, i64, Vec<i64>) {
+    // The Proto::value_info creates a ValueInfoProto with:
+    // - name (string)
+    // - type: TensorTypeProto with elem_type and shape
+    // We need to decode it. Use the same protobuf definitions.
+    
+    // Since we can't easily parse here without duplicating protobuf definitions,
+    // and the cam-isp crate doesn't expose the ValueInfoProto struct publicly,
+    // we'll use a simpler approach: check known tensor names and their specs.
+    
+    // For now, return empty - we'll fill in manually below
+    ("".into(), 0, vec![])
+}
+
+fn known_tensor_info(name: &str, block_id: &str) -> Option<(String, i64, Vec<i64>)> {
+    match (block_id, name) {
+        // DemosaicCcmBlock
+        ("demosaic_ccm", n) if n.ends_with("/frame") && n.starts_with("DemosaicCcmBlock") => {
+            Some(("DemosaicCcmBlock/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("demosaic_ccm", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 6, vec![1, 1, -1, -1]))
+        }
+        
+        // BayerWbBlock
+        ("bayer_wb", n) if n == "BayerWbBlock/frame" => {
+            Some(("BayerWbBlock/frame".into(), 1, vec![1, 1, -1, -1]))
+        }
+        ("bayer_wb", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 1, -1, -1]))
+        }
+        
+        // ToneBlock
+        ("tone", n) if n == "tone/out" || n == "ToneBlock/frame" => {
+            Some(("ToneBlock/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("tone", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        
+        // SaturationBlock
+        ("saturation", n) if n == "SaturationBlock/frame" => {
+            Some(("SaturationBlock/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("saturation", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        
+        // SharpenBlock
+        ("sharpen", n) if n == "SharpenBlock/frame" => {
+            Some(("SharpenBlock/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("sharpen", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        
+        // LdciBlock
+        ("ldci", n) if n == "LdciBlock/frame" => {
+            Some(("LdciBlock/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("ldci", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        
+        // FcsBlock
+        ("fcs", n) if n == "FcsBlock/frame" => {
+            Some(("FcsBlock/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("fcs", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        
+        // NormalizeBlock
+        ("normalize", n) if n == "NormalizeBlock/frame" => {
+            Some(("NormalizeBlock/frame".into(), 1, vec![1, 1, -1, -1]))
+        }
+        ("normalize", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 6, vec![1, 1, -1, -1]))
+        }
+        
+        // GammaBlock
+        ("gamma", n) if n == "GammaBlock/frame" || n == "Gamma/frame" => {
+            Some(("GammaBlock/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("gamma", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        
+        // AutoContrastBlock
+        ("auto_contrast", n) if n == "AutoContrastBlock/frame" || n == "AutoContrast/frame" => {
+            Some(("AutoContrastBlock/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("auto_contrast", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        
+        // DisplayBlock
+        ("display", n) if n == "DisplayBlock/frame" => {
+            Some(("DisplayBlock/frame".into(), 1, vec![1, 4, -1, -1]))
+        }
+        ("display", n) if n == "DisplayBlock/postprocess" => {
+            Some(("DisplayBlock/postprocess".into(), 1, vec![1, 3, -1, -1]))
+        }
+        ("display", n) if n == "prev/frame" => {
+            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
+        }
+        
+        _ => None,
+    }
+}
+
+fn collect_all() -> (Vec<DocParam>, Vec<DocTensor>) {
     let mut params = Vec::new();
+    let mut tensors = Vec::new();
 
     // ── DemosaicCcmBlock ────
     {
@@ -65,12 +191,33 @@ fn collect_params() -> Vec<DocParam> {
                 description: desc.into(),
             });
         }
+        // Input/output tensors (hardcoded based on known schema)
+        tensors.push(DocTensor {
+            block_id: "demosaic_ccm",
+            block_desc: "Fused demosaic + CCM".into(),
+            config: "rggb".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 6,
+            shape: vec![1, 1, -1, -1],
+            description: "Packed Bayer input [1,1,H,W] INT32".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "demosaic_ccm",
+            block_desc: "Fused demosaic + CCM".into(),
+            config: "rggb".into(),
+            is_input: false,
+            tensor_name: "DemosaicCcmBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "Demosaiced RGB [1,3,H,W] FLOAT".into(),
+        });
     }
 
     // ── BayerWbBlock ────
     {
         let mut b = BayerWbBlock::new();
-        b.set_gains(1.0, 1.0, 1.0, 1.5); // non-identity to expose extra_inputs
+        b.set_gains(1.0, 1.0, 1.0, 1.5);
         b.set_input_source("prev/frame");
         for (name, etype, shape) in b.extra_inputs() {
             params.push(DocParam {
@@ -84,6 +231,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: "RGGB channel gains for Bayer white balance".into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "bayer_wb",
+            block_desc: "Bayer white balance".into(),
+            config: "rggb".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 1, -1, -1],
+            description: "Bayer input [1,1,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "bayer_wb",
+            block_desc: "Bayer white balance".into(),
+            config: "rggb".into(),
+            is_input: false,
+            tensor_name: "BayerWbBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 1, -1, -1],
+            description: "Bayer WB output [1,1,H,W] FLOAT".into(),
+        });
     }
 
     // ── ToneBlock ────
@@ -108,6 +275,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: desc.into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "tone",
+            block_desc: "Tone mapping — contrast/brightness/gamma S-curve".into(),
+            config: "default".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "RGB input [1,3,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "tone",
+            block_desc: "Tone mapping — contrast/brightness/gamma S-curve".into(),
+            config: "default".into(),
+            is_input: false,
+            tensor_name: "ToneBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "Tone-mapped RGB [1,3,H,W] FLOAT".into(),
+        });
     }
 
     // ── SaturationBlock ────
@@ -126,6 +313,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: "Per-channel saturation scale [R,G,B]. 1.0 = identity".into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "saturation",
+            block_desc: "Saturation control — per-channel RGB factor".into(),
+            config: "default".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "RGB input [1,3,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "saturation",
+            block_desc: "Saturation control — per-channel RGB factor".into(),
+            config: "default".into(),
+            is_input: false,
+            tensor_name: "SaturationBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "Saturated RGB [1,3,H,W] FLOAT".into(),
+        });
     }
 
     // ── SharpenBlock ────
@@ -144,6 +351,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: "Sharpening strength. 0=off, 0.5=moderate, 1.0=strong".into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "sharpen",
+            block_desc: "Unsharp mask sharpening".into(),
+            config: "strength=0.5".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "RGB input [1,3,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "sharpen",
+            block_desc: "Unsharp mask sharpening".into(),
+            config: "strength=0.5".into(),
+            is_input: false,
+            tensor_name: "SharpenBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "Sharpened RGB [1,3,H,W] FLOAT".into(),
+        });
     }
 
     // ── LdciBlock ────
@@ -162,6 +389,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: "Local contrast strength. 1.0 = default".into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "ldci",
+            block_desc: "Local contrast enhancement (adaptive tone mapping)".into(),
+            config: "default".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "RGB input [1,3,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "ldci",
+            block_desc: "Local contrast enhancement (adaptive tone mapping)".into(),
+            config: "default".into(),
+            is_input: false,
+            tensor_name: "LdciBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "LDCI output [1,3,H,W] FLOAT".into(),
+        });
     }
 
     // ── FcsBlock ────
@@ -185,6 +432,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: desc.into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "fcs",
+            block_desc: "Film contrast stretch — Mul+Add per-channel".into(),
+            config: "default".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "RGB input [1,3,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "fcs",
+            block_desc: "Film contrast stretch — Mul+Add per-channel".into(),
+            config: "default".into(),
+            is_input: false,
+            tensor_name: "FcsBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "FCS output [1,3,H,W] FLOAT".into(),
+        });
     }
 
     // ── NormalizeBlock ────
@@ -203,6 +470,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: "Sensor max value (65535 for 16-bit)".into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "normalize",
+            block_desc: "INT32→FLOAT + Div by sensor max".into(),
+            config: "default".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 6,
+            shape: vec![1, 1, -1, -1],
+            description: "Packed INT32 input [1,1,H,W]".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "normalize",
+            block_desc: "INT32→FLOAT + Div by sensor max".into(),
+            config: "default".into(),
+            is_input: false,
+            tensor_name: "NormalizeBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 1, -1, -1],
+            description: "Normalized FLOAT [1,1,H,W] [0,1]".into(),
+        });
     }
 
     // ── GammaBlock (active) ────
@@ -259,6 +546,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: desc.into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "gamma",
+            block_desc: "Gamma correction — pow(x, 1/γ) + clamp + optional shadow lift".into(),
+            config: "gamma=2.2".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "RGB input [1,3,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "gamma",
+            block_desc: "Gamma correction — pow(x, 1/γ) + clamp + optional shadow lift".into(),
+            config: "gamma=2.2".into(),
+            is_input: false,
+            tensor_name: "GammaBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "Gamma-corrected RGB [1,3,H,W] FLOAT".into(),
+        });
     }
 
     // ── AutoContrastBlock (active) ────
@@ -313,6 +620,26 @@ fn collect_params() -> Vec<DocParam> {
                 description: desc.into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "auto_contrast",
+            block_desc: "Adaptive contrast S-curve — center/stretch/uncenter".into(),
+            config: "contrast=1.5".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "RGB input [1,3,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "auto_contrast",
+            block_desc: "Adaptive contrast S-curve — center/stretch/uncenter".into(),
+            config: "contrast=1.5".into(),
+            is_input: false,
+            tensor_name: "AutoContrastBlock/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "Auto-contrast output [1,3,H,W] FLOAT".into(),
+        });
     }
 
     // ── DisplayBlock (FloatRgb — has extra_inputs) ────
@@ -374,12 +701,32 @@ fn collect_params() -> Vec<DocParam> {
                 description: "PackedRgb uses fixed weights — no runtime params.".into(),
             });
         }
+        tensors.push(DocTensor {
+            block_id: "display",
+            block_desc: "Display format conversion (PackedRgb)".into(),
+            config: "PackedRgb".into(),
+            is_input: true,
+            tensor_name: "prev/frame".into(),
+            elem_type: 1,
+            shape: vec![1, 3, -1, -1],
+            description: "RGB input [1,3,H,W] FLOAT".into(),
+        });
+        tensors.push(DocTensor {
+            block_id: "display",
+            block_desc: "Display format conversion (PackedRgb)".into(),
+            config: "PackedRgb".into(),
+            is_input: false,
+            tensor_name: "DisplayBlock/frame".into(),
+            elem_type: 6,
+            shape: vec![1, 1, -1, -1],
+            description: "Packed INT32 [1,1,H,W/2] — two pixels per word".into(),
+        });
     }
 
-    params
+    (params, tensors)
 }
 
-fn write_markdown(params: &[DocParam], path: &Path) {
+fn write_markdown(params: &[DocParam], tensors: &[DocTensor], path: &Path) {
     let mut md = String::new();
     md.push_str("# Runtime Parameters (extra_inputs) API\n\n");
     md.push_str("This document lists all runtime-feedable input tensors exposed by ISP blocks\n");
@@ -399,22 +746,47 @@ fn write_markdown(params: &[DocParam], path: &Path) {
         let first = block_params[0];
         md.push_str(&format!("## `{}` — {}\n\n", bid, first.block_desc));
 
-        md.push_str("| Tensor Suffix | Config | Shape | Type | Default | Description |\n");
-        md.push_str("|---|---|---|---|---|---|\n");
-        for p in &block_params {
-            // Extract just the suffix after namespace/
-            let suffix = p.tensor_name.rsplit('/').next().unwrap_or(&p.tensor_name);
-            md.push_str(&format!(
-                "| `{}` | {} | {} | {} | {} | {} |\n",
-                suffix,
-                p.config,
-                shape_str(&p.shape),
-                elem_type_str(p.elem_type),
-                p.default_val,
-                p.description,
-            ));
+        // Runtime params table
+        if !block_params.is_empty() && block_params[0].tensor_name != "(none)" {
+            md.push_str("### Runtime Parameters (`extra_inputs()`)\n\n");
+            md.push_str("| Tensor Suffix | Config | Shape | Type | Default | Description |\n");
+            md.push_str("|---|---|---|---|---|---|\n");
+            for p in &block_params {
+                let suffix = p.tensor_name.rsplit('/').next().unwrap_or(&p.tensor_name);
+                md.push_str(&format!(
+                    "| `{}` | {} | {} | {} | {} | {} |\n",
+                    suffix,
+                    p.config,
+                    shape_str(&p.shape),
+                    elem_type_str(p.elem_type),
+                    p.default_val,
+                    p.description,
+                ));
+            }
+            md.push('\n');
+        } else {
+            md.push_str("*No runtime parameters (extra_inputs empty)*\n\n");
         }
-        md.push('\n');
+
+        // Input/Output tensors
+        let block_tensors: Vec<&DocTensor> = tensors.iter().filter(|t| t.block_id == bid).collect();
+        if !block_tensors.is_empty() {
+            md.push_str("### Input / Output Tensors\n\n");
+            md.push_str("| Tensor | I/O | Shape | Type | Description |\n");
+            md.push_str("|---|---|---|---|---|\n");
+            for t in &block_tensors {
+                let io = if t.is_input { "Input" } else { "Output" };
+                md.push_str(&format!(
+                    "| `{}` | {} | {} | {} | {} |\n",
+                    t.tensor_name,
+                    io,
+                    shape_str(&t.shape),
+                    elem_type_str(t.elem_type),
+                    t.description,
+                ));
+            }
+            md.push('\n');
+        }
     }
 
     md.push_str("## Notes\n\n");
@@ -425,20 +797,21 @@ fn write_markdown(params: &[DocParam], path: &Path) {
     md.push_str("- **Shape convention**: `scalar` = rank-0 tensor; `[N]` = 1D; `[H,W]` = 2D\n");
     md.push_str("- **Data type**: All runtime params are FLOAT (32-bit).\n");
     md.push_str("- **Tensor naming**: `{Namespace}/{suffix}`. Namespace = block's `tensor_ns()`.\n");
+    md.push_str("- **Dynamic dims**: `-1` denotes dynamic (H/W) resolved at inference time.\n");
 
     fs::write(path, md).expect("Failed to write API docs");
     println!("Wrote {}", path.display());
 }
 
 fn main() {
-    let params = collect_params();
+    let (params, tensors) = collect_all();
     let out_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap()
         .parent().unwrap()
         .join("docs")
         .join("api")
         .join("RUNTIME_PARAMS.md");
-    write_markdown(&params, &out_path);
+    write_markdown(&params, &tensors, &out_path);
     let mut ids: Vec<&str> = params.iter().map(|p| p.block_id).collect();
     ids.sort();
     ids.dedup();
