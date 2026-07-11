@@ -135,6 +135,25 @@ impl From<PipelineError> for IspError {
     }
 }
 
+impl From<crate::hdr::HdrError> for IspError {
+    fn from(e: crate::hdr::HdrError) -> Self {
+        match e {
+            crate::hdr::HdrError::QueueFull => Self::Pipeline("HDR queue full".into()),
+            crate::hdr::HdrError::FrameCount { expected, got } => {
+                Self::Config(format!("HDR: need {} frames, got {}", expected, got))
+            }
+            crate::hdr::HdrError::SizeMismatch { w, h, ew, eh } => {
+                Self::InvalidInput(format!("HDR size mismatch: {}x{} vs {}x{}", w, h, ew, eh))
+            }
+            crate::hdr::HdrError::Isp(msg) => Self::Pipeline(format!("HDR ISP: {}", msg)),
+            crate::hdr::HdrError::Align(msg) => Self::Pipeline(format!("HDR align: {}", msg)),
+            crate::hdr::HdrError::Merge(msg) => Self::Pipeline(format!("HDR merge: {}", msg)),
+            crate::hdr::HdrError::Enhance(msg) => Self::Pipeline(format!("HDR enhance: {}", msg)),
+            crate::hdr::HdrError::Encode(msg) => Self::Pipeline(format!("HDR encode: {}", msg)),
+        }
+    }
+}
+
 // Additional From implementations for common patterns
 impl From<std::num::ParseIntError> for IspError {
     fn from(e: std::num::ParseIntError) -> Self {
