@@ -307,12 +307,15 @@ impl UnifiedPipeline {
                             warp_params.effective_k1(),
                             warp_params.effective_k2(),
                             warp_params.effective_k3(),
+                            warp_params.zoom,
+                            warp_params.vcm_position,
                             warp_params.eis_dx,
                             warp_params.eis_dy,
                         ) {
                             Ok(warped) => {
                                 *float_data = warped;
-                                info!("GPU warp (float): k1={:.3} k2={:.3} k3={:.3} dx={:.3} dy={:.3} ({:.2}ms)",
+                                info!("GPU warp (float): zoom={:.2} vcm={:.2} k1={:.3} k2={:.3} k3={:.3} dx={:.3} dy={:.3} ({:.2}ms)",
+                                    warp_params.zoom, warp_params.vcm_position,
                                     warp_params.gdc_k1, warp_params.gdc_k2, warp_params.gdc_k3,
                                     warp_params.eis_dx, warp_params.eis_dy,
                                     t_warp.elapsed().as_secs_f64() * 1000.0);
@@ -489,6 +492,8 @@ impl UnifiedPipeline {
                                     warp_params.effective_k1(),
                                     warp_params.effective_k2(),
                                     warp_params.effective_k3(),
+                                    warp_params.zoom,
+                                    warp_params.vcm_position,
                                     warp_params.eis_dx,
                                     warp_params.eis_dy,
                                     &mut float_data[..n],
@@ -543,6 +548,8 @@ impl UnifiedPipeline {
                             warp_params.effective_k1(),
                             warp_params.effective_k2(),
                             warp_params.effective_k3(),
+                            warp_params.zoom,
+                            warp_params.vcm_position,
                             warp_params.eis_dx,
                             warp_params.eis_dy,
                             &mut float_data[..n],
