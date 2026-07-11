@@ -5,7 +5,7 @@
 //! Usage:
 //!   cargo run --example bench_cost -p cam-isp --features mnn
 
-use cam_isp::pipeline_builder::PipelineBuilder;
+use cam_isp::pipeline::PipelineBuilder;
 use std::time::Instant;
 
 fn main() {
