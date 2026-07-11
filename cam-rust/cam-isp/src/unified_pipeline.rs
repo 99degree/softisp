@@ -6,6 +6,7 @@ use crate::pipeline::ProcessPipeline;
 use crate::postprocess::{PostProcessPipeline, PostProcessConfig};
 use crate::format_convert::FormatConvertEngine;
 use crate::isp_controller::IspController;
+use crate::controller_api::ControllerApi;
 use crate::pipeline::types::IspFrame;
 use std::time::Instant;
 use log::{info, warn};
@@ -29,6 +30,12 @@ pub struct UnifiedConfig {
     pub sensor_max: f32,
     /// Enable GPU-accelerated warp for EIS/GDC.
     pub gpu_warp_enabled: bool,
+    /// Lens GDC calibration k1 (barrel distortion). 0.0 = no correction.
+    pub lens_gdc_k1: f32,
+    /// Lens GDC calibration k2.
+    pub lens_gdc_k2: f32,
+    /// Lens GDC calibration k3.
+    pub lens_gdc_k3: f32,
 }
 
 impl Default for UnifiedConfig {
@@ -42,6 +49,9 @@ impl Default for UnifiedConfig {
             output_format: EngineOutputFormat::FloatRgb,
             sensor_max: 1023.0,
             gpu_warp_enabled: false,
+            lens_gdc_k1: 0.0,
+            lens_gdc_k2: 0.0,
+            lens_gdc_k3: 0.0,
         }
     }
 }
@@ -119,7 +129,7 @@ pub struct UnifiedPipeline {
     width: u32,
     height: u32,
     initialized: bool,
-    controller: IspController,
+    controller: Box<dyn ControllerApi>,
     post_pipeline: PostProcessPipeline,
     gpu_warp_engine: Option<GpuWarpEngine>,
     #[allow(dead_code)]
@@ -178,7 +188,7 @@ impl UnifiedPipeline {
             (None, None)
         };
 
-        let controller = IspController::new();
+        let controller: Box<dyn ControllerApi> = Box::new(IspController::new());
 
         Ok(Self {
             engine,
@@ -194,9 +204,42 @@ impl UnifiedPipeline {
         })
     }
 
-    /// Process a frame with identity warp.
+    /// Set the controller (rule-based or neural).
+    /// Allows plugging in `NeuralController` which provides zoom from model.
+    pub fn with_controller(mut self, controller: Box<dyn ControllerApi>) -> Self {
+        self.controller = controller;
+        self
+    }
+
+    /// Process a frame, auto-building warp params from lens calibration + controller zoom/VCM.
+    ///
+    /// Lens GDC coefficients from config, zoom/VCM from controller.
     pub fn process(&mut self, raw_data: &[u8], width: u32, height: u32) -> crate::error::IspResult<IspFrame> {
-        self.process_with_warp(raw_data, width, height, &GpuWarpParams::identity())
+        let isp_params = {
+            let frame = IspFrame {
+                params: crate::isp_params::IspParams::default(),
+                data: raw_data.to_vec(),
+                width,
+                height,
+                format: cam_types::FrameFormat::RawSensor,
+                float_data: None,
+                aux: None,
+                timestamp_ns: 0,
+                prep_duration_ns: 0,
+                inference_duration_ns: 0,
+                total_duration_ns: 0,
+            };
+            self.controller.analyze_and_update(&frame)
+        };
+
+        let warp_params = GpuWarpParams::from_isp_params(
+            self.config.lens_gdc_k1,
+            self.config.lens_gdc_k2,
+            self.config.lens_gdc_k3,
+            &isp_params,
+        );
+
+        self.process_with_warp(raw_data, width, height, &warp_params)
     }
 
     /// Process with GPU warp parameters (GDC + EIS).
