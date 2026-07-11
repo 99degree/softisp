@@ -1,6 +1,7 @@
 //! Backend-agnostic inference engine for the ISP pipeline.
 //! Ported from com.camcore.isp.engine.IspEngine
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::fmt;
 use log::info;
@@ -222,6 +223,11 @@ impl BackendCapabilities {
 }
 
 /// Factory for creating an IspEngine instance.
+/// Engine factory — creates engine instances for a specific backend.
+///
+/// The `priority` field determines selection order (higher = preferred).
+/// This is separate from `IspEngine::priority()` which returns the
+/// runtime-computed priority of a specific instance.
 pub struct EngineFactory {
     pub name: &'static str,
     pub priority: i32,
@@ -298,44 +304,83 @@ pub trait IspEngine: Send + Sync {
 
 /// Global registry of engine factories.
 ///
-/// Engines are registered at startup via `init()` and sorted by priority.
-/// The registry is thread-safe and can be accessed from multiple threads.
-static REGISTRY: std::sync::LazyLock<Mutex<Vec<EngineFactory>>> =
-    std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
+/// Maintains a priority-ordered map of registered backends.
+/// Thread-safe: all operations go through a Mutex.
+static REGISTRY: std::sync::LazyLock<Mutex<EngineRegistry>> =
+    std::sync::LazyLock::new(|| Mutex::new(EngineRegistry::new()));
+
+/// Priority-ordered collection of engine factories.
+/// Uses ``BTreeMap`` so iteration is always in priority order (ascending).
+struct EngineRegistry {
+    /// Map from priority → factory. Priority value is negated on insertion
+    /// so iteration yields highest-priority first.
+    factories: BTreeMap<i32, EngineFactory>,
+    /// Counter to break ties for engines with equal priority.
+    next_id: i32,
+}
+
+impl EngineRegistry {
+    fn new() -> Self {
+        Self {
+            factories: BTreeMap::new(),
+            next_id: 0,
+        }
+    }
+
+    /// Insert a factory, generating a unique key from ``-priority`` + tiebreaker.
+    /// Iterating ``factories.values()`` yields highest-priority first.
+    fn insert(&mut self, factory: EngineFactory) {
+        let key = -factory.priority * 10000 + self.next_id;
+        self.next_id += 1;
+        self.factories.insert(key, factory);
+    }
+
+    fn remove_by_name(&mut self, name: &str) {
+        self.factories.retain(|_, f| f.name != name);
+    }
+
+    fn all(&self) -> impl Iterator<Item = &EngineFactory> {
+        self.factories.values()
+    }
+
+    fn len(&self) -> usize {
+        self.factories.len()
+    }
+}
 
 /// Register an engine factory.
 ///
 /// Called during `init()` to register available backends.
-/// Engines are sorted by priority (descending) so `select_engine()`
-/// returns the best available backend.
-///
-/// # Arguments
-/// * `factory` - Engine factory with name, priority, and creation function
 pub fn register_engine(factory: EngineFactory) {
+    let mut registry = REGISTRY.lock().unwrap();
     let name = factory.name;
     let priority = factory.priority;
+    registry.insert(factory);
+    info!("Registered engine: {} (priority={}, total={})", name, priority, registry.len());
+}
+
+/// Unregister an engine factory by name.
+///
+/// Returns ``true`` if an engine was removed.
+pub fn unregister_engine(name: &str) -> bool {
     let mut registry = REGISTRY.lock().unwrap();
-    registry.push(factory);
-    // Sort by priority descending
-    use std::cmp::Reverse;
-    registry.sort_by_key(|b| Reverse(b.priority));
-    info!("Registered engine: {} (priority={})", name, priority);
+    let len_before = registry.len();
+    registry.remove_by_name(name);
+    let removed = registry.len() < len_before;
+    if removed {
+        info!("Unregistered engine: {} (total={})", name, registry.len());
+    }
+    removed
 }
 
 /// Select the best available engine by priority.
 ///
 /// Returns the highest-priority engine that can be created.
-/// Priority order: MNN (90) > ONNX (80) > CPU (70).
-///
-/// # Returns
-/// Some(engine) if available, None if registry is empty.
 pub fn select_engine() -> Option<Box<dyn IspEngine>> {
     let registry = REGISTRY.lock().unwrap();
-    for factory in registry.iter() {
+    for factory in registry.all() {
         let engine = (factory.create_fn)();
         info!("Trying engine: {} (priority={})", factory.name, factory.priority);
-        // In a real implementation, we would check if the engine can be initialized.
-        // For now, we return the first one.
         if engine.priority() > 0 {
             return Some(engine);
         }
@@ -343,25 +388,17 @@ pub fn select_engine() -> Option<Box<dyn IspEngine>> {
     None
 }
 
-/// Select a specific engine by name.
+/// Select a specific engine by name or ``"auto"`` for best available.
 ///
-/// # Arguments
-/// * `name` - Engine name: "cpu", "ort", "mnn", or "auto" for best available
-///
-/// # Returns
-/// Matching engine if found and can be created, None otherwise.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let engine = select_engine_by_name("mnn");
-/// let engine = select_engine_by_name("auto"); // best available
-/// ```
+/// Name matching is case-insensitive and supports partial matches.
 pub fn select_engine_by_name(name: &str) -> Option<Box<dyn IspEngine>> {
+    if name == "auto" {
+        return select_engine();
+    }
     let registry = REGISTRY.lock().unwrap();
-    let name_lower = name.to_lowercase();
-    for factory in registry.iter() {
-        if name_lower == "auto" || factory.name.to_lowercase().contains(&name_lower) {
+    let lower = name.to_lowercase();
+    for factory in registry.all() {
+        if factory.name.to_lowercase().contains(&lower) {
             let engine = (factory.create_fn)();
             info!("Selected engine: {} (priority={})", factory.name, factory.priority);
             if engine.priority() > 0 {
