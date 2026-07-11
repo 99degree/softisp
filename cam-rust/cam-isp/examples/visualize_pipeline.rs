@@ -8,7 +8,7 @@
 //! Usage:
 //!   cargo run --example visualize_pipeline -p cam-isp --features mnn
 
-use cam_isp::pipeline_builder::PipelineBuilder;
+use cam_isp::pipeline::PipelineBuilder;
 
 fn main() {
     println!("Pipeline Visualization Example");
