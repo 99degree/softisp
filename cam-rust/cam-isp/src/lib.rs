@@ -21,6 +21,7 @@ pub mod controller_api;
 pub mod rectifier_model;
 pub mod ae;
 pub mod profile;
+pub mod profile_builder;
 pub mod config;
 pub mod fused;
 pub mod unified_pipeline;
@@ -38,6 +39,8 @@ pub mod postprocess;
 // MNN-dependent modules (only compiled when `mnn` feature is enabled)
 #[cfg(feature = "mnn")]
 pub mod mnnengine;
+#[cfg(feature = "mnn")]
+pub mod mnn_session_pool;
 #[cfg(feature = "mnn")]
 pub mod mnn_converter;
 #[cfg(feature = "mnn")]
