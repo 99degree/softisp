@@ -142,8 +142,8 @@ pub struct UnifiedPipeline {
     format_converter: Option<FormatConvertEngine>,
     /// HDR capture queue for multi-exposure burst (only if profile has use_hdr)
     hdr_queue: Option<HdrCaptureQueue>,
-    /// Accumulated HDR frames for current burst
-    hdr_frames: Vec<IspFrame>,
+    /// Accumulated HDR frames for current burst (frame, ev)
+    hdr_frames: Vec<(IspFrame, f32)>,
 }
 
 impl UnifiedPipeline {
@@ -657,25 +657,28 @@ impl UnifiedPipeline {
     pub fn submit_hdr_frame(
         &mut self,
         frame: IspFrame,
-        _ev: f32,
+        ev: f32,
     ) -> crate::error::IspResult<Option<Arc<EnhancedFrame>>> {
         let queue = match &mut self.hdr_queue {
             Some(q) => q,
             None => return Err(crate::error::IspError::Config("HDR not enabled in profile".into())),
         };
 
-        self.hdr_frames.push(frame);
+        self.hdr_frames.push((frame, ev));
 
         // When enough frames are collected (default 3), submit
         let expected = queue.frames_per_capture();
         if self.hdr_frames.len() >= expected {
+            // Sort by EV ascending (-2, 0, +2)
+            self.hdr_frames.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
             // Build HdrFrames from accumulated pipeline outputs
-            let hdr_frames: Vec<crate::hdr::HdrFrame> = self.hdr_frames.drain(..).map(|f| {
+            let hdr_frames: Vec<crate::hdr::HdrFrame> = self.hdr_frames.drain(..).map(|(f, ev)| {
                 crate::hdr::HdrFrame {
                     data: Arc::new(f.data.clone()),
                     width: f.width,
                     height: f.height,
-                    ev: 0.0,
+                    ev,
                     timestamp_ns: f.timestamp_ns,
                     iso: 100.0,
                     exposure_time: 0.033,
