@@ -913,6 +913,10 @@ mod tests {
             false, // use_wavelet_denoise
             false, // use_auto_contrast
             false, // use_normalize
+            false, // use_tiled_rendering
+            1,     // tile_count_x
+            1,     // tile_count_y
+            0,     // tile_overlap
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -948,6 +952,10 @@ mod tests {
             false, // use_wavelet_denoise
             false, // use_auto_contrast
             false, // use_normalize
+            false, // use_tiled_rendering
+            1,     // tile_count_x
+            1,     // tile_count_y
+            0,     // tile_overlap
         );
         let blocks = p.build_blocks(128, 0);
         assert_eq!(blocks.len(), 23, "Legacy should have 23 blocks (all with identity placeholders), got {}", blocks.len());

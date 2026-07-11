@@ -29,9 +29,18 @@ pub struct GpuWarpParams {
     pub eis_dx: f32,
     /// EIS vertical displacement in normalized [-1,1] coords
     pub eis_dy: f32,
+    /// Digital zoom factor [1.0, 4.0]. GDC strength scales inversely.
+    pub zoom: f32,
+    /// VCM focus motor position [0.0, 1.0]. 0=infinity, 1=macro.
+    /// Focus breathing changes effective focal length, affecting distortion.
+    pub vcm_position: f32,
 }
 
 impl GpuWarpParams {
+    /// Default breathing factor: ~15% focal length change from infinity to macro.
+    /// This is lens-specific; calibrate per module for production.
+    const BREATHING: f32 = 0.15;
+
     /// Create identity (no warp) parameters.
     pub fn identity() -> Self {
         Self {
@@ -40,6 +49,8 @@ impl GpuWarpParams {
             gdc_k3: 0.0,
             eis_dx: 0.0,
             eis_dy: 0.0,
+            zoom: 1.0,
+            vcm_position: 0.0,
         }
     }
 
@@ -51,6 +62,8 @@ impl GpuWarpParams {
             gdc_k3: k3,
             eis_dx: 0.0,
             eis_dy: 0.0,
+            zoom: 1.0,
+            vcm_position: 0.0,
         }
     }
 
@@ -62,7 +75,48 @@ impl GpuWarpParams {
             gdc_k3: 0.0,
             eis_dx: dx,
             eis_dy: dy,
+            zoom: 1.0,
+            vcm_position: 0.0,
         }
+    }
+
+    /// Set digital zoom factor. GDC strength scales inversely.
+    pub fn with_zoom(mut self, zoom: f32) -> Self {
+        self.zoom = zoom.max(1.0);
+        self
+    }
+
+    /// Set VCM focus motor position [0.0, 1.0].
+    /// Affects effective focal length via focus breathing.
+    pub fn with_vcm(mut self, pos: f32) -> Self {
+        self.vcm_position = pos.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Combined focal factor: accounts for both digital zoom and
+    /// focus breathing (VCM position).
+    ///   zoom=1.0, vcm=0.0 → factor=1.0 (wide, infinity)
+    ///   zoom=2.0, vcm=0.5 → factor=2.0 * 1.075 = 2.15
+    pub fn focal_factor(&self) -> f32 {
+        self.zoom * (1.0 + self.vcm_position * Self::BREATHING)
+    }
+
+    /// Effective k1 accounting for digital zoom and focus breathing.
+    /// Distortion magnitude is inversely proportional to effective
+    /// focal length: at higher zoom or closer focus (VCM→1.0),
+    /// the cropped/breathing FOV has less visible distortion.
+    pub fn effective_k1(&self) -> f32 {
+        self.gdc_k1 / self.focal_factor()
+    }
+
+    /// Effective k2.
+    pub fn effective_k2(&self) -> f32 {
+        self.gdc_k2 / self.focal_factor()
+    }
+
+    /// Effective k3.
+    pub fn effective_k3(&self) -> f32 {
+        self.gdc_k3 / self.focal_factor()
     }
 
     /// Check if any warp is needed (non-identity).
