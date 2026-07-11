@@ -1,7 +1,9 @@
 /** C wrapper for MNNConverter library (libMNNConvertDeps.so).
     Exposes a simple C API for converting ONNX/TF/TFLite models to MNN format.
 
-    Supports both file-path and memory-buffer conversion.
+    Supports both file-path and memory-buffer conversion with safe temp file
+    management. Temp files are tracked globally and cleaned up on normal exit
+    (atexit) and signal termination (SIGINT, SIGTERM).
 
     Compile with:
       clang++ -std=c++17 -c mnn_convert_api.cpp
@@ -11,6 +13,7 @@
     Then link with libMNNConvertDeps.so when building the final binary. */
 
 #include <string>
+#include <vector>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +21,8 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <signal.h>
+#include <mutex>
 #include "config.hpp"
 #include "cli.hpp"
 
@@ -47,15 +52,110 @@ MNN_PUBLIC void MnnConvert_FreeBuffer(MnnConvertBufferResult* result) {
     }
 }
 
+// ── Safe Temp File Management ─────────────────────────────────────
+
+/// Global registry of active temp file paths for cleanup on crash/exit.
+/// Lock-free after initialization — only modified during conversion.
+namespace {
+
+std::mutex g_tempfile_mutex;
+std::vector<std::string>* g_tempfiles = nullptr;
+
+/// atexit handler: removes all tracked temp files.
+void cleanup_tempfiles() {
+    std::vector<std::string> paths;
+    {
+        std::lock_guard<std::mutex> lock(g_tempfile_mutex);
+        if (!g_tempfiles) return;
+        paths.swap(*g_tempfiles);
+    }
+    for (const auto& path : paths) {
+        unlink(path.c_str());
+    }
+}
+
+/// Signal handler: removes tracked temp files then re-raises.
+void signal_handler(int sig) {
+    cleanup_tempfiles();
+    // Reset to default and re-raise for core dump
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+/// Register cleanup once.
+std::once_flag g_cleanup_once;
+void ensure_cleanup_registered() {
+    std::call_once(g_cleanup_once, []() {
+        g_tempfiles = new std::vector<std::string>();
+        atexit(cleanup_tempfiles);
+        signal(SIGINT, signal_handler);
+        signal(SIGTERM, signal_handler);
+        signal(SIGABRT, signal_handler);
+    });
+}
+
+/// RAII guard: registers a temp file path on construction,
+/// unlinks it on destruction. Safe for early returns and exceptions.
+struct TempFileGuard {
+    std::string path;
+    bool active;
+
+    TempFileGuard(const char* tmpl) : active(false) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), "%s", tmpl);
+        int fd = mkstemp(buf);
+        if (fd < 0) return;
+        close(fd);
+        path = buf;
+        active = true;
+        // Register for global cleanup
+        std::lock_guard<std::mutex> lock(g_tempfile_mutex);
+        if (g_tempfiles) {
+            g_tempfiles->push_back(path);
+        }
+    }
+
+    ~TempFileGuard() {
+        if (active) {
+            unlink(path.c_str());
+            // Remove from global registry
+            std::lock_guard<std::mutex> lock(g_tempfile_mutex);
+            if (g_tempfiles) {
+                for (auto it = g_tempfiles->begin(); it != g_tempfiles->end(); ++it) {
+                    if (*it == path) {
+                        g_tempfiles->erase(it);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Move-only
+    TempFileGuard(TempFileGuard&& other) noexcept
+        : path(std::move(other.path)), active(other.active) {
+        other.active = false;
+    }
+    TempFileGuard& operator=(TempFileGuard&& other) noexcept {
+        if (this != &other) {
+            if (active) unlink(path.c_str());
+            path = std::move(other.path);
+            active = other.active;
+            other.active = false;
+        }
+        return *this;
+    }
+
+    // No copy
+    TempFileGuard(const TempFileGuard&) = delete;
+    TempFileGuard& operator=(const TempFileGuard&) = delete;
+};
+
+} // anonymous namespace
+
+// ── File-path conversion ─────────────────────────────────────────
+
 /// Convert an ONNX model to MNN format (file paths).
-/// @param onnx_path   Path to the input ONNX model file.
-/// @param mnn_path    Path where the output .mnn file will be written.
-/// @param biz_code    Business code (e.g. "MNN").
-/// @param optimize_level  Graph optimization level (0=none, 1=safe, 2=aggressive).
-/// @param weight_quant_bits  Weight quantization bits (0=no quant, 2-8 for INT8 etc.).
-/// @param fp16        Whether to convert weights to FP16.
-/// @param preserve_input_type  Preserve int16/uint16/float16 input types (no widening to int32).
-/// @param result      Output result structure.
 MNN_PUBLIC void mnn_convert_onnx_to_mnn(
     const char* onnx_path,
     const char* mnn_path,
@@ -66,6 +166,7 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
     int preserve_input_type,
     MnnConvertResult* result)
 {
+    ensure_cleanup_registered();
     result->success = 0;
     result->error_msg[0] = '\0';
 
@@ -94,9 +195,10 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
     }
 }
 
+// ── Buffer-based conversion ──────────────────────────────────────
+
 /// Convert ONNX model bytes directly to MNN model bytes.
-/// Uses temp files for the converter (which requires file paths)
-/// but immediately unlinks them — no persistent file on disk.
+/// Uses RAII temp file guards that auto-cleanup on any exit path.
 ///
 /// @param onnx_data   Pointer to ONNX protobuf bytes.
 /// @param onnx_len    Length of ONNX data in bytes.
@@ -107,6 +209,7 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
     size_t onnx_len,
     MnnConvertBufferResult* result)
 {
+    ensure_cleanup_registered();
     result->success = 0;
     result->error_msg[0] = '\0';
     result->data = nullptr;
@@ -118,36 +221,46 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
         return;
     }
 
-    // Write ONNX data to a temp file (in CWD, unlinked after read)
-    char in_template[] = "mnn_onnx_XXXXXX";
-    int in_fd = mkstemp(in_template);
-    if (in_fd < 0) {
+    // RAII temp file guards — auto-cleanup on any exit path
+    TempFileGuard in_guard("mnn_onnx_XXXXXX");
+    if (!in_guard.active) {
         result->success = -1;
         snprintf(result->error_msg, sizeof(result->error_msg), "failed to create input tempfile");
         return;
     }
-    // Write all ONNX data
-    size_t written = 0;
-    while (written < onnx_len) {
-        ssize_t n = write(in_fd, (const char*)onnx_data + written, onnx_len - written);
-        if (n < 0) { close(in_fd); unlink(in_template);
+
+    const char* in_template = in_guard.path.c_str();
+
+    // Write ONNX data to temp file
+    {
+        int fd = open(in_template, O_WRONLY);
+        if (fd < 0) {
             result->success = -1;
-            snprintf(result->error_msg, sizeof(result->error_msg), "write input failed");
+            snprintf(result->error_msg, sizeof(result->error_msg), "failed to open input tempfile");
             return;
         }
-        written += n;
+        size_t written = 0;
+        while (written < onnx_len) {
+            ssize_t n = write(fd, (const char*)onnx_data + written, onnx_len - written);
+            if (n < 0) {
+                close(fd);
+                result->success = -1;
+                snprintf(result->error_msg, sizeof(result->error_msg), "write input failed");
+                return;
+            }
+            written += n;
+        }
+        close(fd);
     }
-    close(in_fd);
 
-    // Create output temp file
-    char out_template[] = "mnn_out_XXXXXX";
-    int out_fd = mkstemp(out_template);
-    if (out_fd < 0) { unlink(in_template);
+    TempFileGuard out_guard("mnn_out_XXXXXX");
+    if (!out_guard.active) {
         result->success = -1;
         snprintf(result->error_msg, sizeof(result->error_msg), "failed to create output tempfile");
         return;
     }
-    close(out_fd);
+
+    const char* out_template = out_guard.path.c_str();
 
     try {
         modelConfig config;
@@ -161,8 +274,6 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
         config.preserveInputType = true;
 
         if (!MNN::Cli::convertModel(config)) {
-            unlink(in_template);
-            unlink(out_template);
             result->success = -1;
             snprintf(result->error_msg, sizeof(result->error_msg),
                      "MNN::Cli::convertModel returned false");
@@ -172,8 +283,6 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
         // Read output file into allocated buffer
         FILE* f = fopen(out_template, "rb");
         if (!f) {
-            unlink(in_template);
-            unlink(out_template);
             result->success = -1;
             snprintf(result->error_msg, sizeof(result->error_msg), "failed to open output");
             return;
@@ -185,8 +294,6 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
         void* mnn_data = malloc(fsize > 0 ? fsize : 1);
         if (!mnn_data) {
             fclose(f);
-            unlink(in_template);
-            unlink(out_template);
             result->success = -1;
             snprintf(result->error_msg, sizeof(result->error_msg),
                      "Failed to allocate %ld bytes", fsize);
@@ -195,21 +302,15 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
         size_t total = fread(mnn_data, 1, fsize, f);
         fclose(f);
 
-        // Delete both temp files
-        unlink(in_template);
-        unlink(out_template);
-
+        // TempFileGuard destructors will unlink both temp files.
+        // Copy data pointer to result (ownership transfers to caller).
         result->data = mnn_data;
         result->size = total;
     } catch (const std::exception& e) {
-        unlink(in_template);
-        unlink(out_template);
         result->success = -1;
         snprintf(result->error_msg, sizeof(result->error_msg), "%s", e.what());
         if (result->data) { free(result->data); result->data = nullptr; }
     } catch (...) {
-        unlink(in_template);
-        unlink(out_template);
         result->success = -1;
         snprintf(result->error_msg, sizeof(result->error_msg), "Unknown exception");
         if (result->data) { free(result->data); result->data = nullptr; }
