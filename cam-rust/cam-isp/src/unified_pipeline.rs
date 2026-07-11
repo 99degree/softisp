@@ -259,9 +259,9 @@ impl UnifiedPipeline {
 
                         match warp_engine.run(
                             &input_copy,
-                            warp_params.gdc_k1,
-                            warp_params.gdc_k2,
-                            warp_params.gdc_k3,
+                            warp_params.effective_k1(),
+                            warp_params.effective_k2(),
+                            warp_params.effective_k3(),
                             warp_params.eis_dx,
                             warp_params.eis_dy,
                         ) {
@@ -441,9 +441,9 @@ impl UnifiedPipeline {
                                 input_copy.copy_from_slice(&float_data[..n]);
                                 let _ = warp_engine.run_into(
                                     &input_copy,
-                                    warp_params.gdc_k1,
-                                    warp_params.gdc_k2,
-                                    warp_params.gdc_k3,
+                                    warp_params.effective_k1(),
+                                    warp_params.effective_k2(),
+                                    warp_params.effective_k3(),
                                     warp_params.eis_dx,
                                     warp_params.eis_dy,
                                     &mut float_data[..n],
@@ -495,9 +495,9 @@ impl UnifiedPipeline {
                         input_copy.copy_from_slice(&float_data[..n]);
                         let _ = warp_engine.run_into(
                             &input_copy,
-                            warp_params.gdc_k1,
-                            warp_params.gdc_k2,
-                            warp_params.gdc_k3,
+                            warp_params.effective_k1(),
+                            warp_params.effective_k2(),
+                            warp_params.effective_k3(),
                             warp_params.eis_dx,
                             warp_params.eis_dy,
                             &mut float_data[..n],
@@ -578,6 +578,37 @@ impl UnifiedPipeline {
                 );
             }
         }
+    }
+
+    /// Check if the pipeline is initialized and ready.
+    pub fn is_ready(&self) -> bool {
+        self.initialized
+    }
+
+    /// Get pipeline information.
+    pub fn info(&self) -> PipelineInfo {
+        PipelineInfo {
+            profile: self.config.profile.label.to_string(),
+            engine: "mnn_vulkan".into(),
+            input_width: self.width,
+            input_height: self.height,
+            output_format: format!("{:?}", self.config.output_format),
+            post_eis: self.config.post_config.eis_enabled,
+            post_deshake: self.config.post_config.deshake_enabled,
+            post_gdc: self.config.post_config.gdc_enabled,
+            post_temporal_denoise: false,
+            gpu_warp: self.config.gpu_warp_enabled,
+        }
+    }
+
+    /// Get reference to the GPU warp engine, if initialized.
+    pub fn gpu_warp(&self) -> Option<&GpuWarpEngine> {
+        self.gpu_warp_engine.as_ref()
+    }
+
+    /// Get reference to the GPU warp ONNX model bytes, if available.
+    pub fn gpu_warp_onnx(&self) -> Option<&Vec<u8>> {
+        self.gpu_warp_onnx.as_ref()
     }
 }
 
