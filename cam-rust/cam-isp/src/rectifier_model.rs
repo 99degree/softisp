@@ -4,9 +4,9 @@
 //! input/output interface (267→20) using simple operations.
 //!
 //! The model performs:
-//! - Input: histogram[256] + metadata[11] = 267 dims
+//! - Input: histogram\[256\] + metadata\[11\] = 267 dims
 //! - Simple linear transformation
-//! - Output: wb[3] + ccm[9] + tone[7] + zoom[1] = 20 dims
+//! - Output: wb\[3\] + ccm\[9\] + tone\[7\] + zoom\[1\] = 20 dims
 
 use crate::onnx::proto::Proto;
 
