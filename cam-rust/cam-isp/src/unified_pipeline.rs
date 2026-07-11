@@ -142,8 +142,8 @@ pub struct UnifiedPipeline {
     format_converter: Option<FormatConvertEngine>,
     /// HDR capture queue for multi-exposure burst (only if profile has use_hdr)
     hdr_queue: Option<HdrCaptureQueue>,
-    /// Accumulated HDR frames for current burst (frame, ev)
-    hdr_frames: Vec<(IspFrame, f32)>,
+    /// Accumulated HDR frames for current burst
+    hdr_frames: Vec<crate::hdr::HdrFrame>,
 }
 
 impl UnifiedPipeline {
@@ -664,29 +664,35 @@ impl UnifiedPipeline {
             None => return Err(crate::error::IspError::Config("HDR not enabled in profile".into())),
         };
 
-        self.hdr_frames.push((frame, ev));
+        let hdr_frame = crate::hdr::HdrFrame {
+            frame: crate::pipeline::types::IspFrame {
+                data: frame.data,
+                width: frame.width,
+                height: frame.height,
+                format: frame.format,
+                float_data: frame.float_data,
+                aux: frame.aux,
+                params: frame.params,
+                timestamp_ns: frame.timestamp_ns,
+                prep_duration_ns: frame.prep_duration_ns,
+                inference_duration_ns: frame.inference_duration_ns,
+                total_duration_ns: frame.total_duration_ns,
+            },
+            ev,
+            iso: 100.0,
+            exposure_time: 0.033,
+        };
+        self.hdr_frames.push(hdr_frame);
 
         // When enough frames are collected (default 3), submit
         let expected = queue.frames_per_capture();
         if self.hdr_frames.len() >= expected {
-            // Sort by EV ascending (-2, 0, +2)
-            self.hdr_frames.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Build HdrFrames from accumulated pipeline outputs
-            let hdr_frames: Vec<crate::hdr::HdrFrame> = self.hdr_frames.drain(..).map(|(f, ev)| {
-                crate::hdr::HdrFrame {
-                    data: Arc::new(f.data.clone()),
-                    width: f.width,
-                    height: f.height,
-                    ev,
-                    timestamp_ns: f.timestamp_ns,
-                    iso: 100.0,
-                    exposure_time: 0.033,
-                }
-            }).collect();
+            // Sort by EV ascending (-2, 0, +2) and drain
+            self.hdr_frames.sort_by(|a, b| a.ev.partial_cmp(&b.ev).unwrap_or(std::cmp::Ordering::Equal));
+            let frames: Vec<crate::hdr::HdrFrame> = self.hdr_frames.drain(..).collect();
 
             // Submit and wait for result (blocking)
-            let rx = match queue.submit_frames(hdr_frames) {
+            let rx = match queue.submit_frames(frames) {
                 Ok(rx) => rx,
                 Err(e) => return Err(crate::error::IspError::Pipeline(format!("HDR submit: {}", e))),
             };
