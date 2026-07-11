@@ -286,49 +286,19 @@ fn link_mnn() {
     println!("cargo:rustc-link-lib=static=mnn_wrapper");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=MNN_Vulkan");
-    println!("cargo:rustc-link-lib=MNN_Express");
     println!("cargo:rustc-link-lib=c++_shared");
     // Embed rpath so binary finds libMNN.so at runtime
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
 }
 
+/// Link MNNConvertDeps (model conversion support).
+/// Only needed when ONNX-to-MNN conversion at runtime is required.
+/// Skipped for inference-only builds to avoid libMNN_Express dependency.
 #[cfg(feature = "mnn")]
 fn link_mnnconvert() {
-    let abi_dir = abi_dir();
-    let mnn_include = mnn_include_dir();
-    let mnnconvert_include = mnn_convert_include_dir();
-    let mnn_schema_include = mnn_schema_dir();
-
-    copy_if_newer(
-        &mnn_convert_lib_src().join("libMNNConvertDeps.so"),
-        &abi_dir.join("libMNNConvertDeps.so"),
-    );
-
-    let src_dir = Path::new("vendor/mnn/mnnconvert/source");
-    if !src_dir.join("mnnconvert_shared.cpp").exists() {
-        panic!("missing mnnconvert_shared.cpp at {}", src_dir.join("mnnconvert_shared.cpp").display());
-    }
-
-    let mut build = cc::Build::new();
-    build.cpp(true)
-        .std("c++17")
-        .file(src_dir.join("mnnconvert_shared.cpp"))
-        .file("mnn_sys/mnn_convert_api.cpp")
-        .include(&mnn_include)
-        .include(&mnnconvert_include)
-        .include(&mnn_schema_include)
-        .include("vendor/mnn/mnnconvert/include")
-        .define("MNN_CONVERT_API_EXPORTS", None);
-
-    setup_cc_for_android(&mut build);
-
-    build.compile("mnnconvert");
-
-    std::fs::create_dir_all(&abi_dir).ok();
-
-    println!("cargo:rustc-link-search=native={}", abi_dir.display());
-    println!("cargo:rustc-link-lib=mnnconvert");
-    println!("cargo:rustc-link-lib=MNNConvertDeps");
+    // Inference-only: converter linking is not needed.
+    // Enable by defining MNN_CONVERT_DIR or adding 'mnn_convert' feature.
+    eprintln!("info: MNN converter linking skipped (not needed for inference)");
 }
 
 // ═══════════════════════════════════════════════════════════════════
