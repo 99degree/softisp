@@ -495,6 +495,16 @@ pub struct MnnConvertResult {
     pub error_msg: [c_char; 1024usize],
 }
 
+/// Buffer-based conversion result (mnn_convert_api.cpp).
+/// Caller must call MnnConvert_FreeBuffer to free the data pointer.
+#[repr(C)]
+pub struct MnnConvertBufferResult {
+    pub success: i32,
+    pub error_msg: [c_char; 1024usize],
+    pub data: *mut c_void,
+    pub size: usize,
+}
+
 extern "C" {
     /// Convert ONNX model to MNN format (statically linked from mnn_convert_api.cpp).
     /// Returns result via MnnConvertResult struct. No heap allocation, no free needed.
@@ -508,6 +518,18 @@ extern "C" {
         preserve_input_type: i32,
         result: *mut MnnConvertResult,
     );
+
+    /// Buffer-based ONNX→MNN conversion (libMNNConvertDeps.so, same-process).
+    /// Pass ONNX bytes → receive MNN bytes. Uses memfd internally, no disk writes.
+    /// Caller must free result->data via MnnConvert_FreeBuffer.
+    pub fn mnn_convert_onnx_buffer(
+        onnx_data: *const c_void,
+        onnx_len: usize,
+        result: *mut MnnConvertBufferResult,
+    );
+
+    /// Free data allocated by mnn_convert_onnx_buffer.
+    pub fn MnnConvert_FreeBuffer(result: *mut MnnConvertBufferResult);
 
     /// Convert TensorFlow model to MNN format.
     pub fn mnn_convert_tf_to_mnn(
@@ -531,25 +553,34 @@ extern "C" {
     ) -> i32;
 }
 
-// ── Vulkan Workgroup Configuration (loaded lazily via dlopen) ────────────
-//
-// These symbols are NOT statically linked to avoid FORTIFY crashes caused by
-// libMNN_Vulkan.so's C++ static constructors conflicting with libMNN.so's
-// global state. Use `load_vulkan_symbols()` to lazily resolve at runtime.
+// ── Vulkan Workgroup Configuration ────────────────────────────────────────
 
-/// Load Vulkan runtime symbols via dlopen (lazy init).
-/// Returns true if libMNN_Vulkan.so was loaded successfully.
-pub fn ensure_vulkan_loaded() -> bool {
-    use std::sync::Once;
-    static VULKAN_INIT: Once = Once::new();
-    static mut VULKAN_LOADED: bool = false;
-    VULKAN_INIT.call_once(|| {
-        let handle = unsafe {
-            libc::dlopen(
-                "libMNN_Vulkan.so\0".as_ptr() as *const libc::c_char,
-                libc::RTLD_NOW | libc::RTLD_GLOBAL)
-        };
-        unsafe { VULKAN_LOADED = !handle.is_null(); }
-    });
-    unsafe { VULKAN_LOADED }
+extern "C" {
+    /// Set preferred workgroup size for a Vulkan session.
+    /// Called from Rust to tune dispatch groups per-device.
+    pub fn MNNVulkanSetSessionWorkgroup(
+        session: *mut c_void,
+        size_x: i32,
+        size_y: i32,
+    );
+
+    /// Query optimal workgroup size for current GPU.
+    pub fn MNNVulkanQueryOptimalWorkgroup(
+        out_x: *mut i32,
+        out_y: *mut i32,
+    );
+
+    /// Set workgroup by preset name.
+    /// Presets: "fast_4k" (32×8), "low_power" (8×32), "portrait" (4×64), "universal" (16×16).
+    pub fn MNNVulkanSetWorkgroupPreset(
+        preset_name: *const c_char,
+    );
+
+    /// Hot-swap a const buffer at runtime for live 3A adjustments.
+    pub fn MNNVulkanHotSwapConstBuffer(
+        session_ptr: *mut c_void,
+        binding_index: c_int,
+        data: *const c_void,
+        byte_size: c_int,
+    ) -> c_int;
 }

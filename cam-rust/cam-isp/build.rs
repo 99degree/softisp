@@ -41,10 +41,8 @@ fn main() {
     #[cfg(feature = "mnn")]
     link_mnn();
 
-    // Note: static linker for MNNConvertDeps was removed.
-    // Converter now runs as a subprocess (MNNConvert binary)
-    // to isolate MNN's C++ global state from the inference runtime.
-    // See cam-isp/src/mnn_converter.rs for the subprocess implementation.
+    #[cfg(feature = "mnn")]
+    link_mnnconvert();
 
     // Emit NDK linker flags for Android targets
     setup_ndk_linker();
@@ -294,13 +292,43 @@ fn link_mnn() {
 }
 
 /// Link MNNConvertDeps (model conversion support).
-/// Only needed when ONNX-to-MNN conversion at runtime is required.
-/// Skipped for inference-only builds to avoid libMNN_Express dependency.
+/// Compiles mnn_convert_api.cpp for buffer-based ONNX→MNN conversion.
+/// This is a small C++ wrapper around libMNNConvertDeps.so that provides
+/// memory-to-memory conversion via memfd-backed temp files.
 #[cfg(feature = "mnn")]
 fn link_mnnconvert() {
-    // Inference-only: converter linking is not needed.
-    // Enable by defining MNN_CONVERT_DIR or adding 'mnn_convert' feature.
-    eprintln!("info: MNN converter linking skipped (not needed for inference)");
+    let abi_dir = abi_dir();
+    let mnn_include = mnn_include_dir();
+    let convert_include = mnn_convert_include_dir();
+
+    let conv_src = Path::new("mnn_sys/mnn_convert_api.cpp");
+    if conv_src.exists() {
+        println!("cargo:rerun-if-changed=mnn_sys/mnn_convert_api.cpp");
+
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        let mut build = cc::Build::new();
+        build.cpp(true)
+            .std("c++17")
+            .file(conv_src)
+            .include(&mnn_include)
+            .include(&convert_include)
+            .include(&mnn_schema_dir())
+            .include(vendor_mnn_dir().join("3rd_party/flatbuffers/include"));
+
+        setup_cc_for_android(&mut build);
+        build.compile("mnn_convert_api");
+
+        let src = out_dir.join("libmnn_convert_api.a");
+        let dst = abi_dir.join("libmnn_convert_api.a");
+        if src.exists() {
+            std::fs::copy(&src, &dst).ok();
+        }
+    }
+
+    println!("cargo:rustc-link-search=native={}", abi_dir.display());
+    println!("cargo:rustc-link-lib=static=mnn_convert_api");
+    println!("cargo:rustc-link-lib=MNNConvertDeps");
+    println!("cargo:rustc-link-lib=MNN_Express");
 }
 
 // ═══════════════════════════════════════════════════════════════════
