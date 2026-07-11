@@ -14,6 +14,7 @@ pub mod pipeline;
 pub mod blocks;
 pub mod cpu;
 pub mod controller;
+pub mod controller_awb;
 pub mod isp_params;
 pub mod isp_controller;
 pub mod neural_controller;
