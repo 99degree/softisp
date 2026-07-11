@@ -82,9 +82,9 @@ fn main() {
         Box::new(UnpackBlock::new()
             .with_concrete_dims(h as i64, w as i64)),
         Box::new(DemosaicCcmBlock::new(0)),
-        Box::new(ColorSpaceBlock::new(ColorSpace::RgbToYuv601)),
+        Box::new(ColorSpaceBlock::new(ColorSpace::RgbToYCbCr)),
         Box::new(SharpenBlock::new(0.3)),
-        Box::new(ColorSpaceBlock::new(ColorSpace::Yuv601ToRgb)),
+        Box::new(ColorSpaceBlock::new(ColorSpace::RgbToHsv)),
         Box::new(DisplayBlock::new(w)),
     ];
 
