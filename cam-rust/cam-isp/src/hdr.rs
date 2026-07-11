@@ -261,6 +261,42 @@ impl HdrWorker {
         }
     }
 
+    /// Read RGB pixel at index `i` from an HDR frame, normalised to [0,1].
+    /// Handles both FloatRgb (planar NCHW f32 via `float_data`)
+    /// and ARGB8888 (interleaved bytes via `data`).
+    fn pixel_rgb(frame: &crate::pipeline::types::IspFrame, i: usize) -> (f32, f32, f32) {
+        if let Some(ref fd) = frame.float_data {
+            // NCHW planar: [R...R, G...G, B...B], each plane = H×W
+            let plane = (frame.width * frame.height) as usize;
+            let r = fd.get(i).copied().unwrap_or(0.0);
+            let g = fd.get(plane + i).copied().unwrap_or(0.0);
+            let b = fd.get(2 * plane + i).copied().unwrap_or(0.0);
+            (r, g, b)
+        } else {
+            // Assume ARGB8888: A at base, R=base+1, G=base+2, B=base+3
+            let base = i * 4;
+            if base + 3 < frame.data.len() {
+                let r = frame.data[base + 1] as f32 / 255.0;
+                let g = frame.data[base + 2] as f32 / 255.0;
+                let b = frame.data[base + 3] as f32 / 255.0;
+                (r, g, b)
+            } else {
+                (0.0, 0.0, 0.0)
+            }
+        }
+    }
+
+    /// Write ARGB pixel at index `i` in the output buffer from RGB [0,1].
+    fn write_argb(out: &mut [u8], i: usize, a: u8, r: f32, g: f32, b: f32) {
+        let base = i * 4;
+        if base + 3 < out.len() {
+            out[base] = a;
+            out[base + 1] = (r.clamp(0.0, 1.0) * 255.0) as u8;
+            out[base + 2] = (g.clamp(0.0, 1.0) * 255.0) as u8;
+            out[base + 3] = (b.clamp(0.0, 1.0) * 255.0) as u8;
+        }
+    }
+
     /// Process a complete HDR capture request.
     fn process(&self, request: &HdrCaptureRequest) -> Result<EnhancedFrame, HdrError> {
         let frames = &request.frames;
@@ -336,34 +372,18 @@ impl HdrWorker {
     // ── Merge ──────────────────────────────────────────────────
 
     /// Merge 3 exposures using luminance-weighted blending (Mertens-style).
-    /// This implements the same algorithm as `HdrMergeBlock` but in CPU code
-    /// for simplicity. Future: run the ONNX model directly.
     fn merge_three_exp(&self, frames: &[HdrFrame]) -> Result<Arc<Vec<u8>>, HdrError> {
-        let under = &frames[0]; // -2EV
-        let neutral = &frames[1]; // 0EV
-        let over = &frames[2]; // +2EV
+        let under = &frames[0];
+        let neutral = &frames[1];
+        let over = &frames[2];
 
-        let len = under.frame.data.len().min(neutral.frame.data.len()).min(over.frame.data.len());
-        // Assume ARGB8888: 4 bytes per pixel (A, R, G, B)
-        let pixel_count = len / 4;
-
-        let mut merged = Vec::with_capacity(len);
+        let pixel_count = (under.frame.width * under.frame.height) as usize;
+        let mut merged = vec![0u8; pixel_count * 4];
 
         for i in 0..pixel_count {
-            let base = i * 4;
-
-            // Extract RGB (ignore alpha for merge)
-            let r_u = under.frame.data[base + 1] as f32 / 255.0;
-            let g_u = under.frame.data[base + 2] as f32 / 255.0;
-            let b_u = under.frame.data[base + 3] as f32 / 255.0;
-
-            let r_n = neutral.frame.data[base + 1] as f32 / 255.0;
-            let g_n = neutral.frame.data[base + 2] as f32 / 255.0;
-            let b_n = neutral.frame.data[base + 3] as f32 / 255.0;
-
-            let r_o = over.frame.data[base + 1] as f32 / 255.0;
-            let g_o = over.frame.data[base + 2] as f32 / 255.0;
-            let b_o = over.frame.data[base + 3] as f32 / 255.0;
+            let (r_u, g_u, b_u) = Self::pixel_rgb(&under.frame, i);
+            let (r_n, g_n, b_n) = Self::pixel_rgb(&neutral.frame, i);
+            let (r_o, g_o, b_o) = Self::pixel_rgb(&over.frame, i);
 
             // Luminance for weight computation
             let lum_u = 0.299 * r_u + 0.587 * g_u + 0.114 * b_u;
@@ -375,21 +395,16 @@ impl HdrWorker {
             let w_n = (1.0 - (lum_n - 0.5).abs() * 2.0).clamp(0.0, 1.0);
             let w_o = (1.0 - (lum_o - 0.5).abs() * 2.0).clamp(0.0, 1.0);
 
-            // Normalize weights
             let total = w_u + w_n + w_o + 1e-10;
             let w_u = w_u / total;
             let w_n = w_n / total;
             let w_o = w_o / total;
 
-            // Blend
             let r_m = (r_u * w_u + r_n * w_n + r_o * w_o).clamp(0.0, 1.0);
             let g_m = (g_u * w_u + g_n * w_n + g_o * w_o).clamp(0.0, 1.0);
             let b_m = (b_u * w_u + b_n * w_n + b_o * w_o).clamp(0.0, 1.0);
 
-            merged.push(255); // Alpha
-            merged.push((r_m * 255.0) as u8);
-            merged.push((g_m * 255.0) as u8);
-            merged.push((b_m * 255.0) as u8);
+            Self::write_argb(&mut merged, i, 255, r_m, g_m, b_m);
         }
 
         Ok(Arc::new(merged))
@@ -400,37 +415,24 @@ impl HdrWorker {
         let under = &frames[0];
         let over = &frames[1];
 
-        let len = under.frame.data.len().min(over.frame.data.len());
-        let pixel_count = len / 4;
-
-        let mut merged = Vec::with_capacity(len);
+        let pixel_count = (under.frame.width * under.frame.height) as usize;
+        let mut merged = vec![0u8; pixel_count * 4];
 
         for i in 0..pixel_count {
-            let base = i * 4;
-
-            let r_u = under.frame.data[base + 1] as f32 / 255.0;
-            let g_u = under.frame.data[base + 2] as f32 / 255.0;
-            let b_u = under.frame.data[base + 3] as f32 / 255.0;
-
-            let r_o = over.frame.data[base + 1] as f32 / 255.0;
-            let g_o = over.frame.data[base + 2] as f32 / 255.0;
-            let b_o = over.frame.data[base + 3] as f32 / 255.0;
+            let (r_u, g_u, b_u) = Self::pixel_rgb(&under.frame, i);
+            let (r_o, g_o, b_o) = Self::pixel_rgb(&over.frame, i);
 
             // Luminance-based blend: dark areas → over, bright areas → under
             let lum_o = 0.299 * r_o + 0.587 * g_o + 0.114 * b_o;
-            let weight = (lum_o - 0.5) * 2.0; // -1 to 1
-
-            let w_under = (weight + 1.0) * 0.5; // bright → more under weight
+            let weight = (lum_o - 0.5) * 2.0;
+            let w_under = (weight + 1.0) * 0.5;
             let w_over = 1.0 - w_under;
 
             let r_m = (r_u * w_under + r_o * w_over).clamp(0.0, 1.0);
             let g_m = (g_u * w_under + g_o * w_over).clamp(0.0, 1.0);
             let b_m = (b_u * w_under + b_o * w_over).clamp(0.0, 1.0);
 
-            merged.push(255);
-            merged.push((r_m * 255.0) as u8);
-            merged.push((g_m * 255.0) as u8);
-            merged.push((b_m * 255.0) as u8);
+            Self::write_argb(&mut merged, i, 255, r_m, g_m, b_m);
         }
 
         Ok(Arc::new(merged))
@@ -439,28 +441,23 @@ impl HdrWorker {
     /// Merge N frames by simple averaging (fallback).
     fn merge_n_frames(&self, frames: &[HdrFrame]) -> Result<Arc<Vec<u8>>, HdrError> {
         let n = frames.len() as f32;
-        let len = frames.iter().map(|f| f.frame.data.len()).min().unwrap_or(0);
-        let pixel_count = len / 4;
-
-        let mut merged = vec![0u8; len];
+        let pixel_count = (frames[0].frame.width * frames[0].frame.height) as usize;
+        let mut merged = vec![0u8; pixel_count * 4];
 
         for i in 0..pixel_count {
-            let base = i * 4;
             let mut r_acc = 0.0f32;
             let mut g_acc = 0.0f32;
             let mut b_acc = 0.0f32;
 
             for f in frames {
-                r_acc += f.frame.data[base + 1] as f32;
-                g_acc += f.frame.data[base + 2] as f32;
-                b_acc += f.frame.data[base + 3] as f32;
+                let (r, g, b) = Self::pixel_rgb(&f.frame, i);
+                r_acc += r;
+                g_acc += g;
+                b_acc += b;
             }
 
             let div = n.max(1.0);
-            merged[base] = 255;
-            merged[base + 1] = (r_acc / div).round().clamp(0.0, 255.0) as u8;
-            merged[base + 2] = (g_acc / div).round().clamp(0.0, 255.0) as u8;
-            merged[base + 3] = (b_acc / div).round().clamp(0.0, 255.0) as u8;
+            Self::write_argb(&mut merged, i, 255, r_acc / div, g_acc / div, b_acc / div);
         }
 
         Ok(Arc::new(merged))
@@ -471,7 +468,6 @@ impl HdrWorker {
     /// ACES filmic tone mapping (CPU implementation matching `HdrToneBlock`).
     fn tone_map(&self, frame: &[u8]) -> Result<Vec<u8>, HdrError> {
         let pixel_count = frame.len() / 4;
-        let mut output = Vec::with_capacity(frame.len());
 
         // ACES input transform matrix (sRGB → ACES)
         let input_mat: [[f32; 3]; 3] = [
@@ -486,6 +482,8 @@ impl HdrWorker {
             [-0.00327, -0.07276, 1.07602],
         ];
 
+        let mut output = vec![0u8; frame.len()];
+
         for i in 0..pixel_count {
             let base = i * 4;
             let a = frame[base] as f32 / 255.0;
@@ -493,13 +491,12 @@ impl HdrWorker {
             let g = frame[base + 2] as f32 / 255.0;
             let b = frame[base + 3] as f32 / 255.0;
 
-            // Step 1: sRGB → ACES color space
+            // Step 1: sRGB → ACES
             let aces_r = r * input_mat[0][0] + g * input_mat[0][1] + b * input_mat[0][2];
             let aces_g = r * input_mat[1][0] + g * input_mat[1][1] + b * input_mat[1][2];
             let aces_b = r * input_mat[2][0] + g * input_mat[2][1] + b * input_mat[2][2];
 
             // Step 2: ACES filmic curve
-            // (x*(2.51x + 0.03)) / (x*(2.43x + 0.59) + 0.14)
             let aces_curve = |x: f32| -> f32 {
                 if x <= 0.0 { return 0.0; }
                 let num = x * (2.51 * x + 0.03);
@@ -511,20 +508,12 @@ impl HdrWorker {
             let cg = aces_curve(aces_g);
             let cb = aces_curve(aces_b);
 
-            // Step 3: ACES → sRGB color space
+            // Step 3: ACES → sRGB
             let sr = cr * output_mat[0][0] + cg * output_mat[0][1] + cb * output_mat[0][2];
             let sg = cr * output_mat[1][0] + cg * output_mat[1][1] + cb * output_mat[1][2];
             let sb = cr * output_mat[2][0] + cg * output_mat[2][1] + cb * output_mat[2][2];
 
-            // Step 4: Clamp to [0, 1]
-            let sr = sr.clamp(0.0, 1.0);
-            let sg = sg.clamp(0.0, 1.0);
-            let sb = sb.clamp(0.0, 1.0);
-
-            output.push((a * 255.0) as u8);
-            output.push((sr * 255.0) as u8);
-            output.push((sg * 255.0) as u8);
-            output.push((sb * 255.0) as u8);
+            Self::write_argb(&mut output, i, (a * 255.0) as u8, sr, sg, sb);
         }
 
         Ok(output)
