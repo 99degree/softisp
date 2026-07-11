@@ -13,6 +13,9 @@
 | 7 | **Profile builder monolithic in profile.rs** (1047 lines) | Extracted `build_blocks()`, `build_aux_blocks()`, `block_count()`, `node_estimate()` into `profile_builder.rs` (306 lines). profile.rs reduced to 680 lines. |
 | 8 | **HDR PPM encode wrong dimensions** — sqrt heuristic for non-square frames | `encode()` now takes `width`/`height` from frame metadata. |
 | 9 | **MNN converter temp file leak risk** — `mkstemp` files could leak if process crashes mid-conversion | RAII `TempFileGuard` class auto-unlinks on destruction. Global registry with `atexit` + signal handlers (SIGINT/SIGTERM/SIGABRT). Thread-safe. |
+| 10 | **RollingStats embedded in controller.rs** (1293 lines) | Extracted `RollingStats` struct + impl into `rolling_stats.rs` (47 lines). controller.rs reduced to 1258 lines. |
+| 11 | **Error type fragmentation** — `HdrError` separate from `IspError` | Added `From<HdrError> for IspError`. Unified pipeline now uses `.into()` for automatic conversion. |
+| 12 | **Vec-based engine registry** — sorted on every insert, no unregistration | Replaced with `BTreeMap`-based `EngineRegistry` (negated-priority keys + tiebreaker). Added `unregister_engine()` for dynamic plugin management. |
 
 ## Near-term (High Impact, Low Risk) — Complete ✓
 
@@ -25,26 +28,28 @@ All 4 near-term items completed:
 
 ## Medium-term (Architecture)
 
-### 5. Split `IspController` (1293 lines) into domain modules
-`controller.rs` contains AE, AWB, AF, CCM, tone all in one impl struct. The `ControllerApi` trait abstraction is correct but the concrete implementation is monolithic.
+### 5. Split `IspController` (1258 lines) into domain modules
+`controller.rs` contains AE, AWB, AF, CCM, tone all in one impl struct. `RollingStats` extracted to own file. Core 3A logic (AWB/CCT estimation, tone curve, zone stats) still inline.
+
+**Done:** ✅ `rolling_stats.rs` extracted (47 lines)
+**Remaining:** ~1200 lines of AWB/CCT/zone/ONNX methods
 
 **Plan:**
-- `controller/ae.rs` — Auto-exposure
-- `controller/awb.rs` — White balance
-- `controller/af.rs` — Auto-focus  
-- `controller/ccm.rs` — Color correction
-- `controller/tone.rs` — Tone mapping
-- `controller/mod.rs` — IspController shell that delegates
+- `controller/awb.rs` — AWB + CCT estimation from channel/zone stats
+- `controller/tone.rs` — Tone curve estimation from tone stats
+- `controller/exposure.rs` — Histogram-based AE gain
+- `controller/zone.rs` — Zone-based processing
+- `controller/mod.rs` — IspController struct + delegating methods
 
-### 6. Engine registry as proper plugin system
-Currently `engine.rs` has a static `ENGINE_REGISTRY` using `Vec<Box<dyn Fn() -> Box<dyn IspEngine>>>`. Priorities are hardcoded.
+### 6. Engine registry as proper plugin system ✅ **Done**
+Replaced `Vec<EngineFactory>` with `BTreeMap`-based `EngineRegistry`:
+- Priority-ordered via negated keys + tiebreaker counter
+- Added `unregister_engine(name)` for dynamic plugin management
+- `select_engine_by_name("auto")` delegates to `select_engine()`
+- No redundant sort on every registration
 
-**Plan:** Replace with a priority-ordered `BTreeMap<i32, Box<dyn Fn() -> ...>>` that allows runtime registration/unregistration. Each engine provides a `priority()` method instead of the global list.
-
-### 7. Unified error type consolidation
-There are multiple error enums: `IspError`, `HdrError`, `String`-based errors from MNN FFI, `Result<(), String>` in places.
-
-**Plan:** Make `HdrError` convertible to `IspError` via `From` impl. Move MNN FFI errors to typed variants in `IspError`. Remove `String`-based error returns from public API.
+### 7. Unified error type consolidation ✅ **Done**
+Added `From<HdrError> for IspError` in `error.rs`. HDR errors now auto-convert via `.into()` in `Result` chains. Unified pipeline uses `IspError::from(e)` instead of manual `format!()` wrapping.
 
 ## Long-term (Research)
 
@@ -77,7 +82,8 @@ Train a lightweight CNN for multi-exposure fusion:
 | HDR align latency | 0ms (noop) | 0ms (noop) | <3ms (optical flow) |
 | mnnengine.rs lines | 1504 | 1390 | <800 |
 | mnn_session_pool.rs lines | — | 155 (new) | — |
-| controller.rs lines | 1293 | 1293 | <400 per module |
+| controller.rs lines | 1293 | 1258 | <400 per module |
+| rolling_stats.rs lines | — | 47 (new) | — |
 | profile.rs lines | 1047 | 680 | <300 + builder |
 | profile_builder.rs lines | — | 306 (new) | — |
 | hdr.rs lines | 756 | 747 | <500 |
