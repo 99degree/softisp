@@ -147,8 +147,8 @@ impl GpuWarpParams {
 /// GPU warp engine — separate MNN session for GDC+EIS warp.
 #[cfg(feature = "mnn")]
 pub struct GpuWarpEngine {
-    interp: MnnInterpreterSafe,
     session: MnnSessionSafe,
+    interp: MnnInterpreterSafe,
     width: u32,
     height: u32,
     initialized: bool,
@@ -160,22 +160,27 @@ impl GpuWarpEngine {
     pub fn from_onnx(onnx: &[u8], width: u32, height: u32) -> IspResult<Self> {
         info!("GpuWarpEngine: creating from {} byte ONNX for {}×{}", onnx.len(), width, height);
 
-        // Write ONNX to temp file
-        let on = format!(".warp_temp_{}.onnx", std::process::id());
+        // Write ONNX to temp file, convert to MNN
+        let pid = std::process::id();
+        let tid = std::thread::current().id();
+        let stamp = std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_nanos();
+        let on = format!(".warp_{}_{}_{:?}.onnx", pid, stamp, tid);
         let mn = on.replace(".onnx", ".mnn");
         std::fs::write(&on, onnx)
             .map_err(|e| crate::error::IspError::Io(format!("write onnx: {}", e)))?;
 
-        // Convert ONNX → MNN
         let opts = MnnConvertOptions::default();
         convert_onnx_to_mnn(&on, &mn, Some(&opts))
             .map_err(|e| crate::error::IspError::Conversion(format!("convert warp: {}", e)))?;
         let _ = std::fs::remove_file(&on);
 
-        // Load MNN model
-        let interp = MnnInterpreterSafe::from_file(&mn)
-            .ok_or_else(|| crate::error::IspError::Mnn("warp model load fail".into()))?;
+        // Load MNN model from buffer (avoids C++ static init issues with from_file)
+        let mnn_bytes = std::fs::read(&mn)
+            .map_err(|e| crate::error::IspError::Io(format!("read mnn: {}", e)))?;
         let _ = std::fs::remove_file(&mn);
+
+        let interp = MnnInterpreterSafe::from_buffer(&mnn_bytes)
+            .ok_or_else(|| crate::error::IspError::Mnn("warp model load fail".into()))?;
 
         // Create session (CPU for warp — lightweight)
         let session = interp.create_session(MnnBackendType::Cpu, 2)
@@ -199,39 +204,60 @@ impl GpuWarpEngine {
     }
 
     /// Generate a default ONNX model for GDC+EIS warp.
+    ///
+    /// Simple GridSample model: takes frame + grid as inputs.
+    /// Grid is pre-computed on CPU in `run_into()` for reliability.
+    ///
+    /// Inputs:
+    ///   GpuWarp/input  [1,3,H,W]  — frame to warp
+    ///   GpuWarp/grid   [1,H,W,2]  — normalized sampling grid [-1,1]
+    ///
+    /// Output:
+    ///   GpuWarp/frame  [1,3,H,W]  — warped frame
     pub fn generate_onnx(width: u32, height: u32) -> Vec<u8> {
-        // Generate a simple ONNX model for GDC+EIS warp
         use crate::onnx::proto::Proto;
 
-        // Build the graph components
-        let input_proto = Proto::value_info("input", &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3), Proto::tensor_dim_value(height as i64), Proto::tensor_dim_value(width as i64)], 1);
-        let output_proto = Proto::value_info("output", &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3), Proto::tensor_dim_value(height as i64), Proto::tensor_dim_value(width as i64)], 1);
+        let h = height as i64;
+        let w = width as i64;
 
-        // Constants for k1, k2, k3, eis_x, eis_y
-        let k1_init = Proto::tensor_proto_float_scalar("k1", 0.0);
-        let k2_init = Proto::tensor_proto_float_scalar("k2", 0.0);
-        let k3_init = Proto::tensor_proto_float_scalar("k3", 0.0);
-        let eis_x_init = Proto::tensor_proto_float_scalar("eis_x", 0.0);
-        let eis_y_init = Proto::tensor_proto_float_scalar("eis_y", 0.0);
+        // Graph inputs
+        let inputs = vec![
+            Proto::value_info("GpuWarp/input", &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ], 1),
+            Proto::value_info("GpuWarp/grid", &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+                Proto::tensor_dim_value(2),
+            ], 1),
+        ];
 
-        // GridSample node for warp
+        // Graph output
+        let outputs = vec![
+            Proto::value_info("GpuWarp/frame", &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ], 1),
+        ];
+
+        // Single GridSample node
         let nodes = vec![
-            Proto::node("GridSample", &["input", "grid"], &["output"], &[
+            Proto::node("GridSample", &["GpuWarp/input", "GpuWarp/grid"], &["GpuWarp/frame"], &[
                 Proto::attribute_string("mode", "bilinear"),
                 Proto::attribute_string("padding_mode", "zeros"),
-                Proto::attribute_string("align_corners", "1"),
+                Proto::attribute_int("align_corners", 0),
             ]),
         ];
-        // Graph inputs (ValueInfoProto) and initializers (TensorProto)
-        let inputs = vec![input_proto];
-        let outputs = vec![output_proto];
-        let initializers = vec![k1_init, k2_init, k3_init, eis_x_init, eis_y_init];
-        let value_info = vec![];
 
-        let graph = Proto::graph("GpuWarpGraph", &nodes, &inputs, &outputs, &initializers, &value_info);
-        let opset = Proto::opset("", 13);
-        let model = Proto::model(13, &opset, "softisp", &graph);
-        model
+        let graph = Proto::graph("GpuWarpGraph", &nodes, &inputs, &outputs, &[], &[]);
+        let opset = Proto::opset("", 21);
+        Proto::model(8, &opset, "softisp", &graph)
     }
 
     /// Run warp inference into a pre-allocated output buffer.
@@ -284,17 +310,42 @@ impl GpuWarpEngine {
             }
         }
 
-        // Set GDC coefficients
-        self.set_const_f32("GpuWarp/gdc_k1", k1);
-        self.set_const_f32("GpuWarp/gdc_k2", k2);
-        self.set_const_f32("GpuWarp/gdc_k3", k3);
+        // Compute GDC+EIS grid on CPU
+        // Grid layout: [1, H, W, 2] where grid[y][x] = [gdc_x + eis_x, gdc_y + eis_y]
+        let mut grid = vec![0.0f32; n * 2];
+        for y in 0..h {
+            let ny = 2.0 * y as f32 / (h - 1) as f32 - 1.0;
+            for x in 0..w {
+                let nx = 2.0 * x as f32 / (w - 1) as f32 - 1.0;
+                let r2 = nx * nx + ny * ny;
+                let r4 = r2 * r2;
+                let r6 = r4 * r2;
+                let denom = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+                let inv_denom = 1.0 / denom;
+                let idx = y * w + x;
+                grid[idx * 2] = nx * inv_denom + eis_x;
+                grid[idx * 2 + 1] = ny * inv_denom + eis_y;
+            }
+        }
 
-        // Set EIS grid
-        let n = (self.width * self.height) as usize;
-        let eis_grid_x: Vec<f32> = vec![eis_x; n];
-        let eis_grid_y: Vec<f32> = vec![eis_y; n];
-        self.set_const_f32_grid("GpuWarp/eis_x", &eis_grid_x, h, w);
-        self.set_const_f32_grid("GpuWarp/eis_y", &eis_grid_y, h, w);
+        // Set grid input tensor
+        if let Some(grid_tensor) = self.interp.get_input(&self.session, "GpuWarp/grid") {
+            let _ = grid_tensor.set_shape(
+                self.interp.as_ptr(),
+                self.session.as_ptr(),
+                &[1, h as i32, w as i32, 2],
+            );
+            if let Some(bytes) = grid_tensor.as_bytes_mut() {
+                let copy_len = (grid.len() * 4).min(bytes.len());
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        grid.as_ptr() as *const u8,
+                        bytes.as_mut_ptr(),
+                        copy_len,
+                    );
+                }
+            }
+        }
 
         // Resize + Run
         self.session.resize()
@@ -336,101 +387,21 @@ impl GpuWarpEngine {
         Ok(out)
     }
 
-    /// Set a scalar float constant as input tensor.
-    fn set_const_f32(&self, name: &str, value: f32) {
-        if let Some(tensor) = self.interp.get_input(&self.session, name) {
-            let _ = tensor.set_shape(
-                self.interp.as_ptr(),
-                self.session.as_ptr(),
-                &[1],
-            );
-            if let Some(bytes) = tensor.as_bytes_mut() {
-                if bytes.len() >= 4 {
-                    unsafe {
-                        *(bytes.as_mut_ptr() as *mut f32) = value;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Set a 4D float grid as input tensor.
-    fn set_const_f32_grid(&self, name: &str, data: &[f32], h: usize, w: usize) {
-        if let Some(tensor) = self.interp.get_input(&self.session, name) {
-            let _ = tensor.set_shape(
-                self.interp.as_ptr(),
-                self.session.as_ptr(),
-                &[1, 1, h as i32, w as i32],
-            );
-            if let Some(bytes) = tensor.as_bytes_mut() {
-                let copy_len = (data.len() * 4).min(bytes.len());
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const u8,
-                        bytes.as_mut_ptr(),
-                        copy_len,
-                    );
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 #[cfg(feature = "mnn")]
 mod tests {
     use super::*;
-    use crate::blocks::gpu_warp::GpuWarpBlock;
-    use crate::pipeline::GraphComposer;
-    use crate::pipeline::IspBlock;
-    use crate::onnx::proto::Proto;
 
     #[test]
     fn test_gpu_warp_engine_build() {
         crate::init();
 
-        // Build warp ONNX
+        // Build a simple warp ONNX (GridSample only, grid computed on CPU)
         let w = 64u32;
         let h = 64u32;
-        let block = GpuWarpBlock::new(w, h);
-
-        let nodes = block.nodes();
-        let inits = block.initializers();
-        let extras = block.extra_inputs();
-
-        // Build graph inputs
-        let mut graph_inputs = vec![
-            Proto::value_info(
-                "GpuWarp/input",
-                &[Proto::tensor_dim_value(1),
-                  Proto::tensor_dim_value(3),
-                  Proto::tensor_dim_param("H"),
-                  Proto::tensor_dim_param("W")], 1),
-        ];
-        for (name, etype, shape) in &extras {
-            let dim_protos: Vec<Vec<u8>> = shape.iter().map(|d| {
-                if *d > 0 {
-                    Proto::tensor_dim_value(*d)
-                } else {
-                    Proto::tensor_dim_param("?")
-                }
-            }).collect();
-            graph_inputs.push(Proto::value_info(name, &dim_protos, *etype as i32));
-        }
-
-        let graph_outputs = vec![
-            Proto::value_info(
-                "GpuWarp/frame",
-                &[Proto::tensor_dim_value(1),
-                  Proto::tensor_dim_value(3),
-                  Proto::tensor_dim_param("H"),
-                  Proto::tensor_dim_param("W")], 1),
-        ];
-
-        let graph = Proto::graph(
-            "gpu_warp", &nodes, &graph_inputs, &graph_outputs, &inits, &[]);
-        let opset = Proto::opset("", 21);
-        let onnx = Proto::model(8, &opset, "test-warp", &graph);
+        let onnx = GpuWarpEngine::generate_onnx(w, h);
 
         // Create engine
         let engine = GpuWarpEngine::from_onnx(&onnx, w, h);
