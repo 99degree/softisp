@@ -168,8 +168,8 @@ impl GpuWarpEngine {
     /// Create warp engine from ONNX bytes.
     /// 
     /// Architecture (same-process, no disk writes):
-    ///   [init]  build ONNX (Rust, no MNN) → convert via mnn_convert_onnx_buffer
-    ///   [exec]  load MNN from buffer → create session → run inference
+    ///   \[init\]  build ONNX (Rust, no MNN) → convert via mnn_convert_onnx_buffer
+    ///   \[exec\]  load MNN from buffer → create session → run inference
     pub fn from_onnx(onnx: &[u8], width: u32, height: u32) -> IspResult<Self> {
         info!("GpuWarpEngine: creating from {} byte ONNX for {}×{}", onnx.len(), width, height);
 
