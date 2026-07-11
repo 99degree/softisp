@@ -183,8 +183,6 @@ pub(crate) fn apply_tone(rgb: &[f32], params: &ToneParams, w: usize, h: usize) -
 
     // Build gamma lookup table (4096 entries, ~16KB)
     let gamma_lut = build_gamma_lut(gamma);
-    #[allow(dead_code)]
-    const LUT_MASK: usize = 4095;
 
     for i in 0..count {
         let idx = i * 3;
