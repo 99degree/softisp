@@ -60,23 +60,17 @@ use std::thread;
 // ── Types ──────────────────────────────────────────────────────────
 
 /// Frame with exposure metadata after ISP processing.
-/// Data is ARGB8888 (or NCHW float) output from ISP for one exposure.
+/// Wraps an `IspFrame` with HDR-specific exposure information.
 #[derive(Debug, Clone)]
 pub struct HdrFrame {
-    /// Pixel data (ARGB8888 or NCHW float bytes)
-    pub data: Arc<Vec<u8>>,
+    /// The underlying ISP-processed frame (pixel data, params, aux, timestamps)
+    pub frame: crate::pipeline::types::IspFrame,
     /// Exposure value relative to metered: -2.0, 0.0, +2.0
     pub ev: f32,
-    /// Frame timestamp
-    pub timestamp_ns: u64,
     /// ISO value for this frame
     pub iso: f32,
     /// Exposure time in seconds
     pub exposure_time: f32,
-    /// Width in pixels
-    pub width: u32,
-    /// Height in pixels
-    pub height: u32,
 }
 
 /// Metadata for an HDR capture session.
@@ -280,12 +274,12 @@ impl HdrWorker {
         }
 
         // Validate uniform dimensions
-        let w = frames[0].width;
-        let h = frames[0].height;
+        let w = frames[0].frame.width;
+        let h = frames[0].frame.height;
         for f in frames {
-            if f.width != w || f.height != h {
+            if f.frame.width != w || f.frame.height != h {
                 return Err(HdrError::SizeMismatch {
-                    w, h, ew: f.width, eh: f.height,
+                    w, h, ew: f.frame.width, eh: f.frame.height,
                 });
             }
         }
@@ -349,7 +343,7 @@ impl HdrWorker {
         let neutral = &frames[1]; // 0EV
         let over = &frames[2]; // +2EV
 
-        let len = under.data.len().min(neutral.data.len()).min(over.data.len());
+        let len = under.frame.data.len().min(neutral.frame.data.len()).min(over.frame.data.len());
         // Assume ARGB8888: 4 bytes per pixel (A, R, G, B)
         let pixel_count = len / 4;
 
@@ -359,17 +353,17 @@ impl HdrWorker {
             let base = i * 4;
 
             // Extract RGB (ignore alpha for merge)
-            let r_u = under.data[base + 1] as f32 / 255.0;
-            let g_u = under.data[base + 2] as f32 / 255.0;
-            let b_u = under.data[base + 3] as f32 / 255.0;
+            let r_u = under.frame.data[base + 1] as f32 / 255.0;
+            let g_u = under.frame.data[base + 2] as f32 / 255.0;
+            let b_u = under.frame.data[base + 3] as f32 / 255.0;
 
-            let r_n = neutral.data[base + 1] as f32 / 255.0;
-            let g_n = neutral.data[base + 2] as f32 / 255.0;
-            let b_n = neutral.data[base + 3] as f32 / 255.0;
+            let r_n = neutral.frame.data[base + 1] as f32 / 255.0;
+            let g_n = neutral.frame.data[base + 2] as f32 / 255.0;
+            let b_n = neutral.frame.data[base + 3] as f32 / 255.0;
 
-            let r_o = over.data[base + 1] as f32 / 255.0;
-            let g_o = over.data[base + 2] as f32 / 255.0;
-            let b_o = over.data[base + 3] as f32 / 255.0;
+            let r_o = over.frame.data[base + 1] as f32 / 255.0;
+            let g_o = over.frame.data[base + 2] as f32 / 255.0;
+            let b_o = over.frame.data[base + 3] as f32 / 255.0;
 
             // Luminance for weight computation
             let lum_u = 0.299 * r_u + 0.587 * g_u + 0.114 * b_u;
@@ -406,7 +400,7 @@ impl HdrWorker {
         let under = &frames[0];
         let over = &frames[1];
 
-        let len = under.data.len().min(over.data.len());
+        let len = under.frame.data.len().min(over.frame.data.len());
         let pixel_count = len / 4;
 
         let mut merged = Vec::with_capacity(len);
@@ -414,13 +408,13 @@ impl HdrWorker {
         for i in 0..pixel_count {
             let base = i * 4;
 
-            let r_u = under.data[base + 1] as f32 / 255.0;
-            let g_u = under.data[base + 2] as f32 / 255.0;
-            let b_u = under.data[base + 3] as f32 / 255.0;
+            let r_u = under.frame.data[base + 1] as f32 / 255.0;
+            let g_u = under.frame.data[base + 2] as f32 / 255.0;
+            let b_u = under.frame.data[base + 3] as f32 / 255.0;
 
-            let r_o = over.data[base + 1] as f32 / 255.0;
-            let g_o = over.data[base + 2] as f32 / 255.0;
-            let b_o = over.data[base + 3] as f32 / 255.0;
+            let r_o = over.frame.data[base + 1] as f32 / 255.0;
+            let g_o = over.frame.data[base + 2] as f32 / 255.0;
+            let b_o = over.frame.data[base + 3] as f32 / 255.0;
 
             // Luminance-based blend: dark areas → over, bright areas → under
             let lum_o = 0.299 * r_o + 0.587 * g_o + 0.114 * b_o;
@@ -445,7 +439,7 @@ impl HdrWorker {
     /// Merge N frames by simple averaging (fallback).
     fn merge_n_frames(&self, frames: &[HdrFrame]) -> Result<Arc<Vec<u8>>, HdrError> {
         let n = frames.len() as f32;
-        let len = frames.iter().map(|f| f.data.len()).min().unwrap_or(0);
+        let len = frames.iter().map(|f| f.frame.data.len()).min().unwrap_or(0);
         let pixel_count = len / 4;
 
         let mut merged = vec![0u8; len];
@@ -457,9 +451,9 @@ impl HdrWorker {
             let mut b_acc = 0.0f32;
 
             for f in frames {
-                r_acc += f.data[base + 1] as f32;
-                g_acc += f.data[base + 2] as f32;
-                b_acc += f.data[base + 3] as f32;
+                r_acc += f.frame.data[base + 1] as f32;
+                g_acc += f.frame.data[base + 2] as f32;
+                b_acc += f.frame.data[base + 3] as f32;
             }
 
             let div = n.max(1.0);
@@ -610,13 +604,22 @@ mod tests {
             data.push(b_val); // B
         }
         HdrFrame {
-            data: Arc::new(data),
+            frame: crate::pipeline::types::IspFrame {
+                data,
+                width: 64,
+                height: 64,
+                format: cam_types::FrameFormat::NchwFloat,
+                float_data: None,
+                aux: None,
+                params: crate::isp_params::IspParams::default(),
+                timestamp_ns: 0,
+                prep_duration_ns: 0,
+                inference_duration_ns: 0,
+                total_duration_ns: 0,
+            },
             ev,
-            timestamp_ns: 0,
             iso: 100.0,
             exposure_time: 0.033,
-            width: 64,
-            height: 64,
         }
     }
 
@@ -700,7 +703,7 @@ mod tests {
     fn test_hdr_error_size_mismatch() {
         let worker = HdrWorker::new();
         let mut f1 = make_test_frame(-2.0, 50, 50, 50);
-        f1.width = 32; // Different from default 64
+        f1.frame.width = 32; // Different from default 64
         let f2 = make_test_frame(0.0, 128, 128, 128);
         let f3 = make_test_frame(2.0, 200, 200, 200);
 
