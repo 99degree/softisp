@@ -196,8 +196,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU32;
-
     #[test]
     fn test_watchdog_initial_state() {
         let watchdog = GpuWatchdog::new(WatchdogConfig::default());

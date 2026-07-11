@@ -10,6 +10,8 @@ use crate::format_convert::FormatConvertEngine;
 use crate::isp_controller::IspController;
 use crate::controller_api::ControllerApi;
 use crate::pipeline::types::IspFrame;
+use crate::hdr::{HdrCaptureQueue, EnhancedFrame};
+use std::sync::Arc;
 use std::time::Instant;
 use log::{info, warn};
 
@@ -138,6 +140,10 @@ pub struct UnifiedPipeline {
     gpu_warp_onnx: Option<Vec<u8>>,
     #[allow(dead_code)]
     format_converter: Option<FormatConvertEngine>,
+    /// HDR capture queue for multi-exposure burst (only if profile has use_hdr)
+    hdr_queue: Option<HdrCaptureQueue>,
+    /// Accumulated HDR frames for current burst
+    hdr_frames: Vec<IspFrame>,
 }
 
 impl UnifiedPipeline {
@@ -190,6 +196,12 @@ impl UnifiedPipeline {
             (None, None)
         };
 
+        let hdr_queue = if config.profile.use_hdr {
+            Some(HdrCaptureQueue::new(1))
+        } else {
+            None
+        };
+
         let controller: Box<dyn ControllerApi> = Box::new(IspController::new());
 
         Ok(Self {
@@ -203,6 +215,8 @@ impl UnifiedPipeline {
             gpu_warp_engine,
             gpu_warp_onnx,
             format_converter: None,
+            hdr_queue,
+            hdr_frames: Vec::new(),
         })
     }
 
@@ -630,6 +644,73 @@ impl UnifiedPipeline {
                 );
             }
         }
+    }
+
+    /// HDR burst capture: accumulate frames from different exposures.
+    /// When enough frames are collected, submits to HDR queue for async merge.
+    ///
+    /// Call this after each ISP-processed frame. The `ev` value identifies
+    /// which exposure this frame belongs to (-2.0, 0.0, +2.0).
+    ///
+    /// Returns `Ok(Some(result))` when HDR processing completes,
+    /// `Ok(None)` while still accumulating frames.
+    pub fn submit_hdr_frame(
+        &mut self,
+        frame: IspFrame,
+        _ev: f32,
+    ) -> crate::error::IspResult<Option<Arc<EnhancedFrame>>> {
+        let queue = match &mut self.hdr_queue {
+            Some(q) => q,
+            None => return Err(crate::error::IspError::Config("HDR not enabled in profile".into())),
+        };
+
+        self.hdr_frames.push(frame);
+
+        // When enough frames are collected (default 3), submit
+        let expected = queue.frames_per_capture();
+        if self.hdr_frames.len() >= expected {
+            // Build HdrFrames from accumulated pipeline outputs
+            let hdr_frames: Vec<crate::hdr::HdrFrame> = self.hdr_frames.drain(..).map(|f| {
+                crate::hdr::HdrFrame {
+                    data: Arc::new(f.data.clone()),
+                    width: f.width,
+                    height: f.height,
+                    ev: 0.0,
+                    timestamp_ns: f.timestamp_ns,
+                    iso: 100.0,
+                    exposure_time: 0.033,
+                }
+            }).collect();
+
+            // Submit and wait for result (blocking)
+            let rx = match queue.submit_frames(hdr_frames) {
+                Ok(rx) => rx,
+                Err(e) => return Err(crate::error::IspError::Pipeline(format!("HDR submit: {}", e))),
+            };
+            match rx.recv() {
+                Ok(result) => match result {
+                    Ok(enhanced) => Ok(Some(Arc::new(enhanced))),
+                    Err(e) => Err(crate::error::IspError::Pipeline(format!("HDR merge: {}", e))),
+                },
+                Err(_) => Err(crate::error::IspError::Pipeline("HDR worker channel closed".into())),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get the HDR configuration, if HDR is enabled.
+    pub fn hdr_config(&self) -> Option<crate::hdr::HdrConfig> {
+        if self.hdr_queue.is_some() {
+            Some(crate::hdr::HdrConfig::default())
+        } else {
+            None
+        }
+    }
+
+    /// Clear accumulated HDR frames without submitting (e.g., on timeout).
+    pub fn clear_hdr_frames(&mut self) {
+        self.hdr_frames.clear();
     }
 
     /// Check if the pipeline is initialized and ready.
