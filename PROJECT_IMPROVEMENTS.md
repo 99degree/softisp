@@ -85,7 +85,7 @@ Train a lightweight CNN for multi-exposure fusion:
 | HDR align latency | 0ms (noop) | 0ms (noop) | <3ms (optical flow) |
 | mnnengine.rs lines | 1504 | 1390 | <800 |
 | mnn_session_pool.rs lines | — | 155 (new) | — |
-| controller.rs lines | 1293 | 1052 (+219 in controller_awb.rs) | <400 per module |
+| controller.rs lines | 1293 | 708 (+631 in sub-modules) | <400 per module |
 | rolling_stats.rs lines | — | 47 (new) | — |
 | controller_awb.rs lines | — | 219 (new) | — |
 | profile.rs lines | 1047 | 680 | <300 + builder |
