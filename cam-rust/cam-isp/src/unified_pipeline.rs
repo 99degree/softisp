@@ -1,7 +1,9 @@
 use crate::profile::PipelineProfile;
-use crate::warp_engine::{GpuWarpEngine, GpuWarpParams};
 use crate::engine::{IspEngine, ProcessParams, OutputFormat as EngineOutputFormat};
 use crate::pipeline::ProcessPipeline;
+
+// Re-export warp types for external consumers
+pub use crate::warp_engine::{GpuWarpParams, GpuWarpEngine};
 
 use crate::postprocess::{PostProcessPipeline, PostProcessConfig};
 use crate::format_convert::FormatConvertEngine;
