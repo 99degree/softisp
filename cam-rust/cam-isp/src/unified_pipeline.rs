@@ -1,15 +1,14 @@
 use crate::profile::PipelineProfile;
 use crate::warp_engine::{GpuWarpEngine, GpuWarpParams};
 use crate::engine::{IspEngine, ProcessParams, OutputFormat as EngineOutputFormat};
-use crate::pipeline::{GraphComposer, ProcessPipeline};
+use crate::pipeline::ProcessPipeline;
 
 use crate::postprocess::{PostProcessPipeline, PostProcessConfig};
 use crate::format_convert::FormatConvertEngine;
 use crate::isp_controller::IspController;
 use crate::pipeline::types::IspFrame;
-use crate::mnnengine::MnnEngine;
 use std::time::Instant;
-use log::{info, warn, debug};
+use log::{info, warn};
 
 /// Configuration for the unified pipeline.
 #[derive(Debug, Clone)]
@@ -123,7 +122,9 @@ pub struct UnifiedPipeline {
     controller: IspController,
     post_pipeline: PostProcessPipeline,
     gpu_warp_engine: Option<GpuWarpEngine>,
+    #[allow(dead_code)]
     gpu_warp_onnx: Option<Vec<u8>>,
+    #[allow(dead_code)]
     format_converter: Option<FormatConvertEngine>,
 }
 
@@ -145,8 +146,6 @@ impl UnifiedPipeline {
 
         let profile = config.profile;
         let target_width = config.target_width;
-        let bayer_pattern = config.bayer_pattern;
-        let output_format = config.output_format;
 
         // Build pipeline blocks
         let mut blocks = profile.build_blocks(target_width, config.bayer_pattern);
@@ -177,13 +176,6 @@ impl UnifiedPipeline {
             }
         } else {
             (None, None)
-        };
-
-        // Initialize format converter
-        let format_converter = if config.output_format != EngineOutputFormat::FloatRgb {
-            Some(FormatConvertEngine::new(0, 0, EngineOutputFormat::FloatRgb))
-        } else {
-            None
         };
 
         let controller = IspController::new();
@@ -265,7 +257,7 @@ impl UnifiedPipeline {
                         let mut input_copy = vec![0.0f32; n];
                         input_copy.copy_from_slice(&float_data[..n]);
 
-                        match self.gpu_warp_engine.as_ref().unwrap().run(
+                        match warp_engine.run(
                             &input_copy,
                             warp_params.gdc_k1,
                             warp_params.gdc_k2,
@@ -537,7 +529,7 @@ impl UnifiedPipeline {
     fn extract_tile(
         raw_data: &[u8],
         width: u32,
-        x: u32,
+        _x: u32,
         y: u32,
         tile_w: u32,
         tile_h: u32,
@@ -566,7 +558,7 @@ impl UnifiedPipeline {
         tile: &[f32],
         out_width: u32,
         out_height: u32,
-        x: u32,
+        _x: u32,
         y: u32,
         tile_w: u32,
         tile_h: u32,
@@ -576,7 +568,7 @@ impl UnifiedPipeline {
 
         for c in 0..3 {
             let tile_base = c * tile_plane;
-            let out_base = c * (out_width * out_height) as usize + (y * out_width + x) as usize;
+            let out_base = c * (out_width * out_height) as usize + (y * out_width + _x) as usize;
 
             for ty in 0..tile_h as usize {
                 let src = tile_base + ty * tile_w as usize;
