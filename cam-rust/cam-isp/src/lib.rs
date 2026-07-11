@@ -43,6 +43,8 @@ pub mod mnn_converter;
 #[cfg(feature = "mnn_buffer")]
 pub mod mnn_buffer;
 pub mod warp_engine;
+pub use warp_engine::GpuWarpParams;
+
 pub mod frame_rate;
 pub mod pipeline_builder_smart;
 pub mod pipeline_config;

@@ -1,20 +1,13 @@
-use crate::profile::{PipelineProfile, PipelineLevel, DemosaicQuality, OutputFormat};
+use crate::profile::PipelineProfile;
 use crate::warp_engine::{GpuWarpEngine, GpuWarpParams};
 use crate::engine::{IspEngine, ProcessParams, OutputFormat as EngineOutputFormat};
-use crate::pipeline::{GraphComposer, IspBlock, ProcessPipeline};
-use crate::isp_params::IspParams;
+use crate::pipeline::{GraphComposer, ProcessPipeline};
+
 use crate::postprocess::{PostProcessPipeline, PostProcessConfig};
 use crate::format_convert::FormatConvertEngine;
-use crate::controller::IspController;
-use crate::pipeline::types::{IspFrame, IspAuxOutput};
-use crate::blocks::{RawInputBlock, NormalizeBlock, CfaBlock, BlcBlock, BayerWbBlock, DemosaicCcmBlock, DemosaicBlock, ToneBlock, DisplayBlock, FcsBlock, LdciBlock, EeBlock, UnpackBlock, UnpackCfaBlock, IdentityBlock};
-use crate::postprocess::{PostProcessPipeline, PostProcessConfig};
-use crate::eis::EisEngine;
-use crate::deshake::DeshakeEngine;
-use cam_types::{FrameFormat, ToneParams};
+use crate::isp_controller::IspController;
+use crate::pipeline::types::IspFrame;
 use crate::mnnengine::MnnEngine;
-use crate::controller::IspController;
-use crate::format_convert::FormatConvertEngine;
 use std::time::Instant;
 use log::{info, warn, debug};
 
@@ -90,7 +83,7 @@ impl UnifiedConfig {
     /// Enable GDC with distortion coefficient.
     pub fn with_gdc(mut self, k1: f32) -> Self {
         self.post_config.gdc_enabled = true;
-        self.post_config.gdc_k1 = Some(k1);
+        self.post_config.gdc_strength = k1;
         self
     }
 
@@ -156,7 +149,7 @@ impl UnifiedPipeline {
         let output_format = config.output_format;
 
         // Build pipeline blocks
-        let mut blocks = profile.build_blocks(target_width, bayer_pattern);
+        let mut blocks = profile.build_blocks(target_width, config.bayer_pattern);
         crate::pipeline::GraphComposer::wire_blocks(&mut blocks);
 
         let head = blocks.remove(0);
@@ -170,9 +163,11 @@ impl UnifiedPipeline {
 
         // Initialize GPU warp engine if enabled
         let (gpu_warp_engine, gpu_warp_onnx) = if config.gpu_warp_enabled {
-            match GpuWarpEngine::new() {
+            let warp_w = config.target_width;
+            let warp_h = (warp_w * 9 / 16).max(1);
+            match GpuWarpEngine::new(warp_w, warp_h) {
                 Ok(engine) => {
-                    let onnx = GpuWarpEngine::generate_onnx().ok();
+                    let onnx = Some(GpuWarpEngine::generate_onnx(warp_w, warp_h));
                     (Some(engine), onnx)
                 }
                 Err(e) => {
@@ -185,7 +180,7 @@ impl UnifiedPipeline {
         };
 
         // Initialize format converter
-        let format_converter = if output_format != EngineOutputFormat::FloatRgb {
+        let format_converter = if config.output_format != EngineOutputFormat::FloatRgb {
             Some(FormatConvertEngine::new(0, 0, EngineOutputFormat::FloatRgb))
         } else {
             None
@@ -203,7 +198,7 @@ impl UnifiedPipeline {
             post_pipeline,
             gpu_warp_engine,
             gpu_warp_onnx,
-            format_converter,
+            format_converter: None,
         })
     }
 
@@ -250,7 +245,7 @@ impl UnifiedPipeline {
 
         // 1. ISP processing (GPU) — output FloatRgb [1,3,H,W] f32
         let mut params = ProcessParams::new(width, height, raw_data);
-        params.isp_params = Some(isp_params);
+        params.isp_params = Some(isp_params.clone());
         params.target_width = self.width;
         params.target_height = self.height;
         params.sensor_max = self.config.sensor_max;
@@ -270,16 +265,16 @@ impl UnifiedPipeline {
                         let mut input_copy = vec![0.0f32; n];
                         input_copy.copy_from_slice(&float_data[..n]);
 
-                        match warp_engine.run_into(
+                        match self.gpu_warp_engine.as_ref().unwrap().run(
                             &input_copy,
                             warp_params.gdc_k1,
                             warp_params.gdc_k2,
                             warp_params.gdc_k3,
                             warp_params.eis_dx,
                             warp_params.eis_dy,
-                            &mut float_data[..n],
                         ) {
-                            Ok(_) => {
+                            Ok(warped) => {
+                                *float_data = warped;
                                 info!("GPU warp (float): k1={:.3} k2={:.3} k3={:.3} dx={:.3} dy={:.3} ({:.2}ms)",
                                     warp_params.gdc_k1, warp_params.gdc_k2, warp_params.gdc_k3,
                                     warp_params.eis_dx, warp_params.eis_dy,
@@ -435,7 +430,7 @@ impl UnifiedPipeline {
                     prep_duration_ns: 0,
                     inference_duration_ns: 0,
                     total_duration_ns: 0,
-                }));
+                }).clone());
                 params.target_width = tile_out_w;
                 params.target_height = tile_out_h;
                 params.sensor_max = self.config.sensor_max;
@@ -576,7 +571,7 @@ impl UnifiedPipeline {
         tile_w: u32,
         tile_h: u32,
     ) {
-        let plane_size = (out_width * out_height) as usize;
+        let _plane_size = (out_width * out_height) as usize;
         let tile_plane = (tile_w * tile_h) as usize;
 
         for c in 0..3 {
