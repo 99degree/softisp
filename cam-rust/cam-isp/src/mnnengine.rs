@@ -12,7 +12,6 @@
 //!   4. Read output float32 → BGRA U8
 
 use std::sync::Mutex;
-use std::collections::VecDeque;
 
 use std::time::Instant;
 use std::ffi::CStr;
@@ -54,121 +53,8 @@ impl MnnBackend {
 }
 
 // ── Session Pool (parallel inference) ─────────────────────────────────
-
-/// One session together with its cached extra-input tensor handles.
-#[cfg(feature = "mnn")]
-struct SessionSlot {
-    sess: MnnSessionSafe,
-    tensor_pool: Vec<(String, MnnTensorSafe)>,
-}
-
-/// A pool of N sessions sharing one interpreter.
-/// Threads acquire a slot, use it, release it back.
-///
-/// ⚠ Fields are dropped in declaration order. `slots` (sessions) must be
-/// dropped BEFORE `interp` because session release needs the interpreter.
-#[cfg(feature = "mnn")]
-struct SessionPool {
-    /// Queue of available slots (dropped first — sessions before interpreter).
-    slots: Mutex<VecDeque<SessionSlot>>,
-    /// Shared interpreter (owns the model). Dropped last.
-    interp: MnnInterpreterSafe,
-}
-
-#[cfg(feature = "mnn")]
-impl SessionPool {
-    fn new(interp: MnnInterpreterSafe, backend: MnnBackendType, n: usize, num_threads: i32) -> Result<Self, String> {
-        let extra_names = [
-            "DemosaicCcmBlock/w",
-            "DemosaicCcmBlock/b",
-            "BayerWbBlock/gains",
-            "ToneBlock/contrast",
-            "ToneBlock/brightness",
-            "ToneBlock/gamma_recip",
-            "saturation/scale",
-            "Sharpen/strength",
-            "LdciBlock/strength",
-            "FcsBlock/gain",
-            "FcsBlock/bias",
-            "NormalizeBlock/max_val",
-            "Gamma/inv_gamma",
-            "Gamma/min",
-            "Gamma/max",
-            "Gamma/lift",
-            "Gamma/norm",
-            "AutoContrast/lift",
-            "AutoContrast/half",
-            "AutoContrast/contrast_w",
-            "AutoContrast/zero",
-            "AutoContrast/one",
-            "DisplayBlock/scale",
-            "DisplayBlock/gamma_exp",
-            "DisplayBlock/zero",
-            "DisplayBlock/one",
-        ];
-        let mut slots = VecDeque::with_capacity(n);
-        for _ in 0..n {
-            let sess = interp.create_session(backend, num_threads)
-                .ok_or_else(|| format!("create session {} failed", slots.len()))?;
-            let mut tensor_pool = Vec::new();
-            for name in &extra_names {
-                if let Some(t) = interp.get_input(&sess, name) {
-                    tensor_pool.push((name.to_string(), t));
-                }
-            }
-            slots.push_back(SessionSlot { sess, tensor_pool });
-        }
-        info!("SessionPool: {} slots created with {} extra tensors each", n, slots[0].tensor_pool.len());
-        Ok(Self { interp, slots: Mutex::new(slots) })
-    }
-
-    /// Acquire a slot (blocks until one is free).
-    fn acquire(&self) -> SessionGuard<'_> {
-        loop {
-            if let Some(slot) = self.slots.lock().unwrap().pop_front() {
-                return SessionGuard { pool: self, slot: Some(slot) };
-            }
-            std::thread::yield_now();
-        }
-    }
-
-    /// Return a slot to the pool.
-    fn release(&self, slot: SessionSlot) {
-        self.slots.lock().unwrap().push_back(slot);
-    }
-}
-
-/// RAII guard: automatically returns the slot on drop.
-#[cfg(feature = "mnn")]
-struct SessionGuard<'a> {
-    pool: &'a SessionPool,
-    slot: Option<SessionSlot>,
-}
-
-#[cfg(feature = "mnn")]
-impl<'a> std::ops::Deref for SessionGuard<'a> {
-    type Target = SessionSlot;
-    fn deref(&self) -> &Self::Target {
-        self.slot.as_ref().unwrap()
-    }
-}
-
-#[cfg(feature = "mnn")]
-impl<'a> std::ops::DerefMut for SessionGuard<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.slot.as_mut().unwrap()
-    }
-}
-
-#[cfg(feature = "mnn")]
-impl<'a> Drop for SessionGuard<'a> {
-    fn drop(&mut self) {
-        if let Some(slot) = self.slot.take() {
-            self.pool.release(slot);
-        }
-    }
-}
-
+// SessionPool extracted to mnn_session_pool.rs
+pub(crate) use crate::mnn_session_pool::SessionPool;
 
 // ── Engine ──────────────────────────────────────────────────────────────
 
