@@ -243,7 +243,6 @@ fn main() {
         1,     // tile_count_x
         1,     // tile_count_y
         0,     // tile_overlap
-        cam_isp::engine::OutputFormat::PackedRgb,
     );
     let all_blocks = profile.build_blocks(w, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile
