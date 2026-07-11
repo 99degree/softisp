@@ -9,6 +9,7 @@ use cam_types::ToneParams;
 use crate::ae::AutoExposureState;
 use crate::ccm_engine::{self, select_ccm};
 use crate::scene::SceneCategory;
+use crate::rolling_stats::RollingStats;
 
 /// Smoothing mode for temporal filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,42 +21,6 @@ pub enum SmoothingMode {
 }
 
 // CCM clamp feedback flags — imported from ccm_engine module
-
-/// Rolling statistics from a single inference pass.
-/// Double-buffered in `IspController` (A/B slots) so the engine
-/// can write frame N's stats while the controller reads frame N-1's.
-#[derive(Debug, Clone)]
-pub struct RollingStats {
-    /// RGB channel means `[R, G, B]`
-    pub channel_means: [f32; 3],
-    /// Tone stats: [mean_lum, min_lum, max_lum, clip_frac, shadow_frac, total_px]
-    pub tone_stats: [f32; 6],
-    /// Coarse histogram bins `[16]`
-    pub histogram: [f32; 16],
-    /// Whether histogram has valid data
-    pub histogram_valid: bool,
-    /// Zone RGB means (flattened: rows × cols × 3)
-    pub zone_stats: Vec<Vec<[f32; 3]>>,
-    /// Whether zone stats are initialized
-    pub zone_stats_valid: bool,
-}
-
-impl RollingStats {
-    pub fn new() -> Self {
-        Self {
-            channel_means: [0.5, 0.5, 0.5],
-            tone_stats: [0.0; 6],
-            histogram: [0.0; 16],
-            histogram_valid: false,
-            zone_stats: Vec::new(),
-            zone_stats_valid: false,
-        }
-    }
-}
-
-impl Default for RollingStats {
-    fn default() -> Self { Self::new() }
-}
 
 /// ISP Controller — state container + orchestrator for ISP parameters.
 ///
