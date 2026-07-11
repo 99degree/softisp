@@ -205,6 +205,9 @@ pub struct ToneParams {
     pub black_crush: f32,
     /// White clip (0.0-1.0).
     pub white_clip: f32,
+    /// Optional tone curve LUT (7 control points, from neural model).
+    /// When non-empty, overrides the parametric contrast/brightness/gamma.
+    pub curve_lut: Vec<f32>,
 }
 
 impl Default for ToneParams {
@@ -221,6 +224,7 @@ impl ToneParams {
             gamma: 1.0,
             black_crush: 0.0,
             white_clip: 1.0,
+            curve_lut: Vec::new(),
         }
     }
 
@@ -231,6 +235,17 @@ impl ToneParams {
             gamma: self.gamma + (other.gamma - self.gamma) * t,
             black_crush: self.black_crush + (other.black_crush - self.black_crush) * t,
             white_clip: self.white_clip + (other.white_clip - self.white_clip) * t,
+            curve_lut: if self.curve_lut.is_empty() && other.curve_lut.is_empty() {
+                Vec::new()
+            } else if other.curve_lut.is_empty() {
+                self.curve_lut.clone()
+            } else if self.curve_lut.is_empty() {
+                other.curve_lut.clone()
+            } else {
+                self.curve_lut.iter().zip(other.curve_lut.iter())
+                    .map(|(a, b)| a + (b - a) * t)
+                    .collect()
+            },
         }
     }
 }
