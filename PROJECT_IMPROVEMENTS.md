@@ -16,7 +16,8 @@
 | 10 | **RollingStats embedded in controller.rs** (1293 lines) | Extracted `RollingStats` struct + impl into `rolling_stats.rs` (47 lines). controller.rs reduced to 1258 lines. |
 | 11 | **Error type fragmentation** — `HdrError` separate from `IspError` | Added `From<HdrError> for IspError`. Unified pipeline now uses `.into()` for automatic conversion. |
 | 12 | **Vec-based engine registry** — sorted on every insert, no unregistration | Replaced with `BTreeMap`-based `EngineRegistry` (negated-priority keys + tiebreaker). Added `unregister_engine()` for dynamic plugin management. |
-| 13 | **AWB/CCT methods embedded in controller.rs** (1258 lines) | Extracted `awb_alpha()`, `prior_r/b()`, `estimate_cct()`, `update_channel_stats()`, `get_awb_gains()`, `get_ccm()` into `controller_awb.rs` (219 lines). controller.rs reduced to 1052 lines. Remaining: tone, exposure, zone sub-modules. |
+| 13 | **AWB/CCT/CCM extraction from controller.rs** (1258 lines) | Extracted 631 lines into `controller_awb.rs`, `controller_tone.rs`, `controller_exposure.rs`, `controller_zone.rs`. controller.rs reduced to 708 lines. |
+| 14 | **Rectifier feature compilation broken** — 10 errors (missing imports, missing struct fields, borrow conflict) | Added gated imports for `IspResult`/`log`, fixed `ToneParams` initializer (added `black_crush`/`white_clip`), fixed `DenoiseParams::default()` → `off()`, fixed borrow conflict in `analyze_inner`. `--features mnn,rectifier` now builds with 0 cam-isp errors. |
 
 ## Near-term (High Impact, Low Risk) — Complete ✓
 
