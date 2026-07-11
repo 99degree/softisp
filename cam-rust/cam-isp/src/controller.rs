@@ -243,9 +243,6 @@ impl IspController {
 
     // ── Smoothing mode ──
 
-    fn tone_alpha(&self) -> f32 {
-        if self.frame_count < 10 { 0.5 } else { self.smoothing_alpha }
-    }
 
     // ── Prior CCT estimation ──
 
@@ -266,88 +263,6 @@ impl IspController {
     /// Update tone parameters from per-frame tone statistics.
     ///
     /// `tone_stats` = [mean_luminance, min_luminance, max_luminance]
-    pub fn update_tone_stats(&mut self, tone_stats: &[f32; 3]) {
-        let alpha = self.tone_alpha();
-
-        // Update running averages
-        self.avg_lum_mean += (tone_stats[0] - self.avg_lum_mean) * alpha;
-        self.avg_lum_min += (tone_stats[1] - self.avg_lum_min) * alpha;
-        self.avg_lum_max += (tone_stats[2] - self.avg_lum_max) * alpha;
-
-        // Compute target exposure based on scene luminance
-        let target_lum = 0.18;
-        if self.avg_lum_mean > 0.001 {
-            let ae_gain = (target_lum / self.avg_lum_mean).clamp(0.125, 8.0);
-            self.exposure_gain += (ae_gain - self.exposure_gain) * alpha;
-        }
-
-        // Adjust contrast based on dynamic range
-        let dynamic_range = self.avg_lum_max - self.avg_lum_min;
-        if dynamic_range > 0.01 {
-            let target_contrast = 1.0 + (1.0 - dynamic_range) * 0.5;
-            let contrast = target_contrast.clamp(0.5, 2.0);
-            self.tone_contrast += (contrast - self.tone_contrast) * alpha;
-        }
-
-        // ── Dim-scene aggressiveness factor ──
-        let dim_factor = (((self.avg_lum_mean - 0.05) / 0.15).clamp(0.0, 1.0)).powi(2);
-
-        // ── Exposure gain — exponential target luminance ──
-        let max_gain = 1.0 + dim_factor;
-        let target_lum_base = 0.35 * (1.0 - (-self.avg_lum_mean * 8.0).exp()).max(0.02);
-        let lum_bias = (self.brightness_bias - 0.5) * 0.2; // map 0..1 to -0.1..+0.1
-        let target_lum = (target_lum_base + lum_bias).clamp(0.02, 0.6);
-        let raw_ae_gain = (target_lum / self.avg_lum_mean.max(0.005)).clamp(0.5, max_gain);
-        self.exposure_gain += (raw_ae_gain - self.exposure_gain) * alpha;
-
-        // Blend with histogram-constrained gain
-        let hist_weight = (self.highlight_ratio * 3.0).clamp(0.0, 0.6);
-        let blended_gain = self.exposure_gain * (1.0 - hist_weight) + self.hist_constrained_gain * hist_weight;
-        self.exposure_gain = blended_gain.clamp(0.5, 8.0);
-
-        // ── Brightness ──
-        let max_brightness = dim_factor * 0.03;
-        let eff_mean = (self.avg_lum_mean * self.exposure_gain).min(1.0);
-        let raw_brightness = ((target_lum - eff_mean) * 0.4).clamp(-max_brightness, max_brightness);
-        self.tone_brightness += (raw_brightness - self.tone_brightness) * alpha;
-
-        // ── Contrast ──
-        let dynamic_range = (self.avg_lum_max - self.avg_lum_min).max(0.01);
-        let max_contrast = 1.0 + dim_factor * 0.5;
-        let raw_contrast = (0.85 / dynamic_range).clamp(0.7, max_contrast);
-        self.tone_contrast += (raw_contrast - self.tone_contrast) * alpha;
-
-        // ── Gamma (centered on normalized mid-tone) ──
-        let normalized_mean = if dynamic_range > 0.01 {
-            (self.avg_lum_mean - self.avg_lum_min) / dynamic_range
-        } else {
-            0.5
-        };
-        let gamma_center = 2.2 + 0.6 * (normalized_mean - 0.5);
-        let gamma_floor = if self.avg_lum_mean < 0.2 { 2.0 } else { gamma_center };
-        self.tone_gamma += (gamma_floor.clamp(2.0, 2.6) - self.tone_gamma) * alpha * 0.5;
-
-        // ── S-curve: shadow lift + highlight roll ──
-        let raw_shadow_lift = (0.04 + 0.08 * (-self.avg_lum_mean * 5.0).exp()).clamp(0.02, 0.12);
-        let target_shadow_lift = raw_shadow_lift * dim_factor;
-        let target_highlight_roll = (0.05 + 0.15 * (1.0 - (-self.avg_lum_mean * 3.0).exp())).clamp(0.04, 0.20);
-        self.tone_shadow_lift += (target_shadow_lift - self.tone_shadow_lift) * alpha;
-        self.tone_highlight_roll += (target_highlight_roll - self.tone_highlight_roll) * alpha;
-
-        // ── LSC strength from exposure gain ──
-        let raw_lsc = ((self.exposure_gain - 1.0).clamp(0.0, 1.0)) * 0.5;
-        self.lsc_strength += (raw_lsc - self.lsc_strength) * 0.05;
-
-        // ── Saturation ──
-        let raw_sat = (1.0 + 0.3 * (1.0 - (-self.avg_lum_mean * 4.0).exp())).clamp(1.0, 1.3);
-        self.tone_saturation += (raw_sat - self.tone_saturation) * 0.03;
-
-        // Clamp everything
-        self.sanitize_tone("tone");
-
-        // Scene luminance for display
-        self.scene_luminance = self.avg_lum_mean;
-    }
 
     // ── Histogram update ──
 
@@ -355,33 +270,6 @@ impl IspController {
     ///
     /// `hist` — 256-bin luminance histogram (normalized, sum = 1.0).
     /// Ported from ToneEngine.updateHistogram().
-    pub fn update_histogram(&mut self, hist: &[f32]) {
-        let n_bins = hist.len();
-        if n_bins < 4 { return; }
-
-        // Compute highlight (top 2 bins) and shadow (bottom 2 bins) ratios
-        let hl_ratio = (hist[n_bins - 1] + hist[n_bins - 2]).clamp(0.0, 1.0);
-        let sh_ratio = (hist[0] + hist[1]).clamp(0.0, 1.0);
-
-        let ha = 0.3;
-        self.highlight_ratio += (hl_ratio - self.highlight_ratio) * ha;
-        self.shadow_ratio += (sh_ratio - self.shadow_ratio) * ha;
-
-        // Constrain gain based on highlight/shadow excess
-        let hl_excess = (self.highlight_ratio - 0.05).max(0.0);
-        let hl_gain_reduction = 1.0 / (1.0 + hl_excess * 30.0);
-        let sh_excess = (self.shadow_ratio - 0.30).max(0.0);
-        let sh_gain_boost = 1.0 + sh_excess * 0.5;
-
-        let gain_limit = if hl_excess > 0.02 {
-            (self.hist_constrained_gain * hl_gain_reduction).clamp(0.3, 1.5)
-        } else if sh_excess > 0.0 {
-            (self.hist_constrained_gain * sh_gain_boost).clamp(0.5, 4.0)
-        } else {
-            self.hist_constrained_gain
-        };
-        self.hist_constrained_gain += (gain_limit - self.hist_constrained_gain) * 0.2;
-    }
 
     // ── Getters ──
 
@@ -414,63 +302,19 @@ impl IspController {
     /// Get current CCM matrix (3×3 row-major).
 
     /// Get tone parameters for the ISP pipeline.
-    pub fn get_tone_params(&self) -> cam_types::ToneParams {
-        cam_types::ToneParams {
-            contrast: self.tone_contrast,
-            brightness: self.tone_brightness,
-            gamma_recip: 1.0 / self.tone_gamma,
-            shadow_lift: self.tone_shadow_lift,
-            highlight_roll: self.tone_highlight_roll,
-            sharpness: 1.0,
-            saturation: self.tone_saturation,
-        }
-    }
 
     /// Get effective exposure gain (histogram-constrained × AE gain).
-    pub fn get_effective_exposure_gain(&self) -> f32 {
-        self.exposure_gain * self.hist_constrained_gain
-    }
 
     /// Get LSC (lens shading correction) strength.
-    pub fn get_lsc_strength(&self) -> f32 {
-        self.lsc_strength
-    }
 
     /// Compute exposure time + ISO from current scene stats.
     /// Delegates to AutoExposureState using internally-tracked luminance, histogram, and brightness bias.
-    pub fn compute_exposure(&mut self, brightness_bias: f32) -> (i64, i32) {
-        let lum = if self.avg_lum_mean > 0.001 { self.avg_lum_mean } else { self.scene_luminance };
-        let (exp_ns, iso) = self.ae_state.compute(lum, self.highlight_ratio, self.shadow_ratio, brightness_bias);
-        self.exposure_time_ns = exp_ns;
-        self.analog_gain = iso as f32 / self.ae_state.base_iso as f32;
-        (exp_ns, iso)
-    }
 
     /// Get current effective brightness as normalized 0..1.
-    pub fn get_brightness(&self) -> f32 {
-        let ev_range = 4.0;
-        let ev_offset = (self.exposure_gain.max(0.25) as f64).ln() / (2.0f64).ln();
-        (0.5 + ev_offset / ev_range).clamp(0.0, 1.0) as f32
-    }
 
     /// Set brightness (normalized 0..1, 0.5 = default).
     /// In auto-tune mode, only sets brightness_bias for the AE loop.
     /// In manual mode, directly sets exposure_gain and tone_brightness.
-    pub fn set_brightness(&mut self, value: f32, auto_tune: bool) {
-        let v = value.clamp(0.0, 1.0);
-        self.brightness_bias = v;
-        self.last_applied_brightness = v;
-        if auto_tune {
-            return; // Bias picked up by AE loop next frame
-        }
-        let ev_range = 4.0;
-        let ev_offset = (v - 0.5) * ev_range;
-        let gain = (ev_offset as f64 * std::f64::consts::LN_2).exp() as f32;
-        self.exposure_gain = gain.clamp(0.25, 8.0);
-        let tone_brightness_range = 0.3;
-        let tone_offset = (v - 0.5) * tone_brightness_range;
-        self.tone_brightness = tone_offset.clamp(-tone_brightness_range / 2.0, tone_brightness_range / 2.0);
-    }
 
     // ── Manual overrides ──
 
@@ -486,49 +330,11 @@ impl IspController {
         self.ccm_matrix = *ccm;
     }
 
-    pub fn set_manual_gamma(&mut self, gamma: f32) {
-        self.tone_gamma = gamma.clamp(0.5, 4.0);
-    }
 
-    pub fn set_manual_contrast(&mut self, contrast: f32) {
-        self.tone_contrast = contrast.clamp(0.5, 2.0);
-    }
 
-    pub fn set_manual_exposure_gain(&mut self, gain: f32) {
-        self.exposure_gain = gain.clamp(0.5, 8.0);
-    }
 
     /// Goalkeeper: validate & clamp all tone / AWB parameters.
     /// Ported from ToneEngine.sanitizeTone().
-    pub fn sanitize_tone(&mut self, tag: &str) {
-        let clamped = false;
-
-        // AWB gains
-        self.awb_gains[0] = self.awb_gains[0].clamp(0.5, 3.0);
-        self.awb_gains[1] = 1.0;
-        self.awb_gains[2] = self.awb_gains[2].clamp(0.5, 3.0);
-
-        // Tone params
-        self.tone_gamma = self.tone_gamma.clamp(0.5, 4.0);
-        self.tone_contrast = self.tone_contrast.clamp(0.5, 2.0);
-        self.tone_brightness = self.tone_brightness.clamp(-0.3, 0.3);
-        self.tone_shadow_lift = self.tone_shadow_lift.clamp(0.0, 0.25);
-        self.tone_highlight_roll = self.tone_highlight_roll.clamp(0.0, 0.30);
-        self.exposure_gain = self.exposure_gain.clamp(0.5, 8.0);
-        self.tone_saturation = self.tone_saturation.clamp(0.7, 1.6);
-        self.lsc_strength = self.lsc_strength.clamp(0.0, 1.0);
-
-        if clamped {
-            log::warn!(
-                "ToneGuard {}: γ={:.2} c={:.2} b={:.3} sl={:.3} hr={:.3} exp={:.2} sat={:.2} lsc={:.2} awb=[{:.2},{:.2}]",
-                tag,
-                self.tone_gamma, self.tone_contrast, self.tone_brightness,
-                self.tone_shadow_lift, self.tone_highlight_roll,
-                self.exposure_gain, self.tone_saturation, self.lsc_strength,
-                self.awb_gains[0], self.awb_gains[2],
-            );
-        }
-    }
 
     /// Reset all state to defaults.
     pub fn reset(&mut self) {
@@ -539,160 +345,10 @@ impl IspController {
 
     /// Initialize zone stats grid with given dimensions.
     /// Call this once before feeding zone stats.
-    pub fn init_zone_stats(&mut self, rows: usize, cols: usize) {
-        self.zone_rows = rows;
-        self.zone_cols = cols;
-        let n = rows * cols;
-
-        // Build center-weighted zone weights
-        let mut w = vec![0.0f32; n];
-        for r in 0..rows {
-            for c in 0..cols {
-                let i = r * cols + c;
-                let cc = c >= cols / 2 - 1 && c <= cols / 2;  // center columns
-                let cr = r >= rows / 2 - 1 && r <= rows / 2;  // center rows
-                w[i] = if cr && cc { 4.0 } else if cr || cc { 2.0 } else { 1.0 };
-            }
-        }
-        let sum: f32 = w.iter().sum();
-        if sum > 0.0 {
-            for v in w.iter_mut() { *v /= sum; }
-        }
-        self.zone_weight = w;
-
-        // Initialize per-zone arrays
-        self.zone_rgb = vec![vec![[0.0f32; 3]; cols]; rows];
-        self.zone_lum = vec![vec![0.0f32; cols]; rows];
-        self.zone_cct = vec![vec![5500.0f32; cols]; rows];
-        self.smoothed_zone_cct = vec![vec![5500.0f32; cols]; rows];
-        self.zone_cct_initialized = false;
-        self.zone_stats_enabled = true;
-    }
 
     /// Update zone stats from per-zone RGB means.
     /// `zone_stats` should have length zone_rows * zone_cols * 3,
     /// with RGB values in `[0, 1]` interleaved per zone (row-major).
-    pub fn update_zone_stats(&mut self, zone_stats: &[f32]) {
-        if !self.zone_stats_enabled { return; }
-        let expected = self.zone_rows * self.zone_cols * 3;
-        if zone_stats.len() < expected { return; }
-
-        let min_rgb = 0.001;
-        let mut idx = 0;
-        let mut warm_c = 0;
-        let mut mid_c = 0;
-        let mut cool_c = 0;
-        let mut valid_z = 0;
-        let mut t_r = 0.0f64;
-        let mut t_g = 0.0f64;
-        let mut t_b = 0.0f64;
-        let mut t_w = 0.0f64;
-
-        self.zone_rgb.clear();
-        self.zone_lum.clear();
-        self.zone_cct.clear();
-
-        for r in 0..self.zone_rows {
-            let mut rgb_row = Vec::with_capacity(self.zone_cols);
-            let mut lum_row = Vec::with_capacity(self.zone_cols);
-            let mut cct_row = Vec::with_capacity(self.zone_cols);
-
-            for c in 0..self.zone_cols {
-                let rz = zone_stats[idx].max(min_rgb);
-                let gz = zone_stats[idx + 1].max(min_rgb);
-                let bz = zone_stats[idx + 2].max(min_rgb);
-                idx += 3;
-
-                rgb_row.push([rz, gz, bz]);
-                let y = 0.299 * rz + 0.587 * gz + 0.114 * bz;
-                lum_row.push(y);
-
-                let w_idx = r * self.zone_cols + c;
-                let w = self.zone_weight.get(w_idx).copied().unwrap_or(1.0) as f64;
-                t_r += rz as f64 * w;
-                t_g += gz as f64 * w;
-                t_b += bz as f64 * w;
-                t_w += w;
-
-                // Compute per-zone CCT
-                if gz > min_rgb && rz > min_rgb && bz > min_rgb {
-                    let rg = rz / gz;
-                    let bg = bz / gz;
-                    let cct_val = Self::estimate_cct(rg, bg) as f32;
-                    cct_row.push(cct_val);
-
-                    // Smooth temporal zone CCT
-                    if self.zone_cct_initialized {
-                        let prev = self.smoothed_zone_cct[r][c];
-                        self.smoothed_zone_cct[r][c] = prev + (cct_val - prev) * 0.3;
-                    } else {
-                        self.smoothed_zone_cct[r][c] = cct_val;
-                    }
-                    let smoothed = self.smoothed_zone_cct[r][c];
-                    if smoothed < 4000.0 {
-                        warm_c += 1;
-                    } else if smoothed > 5500.0 {
-                        cool_c += 1;
-                    } else {
-                        mid_c += 1;
-                    }
-                    valid_z += 1;
-                } else {
-                    cct_row.push(5500.0);
-                }
-            }
-
-            self.zone_rgb.push(rgb_row);
-            self.zone_lum.push(lum_row);
-            self.zone_cct.push(cct_row);
-        }
-
-        self.zone_cct_initialized = true;
-
-        // ── Zone-weighted AWB ──
-        if t_w > 0.001 {
-            let wr = (t_r / t_w) as f32;
-            let wg = (t_g / t_w) as f32;
-            let wb = (t_b / t_w) as f32;
-            if wg > min_rgb {
-                let r_gain = (wg * self.target_r / wr).clamp(0.5, 3.0);
-                let b_gain = (wg * self.target_b / wb).clamp(0.5, 3.0);
-                let alpha_awb = self.awb_alpha();
-                self.awb_gains[0] += (r_gain - self.awb_gains[0]) * alpha_awb;
-                self.awb_gains[2] += (b_gain - self.awb_gains[2]) * alpha_awb;
-            }
-        }
-
-        // ── Multi-illuminant cluster detection ──
-        if valid_z >= 6 {
-            let total = (warm_c + mid_c + cool_c) as f32;
-            let max_c = warm_c.max(mid_c).max(cool_c);
-            self.dominant_cct_cluster = if max_c == warm_c {
-                Some(0)
-            } else if max_c == mid_c {
-                Some(1)
-            } else {
-                Some(2)
-            };
-
-            // Check for mixed illumination
-            let mut sorted = [warm_c, mid_c, cool_c];
-            sorted.sort_by(|a, b| b.cmp(a));
-            if sorted.len() >= 2 && (sorted[1] as f32 / total) > 0.20
-                && (sorted[0] as f32) < 0.80 * total
-            {
-                self.dominant_cct_cluster = Some(-1); // Mixed
-            }
-            self.dominant_cluster_fraction = max_c as f32 / total;
-        }
-
-        log::debug!(
-            "ZoneStats: w={} m={} c={} cluster={:?} frac={:.2}",
-            warm_c, mid_c, cool_c,
-            self.dominant_cct_cluster,
-            self.dominant_cluster_fraction
-        );
-    }
 
     // ── ControllerApi ONNX override methods ──
 
