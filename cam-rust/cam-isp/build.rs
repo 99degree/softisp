@@ -41,8 +41,10 @@ fn main() {
     #[cfg(feature = "mnn")]
     link_mnn();
 
-    #[cfg(feature = "mnn")]
-    link_mnnconvert();
+    // Note: static linker for MNNConvertDeps was removed.
+    // Converter now runs as a subprocess (MNNConvert binary)
+    // to isolate MNN's C++ global state from the inference runtime.
+    // See cam-isp/src/mnn_converter.rs for the subprocess implementation.
 
     // Emit NDK linker flags for Android targets
     setup_ndk_linker();
