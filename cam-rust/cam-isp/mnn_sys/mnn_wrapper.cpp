@@ -335,7 +335,7 @@ extern "C" int mnn_run_true_zero_copy(
     if (!output) return -1;
     auto host = output->host<float>();
     auto elements = output->elementSize();
-    size_t count = elements < (size_t)max_out ? elements : (size_t)max_out;
+    size_t count = (size_t)elements < (size_t)max_out ? (size_t)elements : (size_t)max_out;
     std::memcpy(out_data, host, count * sizeof(float));
     return 0;
 }
