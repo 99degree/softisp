@@ -64,6 +64,7 @@ pub mod scene;
 pub mod r#match;
 pub mod predictor;
 pub mod regression;
+pub mod rolling_stats;
 pub mod store;
 pub mod genetic;
 pub mod demosaic;
