@@ -7,6 +7,10 @@
 use crate::isp_params::*;
 use crate::isp_controller::IspController;
 use crate::pipeline::IspFrame;
+#[cfg(feature = "rectifier")]
+use crate::error::IspResult;
+#[cfg(feature = "rectifier")]
+use log::{info, warn};
 
 /// Neural controller with fallback to rule-based controller.
 pub struct NeuralController {
@@ -125,10 +129,13 @@ impl NeuralController {
     
     #[cfg(feature = "rectifier")]
     fn analyze_inner(&mut self, frame: &IspFrame) -> IspParams {
+        // Extract metadata first (borrows self immutably)
+        let metadata = self.extract_metadata(frame);
+        
         if let Some(ref mut rectifier) = self.rectifier {
-            match self.extract_metadata(frame) {
-                Ok(metadata) => {
-                    match rectifier.optimize(&metadata) {
+            match metadata {
+                Ok(meta) => {
+                    match rectifier.optimize(&meta) {
                         Ok(optimized) => {
                             info!("NeuralController: neural model succeeded");
                             self.params_from_optimized(&optimized)
@@ -235,11 +242,13 @@ impl NeuralController {
                 contrast: 1.0,
                 brightness: 0.0,
                 gamma: 1.0,
+                black_crush: 0.0,
+                white_clip: 1.0,
                 curve_lut: optimized.tone_curve_lut.clone(),
             },
             saturation: SaturationParams::default(),
             sharpen: SharpenParams::default(),
-            denoise: DenoiseParams::default(),
+            denoise: DenoiseParams::off(),
             lens: LensParams::default(),
             display: DisplayParams::default(),
             zoom: optimized.zoom_factor,

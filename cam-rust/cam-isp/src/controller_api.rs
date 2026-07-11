@@ -54,7 +54,7 @@ impl Controller {
     /// Create neural controller with model.
     pub fn neural_with_model(_model_path: &str) -> Self {
         #[cfg(feature = "rectifier")]
-        { Self::Neural(Box::new(crate::neural_controller::NeuralController::with_model(model_path))) }
+        { Self::Neural(Box::new(crate::neural_controller::NeuralController::with_model(_model_path))) }
         #[cfg(not(feature = "rectifier"))]
         { Self::Neural(Box::default()) }
     }
