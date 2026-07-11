@@ -16,6 +16,65 @@ use crate::mnn::mnn_sys::{
 #[cfg(feature = "mnn")]
 use crate::mnn::mnn_converter::{convert_onnx_to_mnn, MnnConvertOptions};
 
+/// Parameters for GPU warp (GDC + EIS).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GpuWarpParams {
+    /// GDC radial distortion coefficient k1
+    pub gdc_k1: f32,
+    /// GDC radial distortion coefficient k2
+    pub gdc_k2: f32,
+    /// GDC radial distortion coefficient k3
+    pub gdc_k3: f32,
+    /// EIS horizontal displacement in normalized [-1,1] coords
+    pub eis_dx: f32,
+    /// EIS vertical displacement in normalized [-1,1] coords
+    pub eis_dy: f32,
+}
+
+impl GpuWarpParams {
+    /// Create identity (no warp) parameters.
+    pub fn identity() -> Self {
+        Self {
+            gdc_k1: 0.0,
+            gdc_k2: 0.0,
+            gdc_k3: 0.0,
+            eis_dx: 0.0,
+            eis_dy: 0.0,
+        }
+    }
+
+    /// Create GDC parameters with given k1, k2, k3.
+    pub fn gdc(k1: f32, k2: f32, k3: f32) -> Self {
+        Self {
+            gdc_k1: k1,
+            gdc_k2: k2,
+            gdc_k3: k3,
+            eis_dx: 0.0,
+            eis_dy: 0.0,
+        }
+    }
+
+    /// Create EIS parameters with given displacement.
+    pub fn eis(dx: f32, dy: f32) -> Self {
+        Self {
+            gdc_k1: 0.0,
+            gdc_k2: 0.0,
+            gdc_k3: 0.0,
+            eis_dx: dx,
+            eis_dy: dy,
+        }
+    }
+
+    /// Check if any warp is needed (non-identity).
+    pub fn needs_warp(&self) -> bool {
+        self.gdc_k1.abs() > 1e-6
+            || self.gdc_k2.abs() > 1e-6
+            || self.gdc_k3.abs() > 1e-6
+            || self.eis_dx.abs() > 1e-6
+            || self.eis_dy.abs() > 1e-6
+    }
+}
+
 /// GPU warp engine — separate MNN session for GDC+EIS warp.
 #[cfg(feature = "mnn")]
 pub struct GpuWarpEngine {
@@ -62,6 +121,48 @@ impl GpuWarpEngine {
             height,
             initialized: true,
         })
+    }
+
+    /// Create a new warp engine with a default ONNX model for the given dimensions.
+    pub fn new(width: u32, height: u32) -> IspResult<Self> {
+        let onnx = Self::generate_onnx(width, height);
+        Self::from_onnx(&onnx, width, height)
+    }
+
+    /// Generate a default ONNX model for GDC+EIS warp.
+    pub fn generate_onnx(width: u32, height: u32) -> Vec<u8> {
+        // Generate a simple ONNX model for GDC+EIS warp
+        use crate::onnx::proto::Proto;
+
+        // Build the graph components
+        let input_proto = Proto::value_info("input", &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3), Proto::tensor_dim_value(height as i64), Proto::tensor_dim_value(width as i64)], 1);
+        let output_proto = Proto::value_info("output", &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3), Proto::tensor_dim_value(height as i64), Proto::tensor_dim_value(width as i64)], 1);
+
+        // Constants for k1, k2, k3, eis_x, eis_y
+        let k1_init = Proto::tensor_proto_float_scalar("k1", 0.0);
+        let k2_init = Proto::tensor_proto_float_scalar("k2", 0.0);
+        let k3_init = Proto::tensor_proto_float_scalar("k3", 0.0);
+        let eis_x_init = Proto::tensor_proto_float_scalar("eis_x", 0.0);
+        let eis_y_init = Proto::tensor_proto_float_scalar("eis_y", 0.0);
+
+        // GridSample node for warp
+        let nodes = vec![
+            Proto::node("GridSample", &["input", "grid"], &["output"], &[
+                Proto::attribute_string("mode", "bilinear"),
+                Proto::attribute_string("padding_mode", "zeros"),
+                Proto::attribute_string("align_corners", "1"),
+            ]),
+        ];
+        // Graph inputs (ValueInfoProto) and initializers (TensorProto)
+        let inputs = vec![input_proto];
+        let outputs = vec![output_proto];
+        let initializers = vec![k1_init, k2_init, k3_init, eis_x_init, eis_y_init];
+        let value_info = vec![];
+
+        let graph = Proto::graph("GpuWarpGraph", &nodes, &inputs, &outputs, &initializers, &value_info);
+        let opset = Proto::opset("", 13);
+        let model = Proto::model(13, &opset, "softisp", &graph);
+        model
     }
 
     /// Run warp inference into a pre-allocated output buffer.
@@ -120,6 +221,7 @@ impl GpuWarpEngine {
         self.set_const_f32("GpuWarp/gdc_k3", k3);
 
         // Set EIS grid
+        let n = (self.width * self.height) as usize;
         let eis_grid_x: Vec<f32> = vec![eis_x; n];
         let eis_grid_y: Vec<f32> = vec![eis_y; n];
         self.set_const_f32_grid("GpuWarp/eis_x", &eis_grid_x, h, w);
@@ -266,3 +368,4 @@ mod tests {
         assert!(engine.is_ok(), "Build failed: {:?}", engine.err());
     }
 }
+
