@@ -345,7 +345,7 @@ impl HdrWorker {
         let tonemapped = self.tone_map(&merged)?;
 
         // 5. Encode (placeholder for JPEG/HEIC)
-        let encoded = self.encode(&tonemapped, 95)?;
+        let encoded = self.encode(&tonemapped, 95, w, h)?;
 
         Ok(EnhancedFrame {
             data: encoded,
@@ -524,18 +524,20 @@ impl HdrWorker {
     /// Encode merged frame to JPEG/HEIC.
     /// Placeholder: writes PPM format for now.
     /// Future: use libjpeg-turbo or Android Bitmap API.
-    fn encode(&self, frame: &[u8], _quality: u8) -> Result<Vec<u8>, HdrError> {
+    fn encode(&self, frame: &[u8], _quality: u8, width: u32, height: u32) -> Result<Vec<u8>, HdrError> {
         let pixel_count = frame.len() / 4;
+        if pixel_count != (width * height) as usize {
+            // Try to recover: use pixel_count dimensions
+            let w = (pixel_count as f32).sqrt() as u32;
+            let h = (pixel_count / w.max(1) as usize) as u32;
+            return self.encode(frame, _quality, w, h);
+        }
 
         // Simple PPM encoding (R, G, B only, no alpha)
         let mut ppm = Vec::new();
         // PPM header
         ppm.extend_from_slice(b"P6\n");
-        // Width and height (approximate from data length)
-        // Without known dimensions, use square root heuristic
-        let w = (pixel_count as f32).sqrt() as u32;
-        let h = (pixel_count / w as usize) as u32;
-        ppm.extend_from_slice(format!("{} {}\n255\n", w, h).as_bytes());
+        ppm.extend_from_slice(format!("{} {}\n255\n", width, height).as_bytes());
 
         // RGB data (skip alpha)
         for i in 0..pixel_count {
