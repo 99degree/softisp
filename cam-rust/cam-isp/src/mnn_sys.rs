@@ -542,15 +542,6 @@ extern "C" {
         preserve_input_type: i32,
         result: *mut MnnConvertResult,
     );
-
-    /// Count ops in an MNN model file. Returns total op count.
-    /// Prints per-op breakdown to stderr.
-    pub fn mnn_inspect_model_ops(
-        mnn_path: *const c_char,
-        extra_count: *mut i32,
-        conv_count: *mut i32,
-        other_count: *mut i32,
-    ) -> i32;
 }
 
 // ── Vulkan Workgroup Configuration ────────────────────────────────────────
