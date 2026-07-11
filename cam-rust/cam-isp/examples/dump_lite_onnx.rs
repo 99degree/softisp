@@ -10,26 +10,19 @@ fn main() {
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
 
-    let graph = onnx.graph.as_ref().unwrap();
     eprintln!("=== LITE ONNX Graph ===");
-    eprintln!("Nodes: {}", graph.node.len());
-    for (idx, node) in graph.node.iter().enumerate() {
-        let inputs: Vec<&str> = node.input.iter().map(|s| s.as_str()).collect();
-        let outputs: Vec<&str> = node.output.iter().map(|s| s.as_str()).collect();
-        eprintln!("  [{}] {} in=[{}] out=[{}]",
-            idx, node.op_type, inputs.join(","), outputs.join(","));
+    eprintln!("ONNX model size: {} bytes", onnx.len());
+    eprintln!("Block chain:");
+    for (idx, blk) in block_refs.iter().enumerate() {
+        let ins = blk.input_tensors().join(",");
+        let outs = blk.output_tensors().join(",");
+        eprintln!("  [{}] {} in=[{}] out=[{}]", idx, blk.id(), ins, outs);
     }
-    eprintln!("Inputs: {}", graph.input.len());
-    for inp in &graph.input {
-        let dims: Vec<i64> = inp.r#type.as_ref()
-            .and_then(|t| t.tensor_type.as_ref())
-            .and_then(|tt| tt.shape.as_ref())
-            .map(|s| s.dim.iter().map(|d| d.dim_value).collect())
-            .unwrap_or_default();
-        eprintln!("  {} {:?}", inp.name, dims);
-    }
-    eprintln!("Outputs: {}", graph.output.len());
-    for out in &graph.output {
-        eprintln!("  {}", out.name);
-    }
+    
+    // Pipeline summary
+    eprintln!("\nPipeline summary:");
+    eprintln!("  {} blocks, {} nodes, {} bytes ONNX",
+        block_refs.len(),
+        block_refs.iter().map(|b| b.nodes().len()).sum::<usize>(),
+        onnx.len());
 }
