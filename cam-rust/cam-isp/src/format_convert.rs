@@ -17,8 +17,7 @@
 use crate::engine::OutputFormat;
 #[cfg(feature = "mnn")]
 use crate::onnx::proto::Proto;
-#[allow(unused_imports)]
-use log::{info, warn};
+use log::info;
 
 /// GPU-accelerated format converter.
 ///
