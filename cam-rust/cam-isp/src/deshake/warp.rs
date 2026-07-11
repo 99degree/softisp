@@ -163,7 +163,7 @@ mod tests {
         let rgb = vec![0.5f32; 100 * 100 * 3];
         let warped = apply_warp_rgb_f32(&rgb, 100, 100, 0.0, 0.0, 0.0);
         // Center pixel should be unchanged
-        let n = 10000;
+        let _n = 10000;
         let center = 50 * 100 + 50;
         assert!((warped[center] - 0.5).abs() < 0.01);
     }
