@@ -6,6 +6,7 @@
 #![allow(clippy::needless_range_loop)] // ISP loops are clearer with explicit indices
 #![allow(clippy::too_many_arguments)] // ISP pipeline functions require all parameters
 #![allow(clippy::arc_with_non_send_sync)] // Internal Arc usage for single-threaded buffers
+#![allow(rustdoc::broken_intra_doc_links)] // Tensor shape [1,3,H,W] are not links
 
 pub mod engine;
 pub mod error;
