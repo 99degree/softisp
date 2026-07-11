@@ -230,6 +230,20 @@ fn main() {
         0,     // stats_downscale_max
         0,     // pipeline_downscale_target
         0.0,   // eis_margin
+        false, // use_bilateral
+        true,  // use_saturation
+        false, // use_vignetting
+        false, // use_colorspace
+        false, // use_gamma
+        false, // use_sharpen
+        false, // use_wavelet_denoise
+        false, // use_auto_contrast
+        true,  // use_normalize
+        false, // use_tiled_rendering
+        1,     // tile_count_x
+        1,     // tile_count_y
+        0,     // tile_overlap
+        cam_isp::engine::OutputFormat::PackedRgb,
     );
     let all_blocks = profile.build_blocks(w, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile
