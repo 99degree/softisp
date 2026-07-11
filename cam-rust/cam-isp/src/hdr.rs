@@ -220,6 +220,29 @@ impl HdrCaptureQueue {
     pub fn submit(&self, request: HdrCaptureRequest) -> Result<(), HdrError> {
         self.tx.send(request).map_err(|_| HdrError::QueueFull)
     }
+
+    /// Convenience: submit frames directly, returns a receiver for the result.
+    pub fn submit_frames(
+        &self,
+        frames: Vec<HdrFrame>,
+    ) -> Result<std::sync::mpsc::Receiver<Result<EnhancedFrame, HdrError>>, HdrError> {
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let request = HdrCaptureRequest {
+            frames,
+            metadata: CaptureMetadata {
+                timestamp_ns: 0,
+                scene_brightness: 0.5,
+            },
+            response_tx,
+        };
+        self.submit(request)?;
+        Ok(response_rx)
+    }
+
+    /// Get the expected number of frames per capture.
+    pub fn frames_per_capture(&self) -> usize {
+        self.frames_per_capture
+    }
 }
 
 impl Drop for HdrCaptureQueue {
@@ -708,7 +731,7 @@ mod tests {
 
         // Verify output is within [0, 255]
         for &b in &result {
-            assert!(b <= 255, "Pixel value out of range: {}", b as u16);
+            let _ = b; // u8 always in [0, 255]
         }
     }
 
