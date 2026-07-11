@@ -9,35 +9,19 @@
 | 3 | **Doc warnings** — 15 `rustdoc::broken_intra_doc_links` warnings from tensor shapes `[1,3,H,W]` being parsed as link references | Added `#![allow(rustdoc::broken_intra_doc_links)]` + escaped brackets in warp_engine.rs |
 | 4 | **Build warnings** — 3 unused variables/imports | Removed dead `LUT_MASK`, unused `warn!` import, unused `_n` |
 | 5 | **HDR EV passed but ignored** — `_ev: f32` was received but frames always got `ev: 0.0` | Stored EV in `HdrFrame.ev`, sorted by EV before submitting |
+| 6 | **SessionPool monolithic in mnnengine.rs** (1504 lines) | Extracted SessionPool/SessionGuard/SessionSlot into `mnn_session_pool.rs` (155 lines). mnnengine.rs reduced to 1390 lines. |
+| 7 | **Profile builder monolithic in profile.rs** (1047 lines) | Extracted `build_blocks()`, `build_aux_blocks()`, `block_count()`, `node_estimate()` into `profile_builder.rs` (306 lines). profile.rs reduced to 680 lines. |
+| 8 | **HDR PPM encode wrong dimensions** — sqrt heuristic for non-square frames | `encode()` now takes `width`/`height` from frame metadata. |
+| 9 | **MNN converter temp file leak risk** — `mkstemp` files could leak if process crashes mid-conversion | RAII `TempFileGuard` class auto-unlinks on destruction. Global registry with `atexit` + signal handlers (SIGINT/SIGTERM/SIGABRT). Thread-safe. |
 
-## Near-term (High Impact, Low Risk)
+## Near-term (High Impact, Low Risk) — Complete ✓
 
-### 1. Extract `SessionPool` from `mnnengine.rs` (1504 → ~module)
-`mnnengine.rs` contains three concerns in one file:
-- `SessionPool` (session reuse, acquire/release, multi-slot)
-- `MnnEngine` (build/inference orchestration, ~700 lines)
-- `bench_one` / `norm` (benchmarking helpers)
+All 4 near-term items completed:
 
-**Plan:** Move `SessionPool` (lines 79-165) and `SessionGuard` into `mnn_session_pool.rs`. Keep `MnnEngine` and `IspEngine` impl in `mnnengine.rs`. Remove `bench_one` if unused.
-
-**Files:** `cam-isp/src/mnn_session_pool.rs` (new), `cam-isp/src/mnnengine.rs` (simplified)
-
-### 2. Extract `build_blocks()` from `profile.rs` (1047 → ~module)
-`profile.rs` mixes profile constants (7 static `PipelineProfile` values) with the `build_blocks()` method (~500 lines of block construction + wiring logic).
-
-**Plan:** Move `build_blocks()` and `build_aux_blocks()` into `profile_builder.rs`. Profile constants stay in `profile.rs`.
-
-**Files:** `cam-isp/src/profile_builder.rs` (new)
-
-### 3. FloatRgb path for HDRWorker encoding
-The `encode()` function writes PPM with dimensions derived from pixel count (`sqrt` heuristic), which is wrong for non-square frames. Should use `IspFrame.width` / `height` from the HDR frame metadata.
-
-**Plan:** Change `encode()` to accept `width`/`height` from the merged frame dimensions, remove the sqrt heuristic.
-
-### 4. MNN converter temp file hardening
-`mkstemp`-based temp files in `mnn_convert_api.cpp` can leak if the converter process crashes mid-conversion.
-
-**Plan:** Add `atexit` cleanup handler + signal-safe temp file tracking. Or switch to `memfd_create` for non-Android platforms.
+1. ✅ **SessionPool extraction** — `mnn_session_pool.rs` with `SessionPool`, `SessionGuard`, `SessionSlot`. Same interface, smaller file.
+2. ✅ **Profile builder extraction** — `profile_builder.rs` with `build_blocks()`, `build_aux_blocks()`, `block_count()`, `node_estimate()`.
+3. ✅ **HDR encode dimension fix** — `encode()` now accepts `width`/`height` from frame metadata, no sqrt heuristic.
+4. ✅ **MNN converter temp file hardening** — RAII `TempFileGuard` + global registry + signal handlers.
 
 ## Medium-term (Architecture)
 
@@ -84,13 +68,17 @@ Train a lightweight CNN for multi-exposure fusion:
 
 ## Metrics
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| Build warnings | 0 | 0 |
-| Doc warnings | 0 | 0 |
-| Test pass rate | 734/734 | 734/734 |
-| HDR merge latency (FHD) | ~5ms CPU | <1ms GPU |
-| HDR align latency | 0ms (noop) | <3ms (optical flow) |
-| mnnengine.rs lines | 1504 | <800 |
-| controller.rs lines | 1293 | <400 per module |
-| profile.rs lines | 1047 | <300 + builder |
+| Metric | Before | After | Target |
+|--------|--------|-------|--------|
+| Build warnings | 0 | 0 | 0 |
+| Doc warnings | 0 | 0 | 0 |
+| Test pass rate | 734/734 | 734/734 | 734/734 |
+| HDR merge latency (FHD) | ~5ms CPU | ~5ms CPU | <1ms GPU |
+| HDR align latency | 0ms (noop) | 0ms (noop) | <3ms (optical flow) |
+| mnnengine.rs lines | 1504 | 1390 | <800 |
+| mnn_session_pool.rs lines | — | 155 (new) | — |
+| controller.rs lines | 1293 | 1293 | <400 per module |
+| profile.rs lines | 1047 | 680 | <300 + builder |
+| profile_builder.rs lines | — | 306 (new) | — |
+| hdr.rs lines | 756 | 747 | <500 |
+| mnn_convert_api.cpp temp safety | manual unlink | RAII + atexit + signals | no leaks |
