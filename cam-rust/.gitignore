@@ -4,3 +4,6 @@
 cam-isp/lib/
 lib/**/libmnn_wrapper.a
 .mnn_last_pipeline.onnx
+# MNN converter temp files (mkstemp pattern)
+mnn_onnx_*
+mnn_out_*
