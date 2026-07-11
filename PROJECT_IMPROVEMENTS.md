@@ -16,6 +16,7 @@
 | 10 | **RollingStats embedded in controller.rs** (1293 lines) | Extracted `RollingStats` struct + impl into `rolling_stats.rs` (47 lines). controller.rs reduced to 1258 lines. |
 | 11 | **Error type fragmentation** — `HdrError` separate from `IspError` | Added `From<HdrError> for IspError`. Unified pipeline now uses `.into()` for automatic conversion. |
 | 12 | **Vec-based engine registry** — sorted on every insert, no unregistration | Replaced with `BTreeMap`-based `EngineRegistry` (negated-priority keys + tiebreaker). Added `unregister_engine()` for dynamic plugin management. |
+| 13 | **AWB/CCT methods embedded in controller.rs** (1258 lines) | Extracted `awb_alpha()`, `prior_r/b()`, `estimate_cct()`, `update_channel_stats()`, `get_awb_gains()`, `get_ccm()` into `controller_awb.rs` (219 lines). controller.rs reduced to 1052 lines. Remaining: tone, exposure, zone sub-modules. |
 
 ## Near-term (High Impact, Low Risk) — Complete ✓
 
@@ -28,18 +29,20 @@ All 4 near-term items completed:
 
 ## Medium-term (Architecture)
 
-### 5. Split `IspController` (1258 lines) into domain modules
-`controller.rs` contains AE, AWB, AF, CCM, tone all in one impl struct. `RollingStats` extracted to own file. Core 3A logic (AWB/CCT estimation, tone curve, zone stats) still inline.
+### 5. Split `IspController` (1052 lines + 219 in sub-modules) ✅ **In Progress**
 
-**Done:** ✅ `rolling_stats.rs` extracted (47 lines)
-**Remaining:** ~1200 lines of AWB/CCT/zone/ONNX methods
+**Done:**
+- ✅ `rolling_stats.rs` extracted (47 lines)
+- ✅ `controller_awb.rs` extracted (219 lines) — AWB/CCT/CCM/SceneClassification methods
 
-**Plan:**
-- `controller/awb.rs` — AWB + CCT estimation from channel/zone stats
-- `controller/tone.rs` — Tone curve estimation from tone stats
-- `controller/exposure.rs` — Histogram-based AE gain
-- `controller/zone.rs` — Zone-based processing
-- `controller/mod.rs` — IspController struct + delegating methods
+**Remaining (~730 lines) in controller.rs:**
+- Tone parameters (`update_tone_stats`, `get_tone_params`, `sanitize_tone`, `set_manual_gamma/contrast`)
+- Exposure/histogram (`update_histogram`, `compute_exposure`, `set_brightness`, etc.)
+- Zone stats (`init_zone_stats`, `update_zone_stats`)
+- Manual overrides (`set_manual_awb/ccm/gamma/contrast/exposure_gain`)
+- ONNX integration (`set_onnx_awb_gains/gamma/exposure_gain/cct`, `update_from_hardware/onnx`)
+- Stats management (`rotate_stats`, `write_stats`, `process_stats`, `ready_stats`)
+- Constructor + reset
 
 ### 6. Engine registry as proper plugin system ✅ **Done**
 Replaced `Vec<EngineFactory>` with `BTreeMap`-based `EngineRegistry`:
@@ -82,8 +85,9 @@ Train a lightweight CNN for multi-exposure fusion:
 | HDR align latency | 0ms (noop) | 0ms (noop) | <3ms (optical flow) |
 | mnnengine.rs lines | 1504 | 1390 | <800 |
 | mnn_session_pool.rs lines | — | 155 (new) | — |
-| controller.rs lines | 1293 | 1258 | <400 per module |
+| controller.rs lines | 1293 | 1052 (+219 in controller_awb.rs) | <400 per module |
 | rolling_stats.rs lines | — | 47 (new) | — |
+| controller_awb.rs lines | — | 219 (new) | — |
 | profile.rs lines | 1047 | 680 | <300 + builder |
 | profile_builder.rs lines | — | 306 (new) | — |
 | hdr.rs lines | 756 | 747 | <500 |
