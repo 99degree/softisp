@@ -647,7 +647,7 @@ impl UnifiedPipeline {
     }
 
     /// HDR burst capture: accumulate frames from different exposures.
-    /// When enough frames are collected, submits to HDR queue for async merge.
+    /// Clones the frame internally — caller retains their copy for display.
     ///
     /// Call this after each ISP-processed frame. The `ev` value identifies
     /// which exposure this frame belongs to (-2.0, 0.0, +2.0).
@@ -656,7 +656,7 @@ impl UnifiedPipeline {
     /// `Ok(None)` while still accumulating frames.
     pub fn submit_hdr_frame(
         &mut self,
-        frame: IspFrame,
+        frame: &IspFrame,
         ev: f32,
     ) -> crate::error::IspResult<Option<Arc<EnhancedFrame>>> {
         let queue = match &mut self.hdr_queue {
@@ -664,25 +664,12 @@ impl UnifiedPipeline {
             None => return Err(crate::error::IspError::Config("HDR not enabled in profile".into())),
         };
 
-        let hdr_frame = crate::hdr::HdrFrame {
-            frame: crate::pipeline::types::IspFrame {
-                data: frame.data,
-                width: frame.width,
-                height: frame.height,
-                format: frame.format,
-                float_data: frame.float_data,
-                aux: frame.aux,
-                params: frame.params,
-                timestamp_ns: frame.timestamp_ns,
-                prep_duration_ns: frame.prep_duration_ns,
-                inference_duration_ns: frame.inference_duration_ns,
-                total_duration_ns: frame.total_duration_ns,
-            },
+        self.hdr_frames.push(crate::hdr::HdrFrame {
+            frame: frame.clone(),
             ev,
             iso: 100.0,
             exposure_time: 0.033,
-        };
-        self.hdr_frames.push(hdr_frame);
+        });
 
         // When enough frames are collected (default 3), submit
         let expected = queue.frames_per_capture();
