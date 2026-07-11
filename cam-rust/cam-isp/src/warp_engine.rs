@@ -93,6 +93,21 @@ impl GpuWarpParams {
         self
     }
 
+    /// Create warp params from ISP controller params.
+    /// Extracts zoom and VCM position for GDC correction.
+    pub fn from_isp_params(gdc_k1: f32, gdc_k2: f32, gdc_k3: f32,
+                           isp: &crate::isp_params::IspParams) -> Self {
+        Self {
+            gdc_k1,
+            gdc_k2,
+            gdc_k3,
+            eis_dx: 0.0,
+            eis_dy: 0.0,
+            zoom: isp.zoom.max(1.0),
+            vcm_position: isp.vcm_position.clamp(0.0, 1.0),
+        }
+    }
+
     /// Combined focal factor: accounts for both digital zoom and
     /// focus breathing (VCM position).
     ///   zoom=1.0, vcm=0.0 → factor=1.0 (wide, infinity)
