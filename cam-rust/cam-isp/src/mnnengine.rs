@@ -254,44 +254,75 @@ impl MnnEngine {
 
     /// Set preferred workgroup size for Vulkan dispatch.
     /// Call after creating session and before inference.
+    /// Uses dlsym to avoid static link dependency on libMNN_Vulkan.so.
     pub fn set_workgroup_size(&self, session: *mut std::ffi::c_void, size_x: u32, size_y: u32) {
-        use crate::mnn_sys::MNNVulkanSetSessionWorkgroup;
-        unsafe {
-            MNNVulkanSetSessionWorkgroup(session, size_x as i32, size_y as i32);
+        if let Some(func) = unsafe { Self::load_vulkan_fn("MNNVulkanSetSessionWorkgroup") } {
+            unsafe {
+                let f: unsafe extern "C" fn(*mut std::ffi::c_void, i32, i32) = std::mem::transmute(func);
+                f(session, size_x as i32, size_y as i32);
+            }
         }
     }
 
     /// Query optimal workgroup size for current GPU.
+    /// Returns default (16, 16) if libMNN_Vulkan.so is not available.
     pub fn query_optimal_workgroup() -> (u32, u32) {
-        use crate::mnn_sys::MNNVulkanQueryOptimalWorkgroup;
-        let mut wx: i32 = 16;
-        let mut wy: i32 = 16;
-        unsafe { MNNVulkanQueryOptimalWorkgroup(&mut wx, &mut wy); }
-        (wx as u32, wy as u32)
+        if let Some(func) = unsafe { Self::load_vulkan_fn("MNNVulkanQueryOptimalWorkgroup") } {
+            unsafe {
+                let f: unsafe extern "C" fn(*mut i32, *mut i32) = std::mem::transmute(func);
+                let mut wx: i32 = 16;
+                let mut wy: i32 = 16;
+                f(&mut wx, &mut wy);
+                return (wx as u32, wy as u32);
+            }
+        }
+        (16, 16)
     }
 
     /// Set workgroup by preset name ("fast_4k", "low_power", "portrait", "universal").
     pub fn set_workgroup_preset(&self, preset: &str) {
-        use crate::mnn_sys::MNNVulkanSetWorkgroupPreset;
-        use std::ffi::CString;
-        let c_name = CString::new(preset).unwrap();
-        unsafe {
-            MNNVulkanSetWorkgroupPreset(c_name.as_ptr());
+        if let Some(func) = unsafe { Self::load_vulkan_fn("MNNVulkanSetWorkgroupPreset") } {
+            unsafe {
+                let f: unsafe extern "C" fn(*const std::ffi::c_char) = std::mem::transmute(func);
+                let c_name = std::ffi::CString::new(preset).unwrap();
+                f(c_name.as_ptr());
+            }
         }
     }
 
     /// Hot-swap a const buffer at runtime for live 3A adjustments.
     /// Updates GPU const buffer with new float32 data without rebuilding the model.
     pub fn hot_swap_const_buffer(&self, session: *mut std::ffi::c_void, binding: i32, data: &[f32]) {
-        use crate::mnn_sys::MNNVulkanHotSwapConstBuffer;
-        unsafe {
-            MNNVulkanHotSwapConstBuffer(
-                session,
-                binding,
-                data.as_ptr() as *const std::ffi::c_void,
-                (data.len() * 4) as i32,
-            );
+        if let Some(func) = unsafe { Self::load_vulkan_fn("MNNVulkanHotSwapConstBuffer") } {
+            unsafe {
+                let f: unsafe extern "C" fn(*mut std::ffi::c_void, i32, *const std::ffi::c_void, i32) -> i32
+                    = std::mem::transmute(func);
+                f(session, binding, data.as_ptr() as *const std::ffi::c_void, (data.len() * 4) as i32);
+            }
         }
+    }
+
+    /// Load a symbol from libMNN_Vulkan.so via dlsym (lazy init).
+    /// Returns the function pointer if the library was loaded.
+    unsafe fn load_vulkan_fn(name: &str) -> Option<*mut std::ffi::c_void> {
+        use std::sync::Once;
+        static mut VK_HANDLE: *mut libc::c_void = std::ptr::null_mut();
+        static VK_INIT: Once = Once::new();
+        VK_INIT.call_once(|| {
+            unsafe {
+                VK_HANDLE = libc::dlopen(
+                    "libMNN_Vulkan.so\0".as_ptr() as *const libc::c_char,
+                    libc::RTLD_NOW | libc::RTLD_GLOBAL,
+                );
+            }
+        });
+        let handle = unsafe { VK_HANDLE };
+        if handle.is_null() {
+            return None;
+        }
+        let c_name = std::ffi::CString::new(name).ok()?;
+        let sym = libc::dlsym(handle, c_name.as_ptr());
+        if sym.is_null() { None } else { Some(sym) }
     }
 
     /// Set whether to preserve input type (int16/uint16/float16) instead of widening to int32.
