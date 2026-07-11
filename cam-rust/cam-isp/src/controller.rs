@@ -244,36 +244,8 @@ impl IspController {
     // ── Smoothing mode ──
 
 
-    // ── Prior CCT estimation ──
+    // ── Rolling stats ──
 
-    /// Compute prior R/G ratio for a given CCT (quadratic).
-
-    /// Compute prior B/G ratio for a given CCT.
-
-    /// Estimate CCT from R/G and B/G ratios.
-
-    // ── AWB update ──
-
-    /// Update AWB + CCM from channel means (R, G, B averages).
-    ///
-    /// Called each frame with the average R, G, B values from the ISP output.
-
-    // ── Tone update ──
-
-    /// Update tone parameters from per-frame tone statistics.
-    ///
-    /// `tone_stats` = [mean_luminance, min_luminance, max_luminance]
-
-    // ── Histogram update ──
-
-    /// Update histogram-based exposure control.
-    ///
-    /// `hist` — 256-bin luminance histogram (normalized, sum = 1.0).
-    /// Ported from ToneEngine.updateHistogram().
-
-    // ── Getters ──
-
-    /// Get smoothed AWB gains as `[R, G, B]`.
     /// Rotate the triple-buffered stats slots after inference.
     /// Called by the engine after writing frame N's stats to `write_idx`.
     /// Rotates: write → process → ready → write.
@@ -305,17 +277,6 @@ impl IspController {
 
     /// Get effective exposure gain (histogram-constrained × AE gain).
 
-    /// Get LSC (lens shading correction) strength.
-
-    /// Compute exposure time + ISO from current scene stats.
-    /// Delegates to AutoExposureState using internally-tracked luminance, histogram, and brightness bias.
-
-    /// Get current effective brightness as normalized 0..1.
-
-    /// Set brightness (normalized 0..1, 0.5 = default).
-    /// In auto-tune mode, only sets brightness_bias for the AE loop.
-    /// In manual mode, directly sets exposure_gain and tone_brightness.
-
     // ── Manual overrides ──
 
     pub fn set_manual_awb(&mut self, gains: &[f32; 3]) {
@@ -330,25 +291,10 @@ impl IspController {
         self.ccm_matrix = *ccm;
     }
 
-
-
-
-    /// Goalkeeper: validate & clamp all tone / AWB parameters.
-    /// Ported from ToneEngine.sanitizeTone().
-
     /// Reset all state to defaults.
     pub fn reset(&mut self) {
         *self = Self::new();
     }
-
-    // ── Zone stats ──
-
-    /// Initialize zone stats grid with given dimensions.
-    /// Call this once before feeding zone stats.
-
-    /// Update zone stats from per-zone RGB means.
-    /// `zone_stats` should have length zone_rows * zone_cols * 3,
-    /// with RGB values in `[0, 1]` interleaved per zone (row-major).
 
     // ── ControllerApi ONNX override methods ──
 
