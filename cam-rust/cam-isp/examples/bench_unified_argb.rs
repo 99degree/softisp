@@ -5,7 +5,7 @@
 //! Usage:
 //!   cargo run --example bench_unified_argb -p cam-isp --features mnn
 
-use cam_isp::unified_pipeline::{UnifiedConfig, GpuWarpParams};
+use cam_isp::unified_pipeline::UnifiedConfig;
 use cam_isp::engine::OutputFormat;
 use std::time::Instant;
 
@@ -50,7 +50,7 @@ fn main() {
     };
     let build_ms = t0.elapsed().as_secs_f64() * 1000.0;
     println!("Pipeline build: {:.2} ms", build_ms);
-    println!("Pipeline info: {:#?}", pipeline.info());
+    // pipeline.info() not available in this version
 
     // Generate test input: 4K INT16 Bayer
     let raw_size = (input_w * input_h * 2) as usize;
