@@ -399,8 +399,61 @@ impl PipelineProfile {
         output_format: OutputFormat::PackedRgb,
     };
 
+    /// HDR profile — multi-exposure burst with async HDR merge.
+    /// Pipeline processes each exposure individually (MED-level quality),
+    /// then queues ARGB frames for async HDR worker.
+    ///
+    /// Capture flow:
+    ///   1. 3-frame burst: -2EV, 0EV, +2EV
+    ///   2. Each frame processed by ISP: BayerWB → Demosaic+CCM → Tone→ ARGB
+    ///   3. Frames queued to HdrCaptureQueue (MPSC channel)
+    ///   4. Async worker: Align → Merge → Neural Enhance → Encode
+    ///
+    /// Memory: 3× ISP output buffers + 2× worker buffers (<200MB peak)
+    /// Latency: ~100ms ISP + ~20ms HDR = ~120ms total
+    pub const HDR: Self = Self {
+        label: "HDR",
+        level: PipelineLevel::Heavy,
+        use_unpack: true,
+        use_fcs: true,
+        use_ldci: false,
+        use_ee: false,
+        use_bad_pixel: true,
+        demosaic_quality: DemosaicQuality::HqLinear,
+        use_local_contrast: false,
+        use_unsharp: false,
+        use_lsc: true,
+        use_warp: true,         // EIS alignment between exposures
+        use_hdr: true,
+        use_fused_unpack: true,
+        use_demosaic_ccm: true,
+        use_fused_tone: true,
+        rotate_mode: 0,
+        use_zone_stats: true,
+        use_channel_means: true,
+        use_tone_stats: true,
+        use_histogram: false,
+        stats_downscale_max: 0,
+        pipeline_downscale_target: 0,
+        eis_margin: 0.05,       // 5% margin for EIS alignment warp
+        use_bilateral: false,
+        use_saturation: false,
+        use_vignetting: true,
+        use_colorspace: false,
+        use_gamma: false,
+        use_sharpen: false,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
+        output_format: OutputFormat::PackedRgb,
+    };
+
     /// All built-in profiles.
-    pub const ALL: [Self; 6] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::TEST, Self::UNIFIED];
+    pub const ALL: [Self; 7] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::TEST, Self::UNIFIED, Self::HDR];
 
     /// Create a custom profile with override flags.
     pub const fn custom(

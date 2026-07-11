@@ -13,8 +13,6 @@ use crate::mnn::mnn_sys::{
     MnnInterpreterSafe, MnnSessionSafe,
     MnnBackendType,
 };
-#[cfg(feature = "mnn")]
-use crate::mnn::mnn_converter::{convert_onnx_to_mnn, MnnConvertOptions};
 
 /// Parameters for GPU warp (GDC + EIS).
 #[derive(Debug, Clone, Copy, Default)]
@@ -154,30 +152,72 @@ pub struct GpuWarpEngine {
     initialized: bool,
 }
 
+/// Generate a unique temp file path for release builds (cleaned up after use).
+/// Debug dump: save bytes to disk if debug_assertions are enabled.
+#[cfg(feature = "mnn")]
+fn debug_dump_onnx(name: &str, onnx: &[u8]) {
+    if cfg!(debug_assertions) {
+        let path = format!("{}.onnx", name);
+        let _ = std::fs::write(&path, onnx);
+        log::info!("Dumped ONNX to {}", path);
+    }
+}
+
 #[cfg(feature = "mnn")]
 impl GpuWarpEngine {
     /// Create warp engine from ONNX bytes.
+    /// 
+    /// Architecture (same-process, no disk writes):
+    ///   [init]  build ONNX (Rust, no MNN) → convert via mnn_convert_onnx_buffer
+    ///   [exec]  load MNN from buffer → create session → run inference
     pub fn from_onnx(onnx: &[u8], width: u32, height: u32) -> IspResult<Self> {
         info!("GpuWarpEngine: creating from {} byte ONNX for {}×{}", onnx.len(), width, height);
 
-        // Write ONNX to temp file, convert to MNN
-        let pid = std::process::id();
-        let tid = std::thread::current().id();
-        let stamp = std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_nanos();
-        let on = format!(".warp_{}_{}_{:?}.onnx", pid, stamp, tid);
-        let mn = on.replace(".onnx", ".mnn");
-        std::fs::write(&on, onnx)
-            .map_err(|e| crate::error::IspError::Io(format!("write onnx: {}", e)))?;
+        // Debug: dump ONNX to disk for inspection
+        debug_dump_onnx("warp_gdc", onnx);
 
-        let opts = MnnConvertOptions::default();
-        convert_onnx_to_mnn(&on, &mn, Some(&opts))
-            .map_err(|e| crate::error::IspError::Conversion(format!("convert warp: {}", e)))?;
-        let _ = std::fs::remove_file(&on);
+        // Convert ONNX→MNN via same-process buffer API (libMNNConvertDeps.so)
+        // Uses memfd internally — zero disk writes on Linux.
+        let mut result = crate::mnn_sys::MnnConvertBufferResult {
+            success: 0,
+            error_msg: [0u8; 1024usize],
+            data: std::ptr::null_mut(),
+            size: 0,
+        };
+        unsafe {
+            crate::mnn_sys::mnn_convert_onnx_buffer(
+                onnx.as_ptr() as *const std::ffi::c_void,
+                onnx.len(),
+                &mut result,
+            );
+        }
+        if result.success != 0 {
+            let err_msg = unsafe { std::ffi::CStr::from_ptr(result.error_msg.as_ptr()) }
+                .to_string_lossy().into_owned();
+            return Err(crate::error::IspError::Conversion(
+                format!("convert warp onnx: {}", err_msg)));
+        }
 
-        // Load MNN model from buffer (avoids C++ static init issues with from_file)
-        let mnn_bytes = std::fs::read(&mn)
-            .map_err(|e| crate::error::IspError::Io(format!("read mnn: {}", e)))?;
-        let _ = std::fs::remove_file(&mn);
+        // Copy MNN model data into safe Rust Vec
+        let mnn_bytes = if !result.data.is_null() && result.size > 0 {
+            let slice = unsafe {
+                std::slice::from_raw_parts(result.data as *const u8, result.size)
+            };
+            let owned = slice.to_vec();
+            // Debug: dump MNN to disk for inspection
+            if cfg!(debug_assertions) {
+                let path = "warp_gdc.mnn";
+                let _ = std::fs::write(path, &owned);
+                log::info!("Dumped MNN to {}", path);
+            }
+            unsafe {
+                crate::mnn_sys::MnnConvert_FreeBuffer(&mut result);
+            }
+            owned
+        } else {
+            return Err(crate::error::IspError::Conversion(
+                "convert returned empty buffer".into()));
+        };
 
         let interp = MnnInterpreterSafe::from_buffer(&mnn_bytes)
             .ok_or_else(|| crate::error::IspError::Mnn("warp model load fail".into()))?;
@@ -203,42 +243,81 @@ impl GpuWarpEngine {
         Self::from_onnx(&onnx, width, height)
     }
 
-    /// Generate a default ONNX model for GDC+EIS warp.
+    /// Generate ONNX model for GDC+EIS warp with full GPU grid computation.
     ///
-    /// Simple GridSample model: takes frame + grid as inputs.
-    /// Grid is pre-computed on CPU in `run_into()` for reliability.
+    /// All ISP parameters flow through MNN tensors. The grid is computed
+    /// entirely in ONNX arithmetic ops — zero CPU involvement.
+    /// MNN Executor fuses these ops into efficient GPU kernels.
     ///
-    /// Inputs:
-    ///   GpuWarp/input  [1,3,H,W]  — frame to warp
-    ///   GpuWarp/grid   [1,H,W,2]  — normalized sampling grid [-1,1]
+    /// Input tensors (per-frame runtime):
+    ///   GpuWarp/input   [1,3,H,W]  — frame to warp
+    ///   GpuWarp/gdc_k1  [1]        — radial distortion k1
+    ///   GpuWarp/gdc_k2  [1]        — radial distortion k2
+    ///   GpuWarp/gdc_k3  [1]        — radial distortion k3
+    ///   GpuWarp/zoom    [1]        — digital zoom [1.0, 4.0]
+    ///   GpuWarp/vcm     [1]        — focus motor position [0, 1]
+    ///   GpuWarp/eis_dx  [1,1,H,W]  — EIS X displacement
+    ///   GpuWarp/eis_dy  [1,1,H,W]  — EIS Y displacement
     ///
-    /// Output:
-    ///   GpuWarp/frame  [1,3,H,W]  — warped frame
+    /// Output tensor:
+    ///   GpuWarp/frame   [1,3,H,W]  — warped frame
+    ///
+    /// Computation (all GPU, all ONNX ops):
+    ///   focal_factor = zoom * (1 + vcm * BREATHING)
+    ///   effective_k1 = gdc_k1 / focal_factor
+    ///   ...
+    ///   r² = grid_x² + grid_y²  →  r⁴ → r⁶
+    ///   denom = 1 + k1*r² + k2*r⁴ + k3*r⁶
+    ///   inv_denom = 1/denom
+    ///   grid = concat(grid_x*inv + eis_dx, grid_y*inv + eis_dy)
+    ///   GridSample(input, grid)
     pub fn generate_onnx(width: u32, height: u32) -> Vec<u8> {
         use crate::onnx::proto::Proto;
 
         let h = height as i64;
         let w = width as i64;
+        let ns = "GpuWarp";
 
-        // Graph inputs
+        // ── Runtime inputs ──
         let inputs = vec![
-            Proto::value_info("GpuWarp/input", &[
+            Proto::value_info(&format!("{}/input", ns), &[
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(3),
                 Proto::tensor_dim_value(h),
                 Proto::tensor_dim_value(w),
             ], 1),
-            Proto::value_info("GpuWarp/grid", &[
+            Proto::value_info(&format!("{}/gdc_k1", ns), &[
+                Proto::tensor_dim_value(1),
+            ], 1),
+            Proto::value_info(&format!("{}/gdc_k2", ns), &[
+                Proto::tensor_dim_value(1),
+            ], 1),
+            Proto::value_info(&format!("{}/gdc_k3", ns), &[
+                Proto::tensor_dim_value(1),
+            ], 1),
+            Proto::value_info(&format!("{}/zoom", ns), &[
+                Proto::tensor_dim_value(1),
+            ], 1),
+            Proto::value_info(&format!("{}/vcm", ns), &[
+                Proto::tensor_dim_value(1),
+            ], 1),
+            Proto::value_info(&format!("{}/eis_dx", ns), &[
+                Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(h),
                 Proto::tensor_dim_value(w),
-                Proto::tensor_dim_value(2),
+            ], 1),
+            Proto::value_info(&format!("{}/eis_dy", ns), &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
             ], 1),
         ];
 
-        // Graph output
+        // ── Output ──
         let outputs = vec![
-            Proto::value_info("GpuWarp/frame", &[
+            Proto::value_info(&format!("{}/frame", ns), &[
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(3),
                 Proto::tensor_dim_value(h),
@@ -246,25 +325,144 @@ impl GpuWarpEngine {
             ], 1),
         ];
 
-        // Single GridSample node
-        let nodes = vec![
-            Proto::node("GridSample", &["GpuWarp/input", "GpuWarp/grid"], &["GpuWarp/frame"], &[
+        // ── Grid computation nodes ──
+        let mut nodes = Vec::new();
+
+        // Helper: format names
+        let gx = format!("{}/grid_x", ns);
+        let gy = format!("{}/grid_y", ns);
+        let zero = format!("{}/zero", ns);
+        let one = format!("{}/one", ns);
+        let breath = format!("{}/breathing", ns);
+        let shape4 = format!("{}/shape4", ns);
+
+        // 1) Broadcast coords to [1,1,H,W] via Add(zero)
+        let gx2d = format!("{}/gx2d", ns);
+        nodes.push(Proto::node("Add", &[&gx, &zero], &[&gx2d], &[]));
+        let gy2d = format!("{}/gy2d", ns);
+        nodes.push(Proto::node("Add", &[&gy, &zero], &[&gy2d], &[]));
+
+        // 2) focal_factor = zoom * (1 + vcm * breathing)
+        let vcm_term = format!("{}/vcm_term", ns);
+        nodes.push(Proto::node("Mul", &[&format!("{}/vcm", ns), &breath], &[&vcm_term], &[]));
+        let base = format!("{}/base", ns);
+        nodes.push(Proto::node("Add", &[&one, &vcm_term], &[&base], &[]));
+        let focal = format!("{}/focal", ns);
+        nodes.push(Proto::node("Mul", &[&format!("{}/zoom", ns), &base], &[&focal], &[]));
+
+        // 3) effective_k = k / focal_factor
+        let mut mk = |i: u32| {
+            let k = format!("{}/gdc_k{}", ns, i);
+            let eff = format!("{}/eff_k{}", ns, i);
+            nodes.push(Proto::node("Div", &[&k, &focal], &[&eff], &[]));
+            eff
+        };
+        let ek1 = mk(1);
+        let ek2 = mk(2);
+        let ek3 = mk(3);
+
+        // 4) r² = gx² + gy²
+        let gx_sq = format!("{}/gx_sq", ns);
+        nodes.push(Proto::node("Mul", &[&gx2d, &gx2d], &[&gx_sq], &[]));
+        let gy_sq = format!("{}/gy_sq", ns);
+        nodes.push(Proto::node("Mul", &[&gy2d, &gy2d], &[&gy_sq], &[]));
+        let r2 = format!("{}/r2", ns);
+        nodes.push(Proto::node("Add", &[&gx_sq, &gy_sq], &[&r2], &[]));
+
+        // 5) r⁴ = r²²
+        let r4 = format!("{}/r4", ns);
+        nodes.push(Proto::node("Mul", &[&r2, &r2], &[&r4], &[]));
+
+        // 6) r⁶ = r⁴ * r²
+        let r6 = format!("{}/r6", ns);
+        nodes.push(Proto::node("Mul", &[&r4, &r2], &[&r6], &[]));
+
+        // 7) denom = 1 + k1*r² + k2*r⁴ + k3*r⁶
+        let k1r2 = format!("{}/k1r2", ns);
+        nodes.push(Proto::node("Mul", &[&ek1, &r2], &[&k1r2], &[]));
+        let k2r4 = format!("{}/k2r4", ns);
+        nodes.push(Proto::node("Mul", &[&ek2, &r4], &[&k2r4], &[]));
+        let k3r6 = format!("{}/k3r6", ns);
+        nodes.push(Proto::node("Mul", &[&ek3, &r6], &[&k3r6], &[]));
+        let t1 = format!("{}/t1", ns);
+        nodes.push(Proto::node("Add", &[&one, &k1r2], &[&t1], &[]));
+        let t2 = format!("{}/t2", ns);
+        nodes.push(Proto::node("Add", &[&t1, &k2r4], &[&t2], &[]));
+        let denom = format!("{}/denom", ns);
+        nodes.push(Proto::node("Add", &[&t2, &k3r6], &[&denom], &[]));
+
+        // 8) inv_denom = 1/denom
+        let inv = format!("{}/inv", ns);
+        nodes.push(Proto::node("Div", &[&one, &denom], &[&inv], &[]));
+
+        // 9) gdc + eis: final = gdc_grid * inv_denom + eis
+        let gx_gdc = format!("{}/gx_gdc", ns);
+        nodes.push(Proto::node("Mul", &[&gx2d, &inv], &[&gx_gdc], &[]));
+        let gy_gdc = format!("{}/gy_gdc", ns);
+        nodes.push(Proto::node("Mul", &[&gy2d, &inv], &[&gy_gdc], &[]));
+        let fx = format!("{}/fx", ns);
+        nodes.push(Proto::node("Add", &[&gx_gdc, &format!("{}/eis_dx", ns)], &[&fx], &[]));
+        let fy = format!("{}/fy", ns);
+        nodes.push(Proto::node("Add", &[&gy_gdc, &format!("{}/eis_dy", ns)], &[&fy], &[]));
+
+        // 10) Concat [fx, fy] → [1,1,H,W,2] → Reshape to [1,H,W,2]
+        let grid5d = format!("{}/g5d", ns);
+        nodes.push(Proto::node("Concat", &[&fx, &fy], &[&grid5d], &[
+            Proto::attribute_int("axis", -1),
+        ]));
+        let grid4d = format!("{}/grid", ns);
+        nodes.push(Proto::node("Reshape", &[&grid5d, &shape4], &[&grid4d], &[]));
+
+        // 11) GridSample
+        let sampled = format!("{}/sampled", ns);
+        nodes.push(Proto::node("GridSample",
+            &[&format!("{}/input", ns), &grid4d],
+            &[&sampled],
+            &[
                 Proto::attribute_string("mode", "bilinear"),
                 Proto::attribute_string("padding_mode", "zeros"),
                 Proto::attribute_int("align_corners", 0),
-            ]),
+            ],
+        ));
+
+        // 12) Identity → output
+        nodes.push(Proto::node("Identity", &[&sampled], &[&format!("{}/frame", ns)], &[]));
+
+        // ── Constants / initializers ──
+        let grid_x_data: Vec<f32> = (0..w as usize)
+            .map(|x| 2.0 * x as f32 / (w - 1) as f32 - 1.0).collect();
+        let grid_y_data: Vec<f32> = (0..h as usize)
+            .map(|y| 2.0 * y as f32 / (h - 1) as f32 - 1.0).collect();
+
+        let initializers = vec![
+            Proto::tensor_proto_float_scalar(&zero, 0.0),
+            Proto::tensor_proto_float_scalar(&one, 1.0),
+            Proto::tensor_proto_float_scalar(&breath, 0.15),
+            Proto::tensor_proto_float(
+                &gx, &[1, 1, 1, w], &grid_x_data),
+            Proto::tensor_proto_float(
+                &gy, &[1, 1, h, 1], &grid_y_data),
+            Proto::tensor_proto_int64(
+                &shape4, &[1, h, w, 2i64]),
         ];
 
-        let graph = Proto::graph("GpuWarpGraph", &nodes, &inputs, &outputs, &[], &[]);
+        let graph = Proto::graph("GpuWarpGraph", &nodes, &inputs, &outputs, &[], &initializers);
         let opset = Proto::opset("", 21);
         Proto::model(8, &opset, "softisp", &graph)
     }
 
     /// Run warp inference into a pre-allocated output buffer.
     ///
+    /// All ISP params flow through MNN tensors (not Rust function args).
+    /// Grid is computed entirely by MNN on GPU — zero CPU involvement.
+    ///
     /// `frame`: RGB planar float data [1,3,H,W] in [0,1] range.
     /// `k1,k2,k3`: GDC radial distortion coefficients.
-    /// `eis_x,eis_y`: EIS displacement in normalized [-1,1] coords.
+    /// `zoom`: digital zoom factor [1.0, 4.0].
+    /// `vcm`: focus motor position [0.0, 1.0].
+    /// `eis_dx, eis_dy`: EIS displacement in normalized [-1,1] coords.
+    ///     These are broadcast across the frame (same displacement for all pixels).
+    ///     For per-pixel displacement, pass a [1,1,H,W] grid directly.
     /// `out`: pre-allocated output buffer (must be H*W*3 elements).
     ///
     /// Returns slice of `out` with warped data.
@@ -274,8 +472,10 @@ impl GpuWarpEngine {
         k1: f32,
         k2: f32,
         k3: f32,
-        eis_x: f32,
-        eis_y: f32,
+        zoom: f32,
+        vcm: f32,
+        eis_dx: f32,
+        eis_dy: f32,
         out: &'a mut [f32],
     ) -> crate::error::IspResult<&'a mut [f32]> {
         if !self.initialized {
@@ -291,7 +491,7 @@ impl GpuWarpEngine {
                 format!("output buffer too small: {} < {}", out.len(), n * 3)));
         }
 
-        // Set main frame input
+        // ── Set frame input tensor ──
         if let Some(input) = self.interp.get_first_input(&self.session) {
             let _ = input.set_shape(
                 self.interp.as_ptr(),
@@ -310,36 +510,55 @@ impl GpuWarpEngine {
             }
         }
 
-        // Compute GDC+EIS grid on CPU
-        // Grid layout: [1, H, W, 2] where grid[y][x] = [gdc_x + eis_x, gdc_y + eis_y]
-        let mut grid = vec![0.0f32; n * 2];
-        for y in 0..h {
-            let ny = 2.0 * y as f32 / (h - 1) as f32 - 1.0;
-            for x in 0..w {
-                let nx = 2.0 * x as f32 / (w - 1) as f32 - 1.0;
-                let r2 = nx * nx + ny * ny;
-                let r4 = r2 * r2;
-                let r6 = r4 * r2;
-                let denom = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
-                let inv_denom = 1.0 / denom;
-                let idx = y * w + x;
-                grid[idx * 2] = nx * inv_denom + eis_x;
-                grid[idx * 2 + 1] = ny * inv_denom + eis_y;
+        // ── Set ISP param tensors (all [1] scalars) ──
+        let params: [(&str, f32); 5] = [
+            ("GpuWarp/gdc_k1", k1),
+            ("GpuWarp/gdc_k2", k2),
+            ("GpuWarp/gdc_k3", k3),
+            ("GpuWarp/zoom", zoom),
+            ("GpuWarp/vcm", vcm),
+        ];
+        for (name, val) in &params {
+            if let Some(t) = self.interp.get_input(&self.session, name) {
+                let _ = t.set_shape(self.interp.as_ptr(), self.session.as_ptr(), &[1]);
+                if let Some(bytes) = t.as_bytes_mut() {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            val as *const f32 as *const u8,
+                            bytes.as_mut_ptr(),
+                            4,
+                        );
+                    }
+                }
             }
         }
 
-        // Set grid input tensor
-        if let Some(grid_tensor) = self.interp.get_input(&self.session, "GpuWarp/grid") {
-            let _ = grid_tensor.set_shape(
-                self.interp.as_ptr(),
-                self.session.as_ptr(),
-                &[1, h as i32, w as i32, 2],
-            );
-            if let Some(bytes) = grid_tensor.as_bytes_mut() {
-                let copy_len = (grid.len() * 4).min(bytes.len());
+        // ── Set EIS displacement tensors (uniform scalar broadcast to [1,1,H,W]) ──
+        // For simplicity, pass uniform scalar values that MNN broadcasts.
+        // The ONNX model has eis_dx/eis_dy as [1,1,H,W] tensors; here we create
+        // a uniform grid where every pixel gets the same displacement.
+        let eis_grid_x = vec![eis_dx; n];
+        let eis_grid_y = vec![eis_dy; n];
+        if let Some(t) = self.interp.get_input(&self.session, "GpuWarp/eis_dx") {
+            let _ = t.set_shape(self.interp.as_ptr(), self.session.as_ptr(), &[1, 1, h as i32, w as i32]);
+            if let Some(bytes) = t.as_bytes_mut() {
+                let copy_len = (n * 4).min(bytes.len());
                 unsafe {
                     std::ptr::copy_nonoverlapping(
-                        grid.as_ptr() as *const u8,
+                        eis_grid_x.as_ptr() as *const u8,
+                        bytes.as_mut_ptr(),
+                        copy_len,
+                    );
+                }
+            }
+        }
+        if let Some(t) = self.interp.get_input(&self.session, "GpuWarp/eis_dy") {
+            let _ = t.set_shape(self.interp.as_ptr(), self.session.as_ptr(), &[1, 1, h as i32, w as i32]);
+            if let Some(bytes) = t.as_bytes_mut() {
+                let copy_len = (n * 4).min(bytes.len());
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        eis_grid_y.as_ptr() as *const u8,
                         bytes.as_mut_ptr(),
                         copy_len,
                     );
@@ -347,13 +566,13 @@ impl GpuWarpEngine {
             }
         }
 
-        // Resize + Run
+        // ── Resize + Run ──
         self.session.resize()
             .map_err(|e| crate::error::IspError::Mnn(format!("warp resize: {}", e)))?;
         self.session.run()
             .map_err(|e| crate::error::IspError::Mnn(format!("warp inference: {}", e)))?;
 
-        // Read output directly into caller's buffer
+        // ── Read output into caller's buffer ──
         let output = self.interp.get_first_output(&self.session)
             .ok_or_else(|| crate::error::IspError::Mnn("warp output missing".into()))?;
         let out_bytes = output.as_bytes()
@@ -378,12 +597,14 @@ impl GpuWarpEngine {
         k1: f32,
         k2: f32,
         k3: f32,
-        eis_x: f32,
-        eis_y: f32,
+        zoom: f32,
+        vcm: f32,
+        eis_dx: f32,
+        eis_dy: f32,
     ) -> crate::error::IspResult<Vec<f32>> {
         let n = (self.width * self.height * 3) as usize;
         let mut out = vec![0.0f32; n];
-        self.run_into(frame, k1, k2, k3, eis_x, eis_y, &mut out)?;
+        self.run_into(frame, k1, k2, k3, zoom, vcm, eis_dx, eis_dy, &mut out)?;
         Ok(out)
     }
 

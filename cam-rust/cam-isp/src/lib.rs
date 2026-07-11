@@ -43,6 +43,7 @@ pub mod mnn_converter;
 #[cfg(feature = "mnn_buffer")]
 pub mod mnn_buffer;
 pub mod warp_engine;
+pub mod hdr;
 pub use warp_engine::GpuWarpParams;
 
 pub mod frame_rate;

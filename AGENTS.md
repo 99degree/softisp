@@ -185,3 +185,110 @@ Test Commands:         TESTING.md
 * **EXECUTION MANDATE**: Every single engineering action must happen exclusively through native LLM tool calls. Text-based simulations break the parsing framework.
 
 * **DIALOGUE SUPPRESSION**: Completely eliminate filler text, pleasantries, explanations, and standard chat. Focus your generation entirely on your inner monologue, planning states, and immediate native tool execution.
+
+---
+
+## 12. CAM-ISP ARCHITECTURAL DESIGN RULES
+
+### 12.1 THREE-STAGE ISOLATION
+
+Build, convert, and inference are three separate stages with no state overlap:
+
+```
+[init ──────────────────────────────────────────────────────────────]
+  Stage 1: Build ONNX graph (pure Rust, no MNN, no C++, no loaded libs)
+            - Uses cam-isp/src/onnx/proto.rs to serialize ONNX protobuf
+            - GpuWarpBlock computes GDC grid using ONNX arithmetic ops
+            - ISP params become runtime tensor inputs (not Rust function args)
+            - Output: Vec<u8> (ONNX protobuf bytes, memory-only)
+
+  Stage 2: Convert ONNX→MNN (same-process FFI via libMNNConvertDeps.so)
+            - Pass ONNX bytes → Receive MNN bytes via mnn_convert_onnx_buffer()
+            - Temp files created via mkstemp(), unlinked immediately after read
+            - libMNNConvertDeps.so linked into main process (not subprocess)
+            - No persistent files remain after conversion
+            - Output: Vec<u8> (MNN flatbuffer bytes, memory-only)
+
+[execute ────────────────────────────────────────────────────────────]
+  Stage 3: Inference (MNN session, no MNNConvert lib linked)
+            - Load MNN from memory buffer (MnnInterpreterSafe::from_buffer)
+            - Frame + ISP params as tensor inputs
+            - Warped frame output
+            - Next params stored in controller for next frame
+```
+
+### 12.2 ISP PARAMS AS MNN TENSORS
+
+All ISP parameters flow through MNN tensors, never Rust function arguments:
+
+**Input tensors (per-frame runtime):**
+  - `GpuWarp/gdc_k1`  [1]  — Radial distortion k1
+  - `GpuWarp/gdc_k2`  [1]  — Radial distortion k2
+  - `GpuWarp/gdc_k3`  [1]  — Radial distortion k3
+  - `GpuWarp/zoom`    [1]  — Digital zoom factor [1.0, 4.0]
+  - `GpuWarp/vcm`     [1]  — Focus motor position [0, 1]
+  - `GpuWarp/eis_dx`  [1,1,H,W]  — EIS X displacement grid
+  - `GpuWarp/eis_dy`  [1,1,H,W]  — EIS Y displacement grid
+
+**Constant initializers (built at init time):**
+  - `GpuWarp/grid_x`  [1,1,1,W]  — Normalized X coords [-1, 1]
+  - `GpuWarp/grid_y`  [1,1,H,1]  — Normalized Y coords [-1, 1]
+  - `GpuWarp/zero`    [1]  — 0.0
+  - `GpuWarp/one`     [1]  — 1.0
+
+**Computation graph (fully in ONNX, GPU by MNN):**
+  - focal_factor = zoom * (1 + vcm * BREATHING)    # BREATHING = 0.15
+  - effective_k1 = k1 / focal_factor
+  - effective_k2 = k2 / focal_factor
+  - effective_k3 = k3 / focal_factor
+  - r² = grid_x² + grid_y²
+  - r⁴ = r²²
+  - r⁶ = r⁴·r²
+  - denom = 1 + k1·r² + k2·r⁴ + k3·r⁶
+  - inv_denom = 1/denom
+  - gdc_x = grid_x * inv_denom
+  - gdc_y = grid_y * inv_denom
+  - final_x = gdc_x + eis_dx
+  - final_y = gdc_y + eis_dy
+  - grid = Concat([final_x, final_y], axis=-1)  # [1,H,W,2]
+  - frame = GridSample(input, grid)
+
+**Output tensor:**
+  - `GpuWarp/frame`  [1,3,H,W]  — Warped output frame
+
+### 12.3 CONTROLLER PARAMS FEEDBACK LOOP
+
+```
+Controller ──→ [k1,k2,k3,zoom,vcm,eis_dx,eis_dy] ──→ MNN Inference
+                                                         ↓
+Controller ←── [updated params]          ←── MNN Output tensors
+```
+
+### 12.4 MEMORY-BASED CONVERSION (SAME-PROCESS, NO PERSISTENT FILES)
+
+- ONNX model: generated in memory as `Vec<u8>`, never written to disk
+- ONNX→MNN conversion: `mnn_convert_onnx_buffer()` in `mnn_convert_api.cpp`
+  - Takes ONNX bytes → writes to mkstemp temp file → calls MNN::Cli::convertModel
+  - Reads output temp file → Returns MNN bytes → unlinks both temp files
+  - Temp files exist only during conversion (ms-scale), then deleted
+  - libMNNConvertDeps.so linked directly (no subprocess, no IPC)
+- MNN model: loaded via `from_buffer()`, never read from file
+- Debug builds (`cfg!(debug_assertions)`): dump ONNX/MNN to named files for inspection
+- Release builds: no persistent files — all cleanup immediate
+- File names use mkstemp template (`mnn_onnx_XXXXXX`, `mnn_out_XXXXXX`) in CWD
+
+### 12.5 GPU OPTIMIZATION VIA MNN OPSET
+
+- GDC grid computation uses MNN optimized ops (Mul, Add, Div, Concat, Reshape)
+- MNN Executor fuses these ops into efficient GPU kernels
+- All arithmetic ops run on GPU via MNN Vulkan backend
+- GridSample runs on GPU via VulkanGridSample
+- Result: entire warp pipeline (grid compute + sample) is GPU-only, zero CPU
+
+### 12.6 RUST LIBS LINKED AT BUILD TIME
+
+- `libmnncore.so` — runtime inference
+- `libMNN_Vulkan.so` — Vulkan backend for GPU inference
+- `libMNNConvertDeps.so` — ONNX→MNN conversion (same-process, buffer API via `mnn_convert_onnx_buffer()`)
+- Static FFI (`mnn_convert_api.cpp`) compiled into Rust crate (CC/ar in build.rs)
+- No subprocess, no IPC, no external converter binary
