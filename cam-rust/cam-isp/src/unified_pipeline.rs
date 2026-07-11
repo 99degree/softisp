@@ -681,12 +681,12 @@ impl UnifiedPipeline {
             // Submit and wait for result (blocking)
             let rx = match queue.submit_frames(frames) {
                 Ok(rx) => rx,
-                Err(e) => return Err(crate::error::IspError::Pipeline(format!("HDR submit: {}", e))),
+                Err(e) => return Err(crate::error::IspError::from(e)),
             };
             match rx.recv() {
                 Ok(result) => match result {
                     Ok(enhanced) => Ok(Some(Arc::new(enhanced))),
-                    Err(e) => Err(crate::error::IspError::Pipeline(format!("HDR merge: {}", e))),
+                    Err(e) => Err(crate::error::IspError::from(e)),
                 },
                 Err(_) => Err(crate::error::IspError::Pipeline("HDR worker channel closed".into())),
             }
