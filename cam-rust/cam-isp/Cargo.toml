@@ -24,6 +24,7 @@ clap = { version = "4", features = ["derive"] }
 env_logger = { workspace = true }
 prost = "0.14.4"
 proptest = "1"
+tract-onnx = "0.20.7"
 
 [[example]]
 name = "mnn_memfd_test"

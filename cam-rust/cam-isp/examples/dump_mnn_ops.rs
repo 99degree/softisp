@@ -2,8 +2,6 @@ use cam_isp::profile::PipelineProfile;
 use cam_isp::engine::OutputFormat;
 use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::mnn_converter::convert_onnx_to_mnn;
-use std::ffi::CString;
-use cam_isp::mnn_sys::mnn_inspect_model_ops;
 
 fn main() {
     let profiles = [
@@ -31,22 +29,6 @@ fn main() {
                 eprintln!("=== {} Profile ===", prof_name);
                 eprintln!("  ONNX: {} bytes", onnx.len());
                 eprintln!("  Convert: {}", msg);
-                
-                // Inspect the MNN model
-                let c_path = CString::new(mnn_path.as_str()).unwrap();
-                let mut extra_count: i32 = 0;
-                let mut conv_count: i32 = 0;
-                let mut other_count: i32 = 0;
-                let total = unsafe {
-                    mnn_inspect_model_ops(
-                        c_path.as_ptr(),
-                        &mut extra_count,
-                        &mut conv_count,
-                        &mut other_count,
-                    )
-                };
-                eprintln!("  MNN Total: {} ops (Extra={}, Conv={}, Other={})", 
-                    total, extra_count, conv_count, other_count);
             }
             Err(e) => {
                 eprintln!("=== {} Profile ===", prof_name);
