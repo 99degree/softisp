@@ -26,6 +26,11 @@ pub struct IspParams {
     pub lens: LensParams,
     /// Display/output settings.
     pub display: DisplayParams,
+    /// Digital zoom factor [1.0, 4.0]. From neural model or manual.
+    pub zoom: f32,
+    /// VCM focus motor position [0.0, 1.0]. 0=infinity, 1=macro.
+    /// Used for focus breathing compensation in GDC.
+    pub vcm_position: f32,
     /// Custom parameters for extensibility.
     pub custom: HashMap<String, f32>,
 }
@@ -42,6 +47,8 @@ impl Default for IspParams {
             denoise: DenoiseParams::off(),
             lens: LensParams::default(),
             display: DisplayParams::default(),
+            zoom: 1.0,
+            vcm_position: 0.0,
             custom: HashMap::new(),
         }
     }
@@ -60,6 +67,8 @@ impl IspParams {
             denoise: DenoiseParams::off(),
             lens: LensParams::default(),
             display: DisplayParams::default(),
+            zoom: 1.0,
+            vcm_position: 0.0,
             custom: HashMap::new(),
         }
     }
@@ -76,6 +85,8 @@ impl IspParams {
             denoise: self.denoise.lerp(&other.denoise, t),
             lens: self.lens.clone(),
             display: self.display.clone(),
+            zoom: self.zoom + (other.zoom - self.zoom) * t,
+            vcm_position: self.vcm_position + (other.vcm_position - self.vcm_position) * t,
             custom: self.custom.clone(),
         }
     }
