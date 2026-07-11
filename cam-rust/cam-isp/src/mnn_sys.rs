@@ -531,34 +531,25 @@ extern "C" {
     ) -> i32;
 }
 
-// ── Vulkan Workgroup Configuration ────────────────────────────────────────
+// ── Vulkan Workgroup Configuration (loaded lazily via dlopen) ────────────
+//
+// These symbols are NOT statically linked to avoid FORTIFY crashes caused by
+// libMNN_Vulkan.so's C++ static constructors conflicting with libMNN.so's
+// global state. Use `load_vulkan_symbols()` to lazily resolve at runtime.
 
-extern "C" {
-    /// Set preferred workgroup size for a Vulkan session.
-    /// Called from Rust to tune dispatch groups per-device.
-    pub fn MNNVulkanSetSessionWorkgroup(
-        session: *mut c_void,
-        size_x: i32,
-        size_y: i32,
-    );
-
-    /// Query optimal workgroup size for current GPU.
-    pub fn MNNVulkanQueryOptimalWorkgroup(
-        out_x: *mut i32,
-        out_y: *mut i32,
-    );
-
-    /// Set workgroup by preset name.
-    /// Presets: "fast_4k" (32×8), "low_power" (8×32), "portrait" (4×64), "universal" (16×16).
-    pub fn MNNVulkanSetWorkgroupPreset(
-        preset_name: *const c_char,
-    );
-
-    /// Hot-swap a const buffer at runtime for live 3A adjustments.
-    pub fn MNNVulkanHotSwapConstBuffer(
-        session_ptr: *mut c_void,
-        binding_index: c_int,
-        data: *const c_void,
-        byte_size: c_int,
-    ) -> c_int;
+/// Load Vulkan runtime symbols via dlopen (lazy init).
+/// Returns true if libMNN_Vulkan.so was loaded successfully.
+pub fn ensure_vulkan_loaded() -> bool {
+    use std::sync::Once;
+    static VULKAN_INIT: Once = Once::new();
+    static mut VULKAN_LOADED: bool = false;
+    VULKAN_INIT.call_once(|| {
+        let handle = unsafe {
+            libc::dlopen(
+                "libMNN_Vulkan.so\0".as_ptr() as *const libc::c_char,
+                libc::RTLD_NOW | libc::RTLD_GLOBAL)
+        };
+        unsafe { VULKAN_LOADED = !handle.is_null(); }
+    });
+    unsafe { VULKAN_LOADED }
 }

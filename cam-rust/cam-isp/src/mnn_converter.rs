@@ -1,11 +1,11 @@
-//! MNN ONNX-to-MNN conversion via static C FFI (no subprocess).
+//! MNN ONNX-to-MNN conversion via MNNConvert subprocess.
 //!
-//! Calls mnn_convert_onnx_to_mnn() from mnn_convert_api.cpp, which is
-//! statically linked into the final binary via build.rs + cc::Build.
-//! No MNNConvert subprocess needed.
+//! Uses MNNConvert binary as a subprocess to isolate MNN's
+//! C++ global state from the inference runtime. This prevents
+//! "pthread_mutex_lock on destroyed mutex" crashes caused by
+//! the converter polluting MNN's global executor/backend state.
 
-use std::ffi::CString;
-use crate::mnn_sys::{MnnConvertResult, mnn_convert_onnx_to_mnn};
+use std::process::Command;
 
 /// Conversion options for MNN converter
 #[derive(Debug, Clone)]
@@ -43,10 +43,10 @@ impl Default for MnnConvertOptions {
     }
 }
 
-/// Convert ONNX model to MNN format via static C FFI.
+/// Convert ONNX model to MNN format via MNNConvert subprocess.
 ///
-/// No subprocess, no temp files — calls MNN::Cli::convertModel directly
-/// through the statically linked mnn_convert_api.cpp wrapper.
+/// Uses MNNConvert binary (separate process) so the converter's MNN global
+/// state does not pollute the inference runtime's MNN globals.
 pub fn convert_onnx_to_mnn(
     onnx_path: &str,
     mnn_path: &str,
@@ -54,40 +54,91 @@ pub fn convert_onnx_to_mnn(
 ) -> Result<String, String> {
     let opts = options.cloned().unwrap_or_default();
 
-    let c_onnx = CString::new(onnx_path).map_err(|_| "NUL in onnx_path")?;
-    let c_mnn  = CString::new(mnn_path).map_err(|_| "NUL in mnn_path")?;
-    let c_biz  = CString::new(opts.biz_code.as_str()).map_err(|_| "NUL in biz_code")?;
+    let mnn_convert = find_mnn_convert_binary()?;
 
-    let mut result = MnnConvertResult {
-        success: 0,
-        error_msg: [0; 1024],
-    };
+    let mut cmd = Command::new(&mnn_convert);
+    cmd.arg("--framework").arg("ONNX")
+        .arg("--modelFile").arg(onnx_path)
+        .arg("--MNNModel").arg(mnn_path)
+        .arg("--bizCode").arg(&opts.biz_code);
 
-    unsafe {
-        mnn_convert_onnx_to_mnn(
-            c_onnx.as_ptr(),
-            c_mnn.as_ptr(),
-            c_biz.as_ptr(),
-            opts.optimize_level as i32,
-            opts.weight_quant_bits as i32,
-            if opts.fp16 { 1 } else { 0 },
-            if opts.preserve_input_type { 1 } else { 0 },
-            &mut result,
-        );
+    if opts.fp16 {
+        cmd.arg("--fp16");
+    }
+    if opts.weight_quant_bits > 0 {
+        cmd.arg("--weightQuantBits").arg(opts.weight_quant_bits.to_string());
+    }
+    if opts.preserve_input_type {
+        cmd.arg("--preserveInputType");
+    }
+    if !opts.use_gelu_approximation {
+        cmd.arg("--geluApproximation");
     }
 
-    if result.success == 0 {
-        Ok(format!("OK: {} -> {}", onnx_path, mnn_path))
+    let output = cmd.output()
+        .map_err(|e| format!("Failed to run MNNConvert: {}", e))?;
+
+    if output.status.success() {
+        if std::path::Path::new(mnn_path).exists() {
+            Ok(format!("OK: {} -> {}", onnx_path, mnn_path))
+        } else {
+            let combined = if output.stdout.is_empty() { &output.stderr } else { &output.stdout };
+            Err(format!("MNNConvert succeeded but no output file: {}",
+                String::from_utf8_lossy(combined)))
+        }
     } else {
-        // Extract error message from C string (null-terminated)
-        let msg = unsafe {
-            let ptr = result.error_msg.as_ptr();
-            let mut len = 0usize;
-            while len < 1024 && *ptr.add(len) != 0 { len += 1; }
-            String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).to_string()
-        };
-        Err(format!("MNN conversion failed: {}", msg))
+        let combined = if output.stderr.is_empty() { &output.stdout } else { &output.stderr };
+        Err(format!("MNN conversion failed: {}",
+            String::from_utf8_lossy(combined).trim()))
     }
+}
+
+/// Find the MNNConvert binary. Checks common locations.
+fn find_mnn_convert_binary() -> Result<String, String> {
+    // 1. Check PATH first
+    if let Ok(output) = Command::new("which").arg("MNNConvert").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() && std::path::Path::new(&path).exists() {
+                return Ok(path);
+            }
+        }
+    }
+
+    // 2. Check well-known locations relative to current dir / project root
+    let candidates = [
+        "tools/MNNConvert",
+        "target/release/tools/MNNConvert",
+        "target/debug/tools/MNNConvert",
+        "../tools/MNNConvert",
+        "/data/data/com.termux/files/home/softisp/cam-rust/tools/MNNConvert",
+        "/data/data/com.termux/files/home/softisp/tools/MNNConvert",
+    ];
+    for p in &candidates {
+        if std::path::Path::new(p).exists() {
+            return Ok(p.to_string());
+        }
+    }
+
+    // 3. Check relative to executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let rel_candidates = [
+                exe_dir.join("MNNConvert"),
+                exe_dir.join("tools").join("MNNConvert"),
+                exe_dir.join("..").join("tools").join("MNNConvert"),
+                exe_dir.join("..").join("..").join("tools").join("MNNConvert"),
+                exe_dir.join("..").join("..").join("..").join("tools").join("MNNConvert"),
+            ];
+            for p in &rel_candidates {
+                if p.exists() {
+                    return Ok(p.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    Err("MNNConvert binary not found. Install or build MNNConvert and place it in PATH.".into())
 }
 
 #[cfg(test)]
