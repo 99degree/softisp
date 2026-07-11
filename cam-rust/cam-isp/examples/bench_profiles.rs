@@ -24,7 +24,7 @@ fn main() {
         let mut blocks = profile.build_blocks(sizes[1].1, 0); // FHD sizes
         GraphComposer::wire_blocks(&mut blocks);
         let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-        let onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
+        let _onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
         let mut block_vec = blocks;
         let head = block_vec.remove(0);
         let aux = block_vec;
@@ -45,8 +45,8 @@ fn main() {
             }
             let elapsed = start.elapsed().as_millis() / 5;
             let fps = if elapsed > 0 { 1000 / elapsed } else { 0 };
-            println!("{:<7} {:<7} {:<4}: {:>2}ms/frame ({:>3} FPS) data={}", 
-                    prof_name, sz_name, profile.output_format.label(), 
+            println!("{:<7} {:<7} {:?}: {:>2}ms/frame ({:>3} FPS) data={}",
+                    prof_name, sz_name, profile.output_format,
                     elapsed, fps, if ok { "OK" } else { "FAIL" });
         }
     }
