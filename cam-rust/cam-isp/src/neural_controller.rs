@@ -242,6 +242,8 @@ impl NeuralController {
             denoise: DenoiseParams::default(),
             lens: LensParams::default(),
             display: DisplayParams::default(),
+            zoom: optimized.zoom_factor,
+            vcm_position: 0.0, // VCM from AF engine, not neural model
             custom: std::collections::HashMap::new(),
         }
     }
@@ -283,6 +285,8 @@ impl NeuralController {
             },
             lens: new.lens.clone(),
             display: new.display.clone(),
+            zoom: lerp(old.zoom, new.zoom),
+            vcm_position: lerp(old.vcm_position, new.vcm_position),
             custom: new.custom.clone(),
         }
     }
