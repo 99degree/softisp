@@ -192,6 +192,7 @@ fn main() {
             out_h,
             None,
             params.timestamp_ns,
+            None,
         );
         let postproc_ms = t_postproc.elapsed().as_secs_f64() * 1000.0;
 
