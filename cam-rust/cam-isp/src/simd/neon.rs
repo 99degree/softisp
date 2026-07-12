@@ -267,7 +267,7 @@ impl SimdEngine for Neon {
                     + p11[c] as f32 * fx * fy;
                 result[c] = v.round().clamp(0.0, 255.0) as u8;
             }
-            return result;
+            result
         }
 
         #[cfg(target_arch = "aarch64")]
