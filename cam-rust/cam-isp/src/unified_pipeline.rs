@@ -182,6 +182,7 @@ pub struct UnifiedPipeline {
 
 impl UnifiedPipeline {
     /// Create a new unified pipeline with the given configuration.
+    #[allow(unused_variables, dead_code)]
     pub fn new(config: UnifiedConfig) -> crate::error::IspResult<Self> {
         let engine_name = if config.engine_preference == "cpu" {
             "cpu"
@@ -275,6 +276,7 @@ impl UnifiedPipeline {
     /// Process a frame, auto-building warp params from lens calibration + controller zoom/VCM.
     ///
     /// Lens GDC coefficients from config, zoom/VCM from controller.
+    #[allow(unused_variables, dead_code)]
     pub fn process(
         &mut self,
         raw_data: &[u8],
@@ -316,6 +318,7 @@ impl UnifiedPipeline {
     ///
     /// Uses FloatRgb format internally to avoid RGBA conversion overhead.
     #[cfg(feature = "mnn")]
+    #[allow(unused_variables, dead_code)]
     pub fn process_with_warp(
         &mut self,
         raw_data: &[u8],
@@ -475,6 +478,7 @@ impl UnifiedPipeline {
 
     /// Stub implementation when MNN feature is disabled.
     #[cfg(not(feature = "mnn"))]
+    #[allow(unused_variables, dead_code)]
     pub fn process_with_warp(
         &mut self,
         raw_data: &[u8],
@@ -522,6 +526,7 @@ impl UnifiedPipeline {
     /// Splits the input into tiles with overlap, processes each tile independently,
     /// and stitches the results together.
     #[cfg(feature = "mnn")]
+    #[allow(unused_variables, dead_code)]
     pub fn process_tiled(
         &mut self,
         raw_data: &[u8],
