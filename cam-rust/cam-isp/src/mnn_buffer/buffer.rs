@@ -153,13 +153,12 @@ impl MNNBufferManager {
     /// Create memfd for the given size
     #[cfg(target_os = "linux")]
     fn create_memfd(&self, size: usize) -> std::io::Result<File> {
-        use std::os::unix::fs::FileExt;
 
         // Try memfd_create syscall
         let fd = unsafe {
             libc::syscall(
                 libc::SYS_memfd_create,
-                b"mnn_buffer\0".as_ptr() as *const libc::c_char,
+                c"mnn_buffer".as_ptr() as *const libc::c_char,
                 libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
             ) as RawFd
         };

@@ -11,6 +11,12 @@ use super::SimdEngine;
 
 pub struct Sse2;
 
+impl Default for Sse2 {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl Sse2 {
     pub fn new() -> Self {
         Self

@@ -13,6 +13,12 @@ use super::SimdEngine;
 
 pub struct Avx2;
 
+impl Default for Avx2 {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl Avx2 {
     pub fn new() -> Self {
         Self
