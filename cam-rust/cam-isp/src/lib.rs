@@ -7,8 +7,8 @@
 #![allow(clippy::too_many_arguments)] // ISP pipeline functions require all parameters
 #![allow(clippy::arc_with_non_send_sync)] // Internal Arc usage for single-threaded buffers
 #![allow(rustdoc::broken_intra_doc_links)] // Tensor shape [1,3,H,W] are not links
-#![allow(clippy::unused_imports)] // Some imports used only with certain features
-#![allow(clippy::unneeded_return)] // Some returns are explicit for clarity
+#![allow(unused_imports)] // Some imports used only with certain features
+#![allow(clippy::needless_return)] // Some returns are explicit for clarity
 
 pub mod ae;
 pub mod blocks;
