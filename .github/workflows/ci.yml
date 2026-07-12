@@ -49,7 +49,9 @@ jobs:
     name: Python Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    working-directory: ./isp-rectifier
+    defaults:
+      run:
+        working-directory: ./isp-rectifier
     steps:
       - uses: actions/checkout@v4
 
