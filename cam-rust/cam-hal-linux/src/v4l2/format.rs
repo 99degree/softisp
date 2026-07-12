@@ -22,9 +22,7 @@ pub fn fourcc_to_frame_format(fourcc: u32) -> Option<FrameFormat> {
     match &fmt_bytes {
         b"ARGB" | b"RGBA" | b"RGB4" => Some(FrameFormat::Rgba8888),
         b"RGB3" | b"RGB\0" => Some(FrameFormat::Rgb888),
-        b"YUYV" => Some(FrameFormat::Yuv420),
-        b"NV12" => Some(FrameFormat::Nv12),
-        b"NV21" => Some(FrameFormat::Nv21),
+        b"YUYV" | b"NV12" | b"NV21" => Some(FrameFormat::Yuv420888),
         _ => None,
     }
 }
@@ -35,9 +33,10 @@ pub fn frame_format_to_fourcc(format: FrameFormat) -> u32 {
     match format {
         FrameFormat::Rgba8888 => u32::from_le_bytes(*b"RGBA"),
         FrameFormat::Rgb888 => u32::from_le_bytes(*b"RGB3"),
-        FrameFormat::Yuv420 => u32::from_le_bytes(*b"YUYV"),
-        FrameFormat::Nv12 => u32::from_le_bytes(*b"NV12"),
-        FrameFormat::Nv21 => u32::from_le_bytes(*b"NV21"),
+        FrameFormat::Yuv420888 => u32::from_le_bytes(*b"YUYV"),
+        FrameFormat::RawSensor => u32::from_le_bytes(*b"R010"),
+        FrameFormat::Raw10 => u32::from_le_bytes(*b"R010"),
+        FrameFormat::Raw12 => u32::from_le_bytes(*b"R012"),
         _ => 0,
     }
 }
