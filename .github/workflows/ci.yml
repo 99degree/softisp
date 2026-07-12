@@ -17,6 +17,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          submodules: false
 
       - name: Git config safe directory
         run: git config --global --add safe.directory "*"
@@ -73,6 +74,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          submodules: false
 
       - name: Git config safe directory
         run: git config --global --add safe.directory '*'
@@ -125,6 +127,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          submodules: false
 
       - name: Git config safe directory
         run: git config --global --add safe.directory '*'
@@ -231,6 +234,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          submodules: false
 
       - name: Git config safe directory
         run: git config --global --add safe.directory '*'
@@ -271,6 +275,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          submodules: false
 
       - name: Git config safe directory
         run: git config --global --add safe.directory '*'
@@ -293,6 +298,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          submodules: false
 
       - name: Git config safe directory
         run: git config --global --add safe.directory '*'
