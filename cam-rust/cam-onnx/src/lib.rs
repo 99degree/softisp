@@ -25,7 +25,7 @@ use log::info;
 /// ONNX model session for inference.
 pub struct OnnxSession {
     #[cfg(feature = "ort")]
-    session: ort::Session,
+    session: ort::session::Session,
     model_name: String,
 }
 
