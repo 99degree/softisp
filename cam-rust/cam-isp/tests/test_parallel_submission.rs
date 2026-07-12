@@ -6,10 +6,6 @@
 
 #[cfg(feature = "mnn")]
 mod parallel_test {
-    
-    
-    
-    
 
     #[test]
     #[ignore]

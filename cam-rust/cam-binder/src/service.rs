@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 use log::info;
 
+use crate::callback::*;
 use crate::provider::CameraProvider;
 use crate::session::CameraDeviceSession;
 use crate::types::*;
-use crate::callback::*;
 
 /// Camera HAL Service.
 ///
@@ -54,7 +54,9 @@ impl CameraHalService {
         camera_id: &str,
         callback: Arc<dyn ICameraDeviceCallback>,
     ) -> Result<Arc<std::sync::Mutex<CameraDeviceSession>>, String> {
-        let device = self.provider.get_camera_device(camera_id)
+        let device = self
+            .provider
+            .get_camera_device(camera_id)
             .ok_or_else(|| format!("Camera {} not found", camera_id))?;
 
         let session = device.lock().unwrap().open(callback)?;
@@ -186,7 +188,10 @@ mod tests {
     fn test_service_creation() {
         let service = CameraHalService::new();
         let cameras = service.get_camera_id_list();
-        assert!(!cameras.is_empty(), "Should have at least one camera (stub)");
+        assert!(
+            !cameras.is_empty(),
+            "Should have at least one camera (stub)"
+        );
     }
 
     #[test]

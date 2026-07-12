@@ -22,9 +22,9 @@
 //!
 //! Key: residual blocks and thumbnail-scale tasks benefit most.
 
-use std::sync::Arc;
-use std::collections::HashMap;
 use log::info;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// NPU accelerator vendor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -233,7 +233,7 @@ impl NpuManager {
         if is_samsung() {
             vendors.push(NpuVendor::Samsung);
         }
-        
+
         info!("NPU hardware detected: {:?}", vendors);
         vendors
     }
@@ -252,10 +252,14 @@ impl NpuManager {
             NpuVendor::Qualcomm => { /* qnn_compile_model */ }
             NpuVendor::MediaTek => { /* mediatek_npu_compile */ }
             NpuVendor::Samsung => { /* samsung_npu_compile */ }
-            _ => return Err(NpuError::Unsupported(format!(
-                "Model import not supported for vendor {}", vendor))),
+            _ => {
+                return Err(NpuError::Unsupported(format!(
+                    "Model import not supported for vendor {}",
+                    vendor
+                )))
+            }
         }
-        
+
         // For now: simulate successful model
         let model = Arc::new(NpuModel {
             _model_ptr: std::ptr::null_mut(),
@@ -280,31 +284,35 @@ impl NpuManager {
         let input_ptr = job.input_ptr;
         let output_ptr = job.output_ptr;
         let callback = job.callback;
-        
-        info!("NPU offload: {} {:?} input={:?}",
-             model.vendor, model.input_shape, input_ptr);
+
+        info!(
+            "NPU offload: {} {:?} input={:?}",
+            model.vendor, model.input_shape, input_ptr
+        );
 
         // SAFETY: hw-boundary only. Real production uses safe binding-generated API.
         match engine {
-            NpuEngine::Qnn(_) => unsafe { 
-                simulate_qnn_execution(&model, input_ptr, output_ptr) 
-            },
+            NpuEngine::Qnn(_) => unsafe { simulate_qnn_execution(&model, input_ptr, output_ptr) },
             NpuEngine::Neuropilot(_) => unsafe {
                 simulate_mtk_execution(&model, input_ptr, output_ptr)
             },
             NpuEngine::Samsung(_) => unsafe {
                 simulate_samsung_execution(&model, input_ptr, output_ptr)
             },
-            NpuEngine::HiSilicon(_) => {
-                Err(NpuError::Unsupported(
-                    "HiSilicon NPU not yet supported".into()))
-            }
+            NpuEngine::HiSilicon(_) => Err(NpuError::Unsupported(
+                "HiSilicon NPU not yet supported".into(),
+            )),
         }?;
 
         let elapsed_us = start_us.elapsed().as_micros();
-        self.offload_ops.fetch_add(model.flops as u64, std::sync::atomic::Ordering::Relaxed);
-        info!("NPU offload complete: {} us, {:.1} GFLOPS, {:.1} GFLOPS/sec",
-             elapsed_us, model.flops / 1e9, model.flops / elapsed_us as f64);
+        self.offload_ops
+            .fetch_add(model.flops as u64, std::sync::atomic::Ordering::Relaxed);
+        info!(
+            "NPU offload complete: {} us, {:.1} GFLOPS, {:.1} GFLOPS/sec",
+            elapsed_us,
+            model.flops / 1e9,
+            model.flops / elapsed_us as f64
+        );
 
         (callback)(Ok(()));
         Ok(())
@@ -320,8 +328,8 @@ impl NpuManager {
 
 /// FFI simulation stub
 unsafe fn simulate_qnn_execution(
-    _model: &NpuModel, 
-    _input_ptr: *mut u8, 
+    _model: &NpuModel,
+    _input_ptr: *mut u8,
     _output_ptr: *mut u8,
 ) -> Result<(), NpuError> {
     // Simulate: transfer input to DSP, run QNN model, transfer output
@@ -393,20 +401,19 @@ impl QuantizationManager {
             managers: HashMap::new(),
         }
     }
-    
+
     pub fn manager(&mut self, soc_name: &str) -> &mut NpuManager {
         let config = NpuConfig {
             max_jobs: 1,
             timeout_secs: 2,
             enable_int8: true,
         };
-        
-        self.managers.entry(soc_name.into())
-            .or_insert_with(|| {
-                let mut manager = NpuManager::new(config);
-                let _ = manager.detect_hardware();
-                manager
-            })
+
+        self.managers.entry(soc_name.into()).or_insert_with(|| {
+            let mut manager = NpuManager::new(config);
+            let _ = manager.detect_hardware();
+            manager
+        })
     }
 }
 
@@ -417,7 +424,10 @@ mod tests {
     #[test]
     fn test_npu_vendor_from_soc() {
         assert_eq!(NpuVendor::from_soc("SDM865"), Some(NpuVendor::Qualcomm));
-        assert_eq!(NpuVendor::from_soc("dimensity_9000"), Some(NpuVendor::MediaTek));
+        assert_eq!(
+            NpuVendor::from_soc("dimensity_9000"),
+            Some(NpuVendor::MediaTek)
+        );
         assert_eq!(NpuVendor::from_soc("exynos_5123"), Some(NpuVendor::Samsung));
         assert_eq!(NpuVendor::from_soc("unknown"), None);
     }

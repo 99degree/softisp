@@ -1,11 +1,13 @@
 //! V4L2 Camera Adapter implementing ICameraAdapter with callback streaming.
 
-use log::{info, warn, error};
+use log::{error, info, warn};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use cam_hal::camera::{
+    BaseCameraAdapter, ByteFrame, CameraState, FrameCallback, ICameraAdapter, StreamConfig,
+};
 use cam_types::{CameraSourceType, FrameFormat};
-use cam_hal::camera::{ICameraAdapter, BaseCameraAdapter, ByteFrame, CameraState, StreamConfig, FrameCallback};
 
 /// V4L2 Camera Adapter that streams frames via callback.
 pub struct V4l2CameraAdapter {
@@ -21,11 +23,14 @@ impl V4l2CameraAdapter {
         {
             let cam = rscam::Camera::new(device_path)
                 .map_err(|e| format!("Failed to open V4L2 device {}: {}", device_path, e))?;
-            let info = cam.query_capability()
+            let info = cam
+                .query_capability()
                 .map_err(|e| format!("Failed to query capabilities: {}", e))?;
-            info!("V4L2 device: driver={}, card={}",
+            info!(
+                "V4L2 device: driver={}, card={}",
                 String::from_utf8_lossy(&info.driver),
-                String::from_utf8_lossy(&info.card));
+                String::from_utf8_lossy(&info.card)
+            );
             drop(cam); // close — we'll reopen on start_streaming
 
             Ok(Self {
@@ -36,17 +41,24 @@ impl V4l2CameraAdapter {
             })
         }
         #[cfg(not(feature = "v4l2"))]
-        { Err("V4L2 feature not enabled".into()) }
+        {
+            Err("V4L2 feature not enabled".into())
+        }
     }
 }
 
 impl ICameraAdapter for V4l2CameraAdapter {
-    fn source_type(&self) -> CameraSourceType { self.base.source_type }
+    fn source_type(&self) -> CameraSourceType {
+        self.base.source_type
+    }
 
     fn open(&mut self, config: &StreamConfig) -> Result<(), String> {
         *self.config.lock().unwrap() = Some(config.clone());
         self.base.set_state(CameraState::Open);
-        info!("V4L2 adapter opened (path={}, {}x{})", self.device_path, config.width, config.height);
+        info!(
+            "V4L2 adapter opened (path={}, {}x{})",
+            self.device_path, config.width, config.height
+        );
         Ok(())
     }
 
@@ -65,7 +77,11 @@ impl ICameraAdapter for V4l2CameraAdapter {
             return Err("No frame callback set".into());
         }
 
-        let config = self.config.lock().unwrap().clone()
+        let config = self
+            .config
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or("Camera not opened (no StreamConfig)")?;
 
         let device_path = self.device_path.clone();
@@ -148,8 +164,8 @@ impl ICameraAdapter for V4l2CameraAdapter {
 
                 let mut cfg = rscam::Config::new();
                 cfg.resolution(width, height)
-                  .format(fourcc)
-                  .frame_rate(fps, 1);
+                    .format(fourcc)
+                    .frame_rate(fps, 1);
 
                 if let Err(e) = cam.configure(&cfg) {
                     error!("V4L2 thread: configure failed: {:?}", e);
@@ -161,7 +177,10 @@ impl ICameraAdapter for V4l2CameraAdapter {
                     return;
                 }
 
-                info!("V4L2 streaming thread started ({}x{} {:?} @ {}fps)", width, height, format, fps);
+                info!(
+                    "V4L2 streaming thread started ({}x{} {:?} @ {}fps)",
+                    width, height, format, fps
+                );
 
                 while *running_clone.lock().unwrap() {
                     match cam.read_frame() {

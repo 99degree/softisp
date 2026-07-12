@@ -50,10 +50,10 @@ impl BayerPattern {
     /// Index of the red pixel in a 2×2 Bayer block.
     pub fn red_index(self) -> usize {
         match self {
-            BayerPattern::Rggb => 3, // (1,1)
-            BayerPattern::Grbg => 2, // (1,0)
-            BayerPattern::Gbrg => 1, // (0,1)
-            BayerPattern::Bggr => 0, // (0,0)
+            BayerPattern::Rggb => 3,    // (1,1)
+            BayerPattern::Grbg => 2,    // (1,0)
+            BayerPattern::Gbrg => 1,    // (0,1)
+            BayerPattern::Bggr => 0,    // (0,0)
             BayerPattern::Unknown => 3, // default RGGB-like
         }
     }
@@ -265,7 +265,7 @@ pub fn nv21_to_rgba(data: &[u8], width: usize, height: usize) -> Vec<u8> {
             let uv_idx = uv_y * width + uv_x * 2;
 
             let y_val = y_plane[y_idx] as i32;
-            let v = uv_plane[uv_idx] as i32 - 128;     // V
+            let v = uv_plane[uv_idx] as i32 - 128; // V
             let u = uv_plane[uv_idx + 1] as i32 - 128; // U
 
             // BT.601 conversion (limited range)
@@ -298,11 +298,26 @@ mod tests {
 
     #[test]
     fn test_bayer_pattern_detection() {
-        assert_eq!(BayerPattern::from_metadata_string("BGGR"), BayerPattern::Bggr);
-        assert_eq!(BayerPattern::from_metadata_string("RGGB"), BayerPattern::Rggb);
-        assert_eq!(BayerPattern::from_metadata_string("GRBG"), BayerPattern::Grbg);
-        assert_eq!(BayerPattern::from_metadata_string("GBRG"), BayerPattern::Gbrg);
-        assert_eq!(BayerPattern::from_metadata_string("unknown"), BayerPattern::Unknown);
+        assert_eq!(
+            BayerPattern::from_metadata_string("BGGR"),
+            BayerPattern::Bggr
+        );
+        assert_eq!(
+            BayerPattern::from_metadata_string("RGGB"),
+            BayerPattern::Rggb
+        );
+        assert_eq!(
+            BayerPattern::from_metadata_string("GRBG"),
+            BayerPattern::Grbg
+        );
+        assert_eq!(
+            BayerPattern::from_metadata_string("GBRG"),
+            BayerPattern::Gbrg
+        );
+        assert_eq!(
+            BayerPattern::from_metadata_string("unknown"),
+            BayerPattern::Unknown
+        );
     }
 
     #[test]

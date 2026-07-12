@@ -4,11 +4,11 @@
 fn test_mnn_per_block_profiling() {
     // This test now validates the full pipeline using session inference memory data
     // instead of running each block individually.
-    use cam_isp::profile::PipelineProfile;
-    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::blocks::DisplayBlock;
     use cam_isp::mnn_converter::convert_onnx_to_mnn;
     use cam_isp::mnn_sys::{MnnBackendType, MnnInterpreterSafe};
-    use cam_isp::blocks::DisplayBlock;
+    use cam_isp::pipeline::GraphComposer;
+    use cam_isp::profile::PipelineProfile;
     use std::ffi::CStr;
     use std::os::raw::c_void;
 
@@ -33,7 +33,9 @@ fn test_mnn_per_block_profiling() {
 
     // Load interpreter and create a session.
     let interp = MnnInterpreterSafe::from_file(mnn_path).expect("load MNN model");
-    let sess = interp.create_session(MnnBackendType::Vulkan, 4).expect("create session");
+    let sess = interp
+        .create_session(MnnBackendType::Vulkan, 4)
+        .expect("create session");
 
     // Synthetic raw input buffer (INT16 packed).
     let frame_size = (w * h * 2) as usize;
@@ -62,10 +64,13 @@ fn test_mnn_per_block_profiling() {
     // Run inference.
     unsafe {
         let _ = cam_isp::mnn_sys::mnn_run_with_output(
-            interp.as_ptr(), sess.as_ptr(),
+            interp.as_ptr(),
+            sess.as_ptr(),
             buf.as_ptr() as *const c_void,
-            0, 32,
-            shape.as_ptr(), shape.len() as i32,
+            0,
+            32,
+            shape.as_ptr(),
+            shape.len() as i32,
             CStr::from_bytes_with_nul_unchecked(b"DisplayBlock/frame\0").as_ptr(),
             out_ptr,
             max_out as i32,
@@ -75,17 +80,32 @@ fn test_mnn_per_block_profiling() {
     // Retrieve numeric session info (MEMORY, FLOPS, THREAD_NUMBER).
     unsafe {
         let mut mem: f32 = 0.0;
-        let ret_mem = cam_isp::mnn_sys::mnn_get_model_info(interp.as_ptr(), sess.as_ptr(), cam_isp::mnn_sys::MnnModelInfo::MEMORY as i32, &mut mem as *mut _ as *mut c_void);
+        let ret_mem = cam_isp::mnn_sys::mnn_get_model_info(
+            interp.as_ptr(),
+            sess.as_ptr(),
+            cam_isp::mnn_sys::MnnModelInfo::MEMORY as i32,
+            &mut mem as *mut _ as *mut c_void,
+        );
         if ret_mem == 0 {
             println!("[perf] MNN MEMORY: {}", mem);
         }
         let mut flops: f32 = 0.0;
-        let ret_flops = cam_isp::mnn_sys::mnn_get_model_info(interp.as_ptr(), sess.as_ptr(), cam_isp::mnn_sys::MnnModelInfo::FLOPS as i32, &mut flops as *mut _ as *mut c_void);
+        let ret_flops = cam_isp::mnn_sys::mnn_get_model_info(
+            interp.as_ptr(),
+            sess.as_ptr(),
+            cam_isp::mnn_sys::MnnModelInfo::FLOPS as i32,
+            &mut flops as *mut _ as *mut c_void,
+        );
         if ret_flops == 0 {
             println!("[perf] MNN FLOPS: {}", flops);
         }
         let mut threads: i32 = 0;
-        let ret_threads = cam_isp::mnn_sys::mnn_get_model_info(interp.as_ptr(), sess.as_ptr(), cam_isp::mnn_sys::MnnModelInfo::THREAD_NUMBER as i32, &mut threads as *mut _ as *mut c_void);
+        let ret_threads = cam_isp::mnn_sys::mnn_get_model_info(
+            interp.as_ptr(),
+            sess.as_ptr(),
+            cam_isp::mnn_sys::MnnModelInfo::THREAD_NUMBER as i32,
+            &mut threads as *mut _ as *mut c_void,
+        );
         if ret_threads == 0 {
             println!("[perf] MNN THREAD_NUMBER: {}", threads);
         }

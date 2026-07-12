@@ -11,13 +11,19 @@
 //!
 //!   backend: cpu (default), vulkan, opencl, opengl
 
-use std::time::{Duration, Instant};
 use cam_isp::engine::IspEngine;
 use cam_isp::pipeline::IspBlock;
+use std::time::{Duration, Instant};
 
 /// Build prefix of the packed INT32 pipeline blocks up to `count`.
 /// Mirrors `PipelineProfile::build_blocks()` — the default production path.
-fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize, fused: bool, legacy: bool) -> Vec<Box<dyn IspBlock>> {
+fn build_blocks_up_to(
+    target_width: u32,
+    target_height: u32,
+    count: usize,
+    fused: bool,
+    legacy: bool,
+) -> Vec<Box<dyn IspBlock>> {
     let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
     let full_w = target_width as i64;
     let packed_w = (target_width / 2) as i64;
@@ -25,70 +31,122 @@ fn build_blocks_up_to(target_width: u32, target_height: u32, count: usize, fused
 
     if fused {
         // Fused: raw → UnpackCfaBlock (unpack+norm+CFA+BLC)
-        blocks.push(Box::new(cam_isp::blocks::RawInputBlock::new()
-            .with_elem_type(6)
-            .with_concrete_dims(h, packed_w)));
-        if blocks.len() >= count { return wire(blocks); }
-        blocks.push(Box::new(cam_isp::blocks::UnpackCfaBlock::new()
-            .with_concrete_dims(h, full_w)
-            .with_blc(true)));
-        if blocks.len() >= count { return wire(blocks); }
+        blocks.push(Box::new(
+            cam_isp::blocks::RawInputBlock::new()
+                .with_elem_type(6)
+                .with_concrete_dims(h, packed_w),
+        ));
+        if blocks.len() >= count {
+            return wire(blocks);
+        }
+        blocks.push(Box::new(
+            cam_isp::blocks::UnpackCfaBlock::new()
+                .with_concrete_dims(h, full_w)
+                .with_blc(true),
+        ));
+        if blocks.len() >= count {
+            return wire(blocks);
+        }
         // blc_id: identity (BLC fused into unpack_cfa)
         blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new("blc_id")));
     } else if legacy {
         // Legacy FLOAT: raw → norm → cfa
-        blocks.push(Box::new(cam_isp::blocks::RawInputBlock::new()
-            .with_elem_type(1)
-            .with_concrete_dims(h, full_w)));
-        if blocks.len() >= count { return wire(blocks); }
+        blocks.push(Box::new(
+            cam_isp::blocks::RawInputBlock::new()
+                .with_elem_type(1)
+                .with_concrete_dims(h, full_w),
+        ));
+        if blocks.len() >= count {
+            return wire(blocks);
+        }
         blocks.push(Box::new(cam_isp::blocks::NormalizeBlock::new()));
-        if blocks.len() >= count { return wire(blocks); }
-        blocks.push(Box::new(cam_isp::blocks::CfaBlock::new()
-            .with_concrete_dims(h, full_w)));
+        if blocks.len() >= count {
+            return wire(blocks);
+        }
+        blocks.push(Box::new(
+            cam_isp::blocks::CfaBlock::new().with_concrete_dims(h, full_w),
+        ));
     } else {
         // Standard packed: raw → unpack → norm → cfa → blc
-        blocks.push(Box::new(cam_isp::blocks::RawInputBlock::new()
-            .with_elem_type(6)
-            .with_concrete_dims(h, packed_w)));
-        if blocks.len() >= count { return wire(blocks); }
-        blocks.push(Box::new(cam_isp::blocks::UnpackBlock::new()
-            .with_concrete_dims(h, full_w)));
-        if blocks.len() >= count { return wire(blocks); }
+        blocks.push(Box::new(
+            cam_isp::blocks::RawInputBlock::new()
+                .with_elem_type(6)
+                .with_concrete_dims(h, packed_w),
+        ));
+        if blocks.len() >= count {
+            return wire(blocks);
+        }
+        blocks.push(Box::new(
+            cam_isp::blocks::UnpackBlock::new().with_concrete_dims(h, full_w),
+        ));
+        if blocks.len() >= count {
+            return wire(blocks);
+        }
         blocks.push(Box::new(cam_isp::blocks::NormalizeBlock::new()));
-        if blocks.len() >= count { return wire(blocks); }
-        blocks.push(Box::new(cam_isp::blocks::CfaBlock::new()
-            .with_concrete_dims(h, full_w)));
-        if blocks.len() >= count { return wire(blocks); }
+        if blocks.len() >= count {
+            return wire(blocks);
+        }
+        blocks.push(Box::new(
+            cam_isp::blocks::CfaBlock::new().with_concrete_dims(h, full_w),
+        ));
+        if blocks.len() >= count {
+            return wire(blocks);
+        }
         blocks.push(Box::new(cam_isp::blocks::BlcBlock::new()));
     }
-    if blocks.len() >= count { return wire(blocks); }
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
 
     // Source hook (after BLC)
-    blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")));
-    if blocks.len() >= count { return wire(blocks); }
+    blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new(
+        "aux_hook_src",
+    )));
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
 
     // Main processing
     blocks.push(Box::new(cam_isp::blocks::BayerWbBlock::new()));
-    if blocks.len() >= count { return wire(blocks); }
-    blocks.push(Box::new(cam_isp::blocks::DemosaicBlock::new(0)
-        .with_concrete_dims(h / 2, full_w / 2)));
-    if blocks.len() >= count { return wire(blocks); }
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
+    blocks.push(Box::new(
+        cam_isp::blocks::DemosaicBlock::new(0).with_concrete_dims(h / 2, full_w / 2),
+    ));
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
     blocks.push(Box::new(cam_isp::blocks::CcmBlock::new()));
-    if blocks.len() >= count { return wire(blocks); }
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
     blocks.push(Box::new(cam_isp::blocks::ToneBlock::new()));
-    if blocks.len() >= count { return wire(blocks); }
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
 
     // Output hook
-    blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")));
-    if blocks.len() >= count { return wire(blocks); }
+    blocks.push(Box::new(cam_isp::blocks::IdentityBlock::new(
+        "aux_hook_out",
+    )));
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
 
     // Aux blocks: FCS, LDCI, EE
     blocks.push(Box::new(cam_isp::blocks::FcsBlock::new()));
-    if blocks.len() >= count { return wire(blocks); }
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
     blocks.push(Box::new(cam_isp::blocks::LdciBlock::new()));
-    if blocks.len() >= count { return wire(blocks); }
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
     blocks.push(Box::new(cam_isp::blocks::EeBlock::new()));
-    if blocks.len() >= count { return wire(blocks); }
+    if blocks.len() >= count {
+        return wire(blocks);
+    }
 
     blocks.push(Box::new(cam_isp::blocks::DisplayBlock::new(target_width)));
     wire(blocks)
@@ -181,8 +239,18 @@ fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--legacy" | "-l" => use_legacy = true,
-            "--width" | "-w" => { i += 1; if i < args.len() { w = args[i].parse().unwrap_or(640); } }
-            "--height" | "-H" => { i += 1; if i < args.len() { h = args[i].parse().unwrap_or(480); } }
+            "--width" | "-w" => {
+                i += 1;
+                if i < args.len() {
+                    w = args[i].parse().unwrap_or(640);
+                }
+            }
+            "--height" | "-H" => {
+                i += 1;
+                if i < args.len() {
+                    h = args[i].parse().unwrap_or(480);
+                }
+            }
             _ if !args[i].starts_with('-') => backend_name = &args[i],
             _ => {}
         }
@@ -194,12 +262,22 @@ fn main() {
         "opencl" => cam_isp::mnnengine::MnnBackend::Opencl,
         "opengl" => cam_isp::mnnengine::MnnBackend::OpenGl,
         "cpu" => cam_isp::mnnengine::MnnBackend::Cpu,
-        _ => { eprintln!("Unknown backend: '{}' (use cpu, vulkan, opencl, opengl)", backend_name); return; }
+        _ => {
+            eprintln!(
+                "Unknown backend: '{}' (use cpu, vulkan, opencl, opengl)",
+                backend_name
+            );
+            return;
+        }
     };
 
     // (aux blocks are always included in the incremental bench)
 
-    let pipeline_desc = if use_legacy { "FLOAT input (legacy)" } else { "packed INT32 → Unpack" };
+    let pipeline_desc = if use_legacy {
+        "FLOAT input (legacy)"
+    } else {
+        "packed INT32 → Unpack"
+    };
 
     eprintln!("=== Block-by-block pipeline profiling ===");
     eprintln!("Backend: {}", backend_name);
@@ -207,12 +285,13 @@ fn main() {
     eprintln!("Resolution: {}x{}", w, h);
     // Build blocks once to determine names and count
     let profile = cam_isp::profile::PipelineProfile::custom(
-        "BENCH", cam_isp::profile::PipelineLevel::Lite,
+        "BENCH",
+        cam_isp::profile::PipelineLevel::Lite,
         !use_legacy, // use_unpack
-        true,  // use_fcs
-        true,  // use_ldci
-        true,  // use_ee
-        false, // use_bad_pixel
+        true,        // use_fcs
+        true,        // use_ldci
+        true,        // use_ee
+        false,       // use_bad_pixel
         cam_isp::profile::DemosaicQuality::Standard,
         false, // use_local_contrast
         false, // use_unsharp
@@ -257,7 +336,13 @@ fn main() {
 
     for n in 1..=max_blocks {
         let blocks = build_blocks_up_to(w, h, n, !use_legacy, use_legacy);
-        assert_eq!(blocks.len(), n, "build_blocks_up_to({}) returned {} blocks", n, blocks.len());
+        assert_eq!(
+            blocks.len(),
+            n,
+            "build_blocks_up_to({}) returned {} blocks",
+            n,
+            blocks.len()
+        );
 
         let label = &block_names[n - 1];
         eprint!("  [{:2}/{}] {:26} ", n, max_blocks, label);
@@ -266,19 +351,46 @@ fn main() {
 
         match result {
             Some((count, total_prep_ns, total_infer_ns, total_total_ns)) => {
-                let avg_prep_ms = if count > 0 { total_prep_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
-                let _avg_infer_ms = if count > 0 { total_infer_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
-                let avg_total_ms = if count > 0 { total_total_ns as f64 / count as f64 / 1_000_000.0 } else { 0.0 };
-                let fps = if avg_total_ms > 0.0 { 1000.0 / avg_total_ms } else { 0.0 };
+                let avg_prep_ms = if count > 0 {
+                    total_prep_ns as f64 / count as f64 / 1_000_000.0
+                } else {
+                    0.0
+                };
+                let _avg_infer_ms = if count > 0 {
+                    total_infer_ns as f64 / count as f64 / 1_000_000.0
+                } else {
+                    0.0
+                };
+                let avg_total_ms = if count > 0 {
+                    total_total_ns as f64 / count as f64 / 1_000_000.0
+                } else {
+                    0.0
+                };
+                let fps = if avg_total_ms > 0.0 {
+                    1000.0 / avg_total_ms
+                } else {
+                    0.0
+                };
 
-                let inc_cost = if n > 1 { avg_total_ms - prev_total_ms } else { avg_total_ms };
+                let inc_cost = if n > 1 {
+                    avg_total_ms - prev_total_ms
+                } else {
+                    avg_total_ms
+                };
 
                 eprintln!(
                     "{:>5.1} fps | {:>5.1}ms total | {:>+5.1}ms | prep={:.1}ms",
                     fps, avg_total_ms, inc_cost, avg_prep_ms
                 );
 
-                results.push((n, label.to_string(), avg_total_ms, inc_cost, _avg_infer_ms, fps));
+                results.push((
+                    n,
+                    label.to_string(),
+                    avg_total_ms,
+                    inc_cost,
+                    _avg_infer_ms,
+                    fps,
+                ));
                 prev_total_ms = avg_total_ms;
             }
             None => {
@@ -291,13 +403,19 @@ fn main() {
     // Summary table
     eprintln!();
     eprintln!("=== Per-Block Cost Summary ===");
-    eprintln!("{:<30} {:>12} {:>12} {:>10}", "Block", "Total (ms)", "Incr (ms)", "FPS");
+    eprintln!(
+        "{:<30} {:>12} {:>12} {:>10}",
+        "Block", "Total (ms)", "Incr (ms)", "FPS"
+    );
     eprintln!("{}", "-".repeat(66));
     for (_, name, total, inc, _, fps) in &results {
         if *total < 0.0 {
             eprintln!("{:<30} {:>12}", name, "FAILED");
         } else {
-            eprintln!("{:<30} {:>9.2}ms {:>+9.2}ms {:>7.1}fps", name, total, inc, fps);
+            eprintln!(
+                "{:<30} {:>9.2}ms {:>+9.2}ms {:>7.1}fps",
+                name, total, inc, fps
+            );
         }
     }
     eprintln!("{}", "-".repeat(66));
@@ -305,17 +423,26 @@ fn main() {
     // Top 5 most expensive blocks
     eprintln!();
     eprintln!("=== Most Expensive Blocks (by incremental cost) ===");
-    let mut sorted: Vec<_> = results.iter()
+    let mut sorted: Vec<_> = results
+        .iter()
         .filter(|(_, _, total, inc, _, _)| *inc >= 0.0 && *total >= 0.0)
         .collect();
     sorted.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
-    let final_total = results.last()
+    let final_total = results
+        .last()
         .filter(|(_, _, t, _, _, _)| *t > 0.0)
         .map(|(_, _, t, _, _, _)| *t)
         .unwrap_or(1.0);
     for (i, (_, name, _, inc, _, _)) in sorted.iter().enumerate().take(5) {
         let bar = "#".repeat((*inc as usize).clamp(1, 40));
         let pct = (*inc / final_total) * 100.0;
-        eprintln!("  #{:2}  +{:>6.2}ms ({:>4.1}%)  {}  {}", i + 1, inc, pct, bar, name);
+        eprintln!(
+            "  #{:2}  +{:>6.2}ms ({:>4.1}%)  {}  {}",
+            i + 1,
+            inc,
+            pct,
+            bar,
+            name
+        );
     }
 }

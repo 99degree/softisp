@@ -6,16 +6,20 @@
 //! Extracted from `controller.rs` to separate AWB/CCT logic from the
 //! rest of the ISP controller.
 
+use crate::ccm_engine::{self, select_ccm};
 use crate::controller::IspController;
 use crate::scene::SceneCategory;
-use crate::ccm_engine::{self, select_ccm};
 
 impl IspController {
     // ── Smoothing ──
 
     /// Smoothing alpha for AWB (fast convergence in first 10 frames).
     pub(crate) fn awb_alpha(&self) -> f32 {
-        if self.frame_count < 10 { 0.4 } else { self.smoothing_alpha }
+        if self.frame_count < 10 {
+            0.4
+        } else {
+            self.smoothing_alpha
+        }
     }
 
     // ── Prior CCT estimation ──
@@ -54,9 +58,14 @@ impl IspController {
         let b = channel_means[2].max(min_rgb);
 
         // Handle clamp feedback: if CCM was broken at previous CCT, reset
-        if self.clamp_flags & (ccm_engine::CCM_R_OUT_NEGATIVE | ccm_engine::CCM_DIAGONAL_EXTREME) != 0 {
-            log::warn!("CCM clamp flags=0x{:x} at CCT={} -> resetting CCT to 5500",
-                self.clamp_flags, self.clamp_cct_ref);
+        if self.clamp_flags & (ccm_engine::CCM_R_OUT_NEGATIVE | ccm_engine::CCM_DIAGONAL_EXTREME)
+            != 0
+        {
+            log::warn!(
+                "CCM clamp flags=0x{:x} at CCT={} -> resetting CCT to 5500",
+                self.clamp_flags,
+                self.clamp_cct_ref
+            );
             self.estimated_cct = Some(5500);
             self.clamp_flags = 0;
         }
@@ -64,7 +73,8 @@ impl IspController {
         // Scene change tracking
         if let Some(prev) = self.prev_channel_means {
             let max_prev = prev[0].max(prev[1]).max(prev[2]).max(1e-6);
-            let md = (channel_means[0] - prev[0]).abs()
+            let md = (channel_means[0] - prev[0])
+                .abs()
                 .max((channel_means[1] - prev[1]).abs())
                 .max((channel_means[2] - prev[2]).abs());
             self.scene_change = (md / max_prev).clamp(0.0, 1.0);
@@ -132,9 +142,8 @@ impl IspController {
         // Update CCM
         if let Some(cct) = self.estimated_cct {
             let x = select_ccm(cct);
-            let raw: [f32; 9] = std::array::from_fn(|i| {
-                self.ccm_scale_a[i] * x[i] + self.ccm_offset_c[i]
-            });
+            let raw: [f32; 9] =
+                std::array::from_fn(|i| self.ccm_scale_a[i] * x[i] + self.ccm_offset_c[i]);
 
             if self.ccm_initialized {
                 for i in 0..9 {
@@ -148,7 +157,9 @@ impl IspController {
             self.ccm_matrix = self.smoothed_ccm;
 
             ccm_engine::sanitize_ccm(
-                &mut self.ccm_matrix, cct, "stats",
+                &mut self.ccm_matrix,
+                cct,
+                "stats",
                 Some(&mut self.clamp_flags),
                 Some(&mut self.clamp_cct_ref),
             );
@@ -164,7 +175,10 @@ impl IspController {
         if new_scene != self.scene_category {
             log::debug!(
                 "Scene transition: {:?} → {:?} (lum={:.3}, cct={}K)",
-                self.scene_category, new_scene, self.scene_luminance, cct_for_scene
+                self.scene_category,
+                new_scene,
+                self.scene_luminance,
+                cct_for_scene
             );
         }
         self.scene_category = new_scene;
@@ -177,30 +191,30 @@ impl IspController {
                 for i in [0, 4, 8] {
                     self.ccm_scale_a[i] = self.ccm_scale_a[i].clamp(1.05, 1.25);
                 }
-            },
+            }
             SceneCategory::SunriseSunset => {
                 self.awb_gains[0] += (1.0 - self.awb_gains[0]) * 0.1;
                 self.awb_gains[2] += (1.0 - self.awb_gains[2]) * 0.1;
                 self.ccm_scale_a[0] = self.ccm_scale_a[0].clamp(1.0, 1.15);
                 self.tone_saturation = self.tone_saturation.clamp(1.1, 1.4);
-            },
+            }
             SceneCategory::Indoor => {
                 self.tone_saturation = self.tone_saturation.clamp(0.9, 1.2);
                 self.tone_shadow_lift = self.tone_shadow_lift.clamp(0.05, 0.20);
                 self.tone_contrast = self.tone_contrast.clamp(0.9, 1.2);
-            },
+            }
             SceneCategory::Outdoor => {
                 self.tone_contrast = self.tone_contrast.clamp(1.05, 1.3);
                 self.tone_shadow_lift = self.tone_shadow_lift.min(0.12);
                 self.tone_gamma = self.tone_gamma.clamp(2.0, 2.4);
-            },
+            }
             SceneCategory::Bright => {
                 self.exposure_gain = self.exposure_gain.min(1.2);
                 self.tone_contrast = self.tone_contrast.clamp(1.1, 1.4);
                 self.tone_shadow_lift = self.tone_shadow_lift.min(0.08);
                 self.tone_gamma = self.tone_gamma.clamp(2.0, 2.3);
                 self.tone_saturation = self.tone_saturation.min(1.1);
-            },
+            }
             SceneCategory::Unknown => {}
         }
     }

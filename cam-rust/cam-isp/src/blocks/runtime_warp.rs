@@ -12,7 +12,7 @@
 //! │                    Hybrid CPU/GPU Pipeline                     │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │                                                                 │
- //! │  CPU: Compute GDC grid from k1, k2, k3 coefficients            │
+//! │  CPU: Compute GDC grid from k1, k2, k3 coefficients            │
 //! │       ↓                                                         │
 //! │  CPU: Compose with EIS displacement grid (from DeshakeEngine)   │
 //! │       ↓                                                         │
@@ -20,7 +20,7 @@
 //! │       ↓                                                         │
 //! │  GPU: GridSample(image, grid) → warped output                   │
 //! │                                                                 │
- //! └─────────────────────────────────────────────────────────────────┘
+//! └─────────────────────────────────────────────────────────────────┘
 //!
 //! ## Deshake Integration
 //!
@@ -52,8 +52,8 @@
 //! - **CPU grid**: Fast math (< 1ms for 4K), updates per-frame
 //! - **GDC caching**: Avoids recomputing grid when k1,k2,k3 unchanged
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// RuntimeWarpBlock — CPU grid + GPU warp.
 pub struct RuntimeWarpBlock {
@@ -164,40 +164,73 @@ impl RuntimeWarpBlock {
 }
 
 impl IspBlock for RuntimeWarpBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "RuntimeWarp".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "RuntimeWarp".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
 
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn graph_input_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_input_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     /// Grid tensor provided as runtime input (computed on CPU).
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![
-            ("RuntimeWarp/grid".into(), 1, vec![
-                1, self.output_height as i64, self.output_width as i64, 2]),
-        ]
+        vec![(
+            "RuntimeWarp/grid".into(),
+            1,
+            vec![1, self.output_height as i64, self.output_width as i64, 2],
+        )]
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -285,7 +318,13 @@ mod tests {
         for i in (0..grid.len()).step_by(2) {
             let nx = 2.0 * ((i / 2) % 64) as f32 / 63.0 - 1.0;
             let ny = 2.0 * ((i / 2) / 64) as f32 / 63.0 - 1.0;
-            assert!((grid[i] - nx).abs() < 1e-5, "x mismatch at {}: {} vs {}", i, grid[i], nx);
+            assert!(
+                (grid[i] - nx).abs() < 1e-5,
+                "x mismatch at {}: {} vs {}",
+                i,
+                grid[i],
+                nx
+            );
             assert!((grid[i + 1] - ny).abs() < 1e-5, "y mismatch");
         }
     }
@@ -319,7 +358,13 @@ mod tests {
         assert_eq!(composed.len(), gdc.len());
         for i in 0..composed.len() {
             let expected = (gdc[i] + eis[i]).clamp(-1.0, 1.0);
-            assert!((composed[i] - expected).abs() < 1e-5, "Mismatch at {}: {} vs {}", i, composed[i], expected);
+            assert!(
+                (composed[i] - expected).abs() < 1e-5,
+                "Mismatch at {}: {} vs {}",
+                i,
+                composed[i],
+                expected
+            );
         }
     }
 

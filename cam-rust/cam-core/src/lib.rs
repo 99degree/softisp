@@ -1,15 +1,15 @@
 //! Core ISP pipeline manager.
 
-pub mod pipeline;
 pub mod debug;
-pub mod logger;
 pub mod hal_bridge;
+pub mod logger;
+pub mod pipeline;
 
-use std::sync::{Arc, Mutex};
-use log::{info, error};
-use cam_isp::engine::{IspEngine, ProcessParams, select_engine};
-use cam_isp::pipeline::IspFrame;
 use cam_hal::ICameraAdapter;
+use cam_isp::engine::{select_engine, IspEngine, ProcessParams};
+use cam_isp::pipeline::IspFrame;
+use log::{error, info};
+use std::sync::{Arc, Mutex};
 
 /// Central application holder.
 pub struct ApplicationHolder {
@@ -85,5 +85,4 @@ impl ApplicationHolder {
             }
         }
     }
-
 }

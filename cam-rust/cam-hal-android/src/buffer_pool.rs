@@ -33,7 +33,7 @@ impl HalPixelFormat {
     pub fn bytes_per_pixel(&self) -> usize {
         match self {
             Self::Rgba8888 => 4,
-            Self::RawBayer => 2,  // 16-bit per pixel pack
+            Self::RawBayer => 2,         // 16-bit per pixel pack
             Self::Yuv420SemiPlanar => 1, // approximate
             Self::Yuv420Planar => 1,
             Self::Rgb565 => 2,
@@ -171,7 +171,7 @@ impl HardwareBufferPool {
         let format = buffer.desc.format;
         let mut free_buffers = self.free_buffers.lock().unwrap();
         let mut live_count = self.live_count.lock().unwrap();
-        
+
         free_buffers.entry(format).or_default().push_back(buffer);
         if let Some(count) = live_count.get_mut(&format) {
             *count = count.saturating_sub(1);
@@ -240,7 +240,7 @@ mod tests {
         let buf1 = pool.acquire(test_desc(HalPixelFormat::Rgba8888)).unwrap();
         let id1 = buf1.id;
         pool.release(buf1);
-        
+
         let buf2 = pool.acquire(test_desc(HalPixelFormat::Rgba8888)).unwrap();
         assert_eq!(buf2.id, id1, "Pool should reuse released buffer");
     }
@@ -260,7 +260,9 @@ mod tests {
     fn test_pool_separates_formats() {
         let pool = HardwareBufferPool::new(8);
         let rgba = pool.acquire(test_desc(HalPixelFormat::Rgba8888)).unwrap();
-        let yuv = pool.acquire(test_desc(HalPixelFormat::Yuv420SemiPlanar)).unwrap();
+        let yuv = pool
+            .acquire(test_desc(HalPixelFormat::Yuv420SemiPlanar))
+            .unwrap();
         pool.release(rgba);
         pool.release(yuv);
         assert_eq!(pool.capacity(HalPixelFormat::Rgba8888), 1);
@@ -278,6 +280,9 @@ mod tests {
         assert_eq!(pool.capacity(HalPixelFormat::Rgba8888), 2);
         // Capacity remains but free list is empty
         let next = pool.acquire(test_desc(HalPixelFormat::Rgba8888));
-        assert!(next.is_ok(), "Pool should still allocate new buffers after drain");
+        assert!(
+            next.is_ok(),
+            "Pool should still allocate new buffers after drain"
+        );
     }
 }

@@ -16,12 +16,12 @@
 //!   cargo run --example stream_isp --features mnn -p cam-isp -- \
 //!     --engine mnn --v4l2 /dev/video0 --width 1920 --height 1080
 
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use log::info;
 
-use cam_isp::engine::{ProcessParams, IspEngine, select_engine, select_engine_by_name};
+use cam_isp::engine::{select_engine, select_engine_by_name, IspEngine, ProcessParams};
 
 #[derive(Parser, Debug)]
 #[clap(about = "Continuous V4L2 → ISP streaming")]
@@ -98,14 +98,24 @@ fn main() {
     let args = Args::parse();
 
     info!("═══ V4L2 → ISP Streaming ═══");
-    info!("Resolution: {}x{} @ {}fps", args.width, args.height, args.fps);
+    info!(
+        "Resolution: {}x{} @ {}fps",
+        args.width, args.height, args.fps
+    );
     info!("Engine: {}, Sensor: {}", args.engine, args.sensor_max);
     if let Some(ref dev) = args.v4l2 {
         info!("V4L2 device: {}", dev);
     } else {
         info!("Mode: test pattern (no camera)");
     }
-    info!("Duration: {}s (or Ctrl+C)", if args.duration > 0 { args.duration.to_string() } else { "infinite".to_string() });
+    info!(
+        "Duration: {}s (or Ctrl+C)",
+        if args.duration > 0 {
+            args.duration.to_string()
+        } else {
+            "infinite".to_string()
+        }
+    );
 
     // Select ISP engine
     let engine: Box<dyn IspEngine> = if args.engine == "auto" {
@@ -211,8 +221,10 @@ fn main() {
     info!("Frames: {}", frame_count);
     info!("Duration: {:.1}s", total_secs);
     info!("FPS: avg={:.1}", avg_fps);
-    info!("Latency: avg={:.1}ms min={:.1}ms max={:.1}ms",
+    info!(
+        "Latency: avg={:.1}ms min={:.1}ms max={:.1}ms",
         avg_ms,
         min_latency_ns as f64 / 1_000_000.0,
-        max_latency_ns as f64 / 1_000_000.0);
+        max_latency_ns as f64 / 1_000_000.0
+    );
 }

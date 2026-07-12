@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 
 use log::info;
 
-use crate::types::*;
 use crate::callback::ICameraDeviceCallback;
 use crate::session::CameraDeviceSession;
+use crate::types::*;
 
 /// ICameraDevice implementation.
 pub struct CameraDevice {
@@ -38,16 +38,27 @@ impl CameraDevice {
         }
     }
 
-    pub fn camera_id(&self) -> &str { &self.camera_id }
-    pub fn info(&self) -> &CameraInfo { &self.info }
-    pub fn device_path(&self) -> &str { &self.device_path }
-    pub fn is_opened(&self) -> bool { *self.opened.lock().unwrap() }
+    pub fn camera_id(&self) -> &str {
+        &self.camera_id
+    }
+    pub fn info(&self) -> &CameraInfo {
+        &self.info
+    }
+    pub fn device_path(&self) -> &str {
+        &self.device_path
+    }
+    pub fn is_opened(&self) -> bool {
+        *self.opened.lock().unwrap()
+    }
 
     /// Open the camera device.
     ///
     /// Creates a capture session and delivers it via the callback's onOpened().
     /// If V4L2 is available, auto-configures the camera.
-    pub fn open(&self, callback: Arc<dyn ICameraDeviceCallback>) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
+    pub fn open(
+        &self,
+        callback: Arc<dyn ICameraDeviceCallback>,
+    ) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
         if *self.opened.lock().unwrap() {
             return Err(format!("Camera {} already opened", self.camera_id));
         }
@@ -71,7 +82,11 @@ impl CameraDevice {
         // Auto-configure V4L2 if device_path looks like a V4L2 device
         if self.device_path.starts_with("/dev/video") {
             if let Err(e) = session.lock().unwrap().configure_v4l2(&self.device_path) {
-                log::warn!("CameraDevice({}): V4L2 config failed: {}", self.camera_id, e);
+                log::warn!(
+                    "CameraDevice({}): V4L2 config failed: {}",
+                    self.camera_id,
+                    e
+                );
             }
         }
 
@@ -119,7 +134,9 @@ impl CameraDevice {
         info!("CameraDevice({}): torch not implemented", self.camera_id);
     }
 
-    pub fn is_torch_supported(&self) -> bool { false }
+    pub fn is_torch_supported(&self) -> bool {
+        false
+    }
 
     /// Flush all pending requests.
     pub fn flush(&self) {
@@ -129,7 +146,10 @@ impl CameraDevice {
     }
 
     /// AIDL: openSession — create and configure a capture session.
-    pub fn open_session(&self, callback: Arc<dyn ICameraDeviceCallback>) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
+    pub fn open_session(
+        &self,
+        callback: Arc<dyn ICameraDeviceCallback>,
+    ) -> Result<Arc<Mutex<CameraDeviceSession>>, String> {
         if *self.opened.lock().unwrap() {
             return Err("device already opened".into());
         }

@@ -1,5 +1,5 @@
-use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::engine::OutputFormat;
+use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::profile::PipelineProfile;
 use std::io::Write;
 
@@ -10,7 +10,7 @@ fn main() {
     GraphComposer::wire_blocks(&mut blocks);
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
-    
+
     // Find all value_info for DisplayBlock/frame
     let onnx_str = String::from_utf8_lossy(&onnx);
     // Look for tensor dimensions

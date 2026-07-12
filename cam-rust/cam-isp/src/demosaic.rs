@@ -219,13 +219,7 @@ fn interpolate_blue_at_red(
 }
 
 /// Interpolate red at a green pixel.
-fn interpolate_red_at_green(
-    cfa: &[f32],
-    width: usize,
-    height: usize,
-    x: usize,
-    y: usize,
-) -> f32 {
+fn interpolate_red_at_green(cfa: &[f32], width: usize, height: usize, x: usize, y: usize) -> f32 {
     // R at G in BGGR: vertical neighbors for Gr (even row, odd col)
     // horizontal neighbors for Gb (odd row, even col)
     let is_gr = y.is_multiple_of(2) && x % 2 == 1; // Gr: green in red row
@@ -262,13 +256,7 @@ fn interpolate_red_at_green(
 }
 
 /// Interpolate blue at a green pixel.
-fn interpolate_blue_at_green(
-    cfa: &[f32],
-    width: usize,
-    height: usize,
-    x: usize,
-    y: usize,
-) -> f32 {
+fn interpolate_blue_at_green(cfa: &[f32], width: usize, height: usize, x: usize, y: usize) -> f32 {
     // B at G in BGGR: horizontal neighbors for Gr, vertical for Gb
     let is_gr = y.is_multiple_of(2) && x % 2 == 1;
     let mut sum = 0.0f32;
@@ -346,10 +334,9 @@ mod tests {
     #[test]
     fn test_bayer_to_quads_basic() {
         // 4x4 Bayer RGGB
-        let bayer = vec![0.8, 0.2, 0.3, 0.9,
-                         0.1, 0.7, 0.6, 0.4,
-                         0.5, 0.3, 0.4, 0.6,
-                         0.2, 0.8, 0.7, 0.1];
+        let bayer = vec![
+            0.8, 0.2, 0.3, 0.9, 0.1, 0.7, 0.6, 0.4, 0.5, 0.3, 0.4, 0.6, 0.2, 0.8, 0.7, 0.1,
+        ];
         let quads = bayer_to_quads(&bayer, 4, 4);
         // 4 channels * (2 * 2) = 16 elements
         assert_eq!(quads.len(), 16);

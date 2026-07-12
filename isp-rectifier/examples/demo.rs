@@ -1,4 +1,4 @@
-use isp_rectifier::{FrameMetadata, AutoExposure, AutoFocus, AutoWhiteBalance, OptimizedInference};
+use isp_rectifier::{AutoExposure, AutoFocus, AutoWhiteBalance, FrameMetadata, OptimizedInference};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize inference engine
     let model_path = "fusedispcontroller_int8.onnx";
     let mut optimizer = OptimizedInference::new(model_path, true)?;
-    
+
     println!("✅ Model loaded: {}", model_path);
 
     // Simulate camera frame metadata
@@ -45,8 +45,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Display results
     println!("\n📊 Inference Results:");
     println!("  Latency: {:.2} ms", latency.as_secs_f64() * 1000.0);
-    println!("  WB Gains: [{:.3}, {:.3}, {:.3}]", 
-             params.wb_r_gain, params.wb_g_gain, params.wb_b_gain);
+    println!(
+        "  WB Gains: [{:.3}, {:.3}, {:.3}]",
+        params.wb_r_gain, params.wb_g_gain, params.wb_b_gain
+    );
     println!("  CCM:");
     for row in &params.ccm {
         println!("    [{:.3}, {:.3}, {:.3}]", row[0], row[1], row[2]);
@@ -57,12 +59,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Apply to ISP registers
     let registers = isp_rectifier::inject_registers(&params, &Default::default());
     println!("\n🎛️  ISP Register Values:");
-    println!("  WB R: 0x{:04X} ({:.3})", registers.wb_r_gain, params.wb_r_gain);
-    println!("  WB G: 0x{:04X} ({:.3})", registers.wb_g_gain, params.wb_g_gain);
-    println!("  WB B: 0x{:04X} ({:.3})", registers.wb_b_gain, params.wb_b_gain);
+    println!(
+        "  WB R: 0x{:04X} ({:.3})",
+        registers.wb_r_gain, params.wb_r_gain
+    );
+    println!(
+        "  WB G: 0x{:04X} ({:.3})",
+        registers.wb_g_gain, params.wb_g_gain
+    );
+    println!(
+        "  WB B: 0x{:04X} ({:.3})",
+        registers.wb_b_gain, params.wb_b_gain
+    );
     println!("  CCM_00: 0x{:04X}", registers.ccm_00);
     println!("  Tone LUT: {:?}", registers.tone_lut);
-    println!("  Zoom: 0x{:04X} ({:.3})", registers.zoom_scale, params.zoom_factor);
+    println!(
+        "  Zoom: 0x{:04X} ({:.3})",
+        registers.zoom_scale, params.zoom_factor
+    );
 
     // Benchmark
     println!("\n⚡ Benchmarking (100 runs)...");
@@ -73,7 +87,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         total += start.elapsed();
     }
     println!("  Average: {:.2} ms", total.as_secs_f64() * 1000.0 / 100.0);
-    println!("  FPS: {:.1f}", 1000.0 / (total.as_secs_f64() * 1000.0 / 100.0));
+    println!(
+        "  FPS: {:.1f}",
+        1000.0 / (total.as_secs_f64() * 1000.0 / 100.0)
+    );
 
     println!("\n✅ Demo completed successfully!");
     Ok(())

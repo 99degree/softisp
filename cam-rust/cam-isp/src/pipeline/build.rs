@@ -3,9 +3,9 @@
 //! Provides common helper functions for building ISP engines from blocks.
 //! Used by both `FusedPipeline` and `UnifiedPipeline`.
 
-use crate::engine::{IspEngine, select_engine};
-use crate::error::IspResult;
 use super::IspBlock;
+use crate::engine::{select_engine, IspEngine};
+use crate::error::IspResult;
 
 /// Build an ISP engine from blocks using auto-selected backend.
 ///
@@ -21,8 +21,8 @@ pub fn build_engine(blocks: Vec<Box<dyn IspBlock>>) -> IspResult<Box<dyn IspEngi
     let head = blocks.remove(0);
     let aux_blocks = blocks;
 
-    let mut engine = select_engine()
-        .ok_or(crate::error::IspError::Config("No engine available".into()))?;
+    let mut engine =
+        select_engine().ok_or(crate::error::IspError::Config("No engine available".into()))?;
 
     engine.build(head, aux_blocks, None, 21)?;
     Ok(engine)

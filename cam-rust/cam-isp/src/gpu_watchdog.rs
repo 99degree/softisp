@@ -36,7 +36,7 @@ pub struct WatchdogConfig {
 impl Default for WatchdogConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(5),           // 5 seconds
+            timeout: Duration::from_secs(5),            // 5 seconds
             check_interval: Duration::from_millis(100), // 100ms
             max_timeouts: 3,
             auto_fallback: true,
@@ -47,8 +47,8 @@ impl Default for WatchdogConfig {
 /// GPU hang watchdog
 pub struct GpuWatchdog {
     config: WatchdogConfig,
-    state: Arc<AtomicU64>,  // GpuState as u64
-    start_time: Arc<AtomicU64>,  // Instant as u64 (nanos since epoch)
+    state: Arc<AtomicU64>,      // GpuState as u64
+    start_time: Arc<AtomicU64>, // Instant as u64 (nanos since epoch)
     timeout_count: Arc<AtomicU32>,
     fallback_requested: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
@@ -69,7 +69,8 @@ impl GpuWatchdog {
 
     /// Start monitoring GPU execution
     pub fn begin_execution(&self) {
-        self.state.store(GpuState::Executing as u64, Ordering::SeqCst);
+        self.state
+            .store(GpuState::Executing as u64, Ordering::SeqCst);
         self.start_time.store(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -134,16 +135,18 @@ impl GpuWatchdog {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_nanos() as u64;
-                
+
                 let elapsed = Duration::from_nanos(now_ns.saturating_sub(start_ns));
 
                 if elapsed > config.timeout {
                     state.store(GpuState::Hung as u64, Ordering::SeqCst);
-                    
+
                     let count = timeout_count.fetch_add(1, Ordering::SeqCst) + 1;
                     log::warn!(
                         "GPU hang detected! Execution time: {:?}, timeout count: {}/{}",
-                        elapsed, count, config.max_timeouts
+                        elapsed,
+                        count,
+                        config.max_timeouts
                     );
 
                     if count >= config.max_timeouts && config.auto_fallback {
@@ -215,11 +218,7 @@ mod tests {
     #[test]
     fn test_execute_with_watchdog_success() {
         let watchdog = GpuWatchdog::new(WatchdogConfig::default());
-        let result = execute_with_watchdog(
-            &watchdog,
-            || 42,
-            || 0,
-        );
+        let result = execute_with_watchdog(&watchdog, || 42, || 0);
         assert_eq!(result, 42);
     }
 
@@ -227,15 +226,11 @@ mod tests {
     fn test_execute_with_watchdog_fallback() {
         let watchdog = GpuWatchdog::new(WatchdogConfig::default());
         watchdog.clear_fallback();
-        
+
         // Simulate timeout by directly setting fallback
         watchdog.fallback_requested.store(true, Ordering::SeqCst);
-        
-        let result = execute_with_watchdog(
-            &watchdog,
-            || 42,
-            || 0,
-        );
+
+        let result = execute_with_watchdog(&watchdog, || 42, || 0);
         assert_eq!(result, 0); // Fallback was used
     }
 }

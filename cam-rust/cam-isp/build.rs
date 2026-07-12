@@ -75,13 +75,27 @@ fn setup_ndk_linker() {
 
     // NDK r26+ uses unified toolchain under <ndk>/toolchains/llvm/prebuilt/<host>/
     let host = ndk_host();
-    let toolchain = ndk.join("toolchains").join("llvm").join("prebuilt").join(host);
+    let toolchain = ndk
+        .join("toolchains")
+        .join("llvm")
+        .join("prebuilt")
+        .join(host);
     let sysroot = toolchain.join("sysroot");
 
     if sysroot.exists() {
         // Tell cc crate about the sysroot
-        println!("cargo:rustc-link-search=native={}", sysroot.join("usr").join("lib").join(format!("{}-linux-android", arch)).display());
-        println!("cargo:rustc-link-search=native={}", sysroot.join("usr").join("lib").display());
+        println!(
+            "cargo:rustc-link-search=native={}",
+            sysroot
+                .join("usr")
+                .join("lib")
+                .join(format!("{}-linux-android", arch))
+                .display()
+        );
+        println!(
+            "cargo:rustc-link-search=native={}",
+            sysroot.join("usr").join("lib").display()
+        );
     }
 
     // Link against NDK system libraries
@@ -90,7 +104,13 @@ fn setup_ndk_linker() {
     println!("cargo:rustc-link-lib=c++_shared");
     println!("cargo:rustc-link-lib=mediandk");
 
-    eprintln!("NDK: abi={}, arch={}, api={}, sysroot={}", abi, arch, api_level, sysroot.display());
+    eprintln!(
+        "NDK: abi={}, arch={}, api={}, sysroot={}",
+        abi,
+        arch,
+        api_level,
+        sysroot.display()
+    );
 }
 
 /// Find the Android NDK root directory.
@@ -98,11 +118,15 @@ fn find_ndk() -> Option<PathBuf> {
     // 1. Explicit env var
     if let Ok(p) = std::env::var("ANDROID_NDK_HOME") {
         let pb = PathBuf::from(p);
-        if pb.exists() { return Some(pb); }
+        if pb.exists() {
+            return Some(pb);
+        }
     }
     if let Ok(p) = std::env::var("NDK_HOME") {
         let pb = PathBuf::from(p);
-        if pb.exists() { return Some(pb); }
+        if pb.exists() {
+            return Some(pb);
+        }
     }
 
     // 2. Standard Android SDK/NDK locations
@@ -126,23 +150,33 @@ fn find_ndk() -> Option<PathBuf> {
     }
 
     // 3. Check if ndk-build is on PATH and infer NDK location
-    if let Ok(output) = std::process::Command::new("which").arg("ndk-build").output() {
+    if let Ok(output) = std::process::Command::new("which")
+        .arg("ndk-build")
+        .output()
+    {
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
         // ndk-build lives in <ndk>/ndk-build
         let pb = PathBuf::from(&path).parent()?.to_path_buf();
-        if pb.exists() { return Some(pb); }
+        if pb.exists() {
+            return Some(pb);
+        }
     }
 
     // 4. ~/android-ndk (common manual install)
     let manual = home.join("android-ndk");
-    if manual.exists() { return Some(manual); }
+    if manual.exists() {
+        return Some(manual);
+    }
 
     None
 }
 
 /// Map CARGO_CFG_TARGET_ARCH to NDK arch name.
 fn target_ndk_arch() -> &'static str {
-    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+    match std::env::var("CARGO_CFG_TARGET_ARCH")
+        .unwrap_or_default()
+        .as_str()
+    {
         "aarch64" | "arm64" => "aarch64",
         "arm" | "armv7" => "arm",
         "x86_64" => "x86_64",
@@ -155,7 +189,10 @@ fn target_ndk_arch() -> &'static str {
 /// Target triple prefix used by NDK clang (e.g., "aarch64-linux-android").
 #[allow(dead_code)]
 fn target_ndk_triple() -> String {
-    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+    match std::env::var("CARGO_CFG_TARGET_ARCH")
+        .unwrap_or_default()
+        .as_str()
+    {
         "aarch64" | "arm64" => "aarch64-linux-android".to_string(),
         "arm" | "armv7" => "armv7a-linux-androideabi".to_string(),
         "x86_64" => "x86_64-linux-android".to_string(),
@@ -175,7 +212,10 @@ fn ndk_api_level() -> u32 {
 
 /// Host platform directory name inside NDK prebuilt/.
 fn ndk_host() -> &'static str {
-    match std::env::var("CARGO_CFG_HOST_TRIPLE").unwrap_or_default().as_str() {
+    match std::env::var("CARGO_CFG_HOST_TRIPLE")
+        .unwrap_or_default()
+        .as_str()
+    {
         t if t.contains("linux") => "linux-x86_64",
         t if t.contains("darwin") || t.contains("macos") => "darwin-x86_64",
         t if t.contains("windows") => "windows-x86_64",
@@ -217,7 +257,10 @@ fn abi_suffix() -> String {
             "x86" | "i686" => "x86".to_string(),
             "riscv64" => "riscv64".to_string(),
             other => {
-                eprintln!("warning: unknown Android ABI arch '{}', defaulting to arm64-v8a", other);
+                eprintln!(
+                    "warning: unknown Android ABI arch '{}', defaulting to arm64-v8a",
+                    other
+                );
                 "arm64-v8a".to_string()
             }
         }
@@ -239,7 +282,10 @@ fn abi_suffix() -> String {
 #[cfg(feature = "ort")]
 fn link_onnxruntime() {
     let abi_dir = abi_dir();
-    println!("cargo:rerun-if-changed={}/libonnxruntime.so", abi_dir.display());
+    println!(
+        "cargo:rerun-if-changed={}/libonnxruntime.so",
+        abi_dir.display()
+    );
     let ort_lib_dir = std::env::var_os("ORT_LIB_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| abi_dir.clone());
@@ -255,10 +301,22 @@ fn link_mnn() {
     copy_if_newer(&mnn_lib_src().join("libMNN.so"), &abi_dir.join("libMNN.so"));
     // Also copy companion shared libraries from their build locations
     let mnn_root = mnn_dir();
-    copy_if_newer(&mnn_root.join("build_vk/source/backend/vulkan/OFF/libMNN_Vulkan.so"), &abi_dir.join("libMNN_Vulkan.so"));
-    copy_if_newer(&mnn_root.join("build_vk/express/OFF/libMNN_Express.so"), &abi_dir.join("libMNN_Express.so"));
-    copy_if_newer(&mnn_root.join("build_vk/tools/converter/OFF/libMNNConvertDeps.so"), &abi_dir.join("libMNNConvertDeps.so"));
-    copy_if_newer(&mnn_lib_src().join("../source/backend/vulkan/OFF/libMNN_Vulkan.so"), &abi_dir.join("libMNN_Vulkan.so"));
+    copy_if_newer(
+        &mnn_root.join("build_vk/source/backend/vulkan/OFF/libMNN_Vulkan.so"),
+        &abi_dir.join("libMNN_Vulkan.so"),
+    );
+    copy_if_newer(
+        &mnn_root.join("build_vk/express/OFF/libMNN_Express.so"),
+        &abi_dir.join("libMNN_Express.so"),
+    );
+    copy_if_newer(
+        &mnn_root.join("build_vk/tools/converter/OFF/libMNNConvertDeps.so"),
+        &abi_dir.join("libMNNConvertDeps.so"),
+    );
+    copy_if_newer(
+        &mnn_lib_src().join("../source/backend/vulkan/OFF/libMNN_Vulkan.so"),
+        &abi_dir.join("libMNN_Vulkan.so"),
+    );
 
     let wrapper_src = Path::new("mnn_sys/mnn_wrapper.cpp");
     let wrapper_hdr = Path::new("mnn_sys/mnn_wrapper.h");
@@ -269,7 +327,8 @@ fn link_mnn() {
 
         let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
         let mut build = cc::Build::new();
-        build.cpp(true)
+        build
+            .cpp(true)
             .std("c++17")
             .file(wrapper_src)
             .include(&mnn_include);
@@ -313,7 +372,8 @@ fn link_mnnconvert() {
 
         let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
         let mut build = cc::Build::new();
-        build.cpp(true)
+        build
+            .cpp(true)
             .std("c++17")
             .file(conv_src)
             .include(&mnn_include)
@@ -359,12 +419,18 @@ fn setup_cc_for_android(build: &mut cc::Build) {
     };
 
     let host = ndk_host();
-    let toolchain = ndk.join("toolchains").join("llvm").join("prebuilt").join(host);
+    let toolchain = ndk
+        .join("toolchains")
+        .join("llvm")
+        .join("prebuilt")
+        .join(host);
     let triple = target_ndk_triple();
     let api = ndk_api_level();
 
     // Use NDK's clang as the C++ compiler
-    let clangpp = toolchain.join("bin").join(format!("{}{}-clang++", triple, api));
+    let clangpp = toolchain
+        .join("bin")
+        .join(format!("{}{}-clang++", triple, api));
     if clangpp.exists() {
         build.compiler(&clangpp);
         eprintln!("cc::Build compiler: {}", clangpp.display());
@@ -373,7 +439,10 @@ fn setup_cc_for_android(build: &mut cc::Build) {
         let clangpp_fallback = toolchain.join("bin").join(format!("{}-clang++", triple));
         if clangpp_fallback.exists() {
             build.compiler(&clangpp_fallback);
-            eprintln!("cc::Build compiler (fallback): {}", clangpp_fallback.display());
+            eprintln!(
+                "cc::Build compiler (fallback): {}",
+                clangpp_fallback.display()
+            );
         }
     }
 
@@ -474,7 +543,10 @@ fn mnn_convert_lib_src() -> PathBuf {
 #[allow(dead_code)]
 fn copy_if_newer(src: &Path, dst: &Path) {
     if !src.exists() {
-        eprintln!("warning: MNN artifact not found, leaving existing copy: {}", src.display());
+        eprintln!(
+            "warning: MNN artifact not found, leaving existing copy: {}",
+            src.display()
+        );
         return;
     }
     if dst.exists() {

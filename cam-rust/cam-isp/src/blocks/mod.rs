@@ -33,110 +33,112 @@
 //! ```text
 //! RawInput → Normalize → CFA → BLC → WB → Demosaic → CCM → Tone → Display
 //! ```
-mod raw_input;
-mod normalize;
-mod cfa;
-mod blc;
+mod adaptive_downscale;
+mod aspect_crop;
+mod auto_contrast;
+mod bayer_demosaic;
 mod bayer_wb;
-mod demosaic;
+pub mod bilateral;
+mod blc;
+mod blc50;
 mod ccm;
-mod tone;
+mod cfa;
+mod chromatic_aberration;
+mod colorspace;
+mod demosaic;
+mod demosaic_ccm;
+mod demosaic_interp;
 mod display;
+mod dyn_resize;
 mod ee;
 mod fcs;
-mod ldci;
-mod warp;
-mod identity;
-mod grayscale;
-mod pyramid;
-mod unpack;
-mod demosaic_ccm;
-mod unpack_cfa;
-mod unpack_bayer_fp16;
-mod resize;
-mod adaptive_downscale;
-mod stats;
-mod hdr_merge;
-mod demosaic_interp;
-mod bayer_demosaic;
-mod chromatic_aberration;
-mod auto_contrast;
-mod temporal_denoise;
-mod noise_estimate;
 mod gamma;
-mod stereo_depth;
-mod sharpen;
-mod colorspace;
-mod aspect_crop;
-mod dyn_resize;
-mod hdr_tone;
-mod wavelet_denoise;
-mod plugin;
-mod laplacian_pyramid;
-mod passthrough;
-mod stage;
-mod hdr_debayer;
-mod blc50;
-mod watermark;
-mod super_res;
-pub mod runtime_warp;
 pub mod gpu_warp;
-pub mod bilateral;
+mod grayscale;
+mod hdr_debayer;
+mod hdr_merge;
+mod hdr_tone;
+mod identity;
+mod laplacian_pyramid;
+mod ldci;
+mod noise_estimate;
+mod normalize;
+mod passthrough;
+mod plugin;
+mod pyramid;
+mod raw_input;
+mod resize;
+pub mod runtime_warp;
 pub mod saturation;
+mod sharpen;
+mod stage;
+mod stats;
+mod stereo_depth;
+mod super_res;
+mod temporal_denoise;
+mod tone;
+mod unpack;
+mod unpack_bayer_fp16;
+mod unpack_cfa;
 pub mod vignetting;
+mod warp;
+mod watermark;
+mod wavelet_denoise;
 
-pub use raw_input::RawInputBlock;
-pub use normalize::NormalizeBlock;
-pub use cfa::CfaBlock;
-pub use blc::BlcBlock;
+pub use adaptive_downscale::AdaptiveDownscaleBlock;
+pub use aspect_crop::AspectCropBlock;
+pub use auto_contrast::AutoContrastBlock;
+pub use bayer_demosaic::{BayerDemosaicBlock, DemosaicAlgo};
+pub use bayer_proc::{BayerMode, BayerPattern, BayerProcBlock};
 pub use bayer_wb::BayerWbBlock;
-pub use demosaic::DemosaicBlock;
+pub use bilateral::BilateralBlock;
+pub use blc::BlcBlock;
+pub use blc50::Blc50Block;
 pub use ccm::CcmBlock;
-pub use tone::ToneBlock;
+pub use cfa::CfaBlock;
+pub use chromatic_aberration::ChromaticAberrationBlock;
+pub use colorspace::{ColorSpace, ColorSpaceBlock};
+pub use demosaic::DemosaicBlock;
+pub use demosaic_ccm::DemosaicCcmBlock;
+pub use demosaic_interp::DemosaicInterpBlock;
 pub use display::DisplayBlock;
+pub use dyn_resize::DynResizeBlock;
 pub use ee::EeBlock;
 pub use fcs::FcsBlock;
-pub use ldci::LdciBlock;
-pub use warp::*;
-pub use identity::{IdentityBlock, FastDemosaicBlock};
-pub use grayscale::GrayscaleBlock;
-pub use pyramid::PyramidBlock;
-pub use unpack_cfa::{UnpackCfaBlock, UnpackMode};
-pub use unpack_bayer_fp16::UnpackBayerToFp16Block;
-pub use unpack::UnpackBlock;
-pub use demosaic_ccm::DemosaicCcmBlock;
-pub use bayer_proc::{BayerProcBlock, BayerMode, BayerPattern};
-pub use resize::ResizeBlock;
-pub use adaptive_downscale::AdaptiveDownscaleBlock;
-pub use stats::{ZoneStatsBlock, ChannelMeansBlock, ToneStatsBlock, CoarseHistogramBlock, CalibrationBlock};
-pub use hdr_merge::HdrMergeBlock;
-pub use demosaic_interp::DemosaicInterpBlock;
-pub use bayer_demosaic::{BayerDemosaicBlock, DemosaicAlgo};
-pub use chromatic_aberration::ChromaticAberrationBlock;
-pub use auto_contrast::AutoContrastBlock;
-pub use temporal_denoise::TemporalDenoiseBlock;
-pub use noise_estimate::NoiseEstimateBlock;
 pub use gamma::GammaBlock;
-pub use stereo_depth::StereoDepthBlock;
-pub use sharpen::SharpenBlock;
-pub use colorspace::{ColorSpaceBlock, ColorSpace};
-pub use aspect_crop::AspectCropBlock;
-pub use dyn_resize::DynResizeBlock;
-pub use hdr_tone::{HdrToneBlock, ToneOperator};
-pub use wavelet_denoise::WaveletDenoiseBlock;
-pub use plugin::PluginBlock;
-pub use laplacian_pyramid::LaplacianPyramidBlock;
-pub use passthrough::PassthroughBlock;
-pub use stage::StageBlock;
-pub use hdr_debayer::HdrDebayerBlock;
-pub use blc50::Blc50Block;
-pub use watermark::WatermarkBlock;
-pub use runtime_warp::RuntimeWarpBlock;
 pub use gpu_warp::GpuWarpBlock;
-pub use super_res::SuperResBlock;
-pub use bilateral::BilateralBlock;
+pub use grayscale::GrayscaleBlock;
+pub use hdr_debayer::HdrDebayerBlock;
+pub use hdr_merge::HdrMergeBlock;
+pub use hdr_tone::{HdrToneBlock, ToneOperator};
+pub use identity::{FastDemosaicBlock, IdentityBlock};
+pub use laplacian_pyramid::LaplacianPyramidBlock;
+pub use ldci::LdciBlock;
+pub use noise_estimate::NoiseEstimateBlock;
+pub use normalize::NormalizeBlock;
+pub use passthrough::PassthroughBlock;
+pub use plugin::PluginBlock;
+pub use pyramid::PyramidBlock;
+pub use raw_input::RawInputBlock;
+pub use resize::ResizeBlock;
+pub use runtime_warp::RuntimeWarpBlock;
 pub use saturation::SaturationBlock;
+pub use sharpen::SharpenBlock;
+pub use stage::StageBlock;
+pub use stats::{
+    CalibrationBlock, ChannelMeansBlock, CoarseHistogramBlock, ToneStatsBlock, ZoneStatsBlock,
+};
+pub use stereo_depth::StereoDepthBlock;
+pub use super_res::SuperResBlock;
+pub use temporal_denoise::TemporalDenoiseBlock;
+pub use tone::ToneBlock;
+pub use unpack::UnpackBlock;
+pub use unpack_bayer_fp16::UnpackBayerToFp16Block;
+pub use unpack_cfa::{UnpackCfaBlock, UnpackMode};
 pub use vignetting::VignettingBlock;
+pub use warp::*;
+pub use watermark::WatermarkBlock;
+pub use wavelet_denoise::WaveletDenoiseBlock;
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.
@@ -147,11 +149,15 @@ pub fn register_builtin_blocks() {
 /// Build output value info for NCHW float tensors (shared helper).
 #[allow(dead_code)]
 pub(crate) fn nchw_value_info(name: &str, c: i64, elem_type: i32) -> Vec<u8> {
-    crate::onnx::proto::Proto::value_info(name, &[
-        crate::onnx::proto::Proto::tensor_dim_value(1),
-        crate::onnx::proto::Proto::tensor_dim_value(c),
-        crate::onnx::proto::Proto::tensor_dim_param("H"),
-        crate::onnx::proto::Proto::tensor_dim_param("W"),
-    ], elem_type)
+    crate::onnx::proto::Proto::value_info(
+        name,
+        &[
+            crate::onnx::proto::Proto::tensor_dim_value(1),
+            crate::onnx::proto::Proto::tensor_dim_value(c),
+            crate::onnx::proto::Proto::tensor_dim_param("H"),
+            crate::onnx::proto::Proto::tensor_dim_param("W"),
+        ],
+        elem_type,
+    )
 }
 pub mod bayer_proc;

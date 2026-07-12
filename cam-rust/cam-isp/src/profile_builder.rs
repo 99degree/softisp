@@ -5,35 +5,52 @@
 //! via the methods here.
 
 use crate::blocks::*;
-use crate::profile::PipelineProfile;
 use crate::pipeline::IspBlock;
+use crate::profile::PipelineProfile;
 use log::info;
 
 impl PipelineProfile {
     /// Build an ordered list of ISP blocks according to this profile.
     pub fn build_blocks(&self, target_width: u32, bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
-        info!("build_blocks: profile={}, target_width={}, bayer_pattern={}",
-            self.label, target_width, bayer_pattern);
+        info!(
+            "build_blocks: profile={}, target_width={}, bayer_pattern={}",
+            self.label, target_width, bayer_pattern
+        );
         let full_w = target_width as i64;
         let packed_w = (target_width / 2) as i64;
 
         let concrete_h = (target_width as f64 / 16.0 * 9.0).round() as i64;
-        assert!(concrete_h > 0, "{} profile: concrete_h must be > 0, got {} for width {}", self.label, concrete_h, target_width);
-        assert!(packed_w > 0, "{} profile: packed_w must be > 0, got {} for width {}", self.label, packed_w, target_width);
+        assert!(
+            concrete_h > 0,
+            "{} profile: concrete_h must be > 0, got {} for width {}",
+            self.label,
+            concrete_h,
+            target_width
+        );
+        assert!(
+            packed_w > 0,
+            "{} profile: packed_w must be > 0, got {} for width {}",
+            self.label,
+            packed_w,
+            target_width
+        );
         if self.use_unpack || self.use_fused_unpack {
-            blocks.push(Box::new(RawInputBlock::new()
-                .with_elem_type(6)
-                .with_concrete_width(packed_w)
-                .with_concrete_height(concrete_h)));
+            blocks.push(Box::new(
+                RawInputBlock::new()
+                    .with_elem_type(6)
+                    .with_concrete_width(packed_w)
+                    .with_concrete_height(concrete_h),
+            ));
 
             if self.use_fused_unpack {
-                blocks.push(Box::new(UnpackCfaBlock::new()
-                    .with_concrete_width(full_w)
-                    .with_blc(true)));
+                blocks.push(Box::new(
+                    UnpackCfaBlock::new()
+                        .with_concrete_width(full_w)
+                        .with_blc(true),
+                ));
             } else {
-                blocks.push(Box::new(UnpackBlock::new()
-                    .with_concrete_width(full_w)));
+                blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
                 blocks.push(Box::new(NormalizeBlock::new()));
                 if self.use_bad_pixel {
                     blocks.push(Box::new(BlcBlock::new()));
@@ -41,9 +58,11 @@ impl PipelineProfile {
                 blocks.push(Box::new(CfaBlock::new()));
             }
         } else {
-            blocks.push(Box::new(RawInputBlock::new()
-                .with_concrete_width(full_w)
-                .with_concrete_height(concrete_h)));
+            blocks.push(Box::new(
+                RawInputBlock::new()
+                    .with_concrete_width(full_w)
+                    .with_concrete_height(concrete_h),
+            ));
             blocks.push(Box::new(NormalizeBlock::new()));
             if self.use_bad_pixel {
                 blocks.push(Box::new(BlcBlock::new()));
@@ -60,18 +79,27 @@ impl PipelineProfile {
         let pipeline_factor = if self.pipeline_downscale_target > 0 {
             let tw = target_width as f32;
             let target = self.pipeline_downscale_target as f32;
-            if tw > target { Some(target / tw) } else { None }
+            if tw > target {
+                Some(target / tw)
+            } else {
+                None
+            }
         } else {
             None
         };
         if let Some(factor) = pipeline_factor {
-            info!("Pipeline downscale: width={} → {} (factor={:.3})",
-                target_width, (target_width as f32 * factor) as u32, factor);
+            info!(
+                "Pipeline downscale: width={} → {} (factor={:.3})",
+                target_width,
+                (target_width as f32 * factor) as u32,
+                factor
+            );
             let down_w = (target_width as f64 * factor as f64).round() as i64;
             let down_h = (target_width as f64 * factor as f64 / 1.5).round() as i64;
-            blocks.push(Box::new(AdaptiveDownscaleBlock::new(
-                down_w.max(1), down_h.max(1), 0, "edge", "pad")
-                .with_margin(self.eis_margin)));
+            blocks.push(Box::new(
+                AdaptiveDownscaleBlock::new(down_w.max(1), down_h.max(1), 0, "edge", "pad")
+                    .with_margin(self.eis_margin),
+            ));
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_ds")));
         }
 
@@ -184,7 +212,9 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::WaveletDenoiseBlock::new()));
         } else {
             info!("  wavelet_denoise: IDENTITY");
-            blocks.push(Box::new(crate::blocks::IdentityBlock::new("wavelet_denoise")));
+            blocks.push(Box::new(crate::blocks::IdentityBlock::new(
+                "wavelet_denoise",
+            )));
         }
 
         if self.use_auto_contrast {
@@ -195,9 +225,11 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("auto_contrast")));
         }
 
-        blocks.push(Box::new(DisplayBlock::new(target_width)
-            .with_rotate(self.rotate_mode)
-            .with_output_format(self.output_format)));
+        blocks.push(Box::new(
+            DisplayBlock::new(target_width)
+                .with_rotate(self.rotate_mode)
+                .with_output_format(self.output_format),
+        ));
 
         info!("  blocks: {} total", blocks.len());
         for (i, b) in blocks.iter().enumerate() {
@@ -211,7 +243,10 @@ impl PipelineProfile {
     /// Build auxiliary ONNX blocks (stats blocks) for the pipeline.
     pub fn build_aux_blocks(&self, input_h: i64, input_w: i64) -> Vec<Box<dyn IspBlock>> {
         let mut aux: Vec<Box<dyn IspBlock>> = Vec::new();
-        info!("build_aux_blocks: profile={}, input={}×{}", self.label, input_h, input_w);
+        info!(
+            "build_aux_blocks: profile={}, input={}×{}",
+            self.label, input_h, input_w
+        );
 
         let stats_input_base = if self.pipeline_downscale_target > 0 {
             "aux_hook_ds/out"
@@ -230,7 +265,11 @@ impl PipelineProfile {
                 let pipe_factor = if self.pipeline_downscale_target > 0 {
                     let pw = input_w as f32;
                     let pt = self.pipeline_downscale_target as f32;
-                    if pw > pt { Some(pt / pw) } else { None }
+                    if pw > pt {
+                        Some(pt / pw)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };
@@ -244,12 +283,18 @@ impl PipelineProfile {
                 };
                 let tgt_h = (src_h as f32 * factor).ceil() as i64;
                 let tgt_w = (src_w as f32 * factor).ceil() as i64;
-                let mut ds = AdaptiveDownscaleBlock::new(
-                    tgt_w.max(1), tgt_h.max(1), 0, "constant", "crop")
-                    .with_concrete_dims(src_h, src_w);
+                let mut ds =
+                    AdaptiveDownscaleBlock::new(tgt_w.max(1), tgt_h.max(1), 0, "constant", "crop")
+                        .with_concrete_dims(src_h, src_w);
                 ds.set_input_source(&stats_input_owned);
-                info!("Stats downscale: {}×{} → {}×{} (factor={:.3}, crop mode)",
-                    src_h, src_w, tgt_h.max(1), tgt_w.max(1), factor);
+                info!(
+                    "Stats downscale: {}×{} → {}×{} (factor={:.3}, crop mode)",
+                    src_h,
+                    src_w,
+                    tgt_h.max(1),
+                    tgt_w.max(1),
+                    factor
+                );
                 stats_input_owned = ds.frame_tensor.clone();
                 aux.push(Box::new(ds));
             }
@@ -258,8 +303,7 @@ impl PipelineProfile {
         let stats_input: &str = &stats_input_owned;
 
         if self.use_zone_stats {
-            let mut b = ZoneStatsBlock::new(6, 8)
-                .with_concrete_dims(input_h, input_w);
+            let mut b = ZoneStatsBlock::new(6, 8).with_concrete_dims(input_h, input_w);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }
@@ -280,8 +324,7 @@ impl PipelineProfile {
         }
         // Calibration stats for AF (quad-level means/vars/mins/maxs)
         {
-            let mut b = CalibrationBlock::new()
-                .with_concrete_dims(input_h, input_w);
+            let mut b = CalibrationBlock::new().with_concrete_dims(input_h, input_w);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }

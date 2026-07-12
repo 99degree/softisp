@@ -11,24 +11,24 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use log::{info, debug, warn, error};
+use log::{debug, error, info, warn};
 
-use crate::engine::{IspEngine, EngineFactory, ProcessParams, register_engine};
-use crate::pipeline::{IspBlock, IspFrame};
-use crate::controller::IspController;
 use crate::af::AfState;
+use crate::controller::IspController;
 use crate::eis::EisEngine;
+use crate::engine::{register_engine, EngineFactory, IspEngine, ProcessParams};
+use crate::pipeline::{IspBlock, IspFrame};
 
-use crate::demosaic::{demosaic_malvar, bayer_to_quads};
+use crate::demosaic::{bayer_to_quads, demosaic_malvar};
 use crate::isp_ops::{
-    generate_simulated_raw, apply_dpc, apply_gaussian_denoise, apply_blc_wb_raw,
-    apply_lsc, apply_tone, apply_fcs, apply_ldci,
-    calculate_ae_gain,
+    apply_blc_wb_raw, apply_dpc, apply_fcs, apply_gaussian_denoise, apply_ldci, apply_lsc,
+    apply_tone, calculate_ae_gain, generate_simulated_raw,
 };
-use crate::stats::{compute_channel_means, compute_tone_stats, compute_histogram, compute_zone_stats};
+use crate::simd::selector::{best_backend, SimdEngine};
+use crate::stats::{
+    compute_channel_means, compute_histogram, compute_tone_stats, compute_zone_stats,
+};
 use crate::warp::{generate_identity_grid, warp_image};
-use crate::simd::selector::{SimdEngine, best_backend};
-
 
 // ── Engine registration ──
 
@@ -67,12 +67,24 @@ impl CpuEngine {
 }
 
 impl IspEngine for CpuEngine {
-    fn backend_name(&self) -> &'static str { "CPU" }
-    fn priority(&self) -> i32 { 70 }
-    fn is_loaded(&self) -> bool { self.loaded }
-    fn as_any(&self) -> &dyn std::any::Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
-    fn controller(&self) -> &Mutex<IspController> { &self.controller }
+    fn backend_name(&self) -> &'static str {
+        "CPU"
+    }
+    fn priority(&self) -> i32 {
+        70
+    }
+    fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn controller(&self) -> &Mutex<IspController> {
+        &self.controller
+    }
 
     fn build(
         &mut self,
@@ -103,14 +115,27 @@ impl IspEngine for CpuEngine {
 
         if !self.loaded {
             error!("CpuEngine::process called before build()");
-            return Err(crate::error::IspError::Config("Engine not initialized".into()));
+            return Err(crate::error::IspError::Config(
+                "Engine not initialized".into(),
+            ));
         }
         let t0 = Instant::now();
 
-        debug!("CpuEngine::process start {}x{} → target {}", width, height, target_width);
-        macro_rules! stage_time { ($name:expr) => { debug!("  stage {:>2}: {} = {:?}", line!(), $name, t0.elapsed()); } }
+        debug!(
+            "CpuEngine::process start {}x{} → target {}",
+            width, height, target_width
+        );
+        macro_rules! stage_time {
+            ($name:expr) => {
+                debug!("  stage {:>2}: {} = {:?}", line!(), $name, t0.elapsed());
+            };
+        }
         // Per-5-lines progress tracker for hang debugging
-        macro_rules! progress { () => { debug!("  prog >> line {} t={:?}", line!(), t0.elapsed()); } }
+        macro_rules! progress {
+            () => {
+                debug!("  prog >> line {} t={:?}", line!(), t0.elapsed());
+            };
+        }
 
         // ── 1. RawInput: interpret as INT16 Bayer ──
         let expected = (width * height * 2) as usize;
@@ -120,21 +145,32 @@ impl IspEngine for CpuEngine {
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
                 .collect()
         } else {
-            warn!("CpuEngine: input buffer too small ({} < {}), using simulated data",
-                buf.len(), expected);
+            warn!(
+                "CpuEngine: input buffer too small ({} < {}), using simulated data",
+                buf.len(),
+                expected
+            );
             generate_simulated_raw(width, height, buf)
         };
         let _t_input = t0.elapsed();
 
         // ── 2. Normalize: INT16 → FLOAT [0, 1] ──
-        let max_val = if p.sensor_max > 0.0 { p.sensor_max } else { 65535.0 };
+        let max_val = if p.sensor_max > 0.0 {
+            p.sensor_max
+        } else {
+            65535.0
+        };
         let mut float = vec![0.0f32; raw.len()];
         self.simd.normalize_u16_to_f32(&raw, &mut float, max_val);
         stage_time!("2. Normalize");
 
         // ── 2b. DPC (defective pixel correction) ──
-        let dpc_data = apply_dpc(&float, width as usize, height as usize,
-            p.lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15));
+        let dpc_data = apply_dpc(
+            &float,
+            width as usize,
+            height as usize,
+            p.lsc_gains.and_then(|g| g.first()).copied().unwrap_or(0.15),
+        );
         stage_time!("2b. DPC");
 
         // ── 2c. Gaussian denoise ──
@@ -145,7 +181,10 @@ impl IspEngine for CpuEngine {
         let calibration_stats = {
             let quads = bayer_to_quads(&denoised, width as usize, height as usize);
             crate::calibration::compute_calibration_stats(
-                &quads, 4, (height as usize).div_ceil(2), (width as usize).div_ceil(2),
+                &quads,
+                4,
+                (height as usize).div_ceil(2),
+                (width as usize).div_ceil(2),
                 cam_types::BayerPattern::Rggb,
             )
         };
@@ -165,17 +204,23 @@ impl IspEngine for CpuEngine {
         }
 
         // ── 2f. EIS ──
-        let eis_frame_count = self.controller.try_lock()
+        let eis_frame_count = self
+            .controller
+            .try_lock()
             .map(|g| g.frame_count)
             .unwrap_or(0);
         let eis_compensation = match self.eis_engine.try_lock() {
             Ok(mut eis) => {
-                if !eis.enabled { eis.enabled = true; }
+                if !eis.enabled {
+                    eis.enabled = true;
+                }
                 let t_ns = eis_frame_count as i64 * 33_333_333;
                 let jitter = (eis_frame_count as f32 * 0.1).sin() * 0.02;
                 eis.push_sample(crate::eis::GyroSample {
-                    timestamp_ns: t_ns, x: 0.01 + jitter,
-                    y: 0.02 + jitter * 0.5, z: 0.005 + jitter * 0.3,
+                    timestamp_ns: t_ns,
+                    x: 0.01 + jitter,
+                    y: 0.02 + jitter * 0.5,
+                    z: 0.005 + jitter * 0.3,
                 });
                 if p.warp_grid.is_some() {
                     None
@@ -184,7 +229,7 @@ impl IspEngine for CpuEngine {
                     eis.update(t_ns + 33_333_333, fl, width, height)
                 }
             }
-            Err(_) => None
+            Err(_) => None,
         };
         stage_time!("2f. EIS");
         let _t_pre = t0.elapsed();
@@ -192,8 +237,11 @@ impl IspEngine for CpuEngine {
         progress!();
 
         // ── 3. AWB ──
-        let awb_gains = if let Some(g) = awb_gains { *g } else {
-            self.controller.try_lock()
+        let awb_gains = if let Some(g) = awb_gains {
+            *g
+        } else {
+            self.controller
+                .try_lock()
                 .map(|g| g.get_awb_gains())
                 .unwrap_or([1.0, 1.0, 1.0])
         };
@@ -211,7 +259,12 @@ impl IspEngine for CpuEngine {
         let corrected = apply_lsc(&blc_wb, width as usize, height as usize, lsc_k);
 
         // ── 5. Demosaic → RGB ──
-        let rgb = demosaic_malvar(&corrected, width as usize, height as usize, Some(&awb_gains));
+        let rgb = demosaic_malvar(
+            &corrected,
+            width as usize,
+            height as usize,
+            Some(&awb_gains),
+        );
         stage_time!("5. Demosaic");
 
         // ── 5b. Stats → IspController ──
@@ -223,7 +276,9 @@ impl IspEngine for CpuEngine {
         progress!();
         let ctrl_ccm = match self.controller.try_lock() {
             Ok(mut ctrl) => {
-                if !ctrl.zone_stats_enabled { ctrl.init_zone_stats(6, 8); }
+                if !ctrl.zone_stats_enabled {
+                    ctrl.init_zone_stats(6, 8);
+                }
                 ctrl.update_channel_stats(&channel_means);
                 ctrl.update_tone_stats(&tone_stats);
                 ctrl.update_histogram(&histogram);
@@ -244,7 +299,8 @@ impl IspEngine for CpuEngine {
 
         // ── 6. AE ──
         let ae_gain = if p.analog_gain <= 0.0 {
-            self.controller.try_lock()
+            self.controller
+                .try_lock()
                 .map(|g| g.get_effective_exposure_gain())
                 .unwrap_or(1.0)
         } else {
@@ -277,12 +333,14 @@ impl IspEngine for CpuEngine {
                 let hf = height as f32 / 2.0;
                 let wf = width as f32 / 2.0;
                 for idx in (0..warp.len()).step_by(2) {
-                    if idx + 1 >= warp.len() { break; }
+                    if idx + 1 >= warp.len() {
+                        break;
+                    }
                     let cy = warp[idx];
                     let cx = warp[idx + 1];
                     let ry = cy * cos_r - cx * sin_r;
                     let rx = cy * sin_r + cx * cos_r;
-                    warp[idx]     = (ry * hf - comp[1]) / hf;
+                    warp[idx] = (ry * hf - comp[1]) / hf;
                     warp[idx + 1] = (rx * wf - comp[0]) / wf;
                 }
                 warp_image(&toned, &warp, height as usize, width as usize)
@@ -297,8 +355,14 @@ impl IspEngine for CpuEngine {
         let _t_process = t0.elapsed();
 
         // ── 9. Display ──
-        let out_width = if target_width > 0 { target_width } else { width };
-        let out_bytes = self.simd.display_output(&toned, width as usize, height as usize, out_width as usize);
+        let out_width = if target_width > 0 {
+            target_width
+        } else {
+            width
+        };
+        let out_bytes =
+            self.simd
+                .display_output(&toned, width as usize, height as usize, out_width as usize);
         stage_time!("9. Display");
         let t_total = t0.elapsed();
 
@@ -333,7 +397,11 @@ impl IspEngine for CpuEngine {
             eis_compensation,
         });
 
-        info!("CpuEngine: frame processed ({} bytes) total={:?}", out_bytes.len(), t_total);
+        info!(
+            "CpuEngine: frame processed ({} bytes) total={:?}",
+            out_bytes.len(),
+            t_total
+        );
 
         Ok(IspFrame {
             params: crate::isp_params::IspParams::default(),
@@ -344,7 +412,7 @@ impl IspEngine for CpuEngine {
             float_data: None,
             aux,
             timestamp_ns: p.timestamp_ns,
-            prep_duration_ns: t_total.as_nanos() as u64,  // CPU: full pipeline is prep
+            prep_duration_ns: t_total.as_nanos() as u64, // CPU: full pipeline is prep
             inference_duration_ns: 0,
             total_duration_ns: t_total.as_nanos() as u64,
         })
@@ -373,7 +441,9 @@ mod tests {
     #[test]
     fn test_cpu_engine_process() {
         let mut engine = CpuEngine::new();
-        assert!(engine.build(Box::new(RawInputBlock::new()), vec![], None, 21).is_ok());
+        assert!(engine
+            .build(Box::new(RawInputBlock::new()), vec![], None, 21)
+            .is_ok());
 
         let w = 16u32;
         let h = 16u32;
@@ -381,9 +451,17 @@ mod tests {
         for y in 0..h {
             for x in 0..w {
                 let val: u16 = if y % 2 == 0 {
-                    if x % 2 == 0 { 2000 } else { 4000 }
+                    if x % 2 == 0 {
+                        2000
+                    } else {
+                        4000
+                    }
                 } else {
-                    if x % 2 == 0 { 4000 } else { 6000 }
+                    if x % 2 == 0 {
+                        4000
+                    } else {
+                        6000
+                    }
                 };
                 raw_buf.extend_from_slice(&val.to_le_bytes());
             }
@@ -396,7 +474,11 @@ mod tests {
         assert_eq!(frame.height, h);
         assert!(!frame.data.is_empty());
         // display_output produces BGRA bytes; data[2] is Red channel
-        assert!(frame.data[2] > 0, "first pixel R channel is zero: data[0..4]={:?}", &frame.data[..4]);
+        assert!(
+            frame.data[2] > 0,
+            "first pixel R channel is zero: data[0..4]={:?}",
+            &frame.data[..4]
+        );
     }
 
     #[test]

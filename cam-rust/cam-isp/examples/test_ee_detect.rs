@@ -1,6 +1,6 @@
+use cam_isp::engine::ProcessParams;
 use cam_isp::pipeline::IspBlock;
 use cam_isp::profile::PipelineProfile;
-use cam_isp::engine::ProcessParams;
 
 fn run_test(label: &str, mut blocks: Vec<Box<dyn IspBlock>>) {
     cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
@@ -25,64 +25,112 @@ fn run_test(label: &str, mut blocks: Vec<Box<dyn IspBlock>>) {
 fn main() {
     cam_isp::cpu::register_cpu_engine();
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-    
+
     // 9 blocks: works
-    run_test("9blk", vec![
-        Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(6).with_concrete_width(960).with_concrete_height(1080)),
-        Box::new(cam_isp::blocks::UnpackCfaBlock::new().with_concrete_width(1920).with_blc(true)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
-        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
-        Box::new(cam_isp::blocks::EeBlock::new()),
-        Box::new(cam_isp::blocks::FcsBlock::new()),
-        Box::new(cam_isp::blocks::LdciBlock::new()),
-        Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
-    ]);
-    
+    run_test(
+        "9blk",
+        vec![
+            Box::new(
+                cam_isp::blocks::RawInputBlock::new()
+                    .with_elem_type(6)
+                    .with_concrete_width(960)
+                    .with_concrete_height(1080),
+            ),
+            Box::new(
+                cam_isp::blocks::UnpackCfaBlock::new()
+                    .with_concrete_width(1920)
+                    .with_blc(true),
+            ),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
+            Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
+            Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
+            Box::new(cam_isp::blocks::EeBlock::new()),
+            Box::new(cam_isp::blocks::FcsBlock::new()),
+            Box::new(cam_isp::blocks::LdciBlock::new()),
+            Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
+        ],
+    );
+
     // 10 blocks (+CCM): works
-    run_test("10blk_ccm", vec![
-        Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(6).with_concrete_width(960).with_concrete_height(1080)),
-        Box::new(cam_isp::blocks::UnpackCfaBlock::new().with_concrete_width(1920).with_blc(true)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
-        Box::new(cam_isp::blocks::CcmBlock::new()),
-        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
-        Box::new(cam_isp::blocks::EeBlock::new()),
-        Box::new(cam_isp::blocks::FcsBlock::new()),
-        Box::new(cam_isp::blocks::LdciBlock::new()),
-        Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
-    ]);
-    
+    run_test(
+        "10blk_ccm",
+        vec![
+            Box::new(
+                cam_isp::blocks::RawInputBlock::new()
+                    .with_elem_type(6)
+                    .with_concrete_width(960)
+                    .with_concrete_height(1080),
+            ),
+            Box::new(
+                cam_isp::blocks::UnpackCfaBlock::new()
+                    .with_concrete_width(1920)
+                    .with_blc(true),
+            ),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
+            Box::new(cam_isp::blocks::CcmBlock::new()),
+            Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
+            Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
+            Box::new(cam_isp::blocks::EeBlock::new()),
+            Box::new(cam_isp::blocks::FcsBlock::new()),
+            Box::new(cam_isp::blocks::LdciBlock::new()),
+            Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
+        ],
+    );
+
     // 11 blocks (+BayerWb): fails
-    run_test("11blk_wb", vec![
-        Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(6).with_concrete_width(960).with_concrete_height(1080)),
-        Box::new(cam_isp::blocks::UnpackCfaBlock::new().with_concrete_width(1920).with_blc(true)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
-        Box::new(cam_isp::blocks::CcmBlock::new()),
-        Box::new(cam_isp::blocks::BayerWbBlock::new()),
-        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
-        Box::new(cam_isp::blocks::EeBlock::new()),
-        Box::new(cam_isp::blocks::FcsBlock::new()),
-        Box::new(cam_isp::blocks::LdciBlock::new()),
-        Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
-    ]);
-    
+    run_test(
+        "11blk_wb",
+        vec![
+            Box::new(
+                cam_isp::blocks::RawInputBlock::new()
+                    .with_elem_type(6)
+                    .with_concrete_width(960)
+                    .with_concrete_height(1080),
+            ),
+            Box::new(
+                cam_isp::blocks::UnpackCfaBlock::new()
+                    .with_concrete_width(1920)
+                    .with_blc(true),
+            ),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
+            Box::new(cam_isp::blocks::CcmBlock::new()),
+            Box::new(cam_isp::blocks::BayerWbBlock::new()),
+            Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
+            Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
+            Box::new(cam_isp::blocks::EeBlock::new()),
+            Box::new(cam_isp::blocks::FcsBlock::new()),
+            Box::new(cam_isp::blocks::LdciBlock::new()),
+            Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
+        ],
+    );
+
     // 11 blocks without WB but with WB gains fused into UnpackCfaBlock
-    run_test("11blk_wb_in_unpacked", vec![
-        Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(6).with_concrete_width(960).with_concrete_height(1080)),
-        Box::new(cam_isp::blocks::UnpackCfaBlock::new().with_concrete_width(1920).with_blc(true)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
-        Box::new(cam_isp::blocks::CcmBlock::new()),
-        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
-        Box::new(cam_isp::blocks::EeBlock::new()),
-        Box::new(cam_isp::blocks::FcsBlock::new()),
-        Box::new(cam_isp::blocks::LdciBlock::new()),
-        Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
-    ]);
+    run_test(
+        "11blk_wb_in_unpacked",
+        vec![
+            Box::new(
+                cam_isp::blocks::RawInputBlock::new()
+                    .with_elem_type(6)
+                    .with_concrete_width(960)
+                    .with_concrete_height(1080),
+            ),
+            Box::new(
+                cam_isp::blocks::UnpackCfaBlock::new()
+                    .with_concrete_width(1920)
+                    .with_blc(true),
+            ),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
+            Box::new(cam_isp::blocks::CcmBlock::new()),
+            Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
+            Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
+            Box::new(cam_isp::blocks::EeBlock::new()),
+            Box::new(cam_isp::blocks::FcsBlock::new()),
+            Box::new(cam_isp::blocks::LdciBlock::new()),
+            Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
+        ],
+    );
 }

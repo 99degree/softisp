@@ -8,11 +8,11 @@
 //! release needs the interpreter. This is guaranteed by declaration order:
 //! ``slots`` is declared first, Rust drops fields top-to-bottom.
 
-use std::sync::Mutex;
-use std::collections::VecDeque;
 use log::info;
+use std::collections::VecDeque;
+use std::sync::Mutex;
 
-use crate::mnn_sys::{MnnInterpreterSafe, MnnSessionSafe, MnnTensorSafe, MnnBackendType};
+use crate::mnn_sys::{MnnBackendType, MnnInterpreterSafe, MnnSessionSafe, MnnTensorSafe};
 
 /// One session together with its cached extra-input tensor handles.
 #[cfg(feature = "mnn")]

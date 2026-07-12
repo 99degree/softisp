@@ -13,7 +13,10 @@ impl DebugService {
 
     /// Log pipeline frame statistics.
     pub fn log_frame_stats(&self, frame_number: u64, width: u32, height: u32, processing_ms: f64) {
-        info!("Frame[{}] {}x{} processed in {:.2}ms", frame_number, width, height, processing_ms);
+        info!(
+            "Frame[{}] {}x{} processed in {:.2}ms",
+            frame_number, width, height, processing_ms
+        );
     }
 }
 

@@ -13,12 +13,7 @@ pub trait ProcessPipeline {
     fn process(&self, params: &ProcessParams) -> IspResult<IspFrame>;
 
     /// Process raw Bayer data directly.
-    fn process_bayer(
-        &mut self,
-        raw_data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> IspResult<IspFrame> {
+    fn process_bayer(&mut self, raw_data: &[u8], width: u32, height: u32) -> IspResult<IspFrame> {
         let params = ProcessParams::new(width, height, raw_data);
         self.process(&params)
     }

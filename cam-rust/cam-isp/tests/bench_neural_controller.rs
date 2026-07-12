@@ -1,8 +1,8 @@
 //! Performance benchmark for neural controller ONNX models
 
-use cam_isp::neural_controller::NeuralController;
 use cam_isp::controller_api::ControllerApi;
 use cam_isp::isp_params::IspParams;
+use cam_isp::neural_controller::NeuralController;
 use cam_isp::pipeline::IspFrame;
 use cam_types::FrameFormat;
 use std::time::Instant;
@@ -27,12 +27,12 @@ fn create_test_frame() -> IspFrame {
 fn bench_neural_controller_mock() {
     let mut ctrl = NeuralController::with_mock_model();
     let frame = create_test_frame();
-    
+
     // Warmup
     for _ in 0..10 {
         let _ = ctrl.analyze_and_update(&frame);
     }
-    
+
     // Benchmark
     let iterations = 100;
     let start = Instant::now();
@@ -40,10 +40,10 @@ fn bench_neural_controller_mock() {
         let _ = ctrl.analyze_and_update(&frame);
     }
     let elapsed = start.elapsed();
-    
+
     let avg_us = elapsed.as_micros() as f64 / iterations as f64;
     let fps = 1_000_000.0 / avg_us;
-    
+
     println!("\n=== Neural Controller Mock Model Benchmark ===");
     println!("Iterations: {}", iterations);
     println!("Total time: {:?}", elapsed);
@@ -55,12 +55,12 @@ fn bench_neural_controller_mock() {
 fn bench_rule_based_controller() {
     let mut ctrl = cam_isp::controller_api::Controller::rule_based();
     let frame = create_test_frame();
-    
+
     // Warmup
     for _ in 0..10 {
         let _ = ctrl.analyze_and_update(&frame);
     }
-    
+
     // Benchmark
     let iterations = 100;
     let start = Instant::now();
@@ -68,10 +68,10 @@ fn bench_rule_based_controller() {
         let _ = ctrl.analyze_and_update(&frame);
     }
     let elapsed = start.elapsed();
-    
+
     let avg_us = elapsed.as_micros() as f64 / iterations as f64;
     let fps = 1_000_000.0 / avg_us;
-    
+
     println!("\n=== Rule-Based Controller Benchmark ===");
     println!("Iterations: {}", iterations);
     println!("Total time: {:?}", elapsed);
@@ -83,29 +83,45 @@ fn bench_rule_based_controller() {
 fn bench_comparison() {
     let frame = create_test_frame();
     let iterations = 100;
-    
+
     // Neural controller
     let mut neural = NeuralController::with_mock_model();
-    for _ in 0..10 { let _ = neural.analyze_and_update(&frame); }
+    for _ in 0..10 {
+        let _ = neural.analyze_and_update(&frame);
+    }
     let start = Instant::now();
-    for _ in 0..iterations { let _ = neural.analyze_and_update(&frame); }
+    for _ in 0..iterations {
+        let _ = neural.analyze_and_update(&frame);
+    }
     let neural_time = start.elapsed();
-    
+
     // Rule-based controller
     let mut rule_based = cam_isp::controller_api::Controller::rule_based();
-    for _ in 0..10 { let _ = rule_based.analyze_and_update(&frame); }
+    for _ in 0..10 {
+        let _ = rule_based.analyze_and_update(&frame);
+    }
     let start = Instant::now();
-    for _ in 0..iterations { let _ = rule_based.analyze_and_update(&frame); }
+    for _ in 0..iterations {
+        let _ = rule_based.analyze_and_update(&frame);
+    }
     let rule_time = start.elapsed();
-    
+
     let neural_us = neural_time.as_micros() as f64 / iterations as f64;
     let rule_us = rule_time.as_micros() as f64 / iterations as f64;
     let speedup = rule_us / neural_us;
-    
+
     println!("\n=== Controller Comparison Benchmark ===");
     println!("Iterations: {}", iterations);
-    println!("Neural:     {:.2} µs/frame ({:.0} FPS)", neural_us, 1_000_000.0 / neural_us);
-    println!("Rule-Based: {:.2} µs/frame ({:.0} FPS)", rule_us, 1_000_000.0 / rule_us);
+    println!(
+        "Neural:     {:.2} µs/frame ({:.0} FPS)",
+        neural_us,
+        1_000_000.0 / neural_us
+    );
+    println!(
+        "Rule-Based: {:.2} µs/frame ({:.0} FPS)",
+        rule_us,
+        1_000_000.0 / rule_us
+    );
     println!("Speedup:    {:.2}x", speedup);
     println!("======================================\n");
 }

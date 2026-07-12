@@ -19,8 +19,7 @@ fn warp_grid_emits_grid_sample_node() {
 
 #[test]
 fn warp_grid_with_gdc_emits_extra_grid_sample() {
-    let block = WarpGridBlock::new(640, 480)
-        .with_gdc(-0.2, 0.0, 0.0);
+    let block = WarpGridBlock::new(640, 480).with_gdc(-0.2, 0.0, 0.0);
     let nodes = block.nodes();
     let has_grid = nodes.iter().any(|n| {
         let s = String::from_utf8_lossy(n);
@@ -31,8 +30,7 @@ fn warp_grid_with_gdc_emits_extra_grid_sample() {
 
 #[test]
 fn warp_grid_with_lens_shading_emits_mul() {
-    let block = WarpGridBlock::new(640, 480)
-        .with_lens_shading(1.5, 1.0);
+    let block = WarpGridBlock::new(640, 480).with_lens_shading(1.5, 1.0);
     let nodes = block.nodes();
     let has_mul = nodes.iter().any(|n| {
         let s = String::from_utf8_lossy(n);
@@ -43,8 +41,7 @@ fn warp_grid_with_lens_shading_emits_mul() {
 
 #[test]
 fn warp_grid_with_rotation_emits_transpose() {
-    let block = WarpGridBlock::new(640, 480)
-        .with_rotate(1); // 90° CW
+    let block = WarpGridBlock::new(640, 480).with_rotate(1); // 90° CW
     let nodes = block.nodes();
     let has_transpose = nodes.iter().any(|n| {
         let s = String::from_utf8_lossy(n);
@@ -56,14 +53,20 @@ fn warp_grid_with_rotation_emits_transpose() {
 #[test]
 fn warp_grid_gdc_and_eis_composes_grids() {
     let eis_grid = vec![0.0f32; 64 * 48 * 2];
-    let block = WarpGridBlock::new(64, 48)
-        .with_gdc_and_eis(-0.1, 0.0, 0.0, eis_grid);
+    let block = WarpGridBlock::new(64, 48).with_gdc_and_eis(-0.1, 0.0, 0.0, eis_grid);
     let nodes = block.nodes();
-    let count = nodes.iter().filter(|n| {
-        let s = String::from_utf8_lossy(n);
-        s.contains("GridSample")
-    }).count();
-    assert!(count >= 1, "GDC+EIS must emit at least 1 GridSample, got {}", count);
+    let count = nodes
+        .iter()
+        .filter(|n| {
+            let s = String::from_utf8_lossy(n);
+            s.contains("GridSample")
+        })
+        .count();
+    assert!(
+        count >= 1,
+        "GDC+EIS must emit at least 1 GridSample, got {}",
+        count
+    );
 }
 
 #[test]
@@ -84,8 +87,7 @@ fn warp_grid_produces_valid_onnx() {
 
 #[test]
 fn ca_emits_split_and_concat() {
-    let block = ChromaticAberrationBlock::new()
-        .with_radial_correction(1080, 1920, 1.5);
+    let block = ChromaticAberrationBlock::new().with_radial_correction(1080, 1920, 1.5);
     let nodes = block.nodes();
     let has_split = nodes.iter().any(|n| {
         let s = String::from_utf8_lossy(n);
@@ -101,20 +103,25 @@ fn ca_emits_split_and_concat() {
 
 #[test]
 fn ca_emits_three_grid_samples() {
-    let block = ChromaticAberrationBlock::new()
-        .with_radial_correction(1080, 1920, 2.0);
+    let block = ChromaticAberrationBlock::new().with_radial_correction(1080, 1920, 2.0);
     let nodes = block.nodes();
-    let count = nodes.iter().filter(|n| {
-        let s = String::from_utf8_lossy(n);
-        s.contains("GridSample")
-    }).count();
-    assert_eq!(count, 3, "CA must emit exactly 3 GridSamples (R, G, B), got {}", count);
+    let count = nodes
+        .iter()
+        .filter(|n| {
+            let s = String::from_utf8_lossy(n);
+            s.contains("GridSample")
+        })
+        .count();
+    assert_eq!(
+        count, 3,
+        "CA must emit exactly 3 GridSamples (R, G, B), got {}",
+        count
+    );
 }
 
 #[test]
 fn ca_has_one_input_one_output() {
-    let block = ChromaticAberrationBlock::new()
-        .with_radial_correction(480, 640, 1.0);
+    let block = ChromaticAberrationBlock::new().with_radial_correction(480, 640, 1.0);
     assert_eq!(block.input_tensors().len(), 1);
     assert_eq!(block.output_tensors().len(), 1);
 }
@@ -123,8 +130,7 @@ fn ca_has_one_input_one_output() {
 fn ca_produces_valid_onnx() {
     use cam_isp::pipeline::GraphComposer;
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
-    let ca = ChromaticAberrationBlock::new()
-        .with_radial_correction(480, 640, 1.5);
+    let ca = ChromaticAberrationBlock::new().with_radial_correction(480, 640, 1.5);
     let display = DisplayBlock::new(640);
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &ca, &display];
     let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
@@ -151,22 +157,32 @@ fn auto_contrast_emits_mul_add_nodes() {
 
 #[test]
 fn auto_contrast_with_shadow_lift() {
-    let block = AutoContrastBlock::new(1.3)
-        .with_shadow_lift(0.03);
+    let block = AutoContrastBlock::new(1.3).with_shadow_lift(0.03);
     let nodes = block.nodes();
     // Should have Mul + Add for contrast, then Add + Mul for shadow lift
-    let add_count = nodes.iter().filter(|n| {
-        let s = String::from_utf8_lossy(n);
-        s.contains("Add")
-    }).count();
-    assert!(add_count >= 2, "shadow lift needs 2+ Add ops, got {}", add_count);
+    let add_count = nodes
+        .iter()
+        .filter(|n| {
+            let s = String::from_utf8_lossy(n);
+            s.contains("Add")
+        })
+        .count();
+    assert!(
+        add_count >= 2,
+        "shadow lift needs 2+ Add ops, got {}",
+        add_count
+    );
 }
 
 #[test]
 fn auto_contrast_has_initializers() {
     let block = AutoContrastBlock::new(1.2);
     let inits = block.initializers();
-    assert!(inits.len() >= 1, "need at least 1 initializer, got {}", inits.len());
+    assert!(
+        inits.len() >= 1,
+        "need at least 1 initializer, got {}",
+        inits.len()
+    );
 }
 
 // ── TemporalDenoiseBlock ──────────────────────────────────
@@ -203,7 +219,11 @@ fn temporal_denoise_emits_sub_abs_less() {
 fn temporal_denoise_threshold_in_init() {
     let block = TemporalDenoiseBlock::new().with_threshold(0.08);
     let inits = block.initializers();
-    assert_eq!(inits.len(), 4, "need threshold + one + blend_w + curr_weight");
+    assert_eq!(
+        inits.len(),
+        4,
+        "need threshold + one + blend_w + curr_weight"
+    );
 }
 
 // ── HdrMergeBlock ─────────────────────────────────────────
@@ -212,7 +232,11 @@ fn temporal_denoise_threshold_in_init() {
 fn hdr_merge_has_three_inputs() {
     let block = HdrMergeBlock::new();
     let inputs = block.input_tensors();
-    assert_eq!(inputs.len(), 3, "must have 3 inputs (neutral + under + over)");
+    assert_eq!(
+        inputs.len(),
+        3,
+        "must have 3 inputs (neutral + under + over)"
+    );
 }
 
 #[test]
@@ -241,10 +265,8 @@ fn full_correction_pipeline_produces_onnx() {
     let warp = WarpGridBlock::new(640, 480)
         .with_gdc(-0.1, 0.0, 0.0)
         .with_lens_shading(1.3, 1.0);
-    let ca = ChromaticAberrationBlock::new()
-        .with_radial_correction(480, 640, 1.5);
-    let contrast = AutoContrastBlock::new(1.3)
-        .with_shadow_lift(0.02);
+    let ca = ChromaticAberrationBlock::new().with_radial_correction(480, 640, 1.5);
+    let contrast = AutoContrastBlock::new(1.3).with_shadow_lift(0.02);
     let denoise = TemporalDenoiseBlock::new();
     let display = DisplayBlock::new(640);
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![
@@ -260,10 +282,8 @@ fn full_correction_pipeline_produces_onnx() {
 fn warp_and_ca_compose() {
     use cam_isp::pipeline::GraphComposer;
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
-    let warp = WarpGridBlock::new(640, 480)
-        .with_gdc(-0.2, 0.0, 0.0);
-    let ca = ChromaticAberrationBlock::new()
-        .with_radial_correction(480, 640, 1.0);
+    let warp = WarpGridBlock::new(640, 480).with_gdc(-0.2, 0.0, 0.0);
+    let ca = ChromaticAberrationBlock::new().with_radial_correction(480, 640, 1.0);
     let display = DisplayBlock::new(640);
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &warp, &ca, &display];
     let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
@@ -278,8 +298,13 @@ fn sharpen_emits_avgpool_sub_mul_add() {
     let nodes = block.nodes();
     let tags = ["AveragePool", "Sub", "Mul", "Add"];
     for tag in &tags {
-        assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains(tag)),
-            "must emit {}", tag);
+        assert!(
+            nodes
+                .iter()
+                .any(|n| String::from_utf8_lossy(n).contains(tag)),
+            "must emit {}",
+            tag
+        );
     }
 }
 
@@ -298,8 +323,8 @@ fn sharpen_produces_valid_onnx() {
 
 #[test]
 fn colorspace_rgb_to_yuv_produces_onnx() {
-    use cam_isp::pipeline::GraphComposer;
     use cam_isp::blocks::ColorSpace;
+    use cam_isp::pipeline::GraphComposer;
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
     let cs = ColorSpaceBlock::new(ColorSpace::RgbToYCbCr);
     let display = DisplayBlock::new(640);
@@ -310,8 +335,8 @@ fn colorspace_rgb_to_yuv_produces_onnx() {
 
 #[test]
 fn colorspace_roundtrip_601() {
-    use cam_isp::pipeline::GraphComposer;
     use cam_isp::blocks::ColorSpace;
+    use cam_isp::pipeline::GraphComposer;
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
     let fwd = ColorSpaceBlock::new(ColorSpace::RgbToYCbCr);
     let rev = ColorSpaceBlock::new(ColorSpace::RgbToHsv);
@@ -338,7 +363,9 @@ fn aspect_crop_16_9_produces_onnx() {
 fn aspect_crop_has_slice_op() {
     let block = AspectCropBlock::new(16, 9);
     let nodes = block.nodes();
-    assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Slice")));
+    assert!(nodes
+        .iter()
+        .any(|n| String::from_utf8_lossy(n).contains("Slice")));
 }
 
 // ── GammaBlock ────────────────────────────────────────────
@@ -360,8 +387,13 @@ fn gamma_emits_log_mul_exp() {
     let nodes = block.nodes();
     let tags = ["Log", "Mul", "Exp"];
     for tag in &tags {
-        assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains(tag)),
-            "must emit {}", tag);
+        assert!(
+            nodes
+                .iter()
+                .any(|n| String::from_utf8_lossy(n).contains(tag)),
+            "must emit {}",
+            tag
+        );
     }
 }
 
@@ -390,16 +422,20 @@ fn stereo_depth_has_two_inputs() {
 fn stereo_depth_emits_conv_sub() {
     let block = StereoDepthBlock::new();
     let nodes = block.nodes();
-    assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Conv")));
-    assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Sub")));
+    assert!(nodes
+        .iter()
+        .any(|n| String::from_utf8_lossy(n).contains("Conv")));
+    assert!(nodes
+        .iter()
+        .any(|n| String::from_utf8_lossy(n).contains("Sub")));
 }
 
 // ── Full pipeline with all new blocks ─────────────────────
 
 #[test]
 fn mega_pipeline_all_blocks() {
-    use cam_isp::pipeline::GraphComposer;
     use cam_isp::blocks::ColorSpace;
+    use cam_isp::pipeline::GraphComposer;
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
     let demosaic = DemosaicCcmBlock::new(0);
     let gamma = GammaBlock::new(2.2).with_shadow_lift(0.02);
@@ -414,13 +450,21 @@ fn mega_pipeline_all_blocks() {
     let crop = AspectCropBlock::ratio_16_9();
     let display = DisplayBlock::new(640);
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![
-        &unpack, &demosaic, &gamma, &sharpen, &contrast,
-        &cs_fwd, &cs_rev, &warp, &ca, &ne, &denoise, &crop, &display,
+        &unpack, &demosaic, &gamma, &sharpen, &contrast, &cs_fwd, &cs_rev, &warp, &ca, &ne,
+        &denoise, &crop, &display,
     ];
     let onnx = GraphComposer::compose_from_vec(&blocks, &[], 16).unwrap();
-    assert!(onnx.len() > 1000, "mega pipeline ONNX: {} bytes", onnx.len());
+    assert!(
+        onnx.len() > 1000,
+        "mega pipeline ONNX: {} bytes",
+        onnx.len()
+    );
     std::fs::write("target/mega_pipeline.onnx", &onnx).ok();
-    println!("Mega pipeline: {} stages, {} bytes", blocks.len(), onnx.len());
+    println!(
+        "Mega pipeline: {} stages, {} bytes",
+        blocks.len(),
+        onnx.len()
+    );
 }
 
 // ── DynResizeBlock ───────────────────────────────────────
@@ -440,7 +484,9 @@ fn dyn_resize_produces_valid_onnx() {
 fn dyn_resize_emits_resize_op() {
     let block = DynResizeBlock::new(640, 480).with_source_size(1280, 720);
     let nodes = block.nodes();
-    assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Resize")));
+    assert!(nodes
+        .iter()
+        .any(|n| String::from_utf8_lossy(n).contains("Resize")));
 }
 
 #[test]
@@ -453,8 +499,8 @@ fn dyn_resize_scales_are_correct() {
 
 #[test]
 fn test_hdr_tone_block_aces_compose() {
-    use cam_isp::pipeline_builder::PipelineBuilder;
     use cam_isp::blocks::ToneOperator;
+    use cam_isp::pipeline_builder::PipelineBuilder;
     let onnx = PipelineBuilder::new(1920, 1080)
         .unpack()
         .hdr_tone(ToneOperator::Aces)
@@ -466,8 +512,8 @@ fn test_hdr_tone_block_aces_compose() {
 
 #[test]
 fn test_hdr_tone_block_reinhard_compose() {
-    use cam_isp::pipeline_builder::PipelineBuilder;
     use cam_isp::blocks::ToneOperator;
+    use cam_isp::pipeline_builder::PipelineBuilder;
     let onnx = PipelineBuilder::new(1920, 1080)
         .unpack()
         .hdr_tone(ToneOperator::Reinhard)
@@ -479,8 +525,8 @@ fn test_hdr_tone_block_reinhard_compose() {
 
 #[test]
 fn test_hdr_tone_block_uncharted2_compose() {
-    use cam_isp::pipeline_builder::PipelineBuilder;
     use cam_isp::blocks::ToneOperator;
+    use cam_isp::pipeline_builder::PipelineBuilder;
     let onnx = PipelineBuilder::new(1920, 1080)
         .unpack()
         .hdr_tone(ToneOperator::Uncharted2)
@@ -516,8 +562,8 @@ fn test_plugin_block_compose() {
 
 #[test]
 fn test_full_hdr_pipeline_compose() {
-    use cam_isp::pipeline_builder::PipelineBuilder;
     use cam_isp::blocks::ToneOperator;
+    use cam_isp::pipeline_builder::PipelineBuilder;
     let onnx = PipelineBuilder::new(3840, 2160)
         .unpack()
         .demosaic_binning()
@@ -549,8 +595,8 @@ fn test_super_res_block_emit() {
 
 #[test]
 fn test_hdr_tone_aces_full_pipeline() {
-    use cam_isp::pipeline_builder::PipelineBuilder;
     use cam_isp::blocks::ToneOperator;
+    use cam_isp::pipeline_builder::PipelineBuilder;
     // Full pipeline: unpack → demosaic → HDR tone → gamma → display
     let onnx = PipelineBuilder::new(3840, 2160)
         .unpack()
@@ -560,13 +606,16 @@ fn test_hdr_tone_aces_full_pipeline() {
         .display()
         .compose()
         .expect("should compose");
-    assert!(onnx.len() > 3000, "full HDR pipeline should produce substantial ONNX");
+    assert!(
+        onnx.len() > 3000,
+        "full HDR pipeline should produce substantial ONNX"
+    );
 }
 
 #[test]
 fn test_hdr_tone_reinhard_full_pipeline() {
-    use cam_isp::pipeline_builder::PipelineBuilder;
     use cam_isp::blocks::ToneOperator;
+    use cam_isp::pipeline_builder::PipelineBuilder;
     let onnx = PipelineBuilder::new(1920, 1080)
         .unpack()
         .demosaic_binning()
@@ -615,7 +664,10 @@ fn test_laplacian_pyramid_standalone() {
         .display()
         .compose()
         .expect("should compose");
-    assert!(onnx.len() > 2000, "laplacian pyramid should produce substantial ONNX");
+    assert!(
+        onnx.len() > 2000,
+        "laplacian pyramid should produce substantial ONNX"
+    );
 }
 
 #[test]
@@ -628,7 +680,11 @@ fn test_laplacian_pyramid_different_levels() {
             .display()
             .compose()
             .expect("should compose");
-        assert!(!onnx.is_empty(), "laplacian pyramid with {} levels failed", levels);
+        assert!(
+            !onnx.is_empty(),
+            "laplacian pyramid with {} levels failed",
+            levels
+        );
     }
 }
 

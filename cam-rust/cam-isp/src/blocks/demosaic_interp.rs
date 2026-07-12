@@ -46,33 +46,65 @@ impl DemosaicInterpBlock {
 }
 
 impl IspBlock for DemosaicInterpBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "DemosaicInterpBlock".to_string() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.output_name) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-
-    fn input_tensors(&self) -> Vec<String> {
-        if self.input_source.is_empty() { vec![] } else { vec![self.input_source.clone()] }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "DemosaicInterpBlock".to_string()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.output_name)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
     }
 
-    fn output_tensors(&self) -> Vec<String> { vec![self.output_name.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        if self.input_source.is_empty() {
+            vec![]
+        } else {
+            vec![self.input_source.clone()]
+        }
+    }
+
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.output_name.clone()]
+    }
 
     fn graph_input_name(&self) -> Option<&str> {
-        if self.is_head() { Some(&self.output_name) } else { None }
+        if self.is_head() {
+            Some(&self.output_name)
+        } else {
+            None
+        }
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.output_name, &[
-            Proto::tensor_dim_value(1),
-            Proto::tensor_dim_value(3),
-            Proto::tensor_dim_param("H"),
-            Proto::tensor_dim_param("W"),
-        ], 1)) // FLOAT
+        Some(Proto::value_info(
+            &self.output_name,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        )) // FLOAT
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
