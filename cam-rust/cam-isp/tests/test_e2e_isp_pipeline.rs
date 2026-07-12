@@ -1,3 +1,4 @@
+#![cfg(feature = "mnn")]
 //! End-to-end ISP pipeline test: ONNX → MNNConvert → Vulkan run → verify.
 //!
 //! This test exercises the full toolchain:

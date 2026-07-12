@@ -1,3 +1,4 @@
+#![cfg(feature = "mnn")]
 // cam-rust/cam-isp/tests/test_unpack_mnn_performance.rs
 //! MNN-based performance tests for UnpackBayerToFp16Block
 //!
