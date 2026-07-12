@@ -6,10 +6,10 @@
 
 #[cfg(feature = "mnn")]
 mod parallel_test {
-    use std::sync::Arc;
-    use std::time::{Duration, Instant};
-    use cam_isp::mnnengine::{MnnBackend, MnnEngine};
-    use cam_isp::engine::{IspEngine, ProcessParams};
+    
+    
+    
+    
 
     #[test]
     #[ignore]
