@@ -11,7 +11,7 @@ use cam_types::{CameraSourceType, FrameFormat};
 
 /// V4L2 Camera Adapter that streams frames via callback.
 pub struct V4l2CameraAdapter {
-    base: BaseCameraAdapter,
+    base: Arc<BaseCameraAdapter>,
     device_path: String,
     config: Mutex<Option<StreamConfig>>,
     running: Arc<Mutex<bool>>,
@@ -27,7 +27,7 @@ impl V4l2CameraAdapter {
             drop(cam); // close — we'll reopen on start_streaming
 
             Ok(Self {
-                base: BaseCameraAdapter::new(CameraSourceType::V4l2),
+                base: Arc::new(BaseCameraAdapter::new(CameraSourceType::V4l2)),
                 device_path: device_path.to_string(),
                 config: Mutex::new(None),
                 running: Arc::new(Mutex::new(false)),
@@ -122,6 +122,7 @@ impl ICameraAdapter for V4l2CameraAdapter {
         // Easiest correct solution: store callback as Arc in a shared struct.
         // I'll create a small SharedState struct for the thread.
 
+        let base = Arc::clone(&self.base);
         *self.running.lock().unwrap() = true;
 
         let running_clone = Arc::clone(&self.running);
@@ -129,14 +130,6 @@ impl ICameraAdapter for V4l2CameraAdapter {
         let height = config.height;
         let format = config.format;
         let fps = config.fps;
-
-        // We need a way to invoke the callback from the streaming thread.
-        // Use a raw pointer to BaseCameraAdapter — safe because:
-        // 1. self (V4l2CameraAdapter) lives on the heap
-        // 2. We set running=false in close()/stop_streaming before self is dropped
-        // 3. The thread checks running before each frame
-        // This is the same pattern used in many FFI scenarios.
-        let base_ptr = &self.base as *const BaseCameraAdapter;
 
         thread::spawn(move || {
             #[cfg(feature = "v4l2")]
@@ -184,12 +177,7 @@ impl ICameraAdapter for V4l2CameraAdapter {
                             let byte_frame = crate::v4l2::buffer::buffer_to_byte_frame(
                                 &frame, width, height, format,
                             );
-                            // SAFETY: base_ptr is valid as long as self is alive,
-                            // and the thread stops (running=false) before self is dropped.
-                            unsafe {
-                                let base = &*base_ptr;
-                                base.invoke_frame_callback(byte_frame);
-                            }
+                            base.invoke_frame_callback(byte_frame);
                         }
                         Err(e) => {
                             error!("V4L2 capture frame error: {:?}", e);
