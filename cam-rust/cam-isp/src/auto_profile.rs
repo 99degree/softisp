@@ -300,8 +300,8 @@ impl AutoProfile {
             "unpack" => Ok(Box::new(UnpackBlock::new())),
             "blc" => Ok(Box::new(BlcBlock::new())),
             "bayer_wb" => Ok(Box::new(BayerWbBlock::new())),
-            "demosaic" => Ok(Box::new(DemosaicCcmBlock::new(0))),
-            "ccm" => Ok(Box::new(CcmBlock::new())),
+            "demosaic" => Ok(Box::new(DemosaicBlock::new(0))),           // demosaic only, not fused CCM
+            "ccm" => Ok(Box::new(CcmBlock::new())),                      // separate CCM after demosaic
             "fcs" => Ok(Box::new(FcsBlock::new())),
             "tone" => Ok(Box::new(ToneBlock::new())),
             "ee" => Ok(Box::new(EeBlock::new())),
