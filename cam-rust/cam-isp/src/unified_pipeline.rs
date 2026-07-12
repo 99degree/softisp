@@ -1003,6 +1003,8 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    #[ignore = "requires MNN/Vulkan engine not available on CI"]
     fn test_unified_pipeline_build() {
         crate::init();
         let config = UnifiedConfig::hd();
@@ -1014,6 +1016,8 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    #[ignore = "requires MNN/Vulkan engine not available on CI"]
     fn test_unified_pipeline_process() {
         crate::init();
         let pipeline = UnifiedPipeline::new(UnifiedConfig::hd()).unwrap();
@@ -1026,6 +1030,8 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    #[ignore = "requires MNN/Vulkan engine not available on CI"]
     fn test_unified_pipeline_with_gpu_warp() {
         crate::init();
         let config = UnifiedConfig::hd().with_gpu_warp();
