@@ -219,7 +219,7 @@ impl OnnxSession {
             self.session
                 .inputs()
                 .iter()
-                .map(|i| i.name.clone())
+                .map(|i| i.name().clone())
                 .collect()
         }
         #[cfg(not(feature = "ort"))]
@@ -233,7 +233,7 @@ impl OnnxSession {
             self.session
                 .outputs()
                 .iter()
-                .map(|o| o.name.clone())
+                .map(|o| o.name().clone())
                 .collect()
         }
         #[cfg(not(feature = "ort"))]
