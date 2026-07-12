@@ -756,6 +756,7 @@ impl UnifiedPipeline {
 
     /// Stitch a tile's float data into the output buffer.
     /// Float data is planar RGB: [R0...Rn, G0...Gn, B0...Bn]
+    #[allow(dead_code)]
     fn stitch_tile_f32(
         output: &mut [f32],
         tile: &[f32],
