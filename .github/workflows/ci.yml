@@ -106,7 +106,7 @@ jobs:
         run: |
           # Build MNN from source (takes ~10-15 min)
           cd /tmp
-          git clone --depth 1 --branch 2.9.7 https://github.com/alibaba/MNN.git
+          git clone --depth 1 --branch 3.6.0 https://github.com/alibaba/MNN.git
           cd MNN
           
           # Build with Vulkan support
