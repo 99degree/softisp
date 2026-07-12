@@ -16,9 +16,3 @@ rscam = { version = "0.5", optional = true }
 [features]
 default = []
 v4l2 = ["rscam"]
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-rscam = { version = "0.5", optional = true }
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.features]
-v4l2 = ["rscam"]

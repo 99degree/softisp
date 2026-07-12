@@ -101,7 +101,7 @@ fn create_weight_matrix() -> Vec<f32> {
 
     // CCM: identity matrix (diagonal = 1.0)
     // Row 0: R→R
-    weights[0 * 20 + 3] = 1.0;
+    weights[3] = 1.0;
     // Row 1: G→G
     weights[1 * 20 + 4] = 1.0;
     // Row 2: B→B
