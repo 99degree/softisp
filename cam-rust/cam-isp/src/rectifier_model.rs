@@ -88,7 +88,7 @@ fn create_weight_matrix() -> Vec<f32> {
     // WB gains: weighted average of histogram
     // R channel: weight first 1/3 of histogram
     for i in 0..85 {
-        weights[i * 20 + 0] = 1.0 / 85.0; // WB R
+        weights[i * 20] = 1.0 / 85.0; // WB R
     }
     // G channel: weight middle 1/3
     for i in 85..170 {
@@ -103,7 +103,7 @@ fn create_weight_matrix() -> Vec<f32> {
     // Row 0: R→R
     weights[3] = 1.0;
     // Row 1: G→G
-    weights[1 * 20 + 4] = 1.0;
+    weights[20 + 4] = 1.0;
     // Row 2: B→B
     weights[2 * 20 + 5] = 1.0;
 

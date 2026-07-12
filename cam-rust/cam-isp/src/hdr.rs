@@ -148,20 +148,15 @@ impl std::fmt::Display for HdrError {
 impl std::error::Error for HdrError {}
 
 /// HDR merge strategy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HdrMergeMethod {
     /// Mertens exposure fusion — fast, good quality
+    #[default]
     Mertens,
     /// Deep HDR CNN — best quality, slower
     DeepHdr,
     /// Neural HDR (Kalantari et al.) — excellent quality
     NeuralHdr,
-}
-
-impl Default for HdrMergeMethod {
-    fn default() -> Self {
-        HdrMergeMethod::Mertens
-    }
 }
 
 // ── HDR Capture Queue ─────────────────────────────────────────────
