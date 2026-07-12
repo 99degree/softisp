@@ -3,6 +3,8 @@
 #[cfg(feature = "v4l2")]
 use rscam::Camera;
 
+use cam_types::FrameFormat;
+
 /// V4L2 format description.
 #[derive(Debug, Clone)]
 pub struct V4L2FormatInfo {
