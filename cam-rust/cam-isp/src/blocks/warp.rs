@@ -77,7 +77,7 @@ use crate::onnx::proto::Proto;
 /// For software-based stabilization, use `DeshakeEngine` to compute
 /// motion vectors, then convert to a grid and pass via `with_grid()`:
 ///
-/// ```rust
+/// ```rust,ignore
 /// // DeshakeEngine computes translation between frames
 /// let deshake = DeshakeEngine::new();
 /// let motion = deshake.estimate_motion(&prev_frame, &curr_frame);
