@@ -88,8 +88,15 @@ impl ICameraAdapter for V4l2CameraAdapter {
         *self.state.lock().unwrap() = CameraState::Streaming;
 
         let device_path = self.device_path.clone();
-        let running = Arc::clone(&self.running);
-        let state = Arc::clone(&self.state);
+        // We need the callback in the streaming thread. Since BaseCameraAdapter uses Mutex<Option<FrameCallback>>,
+        // and the callback is Fn (not FnMut), we can share the BaseCameraAdapter via Arc.
+        // But we don't have Arc<Self>. Let's work around: spawn thread that opens its own camera,
+        // reads frames, and calls a shared callback.
+        // Easiest: move a clone of the callback into the thread.
+        // We take the callback out and wrap it in Arc for sharing.
+        // But FrameCallback is Box<dyn Fn>. We'll wrap it.
+        // Actually, we can use Arc<BaseCameraAdapter> but we don't have one.
+        // Simplest: take callback out, wrap in Arc, put back a wrapper that delegates to Arc.
 
         // Extract callback and wrap for thread safety
         // We use an Arc<Mutex<Option<FrameCallback>>> for the thread
