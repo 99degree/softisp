@@ -13,6 +13,9 @@ pub mod buffer_pool;
 pub mod gralloc;
 pub mod util;
 
+#[cfg(feature = "v4l2")]
+pub mod v4l2;
+
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 

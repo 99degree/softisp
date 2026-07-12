@@ -71,11 +71,13 @@ unsafe fn neon_gain_4(
 
 impl SimdEngine for NeonFp16 {
     fn name(&self) -> &'static str {
-        if cfg!(target_arch = "aarch64") && std::arch::is_aarch64_feature_detected!("fp16") {
-            "neon-fp16"
-        } else {
-            "neon" // fallback name; selector won't pick this without fp16
+        #[cfg(target_arch = "aarch64")]
+        {
+            if std::arch::is_aarch64_feature_detected!("fp16") {
+                return "neon-fp16";
+            }
         }
+        "neon" // fallback name; selector won't pick this without fp16
     }
 
     fn normalize_u16_to_f32(&self, input: &[u16], output: &mut [f32], max_val: f32) {

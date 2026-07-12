@@ -248,6 +248,7 @@ dependencies = [
  "cam-types",
  "libc",
  "log",
+ "rscam",
  "thiserror 2.0.18",
 ]
 
