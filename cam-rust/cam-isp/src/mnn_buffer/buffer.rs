@@ -153,7 +153,6 @@ impl MNNBufferManager {
     /// Create memfd for the given size
     #[cfg(target_os = "linux")]
     fn create_memfd(&self, size: usize) -> std::io::Result<File> {
-
         // Try memfd_create syscall
         let fd = unsafe {
             libc::syscall(
