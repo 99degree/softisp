@@ -153,6 +153,7 @@ impl UnifiedConfig {
 }
 
 /// Unified camera pipeline combining ISP + post-processing.
+#[allow(dead_code)]
 pub struct UnifiedPipeline {
     engine: Box<dyn IspEngine>,
     config: UnifiedConfig,
