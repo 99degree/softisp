@@ -76,8 +76,9 @@ jobs:
           python -m pytest tests/ -v --tb=short
 
       - name: Model validation (quick)
+        working-directory: ./isp-rectifier
         run: |
-          python3 -c "
+          python3 << 'PYEOF'
           import onnxruntime as ort
           import numpy as np
 
@@ -108,7 +109,7 @@ jobs:
 
       - name: Validate ONNX models
         run: |
-          python3 << 'EOF'
+          python3 << 'PYEOF'
           import onnx
           import onnxruntime as ort
           import numpy as np
