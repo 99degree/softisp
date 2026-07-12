@@ -19,12 +19,10 @@ pub fn list_devices() -> Vec<String> {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with("video") {
                 let path = format!("/dev/{}", name);
-                // Try to open and get capabilities
-                if let Ok(cam) = Camera::new(&path) {
-                    if let Ok(info) = cam.query_capability() {
-                        log::info!("Found V4L2 device: {} ({})", path, info.card);
-                        devices.push(path);
-                    }
+                // Try to open the device - if successful, it's a valid camera
+                if Camera::new(&path).is_ok() {
+                    log::info!("Found V4L2 device: {}", path);
+                    devices.push(path);
                 }
             }
         }
@@ -37,7 +35,16 @@ pub fn list_devices() -> Vec<String> {
 #[cfg(feature = "v4l2")]
 pub fn get_device_info(device_path: &str) -> Option<DeviceInfo> {
     let cam = Camera::new(device_path).ok()?;
-    let caps = cam.query_capability().ok()?;
+
+    Some(DeviceInfo {
+        path: device_path.to_string(),
+        driver: String::new(),
+        card: String::new(),
+        bus_info: String::new(),
+        version: 0,
+        capabilities: 0,
+        device_caps: 0,
+    })
 
     Some(DeviceInfo {
         path: device_path.to_string(),
