@@ -1,3 +1,4 @@
+#![cfg(feature = "mnn")]
 //! End-to-end test: GridSampler warp on Vulkan backend.
 //!
 //! Verifies that standard ONNX GridSampler runs natively on Vulkan
