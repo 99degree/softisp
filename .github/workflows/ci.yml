@@ -18,6 +18,8 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*\n
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -72,6 +74,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -120,6 +125,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -220,6 +228,12 @@ jobs:
         working-directory: ./isp-rectifier
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -254,6 +268,12 @@ jobs:
     needs: [rust-test, python]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
 
       - name: Install onnxruntime
         run: pip install -q onnxruntime numpy
@@ -270,6 +290,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
+
       - name: Build docs (placeholder)
         run: echo "Documentation build placeholder"
 
