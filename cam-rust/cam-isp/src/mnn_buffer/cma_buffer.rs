@@ -314,7 +314,7 @@ impl CMABufferInfo {
         let fd = unsafe {
             libc::ioctl(
                 ion_fd.as_raw_fd(),
-                ION_IOC_ALLOC_CMD as u64,
+                ION_IOC_ALLOC_CMD as i32,
                 &alloc_data as *const _ as *mut libc::c_void,
             ) as RawFd
         };
@@ -366,7 +366,7 @@ impl CMABufferInfo {
         let share_fd = unsafe {
             libc::ioctl(
                 ion_fd,
-                ION_IOC_SHARE_CMD as u64,
+                ION_IOC_SHARE_CMD as i32,
                 &ion_fd as *const _ as *mut libc::c_void,
             ) as RawFd
         };
