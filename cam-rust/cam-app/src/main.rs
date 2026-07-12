@@ -4,6 +4,9 @@
 //! Optionally converts ONNX to MNN format.
 //! Does not capture real camera frames.
 
+#![allow(clippy::unused_imports)] // Some imports used only with certain features
+#![allow(clippy::unneeded_return)] // Some returns are explicit for clarity
+
 use clap::Parser;
 use log::{error, info, warn};
 
