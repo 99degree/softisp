@@ -60,12 +60,15 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== clippy lib: $crate ==="
-            # Exclude 'mnn' feature (requires external libs not on CI)
-            cargo clippy -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --features "rectifier" -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+            if [ "$crate" = "cam-isp" ]; then
+              cargo clippy -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --features "rectifier" -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+            else
+              cargo clippy -p "$crate" --jobs $CARGO_BUILD_JOBS --lib -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+            fi
             echo ""
           done
           echo "=== clippy: cam-app ==="
-          cargo clippy -p cam-app --jobs $CARGO_BUILD_JOBS -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+          cargo clippy -p cam-app --jobs $CARGO_BUILD_JOBS --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed clippy"
@@ -93,7 +96,6 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          components: rustfmt, clippy
       - name: Set cargo job count
         run: |
           echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
@@ -122,7 +124,7 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
             echo "=== test: $crate ==="
-            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --lib --features "rectifier" --no-fail-fast 2>&1 || ERRORS=$((ERRORS+1))
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --lib --no-fail-fast 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           if [ "$ERRORS" -ne 0 ]; then
@@ -130,9 +132,13 @@ jobs:
             exit 1
           fi
 
+      - name: Run cam-isp tests with rectifier feature
+        working-directory: ./cam-rust
+        run: cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --lib --features "rectifier" --no-fail-fast
+
       - name: Run doc tests
         working-directory: ./cam-rust
-        run: cargo test --jobs $CARGO_TEST_JOBS --workspace --doc --features "rectifier" --no-fail-fast
+        run: cargo test --jobs $CARGO_TEST_JOBS --workspace --doc --all-features --no-fail-fast
 
   # Rust clean rebuild test
   rust-clean-rebuild:
@@ -187,8 +193,11 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== build lib debug: $crate ==="
-            # Exclude 'mnn' feature (requires external MNN libs not on CI)
-            cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
+            if [ "$crate" = "cam-isp" ]; then
+              cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
+            else
+              cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib 2>&1 || ERRORS=$((ERRORS+1))
+            fi
             echo ""
           done
           echo "=== build app debug: cam-app (default features only, mnn requires external libs) ==="
@@ -205,9 +214,12 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
             echo "=== build tests: $crate ==="
-            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --no-run --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --no-run 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
+          echo "=== build tests: cam-isp (with rectifier) ==="
+          cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --no-run --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
+          echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) test build failed"
             exit 1
@@ -219,7 +231,11 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== build lib release: $crate ==="
-            cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
+            if [ "$crate" = "cam-isp" ]; then
+              cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
+            else
+              cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib 2>&1 || ERRORS=$((ERRORS+1))
+            fi
             echo ""
           done
           echo "=== build app release: cam-app (default features only, mnn requires external libs) ==="
@@ -247,12 +263,6 @@ jobs:
           echo ""
           echo "=== Release binaries ==="
           find target/release -maxdepth 1 -type f -executable -exec ls -lh {} \; 2>/dev/null | head -20
-
-  # Python tests (DISABLED - no Python package in this repo)
-  # python:
-
-  # ONNX model validation (DISABLED - depends on Python package)
-  # model-validation:
 
   # Documentation build (placeholder)
   docs:
