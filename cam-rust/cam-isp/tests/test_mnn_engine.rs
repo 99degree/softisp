@@ -43,6 +43,7 @@ fn build_test_mnn(prefix: &str) -> Result<String, String> {
 #[cfg(feature = "mnn")]
 #[test]
 #[ignore] // requires libMNN.so + MNNConvert
+#[cfg(feature = "mnn")]
 fn test_mnn_engine_streaming() {
     use cam_isp::engine::IspEngine;
     use cam_isp::mnnengine::{MnnBackend, MnnEngine};
@@ -127,6 +128,7 @@ fn test_mnn_engine_streaming() {
 #[cfg(feature = "mnn")]
 #[test]
 #[ignore] // requires libMNN.so + MNNConvert
+#[cfg(feature = "mnn")]
 fn test_mnn_engine_frame_difference() {
     use cam_isp::engine::IspEngine;
     use cam_isp::mnnengine::{MnnBackend, MnnEngine};
@@ -247,6 +249,7 @@ fn test_mnn_engine_frame_difference() {
 #[cfg(feature = "mnn")]
 #[test]
 #[ignore] // requires libMNN.so + MNNConvert
+#[cfg(feature = "mnn")]
 fn test_mnn_engine_lite_profile() {
     use cam_isp::engine::IspEngine;
     use cam_isp::mnn_converter::convert_onnx_to_mnn;
@@ -364,7 +367,7 @@ fn build_profile_mnn(
     Ok(mnn_path)
 }
 
-/// Test profile at 64-wide resolution (fast, for quick validation).
+#[cfg(feature = "mnn")]
 fn test_profile_via_mnn(
     profile: cam_isp::profile::PipelineProfile,
     tag: &str,
@@ -372,6 +375,7 @@ fn test_profile_via_mnn(
     build_profile_mnn(&profile, tag, 64, 64)
 }
 
+#[cfg(feature = "mnn")]
 fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
     use cam_isp::engine::IspEngine;
     use cam_isp::mnnengine::{MnnBackend, MnnEngine};
@@ -434,6 +438,7 @@ fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
 #[cfg(feature = "mnn")]
 #[test]
 #[ignore]
+#[cfg(feature = "mnn")]
 fn test_mnn_all_profiles() {
     use cam_isp::profile::PipelineProfile;
     run_mnn_profile_test("LITE", PipelineProfile::LITE);
@@ -528,6 +533,7 @@ fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
 #[cfg(feature = "mnn")]
 #[test]
 #[ignore]
+#[cfg(feature = "mnn")]
 fn test_mnn_resolution_bench() {
     let resolutions: [(u32, u32); 6] = [
         (256, 144),   // nHD
@@ -665,6 +671,7 @@ fn stream_mnn_backend(w: u32, h: u32, n_frames: u32, backend: &str) -> Result<f6
 #[cfg(feature = "mnn")]
 #[test]
 #[ignore]
+#[cfg(feature = "mnn")]
 fn test_mnn_backend_compare() {
     for backend in &["vulkan", "opencl", "opengl", "cpu"] {
         match stream_mnn_backend(640, 360, 5, backend) {
@@ -678,6 +685,7 @@ fn test_mnn_backend_compare() {
 #[cfg(feature = "mnn")]
 #[test]
 #[ignore] // Requires Vulkan backend — CPU backend SIGSEGV on Extra ops
+#[cfg(feature = "mnn")]
 fn test_mnn_packed_pipeline() {
     use cam_isp::blocks::{DisplayBlock, RawInputBlock, UnpackCfaBlock};
     use cam_isp::engine::IspEngine;
@@ -798,6 +806,7 @@ fn test_mnn_packed_pipeline() {
 
 /// Uninitialized engine should return error.
 #[test]
+#[cfg(feature = "mnn")]
 fn test_mnn_engine_uninitialized() {
     #[cfg(feature = "mnn")]
     {
