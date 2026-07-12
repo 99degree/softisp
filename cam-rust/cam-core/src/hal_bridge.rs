@@ -56,32 +56,30 @@ pub fn create_isp_processor(
     // 4. Create processor closure
     #[allow(unused_imports)]
     use cam_isp::engine::IspEngine;
-    let processor: FrameProcessor = Arc::new(move |data: &[u8], w: u32, h: u32, _fmt: i32| -> Result<Vec<u8>, String> {
-        let proc_start = std::time::Instant::now();
-        let mut guard = engine
-            .lock()
-            .map_err(|e| format!("Lock failed: {}", e))?;
-        let eng = guard
-            .as_mut()
-            .ok_or_else(|| "Engine taken".to_string())?;
-        let mut params = cam_isp::engine::ProcessParams::new(w, h, data);
-        params.target_width = target_width;
-        params.sensor_max = 65535.0;
-        params.timestamp_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
-        let result = eng.process(&params).map_err(|e| e.to_string())?;
-        let proc_elapsed = proc_start.elapsed();
-        log::trace!(
-            "ISP process: {}x{} -> {} bytes in {:.2}ms",
-            w,
-            h,
-            result.data.len(),
-            proc_elapsed.as_secs_f64() * 1000.0
-        );
-        Ok(result.data)
-    });
+    let processor: FrameProcessor = Arc::new(
+        move |data: &[u8], w: u32, h: u32, _fmt: i32| -> Result<Vec<u8>, String> {
+            let proc_start = std::time::Instant::now();
+            let mut guard = engine.lock().map_err(|e| format!("Lock failed: {}", e))?;
+            let eng = guard.as_mut().ok_or_else(|| "Engine taken".to_string())?;
+            let mut params = cam_isp::engine::ProcessParams::new(w, h, data);
+            params.target_width = target_width;
+            params.sensor_max = 65535.0;
+            params.timestamp_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
+            let result = eng.process(&params).map_err(|e| e.to_string())?;
+            let proc_elapsed = proc_start.elapsed();
+            log::trace!(
+                "ISP process: {}x{} -> {} bytes in {:.2}ms",
+                w,
+                h,
+                result.data.len(),
+                proc_elapsed.as_secs_f64() * 1000.0
+            );
+            Ok(result.data)
+        },
+    );
 
     info!("ISP FrameProcessor created for {}x{}", width, height);
     Ok(processor)
