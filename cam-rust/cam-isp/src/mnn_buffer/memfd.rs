@@ -25,7 +25,6 @@
 // ```
 
 use std::fs::File;
-use std::os::fd::FromRawFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::Arc;
 

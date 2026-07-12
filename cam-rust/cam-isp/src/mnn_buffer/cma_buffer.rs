@@ -421,6 +421,7 @@ impl CMABufferInfo {
     }
 
     /// Allocate using POSIX shared memory
+    #[allow(unused_variables)]
     fn allocate_shm(size: usize) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         {
