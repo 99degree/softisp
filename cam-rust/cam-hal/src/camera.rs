@@ -23,8 +23,6 @@
 use cam_types::{CameraSourceType, FrameFormat};
 use std::sync::Mutex;
 
-/// A byte frame sent from the camera adapter to the ISP pipeline.
-
 /// Base camera adapter implementation for reuse.
 ///
 /// Provides common state management (open/close/streaming state) and
