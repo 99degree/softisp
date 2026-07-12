@@ -155,7 +155,7 @@ impl V4l2AidlBridge {
             sensor.width,
             sensor.height,
         )
-        .map_err(|e| BridgeError::DeviceError(e))?;
+        .map_err(BridgeError::DeviceError)?;
         let capture_us = t_cap.elapsed().as_micros() as u64;
 
         // Convert Bayer to RGB (simplified — real impl uses ISP)
