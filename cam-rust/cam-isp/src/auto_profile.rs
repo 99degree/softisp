@@ -283,7 +283,12 @@ impl AutoProfile {
     }
 
     /// Build blocks from config.
-    fn build_blocks(&self) -> IspResult<Vec<Box<dyn IspBlock>>> {
+    fn build_blocks(&mut self) -> IspResult<Vec<Box<dyn IspBlock>>> {
+        // Auto-select blocks if not already configured
+        if self.config.blocks.is_empty() {
+            self.select_optimal_blocks();
+        }
+
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
 
         for block_config in self.config.enabled_blocks() {
