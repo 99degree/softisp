@@ -192,4 +192,3 @@ def test_onnx_model_structure():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
-PYEOF
