@@ -872,6 +872,7 @@ impl IspEngine for MnnEngine {
                     let _ = std::fs::copy(&on, ".mnn_last_pipeline.onnx");
                     let opts = MnnConvertOptions {
                         preserve_input_type: self.preserve_input_type,
+                        allow_custom_op: true,
                         ..Default::default()
                     };
                     info!("preserve_input_type: {}, optimize_level: {}", self.preserve_input_type, opts.optimize_level);
