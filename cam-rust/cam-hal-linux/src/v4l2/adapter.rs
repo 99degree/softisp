@@ -78,7 +78,6 @@ impl ICameraAdapter for V4l2CameraAdapter {
             .ok_or("Camera not opened (no StreamConfig)")?;
 
         let device_path = self.device_path.clone();
-        let running = Arc::clone(&self.running);
         // We need the callback in the streaming thread. Since BaseCameraAdapter uses Mutex<Option<FrameCallback>>,
         // and the callback is Fn (not FnMut), we can share the BaseCameraAdapter via Arc.
         // But we don't have Arc<Self>. Let's work around: spawn thread that opens its own camera,
