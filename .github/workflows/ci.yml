@@ -12,6 +12,9 @@ jobs:
     name: Rust Tests & Build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ./cam-rust
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +31,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('cam-rust/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
