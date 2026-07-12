@@ -12,9 +12,6 @@ jobs:
     name: Rust Lint (fmt + clippy)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: ./cam-rust
     steps:
       - uses: actions/checkout@v4
 
@@ -30,15 +27,17 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-            target
+            cam-rust/target
           key: ${{ runner.os }}-cargo-lint-${{ hashFiles('cam-rust/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
       - name: Check formatting
+        working-directory: ./cam-rust
         run: cargo fmt --all -- --check
 
       - name: Run clippy
+        working-directory: ./cam-rust
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
@@ -56,9 +55,6 @@ jobs:
     name: Rust Tests
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    defaults:
-      run:
-        working-directory: ./cam-rust
     steps:
       - uses: actions/checkout@v4
 
@@ -72,15 +68,17 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-            target
+            cam-rust/target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('cam-rust/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
       - name: Run tests (all targets, all features)
+        working-directory: ./cam-rust
         run: cargo test --workspace --all-targets --all-features --no-fail-fast
 
       - name: Run doc tests
+        working-directory: ./cam-rust
         run: cargo test --workspace --doc --all-features --no-fail-fast
 
   # Rust clean rebuild test
@@ -88,9 +86,6 @@ jobs:
     name: Rust Clean Rebuild
     runs-on: ubuntu-latest
     timeout-minutes: 50
-    defaults:
-      run:
-        working-directory: ./cam-rust
     steps:
       - uses: actions/checkout@v4
 
@@ -109,9 +104,11 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Clean build
+        working-directory: ./cam-rust
         run: cargo clean
 
       - name: Build debug (all targets, all features)
+        working-directory: ./cam-rust
         run: |
           LOGFILE="${RUNNER_TEMP}/build-debug.log"
           ERRORS=0
@@ -122,7 +119,6 @@ jobs:
             echo "" | tee -a "$LOGFILE"
           done
           echo "=== Build complete: $ERRORS errors ===" | tee -a "$LOGFILE"
-          echo "logfile=$LOGFILE" >> "$GITHUB_ENV"
           if [ "$ERRORS" -ne 0 ]; then exit 1; fi
 
       - name: Upload debug build logs
@@ -135,6 +131,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Build release (all targets, all features)
+        working-directory: ./cam-rust
         run: |
           LOGFILE="${RUNNER_TEMP}/build-release.log"
           ERRORS=0
@@ -157,6 +154,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Verify binary sizes
+        working-directory: ./cam-rust
         run: |
           echo "=== Debug binaries ==="
           find target/debug -maxdepth 1 -type f -executable -exec ls -lh {} \; 2>/dev/null | head -20
