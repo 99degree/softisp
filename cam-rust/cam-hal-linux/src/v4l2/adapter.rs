@@ -201,13 +201,8 @@ impl ICameraAdapter for V4l2CameraAdapter {
         &self.device_path
     }
 
-    fn send_frame(&self, _frame: ByteFrame) -> Result<(), String> {
-        Err("V4L2 adapter does not support send_frame".into())
-    }
-}
-
-impl Drop for V4l2CameraAdapter {
-    fn drop(&mut self) {
-        self.close();
+    fn send_frame(&self, frame: ByteFrame) -> Result<(), String> {
+        self.base.invoke_frame_callback(frame);
+        Ok(())
     }
 }
