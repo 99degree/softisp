@@ -74,7 +74,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -q pytest pytest-cov onnxruntime numpy
-          pip install -q -e ./isp-rectifier
+          pip install -q -r requirements.txt
 
       - name: Run Python tests
         run: |
