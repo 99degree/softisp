@@ -7,7 +7,7 @@ use crate::warp_engine::GpuWarpParams;
 
 // Re-export warp types for external consumers (MNN feature only)
 #[cfg(feature = "mnn")]
-pub use crate::warp_engine::{GpuWarpEngine, GpuWarpParams};
+pub use crate::warp_engine::GpuWarpEngine;
 
 #[cfg(feature = "mnn")]
 use crate::format_convert::FormatConvertEngine;
