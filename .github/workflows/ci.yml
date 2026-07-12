@@ -348,6 +348,9 @@ jobs:
 
       - name: Run cam-isp tests with MNN feature
         working-directory: ./cam-rust
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:${LD_LIBRARY_PATH}
+          RUSTFLAGS: -L /usr/local/lib
         run: cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --lib --features "rectifier mnn" --no-fail-fast
 
       - name: Run MNN integration tests
@@ -537,6 +540,9 @@ jobs:
 
       - name: Build debug (with MNN feature)
         working-directory: ./cam-rust
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:${LD_LIBRARY_PATH}
+          RUSTFLAGS: -L /usr/local/lib
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
@@ -575,6 +581,9 @@ jobs:
 
       - name: Build release (with MNN feature)
         working-directory: ./cam-rust
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:${LD_LIBRARY_PATH}
+          RUSTFLAGS: -L /usr/local/lib
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
