@@ -219,7 +219,10 @@ impl IspEngine for OnnxEngine {
                     Ok(t) => t.upcast(),
                     Err(e) => {
                         warn!("OnnxEngine: failed to create input tensor: {}", e);
-                        return Err(format!("Failed to create input tensor: {}", e));
+                        return Err(crate::error::IspError::Onnx(format!(
+                            "Failed to create input tensor: {}",
+                            e
+                        )));
                     }
                 };
 
@@ -242,7 +245,10 @@ impl IspEngine for OnnxEngine {
                     }
                     Err(e) => {
                         eprintln!("OnnxEngine: inference failed: {}", e);
-                        return Err(format!("ORT inference failed: {}", e));
+                        return Err(crate::error::IspError::Onnx(format!(
+                            "ORT inference failed: {}",
+                            e
+                        )));
                     }
                 };
 
@@ -345,4 +351,32 @@ macro_rules! register_onnx_engine {
             create_fn: Box::new(|| Box::new(cam_isp::onnx::OnnxEngine::new($backend))),
         });
     };
+}
+
+/// Register ONNX engine factories for all available backends.
+/// Called automatically by `cam_isp::init()`.
+#[cfg(feature = "ort")]
+pub fn register_factories() {
+    use crate::engine::register_engine;
+    use crate::engine::EngineFactory;
+    let backends = [
+        OrtBackend::Cpu,
+        #[cfg(feature = "cuda")]
+        OrtBackend::Cuda,
+        #[cfg(feature = "tensorrt")]
+        OrtBackend::TensorRT,
+        #[cfg(feature = "openvino")]
+        OrtBackend::OpenVINO,
+    ];
+    for be in &backends {
+        let name = be.id();
+        let pri = be.priority();
+        let b = *be;
+        let create_fn = Box::new(move || Box::new(OnnxEngine::new(b)) as Box<dyn IspEngine>);
+        register_engine(EngineFactory {
+            name,
+            priority: pri,
+            create_fn,
+        });
+    }
 }
