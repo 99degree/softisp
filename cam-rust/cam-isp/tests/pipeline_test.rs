@@ -211,7 +211,8 @@ fn test_pipeline_edge_cases() {
 fn test_profile_pipeline_integration() {
     cam_isp::init();
     let blocks = PipelineProfile::LITE.build_blocks(32, 0);
-    let pipeline = FusedPipeline::build(blocks, 32);
+    let mut engine = cam_isp::engine::select_engine_by_name("mnn_vulkan").unwrap();
+    let pipeline = FusedPipeline::build_with_engine(blocks, engine);
     assert!(pipeline.is_ok());
 }
 
@@ -220,9 +221,10 @@ fn test_profile_pipeline_integration() {
 fn test_profile_test_build() {
     cam_isp::init();
     let blocks = PipelineProfile::TEST.build_blocks(8, 2);
-    let pipeline = FusedPipeline::build(blocks, 8);
+    let mut engine = cam_isp::engine::select_engine_by_name("mnn_vulkan").unwrap();
+    let pipeline = FusedPipeline::build_with_engine(blocks, engine);
     if let Err(ref e) = pipeline {
-        eprintln!("FusedPipeline::build error: {}", e);
+        eprintln!("FusedPipeline::build_with_engine error: {}", e);
     }
-    assert!(pipeline.is_ok(), "FusedPipeline::build failed");
+    assert!(pipeline.is_ok(), "FusedPipeline::build_with_engine failed");
 }

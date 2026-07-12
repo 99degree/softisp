@@ -301,7 +301,7 @@ fn colorspace_rgb_to_yuv_produces_onnx() {
     use cam_isp::pipeline::GraphComposer;
     use cam_isp::blocks::ColorSpace;
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
-    let cs = ColorSpaceBlock::new(ColorSpace::RgbToYuv601);
+    let cs = ColorSpaceBlock::new(ColorSpace::RgbToYCbCr);
     let display = DisplayBlock::new(640);
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &cs, &display];
     let onnx = GraphComposer::compose_from_vec(&blocks, &[], 6).unwrap();
@@ -313,8 +313,8 @@ fn colorspace_roundtrip_601() {
     use cam_isp::pipeline::GraphComposer;
     use cam_isp::blocks::ColorSpace;
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
-    let fwd = ColorSpaceBlock::new(ColorSpace::RgbToYuv601);
-    let rev = ColorSpaceBlock::new(ColorSpace::Yuv601ToRgb);
+    let fwd = ColorSpaceBlock::new(ColorSpace::RgbToYCbCr);
+    let rev = ColorSpaceBlock::new(ColorSpace::YCbCrToRgb);
     let display = DisplayBlock::new(640);
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &fwd, &rev, &display];
     let onnx = GraphComposer::compose_from_vec(&blocks, &[], 8).unwrap();
@@ -405,8 +405,8 @@ fn mega_pipeline_all_blocks() {
     let gamma = GammaBlock::new(2.2).with_shadow_lift(0.02);
     let sharpen = SharpenBlock::new(0.4);
     let contrast = AutoContrastBlock::new(1.3).with_shadow_lift(0.02);
-    let cs_fwd = ColorSpaceBlock::new(ColorSpace::RgbToYuv601);
-    let cs_rev = ColorSpaceBlock::new(ColorSpace::Yuv601ToRgb);
+    let cs_fwd = ColorSpaceBlock::new(ColorSpace::RgbToYCbCr);
+    let cs_rev = ColorSpaceBlock::new(ColorSpace::YCbCrToRgb);
     let warp = WarpGridBlock::new(640, 480).with_gdc(-0.1, 0.0, 0.0);
     let ca = ChromaticAberrationBlock::new().with_radial_correction(480, 640, 1.0);
     let ne = NoiseEstimateBlock::new();
