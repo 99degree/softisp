@@ -74,6 +74,12 @@ pub fn convert_onnx_to_mnn(
     if !opts.use_gelu_approximation {
         cmd.arg("--geluApproximation");
     }
+    if opts.allow_custom_op {
+        cmd.arg("--allowCustomOp");
+    }
+    if opts.transformer_fuse {
+        cmd.arg("--transformerFuse");
+    }
 
     let output = cmd.output()
         .map_err(|e| format!("Failed to run MNNConvert: {}", e))?;
