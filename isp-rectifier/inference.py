@@ -145,6 +145,29 @@ def params_to_registers(params: Dict) -> Dict:
     }
 
 
+def parse_outputs(outputs: Dict[str, np.ndarray]) -> Dict:
+    """Parse ONNX model outputs into structured dict."""
+    return {
+        "wb_gains": outputs["wbgains"].flatten().tolist(),
+        "ccm": outputs["ccm"].flatten().reshape(3, 3).tolist(),
+        "tone_curve": outputs["tonecurve"].flatten().tolist(),
+        "zoom_factor": float(outputs["zoom_factor"].flatten()[0]),
+    }
+
+
+def clamp_params(params: Dict) -> Dict:
+    """Clamp ISP parameters to valid ranges."""
+    def clamp(val, lo, hi):
+        return max(lo, min(hi, val))
+    
+    return {
+        "wb_gains": [clamp(v, 0.1, 10.0) for v in params["wb_gains"]],
+        "ccm": [[clamp(v, -2.0, 2.0) for v in row] for row in params["ccm"]],
+        "tone_curve": [clamp(v, 0.0, 1.0) for v in params["tone_curve"]],
+        "zoom_factor": clamp(params["zoom_factor"], 1.0, 4.0),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="ISP Rectifier ONNX Inference")
     parser.add_argument("--model", default="fusedispcontroller_int8.onnx", help="ONNX model path")
