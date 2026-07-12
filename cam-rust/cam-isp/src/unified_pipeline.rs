@@ -2,6 +2,10 @@ use crate::engine::{IspEngine, OutputFormat as EngineOutputFormat, ProcessParams
 use crate::pipeline::ProcessPipeline;
 use crate::profile::PipelineProfile;
 
+// Allow unused imports/variables when mnn feature is disabled
+// The imports and fields are used when mnn feature is enabled via cfg
+#![allow(unused_imports, dead_code, unused_variables)]
+
 // GpuWarpParams is available without MNN feature (stub implementation)
 use crate::warp_engine::GpuWarpParams;
 
@@ -167,6 +171,7 @@ pub struct UnifiedPipeline {
     #[allow(dead_code)]
     format_converter: Option<FormatConvertEngine>,
     #[cfg(not(feature = "mnn"))]
+    #[allow(dead_code)]
     gpu_warp_engine: Option<()>,
     #[cfg(not(feature = "mnn"))]
     #[allow(dead_code)]
