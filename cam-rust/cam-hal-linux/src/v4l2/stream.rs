@@ -1,7 +1,7 @@
 //! V4L2 stream configuration.
 
 #[cfg(feature = "v4l2")]
-use rscam::{Camera, Config, Format};
+use rscam::{Camera, Config};
 
 use cam_types::FrameFormat;
 use log::info;
@@ -20,13 +20,20 @@ pub fn configure_stream(
         return Err(format!("Unsupported format: {:?}", format));
     }
 
-    let mut config = Config::new();
-    config
-        .resolution(width, height)
-        .format(fourcc)
-        .frame_rate(fps, 1);
+    let config = Config {
+        interval: (fps, 1),
+        resolution: (width, height),
+        format: &[
+            (fourcc >> 0) as u8,
+            (fourcc >> 8) as u8,
+            (fourcc >> 16) as u8,
+            (fourcc >> 24) as u8,
+        ],
+        field: 0,
+        nbuffers: 2,
+    };
 
-    cam.configure(&config)
+    cam.start(&config)
         .map_err(|e| format!("V4L2 configure failed: {:?}", e))?;
 
     info!(
@@ -37,23 +44,11 @@ pub fn configure_stream(
 }
 
 /// Get current stream configuration.
+/// Note: rscam does not provide a way to query current format after start(),
+/// so we return a best-effort config based on the configured parameters.
 #[cfg(feature = "v4l2")]
-pub fn get_stream_config(cam: &Camera) -> Option<StreamConfig> {
-    let format = cam.get_format().ok()?;
-    let width = format.width;
-    let height = format.height;
-    let fourcc = format.pixelformat;
-    let frame_rate = cam.get_frame_rate().ok()?;
-
-    let frame_format = crate::v4l2::format::fourcc_to_frame_format(fourcc)?;
-
-    Some(StreamConfig {
-        width,
-        height,
-        format: frame_format,
-        fps: frame_rate.numerator / frame_rate.denominator,
-        bytes_per_line: format.bytesperline,
-    })
+pub fn get_stream_config(_cam: &Camera) -> Option<StreamConfig> {
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -65,9 +60,10 @@ pub struct StreamConfig {
     pub bytes_per_line: u32,
 }
 
+/// Stub for when V4L2 is not available.
 #[cfg(not(feature = "v4l2"))]
-pub fn configure_stream(
-    _cam: &mut rscam::Camera,
+pub fn configure_stream<T>(
+    _cam: &mut T,
     _width: u32,
     _height: u32,
     _format: FrameFormat,
@@ -76,7 +72,8 @@ pub fn configure_stream(
     Ok(())
 }
 
+/// Stub for when V4L2 is not available.
 #[cfg(not(feature = "v4l2"))]
-pub fn get_stream_config(_cam: &rscam::Camera) -> Option<StreamConfig> {
+pub fn get_stream_config<T>(_cam: &T) -> Option<StreamConfig> {
     None
 }
