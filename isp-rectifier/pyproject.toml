@@ -35,22 +35,20 @@ dependencies = [
     "rawpy>=0.18.0",
     "matplotlib>=3.7.0",
 ]
-optional-dependencies = {
-    "dev" = [
-        "pytest>=7.4.0",
-        "pytest-cov>=4.1.0",
-        "mypy>=1.5.0",
-        "ruff>=0.1.0",
-        "pre-commit>=3.5.0",
-    ],
-    "quant" = [
-        "onnxruntime-tools>=1.15.0",
-        "onnxruntime-quantization>=1.15.0",
-    ],
-    "wandb" = [
-        "wandb>=0.15.0",
-    ],
-}
+optional-dependencies.dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "mypy>=1.5.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.5.0",
+]
+optional-dependencies.quant = [
+    "onnxruntime-tools>=1.15.0",
+    "onnxruntime-quantization>=1.15.0",
+]
+optional-dependencies.wandb = [
+    "wandb>=0.15.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/your-org/softisp"
