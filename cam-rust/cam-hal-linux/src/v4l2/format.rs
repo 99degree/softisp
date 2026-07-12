@@ -48,6 +48,10 @@ pub fn frame_format_to_fourcc(format: FrameFormat) -> u32 {
 pub fn get_supported_formats(cam: &Camera) -> Vec<V4L2FormatInfo> {
     let mut result = Vec::new();
     for fmt in cam.formats() {
+        let fmt = match fmt {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
         let fourcc = u32::from_le_bytes(fmt.format);
         // Try to get first resolution for this format
         if let Ok(res) = cam.resolutions(&fmt.format) {
