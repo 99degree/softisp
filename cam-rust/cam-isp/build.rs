@@ -378,7 +378,7 @@ fn link_mnnconvert() {
             .file(conv_src)
             .include(&mnn_include)
             .include(&convert_include)
-            .include(&mnn_schema_dir())
+            .include(mnn_schema_dir())
             .include(vendor_mnn_dir().join("3rd_party/flatbuffers/include"));
 
         setup_cc_for_android(&mut build);
