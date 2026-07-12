@@ -184,8 +184,6 @@ impl UnifiedPipeline {
     pub fn new(config: UnifiedConfig) -> crate::error::IspResult<Self> {
         let engine_name = if config.engine_preference == "cpu" {
             "cpu"
-        } else if config.engine_preference == "vulkan" || config.engine_preference == "auto" {
-            "mnn_vulkan"
         } else {
             "mnn_vulkan"
         };
@@ -541,9 +539,9 @@ impl UnifiedPipeline {
             return self.process_with_warp(raw_data, width, height, warp_params);
         }
 
-        let tile_x = self.config.profile.tile_count_x.max(1) as u32;
-        let tile_y = self.config.profile.tile_count_y.max(1) as u32;
-        let overlap = self.config.profile.tile_overlap as u32;
+        let tile_x = self.config.profile.tile_count_x.max(1);
+        let tile_y = self.config.profile.tile_count_y.max(1);
+        let overlap = self.config.profile.tile_overlap;
 
         if tile_x == 1 && tile_y == 1 {
             return self.process_with_warp(raw_data, width, height, warp_params);
@@ -555,8 +553,8 @@ impl UnifiedPipeline {
         );
 
         // Calculate tile dimensions with overlap
-        let tile_w = (width + tile_x - 1) / tile_x;
-        let tile_h = (height + tile_y - 1) / tile_y;
+        let tile_w = width.div_ceil(tile_x);
+        let tile_h = height.div_ceil(tile_y);
 
         // Output dimensions per tile (without overlap)
         let out_tile_w = self.width / tile_x;
@@ -738,7 +736,7 @@ impl UnifiedPipeline {
         tile_h: u32,
     ) -> Vec<u8> {
         let packed_w = width / 2;
-        let tile_packed_w = (tile_w + 1) / 2;
+        let tile_packed_w = tile_w.div_ceil(2);
         let mut tile = Vec::with_capacity((tile_packed_w * tile_h * 4) as usize);
 
         for ty in 0..tile_h {
