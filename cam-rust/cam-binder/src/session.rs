@@ -74,7 +74,7 @@ fn capture_v4l2_frame(
     height: u32,
 ) -> crate::error::BinderResult<Vec<u8>> {
     let (_w, _h, data) = cam_hal_linux::capture_single_v4l2_frame(device_path, width, height)
-        .map_err(|e| crate::error::BinderError::V4L2(e))?;
+        .map_err(crate::error::BinderError::V4L2)?;
     Ok(data)
 }
 
