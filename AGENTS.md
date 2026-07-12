@@ -317,6 +317,118 @@ All ISP parameters flow through MNN tensors, never Rust function arguments:
 **Output tensor:**
   - `GpuWarp/frame`  [1,3,H,W]  — Warped output frame
 
+---
+
+## 13. CI DEBUGGING TECHNIQUE
+
+### Problem
+Cannot view raw GitHub Actions CI logs locally (403/authentication required).
+Annotations API only shows exit codes and basic warnings, NOT Rust compilation errors.
+
+### Solution: Artifact Capture + get_ci_logs.py
+
+**Step 1: CI captures build output to a file**
+
+In `.github/workflows/ci.yml`, save cargo output to `${{ runner.temp }}` using `tee -a`:
+
+```yaml
+- name: Build debug (all targets, all features)
+  run: |
+    LOGFILE="${RUNNER_TEMP}/build-debug.log"
+    for crate in cam-types cam-hal ...; do
+      echo "=== $crate ===" | tee -a "$LOGFILE"
+      cargo build -p "$crate" --all-targets --all-features 2>&1 | tee -a "$LOGFILE"
+    done
+
+- name: Upload debug build logs
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: build-debug-logs
+    path: ${{ runner.temp }}/build-debug.log
+    retention-days: 7
+```
+
+**Step 2: Download and grep with get_ci_logs.py**
+
+Script at `scripts/get_ci_logs.py`:
+
+```bash
+# Set PAT (reads GITHUB_TOKEN or GH_TOKEN env vars automatically)
+export GITHUB_TOKEN="ghp_..."
+
+# Download latest run logs and grep for errors
+python3 scripts/get_ci_logs.py --grep "error\[" --branch master
+
+# Download specific run
+python3 scripts/get_ci_logs.py --run 12345678 --grep "error\["
+
+# Save zip for offline inspection
+python3 scripts/get_ci_logs.py --save-zip ci-logs.zip
+```
+
+**Key details:**
+- Uses the GitHub API without auth for public data (runs list, annotations)
+- Artifact download requires `GITHUB_TOKEN` with `actions:read` scope
+- Strips ANSI escape codes before grepping
+- Groups results by log file for easy triage
+- Total matches printed at end
+
+### Cargo Per-Crate Loop Pattern
+
+Instead of `cargo build --workspace` (which stops at first error), build each crate individually to collect ALL errors:
+
+```yaml
+- name: Build debug
+  run: |
+    ERRORS=0
+    for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
+      cargo build -p "$crate" --all-targets --all-features 2>&1 || ERRORS=$((ERRORS+1))
+    done
+    if [ "$ERRORS" -ne 0 ]; then exit 1; fi
+```
+
+Same pattern for clippy:
+```yaml
+- name: Run clippy
+  run: |
+    ERRORS=0
+    for crate in cam-types cam-hal ...; do
+      cargo clippy -p "$crate" --all-targets --all-features -- -D warnings || ERRORS=$((ERRORS+1))
+    done
+    if [ "$ERRORS" -ne 0 ]; then exit 1; fi
+```
+
+For tests, use `--no-fail-fast`:
+```yaml
+- name: Run tests
+  run: cargo test --workspace --all-targets --all-features --no-fail-fast
+```
+
+### Avoiding `defaults.run.working-directory`
+
+Using `defaults:` block at job level can cause git errors (`exit code 128`) on some runners.
+Always use per-step `working-directory:` instead:
+
+```yaml
+# ❌ Avoid this:
+  rust-lint:
+    defaults:
+      run:
+        working-directory: ./cam-rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build
+
+# ✅ Use per-step working-directory:
+  rust-lint:
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        working-directory: ./cam-rust
+        run: cargo build
+```
+
 ### 12.3 CONTROLLER PARAMS FEEDBACK LOOP
 
 ```
