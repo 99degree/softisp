@@ -1,13 +1,13 @@
 //! V4L2 Camera Adapter implementing ICameraAdapter with callback streaming.
 
-use log::{error, info, warn};
+use log::{error, info};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use cam_hal::camera::{
     BaseCameraAdapter, ByteFrame, CameraState, FrameCallback, ICameraAdapter, StreamConfig,
 };
-use cam_types::{CameraSourceType, FrameFormat};
+use cam_types::CameraSourceType;
 
 /// V4L2 Camera Adapter that streams frames via callback.
 pub struct V4l2CameraAdapter {
