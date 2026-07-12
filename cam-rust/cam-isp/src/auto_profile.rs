@@ -511,8 +511,13 @@ mod tests {
     fn test_auto_profile_build() {
         crate::init();
         let mut profile = AutoProfile::new(640, 480);
-        let pipeline = profile.build();
-        assert!(pipeline.is_ok(), "Build failed: {:?}", pipeline.err());
+        // Use CPU engine for test (handles all ONNX ops without MNN conversion)
+        let blocks = profile.build_blocks().unwrap();
+        let engine = crate::pipeline::build::build_engine_with(
+            blocks,
+            Box::new(crate::cpu::CpuEngine::new()),
+        );
+        assert!(engine.is_ok(), "Build failed: {:?}", engine.err());
     }
 
     #[test]
