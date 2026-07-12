@@ -39,7 +39,17 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
+            echo "=== clippy: $crate ==="
+            cargo clippy -p "$crate" --all-targets --all-features -- -D warnings || ERRORS=$((ERRORS+1))
+            echo ""
+          done
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) failed clippy"
+            exit 1
+          fi
 
   # Rust tests
   rust-test:
@@ -68,10 +78,10 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Run tests (all targets, all features)
-        run: cargo test --workspace --all-targets --all-features
+        run: cargo test --workspace --all-targets --all-features --no-fail-fast
 
       - name: Run doc tests
-        run: cargo test --workspace --doc --all-features
+        run: cargo test --workspace --doc --all-features --no-fail-fast
 
   # Rust clean rebuild test
   rust-clean-rebuild:
@@ -102,10 +112,30 @@ jobs:
         run: cargo clean
 
       - name: Build debug (all targets, all features)
-        run: cargo build --workspace --all-targets --all-features
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
+            echo "=== build debug: $crate ==="
+            cargo build -p "$crate" --all-targets --all-features || ERRORS=$((ERRORS+1))
+            echo ""
+          done
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) failed debug build"
+            exit 1
+          fi
 
       - name: Build release (all targets, all features)
-        run: cargo build --workspace --release --all-targets --all-features
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
+            echo "=== build release: $crate ==="
+            cargo build -p "$crate" --release --all-targets --all-features || ERRORS=$((ERRORS+1))
+            echo ""
+          done
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) failed release build"
+            exit 1
+          fi
 
       - name: Verify binary sizes
         run: |
