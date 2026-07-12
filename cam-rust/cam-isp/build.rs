@@ -257,13 +257,11 @@ fn abi_suffix() -> String {
             "x86" | "i686" => "x86".to_string(),
             "riscv64" => "riscv64".to_string(),
             other => {
-            other => {
                 eprintln!(
                     "warning: unknown Android ABI arch '{}', defaulting to aarch64-v8a",
                     other
                 );
                 "aarch64-v8a".to_string()
-            }
             }
         }
     } else {
