@@ -17,4 +17,4 @@
 # libMNNConvertDeps.so transitively depends on libMNN_Express.so,
 # but Android's linker isolation prevents RUNPATH resolution.
 [target.aarch64-linux-android]
-runner = "env LD_PRELOAD=/data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a/libMNN_Express.so LD_LIBRARY_PATH=/data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a:/system/lib64:/vendor/lib64"
+runner = "env LD_PRELOAD=/data/data/com.termux/files/home/softisp/cam-rust/lib/aarch64-v8a/libMNN_Express.so LD_LIBRARY_PATH=/data/data/com.termux/files/home/softisp/cam-rust/lib/aarch64-v8a:/system/lib64:/vendor/lib64"
