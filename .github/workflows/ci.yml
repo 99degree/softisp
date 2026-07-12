@@ -125,9 +125,14 @@ jobs:
           # Explicitly build and install MNNConvert
           ninja -j4 MNNConvert
           sudo ninja install
-          
-          # Verify libraries and converter
+          # Find and copy MNNConvert if not installed
+          find /tmp/MNN/build -name "MNNConvert" -type f -exec sudo cp {} /usr/local/bin/ \;
+          # Also check tools/converter directory
+          find /tmp/MNN/build/tools/converter -name "MNNConvert" -type f -exec sudo cp {} /usr/local/bin/ \;
+          ls -la /usr/local/bin/MNNConvert || echo "MNNConvert not found, searching..."
+          find /tmp/MNN -name "MNNConvert" -type f 2>/dev/null
           ls -la /usr/local/lib/libMNN*.so
+          ls -la /usr/local/bin/MNNConvert
           ls -la /usr/local/bin/MNNConvert
           ls -la /usr/local/bin/MNNConvert
 
