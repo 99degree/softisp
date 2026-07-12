@@ -23,9 +23,7 @@ pub fn buffer_to_byte_frame(
     let stride = match format {
         FrameFormat::Rgba8888 => width * 4,
         FrameFormat::Rgb888 => width * 3,
-        FrameFormat::Yuv420 => width,
-        FrameFormat::Nv12 => width,
-        FrameFormat::Nv21 => width,
+        FrameFormat::Yuv420888 => width,
         _ => width,
     };
 
