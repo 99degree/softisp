@@ -1272,6 +1272,28 @@ Benchmarks run on MNN Vulkan backend (aarch64-linux-android / Termux).
 
 ---
 
+### TODO: ONNX Opset Optimization for MNN 2-Pass Converter
+
+The LITE and MEDIUM pipeline profiles use individual (non-fused) ISP blocks:
+- `UnpackBlock` + `BlcBlock` (vs fused `UnpackCfaBlock`)
+- `CcmBlock` (separate, vs fused in `DemosaicCcmBlock`)
+- `EeBlock` + `LdciBlock` separately (vs fused `EeLdciBlock`)
+
+MNN's 2-pass converter (`IspChainFusion`) has limited support for these
+individual ops when the block ordering/combination doesn't match expected
+patterns. The `--allowCustomOp` flag is required for custom domain ops
+(`isp.fcs`, `isp.demosaic_ccm`, `isp.ee_ldci`, `isp.ldci`).
+
+**Action**: Profile the LITE/MEDIUM ONNX opset against MNN's 2-pass
+converter and either:
+1. Adjust block ordering to match expected fusion patterns
+2. Use fused block variants (UnpackCfaBlock, DemosaicCcmBlock, EeLdciBlock)
+3. Implement missing IspChainFusion passes in MNN's converter plugin
+
+See: `cam-rust/cam-isp/src/auto_profile.rs` for the AutoProfile block selection.
+
+---
+
 *Generated on: 2026-07-12*
 *Version: SoftISP Pipeline Parameter Reference v2.0*
 *Source: cam-rust/cam-isp & isp-rectifier codebase*
