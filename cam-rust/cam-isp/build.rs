@@ -235,7 +235,7 @@ fn abi_dir() -> PathBuf {
 /// Map Rust target arch to Android/Linux ABI directory name.
 ///
 /// Android NDK convention:
-///   aarch64     → arm64-v8a
+///   aarch64     → aarch64-v8a
 ///   arm         → armeabi-v7a
 ///   x86_64     → x86_64
 ///   x86 / i686 → x86
@@ -251,17 +251,19 @@ fn abi_suffix() -> String {
 
     if os == "android" {
         match arch.as_str() {
-            "aarch64" | "arm64" => "arm64-v8a".to_string(),
+            "aarch64" | "arm64" => "aarch64-v8a".to_string(),
             "arm" | "armv7" => "armeabi-v7a".to_string(),
             "x86_64" => "x86_64".to_string(),
             "x86" | "i686" => "x86".to_string(),
             "riscv64" => "riscv64".to_string(),
             other => {
+            other => {
                 eprintln!(
-                    "warning: unknown Android ABI arch '{}', defaulting to arm64-v8a",
+                    "warning: unknown Android ABI arch '{}', defaulting to aarch64-v8a",
                     other
                 );
-                "arm64-v8a".to_string()
+                "aarch64-v8a".to_string()
+            }
             }
         }
     } else {
