@@ -84,32 +84,27 @@ pub fn capture_single_v4l2_frame(
     let mut cam = rscam::Camera::new(device_path)
         .map_err(|e| format!("Failed to open {}: {}", device_path, e))?;
 
-    // Use ARGB32 (RGBA 8888) fourcc = 0x47503241 "RGBA"
-    let mut cfg = rscam::Config::new();
-    cfg.resolution(width, height)
-        .format(0x47503241) // "RGBA" — V4L2_PIX_FMT_RGBA32
-        .frame_rate(30, 1);
+    // Use RGBA format (fourcc "RGBA")
+    let cfg = rscam::Config {
+        interval: (30, 1),
+        resolution: (width, height),
+        format: b"RGBA",
+        field: 0,
+        nbuffers: 2,
+    };
 
-    cam.configure(&cfg)
+    cam.start(&cfg)
         .map_err(|e| format!("Failed to configure V4L2 {}x{}: {}", width, height, e))?;
 
-    cam.start_streaming(1)
-        .map_err(|e| format!("Failed to start V4L2 streaming: {}", e))?;
-
-    let buf = cam
-        .read_frame()
+    let frame = cam
+        .capture()
         .map_err(|e| format!("Failed to read V4L2 frame: {}", e))?;
 
-    let _ = cam.stop_streaming();
+    let _ = cam.stop();
 
-    // Get actual resolution from format
-    let actual_fmt = cam
-        .get_format()
-        .map_err(|_| "Failed to get format".to_string())?;
-    let actual_w = actual_fmt.width;
-    let actual_h = actual_fmt.height;
+    let (actual_w, actual_h) = frame.resolution;
 
-    Ok((actual_w, actual_h, buf.data.to_vec()))
+    Ok((actual_w, actual_h, frame.to_vec()))
 }
 
 /// Non-V4L2 stub for `capture_single_v4l2_frame`.

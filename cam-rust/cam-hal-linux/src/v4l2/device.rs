@@ -1,7 +1,7 @@
 //! V4L2 device enumeration.
 
 #[cfg(feature = "v4l2")]
-use rscam::{Camera, Config};
+use rscam::Camera;
 
 #[cfg(feature = "v4l2")]
 use std::fs;
@@ -17,12 +17,10 @@ pub fn list_devices() -> Vec<String> {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with("video") {
                 let path = format!("/dev/{}", name);
-                // Try to open and get capabilities
-                if let Ok(cam) = Camera::new(&path) {
-                    if let Ok(info) = cam.query_capability() {
-                        info!("Found V4L2 device: {} ({})", path, info.card);
-                        devices.push(path);
-                    }
+                // Try to open the device
+                if Camera::new(&path).is_ok() {
+                    info!("Found V4L2 device: {}", path);
+                    devices.push(path);
                 }
             }
         }
@@ -34,23 +32,16 @@ pub fn list_devices() -> Vec<String> {
 /// Get device info for a V4L2 device path.
 #[cfg(feature = "v4l2")]
 pub fn get_device_info(device_path: &str) -> Option<DeviceInfo> {
-    let cam = Camera::new(device_path).ok()?;
-    let caps = cam.query_capability().ok()?;
+    let _cam = Camera::new(device_path).ok()?;
 
     Some(DeviceInfo {
         path: device_path.to_string(),
-        driver: String::from_utf8_lossy(&caps.driver)
-            .trim_end_matches('\0')
-            .to_string(),
-        card: String::from_utf8_lossy(&caps.card)
-            .trim_end_matches('\0')
-            .to_string(),
-        bus_info: String::from_utf8_lossy(&caps.bus_info)
-            .trim_end_matches('\0')
-            .to_string(),
-        version: caps.version,
-        capabilities: caps.capabilities,
-        device_caps: caps.device_caps,
+        driver: String::new(),
+        card: device_path.to_string(),
+        bus_info: String::new(),
+        version: 0,
+        capabilities: 0,
+        device_caps: 0,
     })
 }
 

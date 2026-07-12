@@ -595,15 +595,9 @@ unsafe extern "C" fn hal_get_camera_info(id: i32, info: *mut camera_info) -> i32
     {
         if let Some(path) = crate::v4l2::list_devices().get(id as usize) {
             log::info!("Camera {}: {}", id, path);
-            // Try to query capabilities
-            if let Ok(cam) = rscam::Camera::new(path) {
-                if let Ok(info_data) = cam.query_capability() {
-                    let driver = String::from_utf8_lossy(&info_data.driver);
-                    let card = String::from_utf8_lossy(&info_data.card);
-                    log::info!("  driver={}, card={}", driver, card);
-                    // V4L2 doesn't provide facing/orientation directly
-                    // These would come from camera metadata in a real HAL
-                }
+            // Try to open the camera
+            if rscam::Camera::new(path).is_ok() {
+                log::info!("  device={}, successfully opened", path);
             }
         }
     }

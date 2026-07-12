@@ -3,9 +3,6 @@
 use cam_hal::camera::ByteFrame;
 use cam_types::FrameFormat;
 
-#[cfg(feature = "v4l2")]
-use rscam::Buffer;
-
 /// Buffer information.
 #[cfg(feature = "v4l2")]
 #[derive(Debug, Clone)]
@@ -15,15 +12,14 @@ pub struct V4L2BufferInfo {
     pub offset: usize,
 }
 
-/// Convert rscam buffer to our ByteFrame.
+/// Convert rscam frame to our ByteFrame.
 #[cfg(feature = "v4l2")]
 pub fn buffer_to_byte_frame(
-    buf: &Buffer,
+    frame: &rscam::Frame,
     width: u32,
     height: u32,
     format: FrameFormat,
 ) -> ByteFrame {
-    let data = &buf.data[..];
     let stride = match format {
         FrameFormat::Rgba8888 => width * 4,
         FrameFormat::Rgb888 => width * 3,
@@ -34,18 +30,20 @@ pub fn buffer_to_byte_frame(
     };
 
     ByteFrame {
-        data: data.to_vec(),
+        data: frame.to_vec(),
         width,
         height,
         stride,
         format: format.to_string(),
-        timestamp: buf.get_timestamp(),
+        timestamp: frame.get_timestamp(),
     }
 }
 
+/// Stub for when V4L2 is not available.
+/// Not meant to be called - only exists so the module compiles.
 #[cfg(not(feature = "v4l2"))]
-pub fn buffer_to_byte_frame(
-    _buf: &rscam::Buffer,
+pub fn buffer_to_byte_frame<T>(
+    _frame: &T,
     _width: u32,
     _height: u32,
     _format: FrameFormat,
