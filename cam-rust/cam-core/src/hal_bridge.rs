@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 /// Frame processing function type (matches AndroidCameraAdapter expectation).
 pub type FrameProcessor =
-    Arc<dyn Fn(&[u8], u32, u32, i32) -> Result<Vec<u8>, cam_isp::error::IspError> + Send + Sync>;
+    Arc<dyn Fn(&[u8], u32, u32, i32) -> Result<Vec<u8>, String> + Send + Sync>;
 
 /// Build a default ISP pipeline for raw-to-RGBA conversion and return
 /// a `FrameProcessor` closure — no Android dependency.
@@ -56,14 +56,14 @@ pub fn create_isp_processor(
     // 4. Create processor closure
     #[allow(unused_imports)]
     use cam_isp::engine::IspEngine;
-    let processor: FrameProcessor = Arc::new(move |data: &[u8], w: u32, h: u32, _fmt: i32| {
+    let processor: FrameProcessor = Arc::new(move |data: &[u8], w: u32, h: u32, _fmt: i32| -> Result<Vec<u8>, String> {
         let proc_start = std::time::Instant::now();
         let mut guard = engine
             .lock()
-            .map_err(|e| cam_isp::error::IspError::Pipeline(format!("Lock failed: {}", e)))?;
+            .map_err(|e| format!("Lock failed: {}", e))?;
         let eng = guard
             .as_mut()
-            .ok_or(cam_isp::error::IspError::Config("Engine taken".into()))?;
+            .ok_or_else(|| "Engine taken".to_string())?;
         let mut params = cam_isp::engine::ProcessParams::new(w, h, data);
         params.target_width = target_width;
         params.sensor_max = 65535.0;
@@ -71,7 +71,7 @@ pub fn create_isp_processor(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        let result = eng.process(&params)?;
+        let result = eng.process(&params).map_err(|e| e.to_string())?;
         let proc_elapsed = proc_start.elapsed();
         log::trace!(
             "ISP process: {}x{} -> {} bytes in {:.2}ms",
@@ -96,7 +96,7 @@ pub fn attach_isp_to_android_adapter(
     height: u32,
     target_width: u32,
 ) -> Result<(), String> {
-    let processor = create_isp_processor(width, height, target_width)?;
+    let processor = create_isp_processor(width, height, target_width).map_err(|e| e.to_string())?;
     adapter.set_processor(processor);
     info!("ISP processor attached to AndroidCameraAdapter");
     Ok(())
