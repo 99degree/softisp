@@ -2,11 +2,17 @@ use crate::engine::{IspEngine, OutputFormat as EngineOutputFormat, ProcessParams
 use crate::pipeline::ProcessPipeline;
 use crate::profile::PipelineProfile;
 
-// Re-export warp types for external consumers
+// GpuWarpParams is available without MNN feature (stub implementation)
+use crate::warp_engine::GpuWarpParams;
+
+// Re-export warp types for external consumers (MNN feature only)
+#[cfg(feature = "mnn")]
 pub use crate::warp_engine::{GpuWarpEngine, GpuWarpParams};
 
-use crate::controller_api::ControllerApi;
+#[cfg(feature = "mnn")]
 use crate::format_convert::FormatConvertEngine;
+
+use crate::controller_api::ControllerApi;
 use crate::hdr::{EnhancedFrame, HdrCaptureQueue};
 use crate::isp_controller::IspController;
 use crate::pipeline::types::IspFrame;
@@ -151,11 +157,22 @@ pub struct UnifiedPipeline {
     initialized: bool,
     controller: Box<dyn ControllerApi>,
     post_pipeline: PostProcessPipeline,
+    #[cfg(feature = "mnn")]
     gpu_warp_engine: Option<GpuWarpEngine>,
+    #[cfg(feature = "mnn")]
     #[allow(dead_code)]
     gpu_warp_onnx: Option<Vec<u8>>,
+    #[cfg(feature = "mnn")]
     #[allow(dead_code)]
     format_converter: Option<FormatConvertEngine>,
+    #[cfg(not(feature = "mnn"))]
+    gpu_warp_engine: Option<()>,
+    #[cfg(not(feature = "mnn"))]
+    #[allow(dead_code)]
+    gpu_warp_onnx: Option<()>,
+    #[cfg(not(feature = "mnn"))]
+    #[allow(dead_code)]
+    format_converter: Option<()>,
     /// HDR capture queue for multi-exposure burst (only if profile has use_hdr)
     hdr_queue: Option<HdrCaptureQueue>,
     /// Accumulated HDR frames for current burst
@@ -195,7 +212,8 @@ impl UnifiedPipeline {
         let post_config = config.post_config.clone();
         let post_pipeline = PostProcessPipeline::new(post_config);
 
-        // Initialize GPU warp engine if enabled
+        // Initialize GPU warp engine if enabled (MNN feature only)
+        #[cfg(feature = "mnn")]
         let (gpu_warp_engine, gpu_warp_onnx) = if config.gpu_warp_enabled {
             let warp_w = config.target_width;
             let warp_h = (warp_w * 9 / 16).max(1);
@@ -212,6 +230,8 @@ impl UnifiedPipeline {
         } else {
             (None, None)
         };
+        #[cfg(not(feature = "mnn"))]
+        let (gpu_warp_engine, gpu_warp_onnx): (Option<()>, Option<()>) = (None, None);
 
         let hdr_queue = if config.profile.use_hdr {
             Some(HdrCaptureQueue::new(1))
@@ -229,8 +249,17 @@ impl UnifiedPipeline {
             initialized: true,
             controller,
             post_pipeline,
+            #[cfg(feature = "mnn")]
             gpu_warp_engine,
+            #[cfg(feature = "mnn")]
             gpu_warp_onnx,
+            #[cfg(feature = "mnn")]
+            format_converter: None,
+            #[cfg(not(feature = "mnn"))]
+            gpu_warp_engine: None,
+            #[cfg(not(feature = "mnn"))]
+            gpu_warp_onnx: None,
+            #[cfg(not(feature = "mnn"))]
             format_converter: None,
             hdr_queue,
             hdr_frames: Vec::new(),
@@ -270,6 +299,7 @@ impl UnifiedPipeline {
             self.controller.analyze_and_update(&frame)
         };
 
+        #[cfg(feature = "mnn")]
         let warp_params = GpuWarpParams::from_isp_params(
             self.config.lens_gdc_k1,
             self.config.lens_gdc_k2,
@@ -277,12 +307,16 @@ impl UnifiedPipeline {
             &isp_params,
         );
 
+        #[cfg(not(feature = "mnn"))]
+        let warp_params = crate::warp_engine::GpuWarpParams::identity();
+
         self.process_with_warp(raw_data, width, height, &warp_params)
     }
 
     /// Process with GPU warp parameters (GDC + EIS).
     ///
     /// Uses FloatRgb format internally to avoid RGBA conversion overhead.
+    #[cfg(feature = "mnn")]
     pub fn process_with_warp(
         &mut self,
         raw_data: &[u8],
@@ -440,9 +474,55 @@ impl UnifiedPipeline {
         Ok(post_output)
     }
 
-    /// Process using tiled rendering for high-resolution output (e.g., 4K→4K).
+    /// Stub implementation when MNN feature is disabled.
+    #[cfg(not(feature = "mnn"))]
+    pub fn process_with_warp(
+        &mut self,
+        raw_data: &[u8],
+        width: u32,
+        height: u32,
+        _warp_params: &GpuWarpParams,
+    ) -> crate::error::IspResult<IspFrame> {
+        if !self.initialized {
+            return Err(crate::error::IspError::Config(
+                "pipeline not initialized".into(),
+            ));
+        }
+
+        // Process without GPU warp
+        let mut params = ProcessParams::new(width, height, raw_data);
+        params.target_width = self.width;
+        params.target_height = self.height;
+        params.sensor_max = self.config.sensor_max;
+        params.output_format = self.config.output_format;
+
+        let isp_output = self.engine.process(&params)?;
+
+        // Post-processing
+        let post_output = if let Some(ref float_data) = isp_output.float_data {
+            self.post_pipeline
+                .process_float(
+                    float_data,
+                    isp_output.width,
+                    isp_output.height,
+                    isp_output.aux.clone(),
+                    isp_output.timestamp_ns,
+                    Some(isp_output.params.clone()),
+                )
+                .map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
+        } else {
+            self.post_pipeline
+                .process(&isp_output)
+                .map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
+        };
+
+        Ok(post_output)
+    }
+
+    /// Process using tiled rendering for high-resolution output (e.g., 4K=>4K).
     /// Splits the input into tiles with overlap, processes each tile independently,
     /// and stitches the results together.
+    #[cfg(feature = "mnn")]
     pub fn process_tiled(
         &mut self,
         raw_data: &[u8],
@@ -794,13 +874,25 @@ impl UnifiedPipeline {
     }
 
     /// Get reference to the GPU warp engine, if initialized.
+    #[cfg(feature = "mnn")]
     pub fn gpu_warp(&self) -> Option<&GpuWarpEngine> {
         self.gpu_warp_engine.as_ref()
     }
 
+    #[cfg(not(feature = "mnn"))]
+    pub fn gpu_warp(&self) -> Option<&()> {
+        None
+    }
+
     /// Get reference to the GPU warp ONNX model bytes, if available.
+    #[cfg(feature = "mnn")]
     pub fn gpu_warp_onnx(&self) -> Option<&Vec<u8>> {
         self.gpu_warp_onnx.as_ref()
+    }
+
+    #[cfg(not(feature = "mnn"))]
+    pub fn gpu_warp_onnx(&self) -> Option<&()> {
+        None
     }
 }
 

@@ -10,6 +10,15 @@ log = { workspace = true }
 thiserror = { workspace = true }
 libc = "0.2"
 
+# V4L2 via rscam crate (optional, for camera detection on Linux-based Android)
+rscam = { version = "0.5", optional = true }
+
 [features]
 default = []
-v4l2 = []
+v4l2 = ["rscam"]
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+rscam = { version = "0.5", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.features]
+v4l2 = ["rscam"]
