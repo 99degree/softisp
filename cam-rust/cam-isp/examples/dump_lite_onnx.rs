@@ -1,6 +1,6 @@
-use cam_isp::profile::PipelineProfile;
 use cam_isp::engine::OutputFormat;
 use cam_isp::pipeline::{GraphComposer, IspBlock};
+use cam_isp::profile::PipelineProfile;
 
 fn main() {
     let mut profile = PipelineProfile::LITE;
@@ -18,11 +18,13 @@ fn main() {
         let outs = blk.output_tensors().join(",");
         eprintln!("  [{}] {} in=[{}] out=[{}]", idx, blk.id(), ins, outs);
     }
-    
+
     // Pipeline summary
     eprintln!("\nPipeline summary:");
-    eprintln!("  {} blocks, {} nodes, {} bytes ONNX",
+    eprintln!(
+        "  {} blocks, {} nodes, {} bytes ONNX",
         block_refs.len(),
         block_refs.iter().map(|b| b.nodes().len()).sum::<usize>(),
-        onnx.len());
+        onnx.len()
+    );
 }

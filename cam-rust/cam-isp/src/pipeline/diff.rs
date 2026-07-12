@@ -24,26 +24,36 @@ impl PipelineDiff {
         let a_ids: Vec<&str> = a.block_ids.iter().map(|s| s.as_str()).collect();
         let b_ids: Vec<&str> = b.block_ids.iter().map(|s| s.as_str()).collect();
 
-        let blocks_added: Vec<String> = b_ids.iter()
+        let blocks_added: Vec<String> = b_ids
+            .iter()
             .filter(|id| !a_ids.contains(id))
             .map(|s| s.to_string())
             .collect();
 
-        let blocks_removed: Vec<String> = a_ids.iter()
+        let blocks_removed: Vec<String> = a_ids
+            .iter()
             .filter(|id| !b_ids.contains(id))
             .map(|s| s.to_string())
             .collect();
 
-        let blocks_reordered = !blocks_added.is_empty() || !blocks_removed.is_empty()
-            || a.block_ids != b.block_ids;
+        let blocks_reordered =
+            !blocks_added.is_empty() || !blocks_removed.is_empty() || a.block_ids != b.block_ids;
 
-        Self { width_changed, height_changed, blocks_added, blocks_removed, blocks_reordered }
+        Self {
+            width_changed,
+            height_changed,
+            blocks_added,
+            blocks_removed,
+            blocks_reordered,
+        }
     }
 
     /// Check if the diff is empty (configs are identical).
     pub fn is_empty(&self) -> bool {
-        !self.width_changed && !self.height_changed
-            && self.blocks_added.is_empty() && self.blocks_removed.is_empty()
+        !self.width_changed
+            && !self.height_changed
+            && self.blocks_added.is_empty()
+            && self.blocks_removed.is_empty()
     }
 
     /// Human-readable summary.
@@ -56,10 +66,18 @@ impl PipelineDiff {
             parts.push("Resolution changed".into());
         }
         if !self.blocks_added.is_empty() {
-            parts.push(format!("+{} blocks: {}", self.blocks_added.len(), self.blocks_added.join(", ")));
+            parts.push(format!(
+                "+{} blocks: {}",
+                self.blocks_added.len(),
+                self.blocks_added.join(", ")
+            ));
         }
         if !self.blocks_removed.is_empty() {
-            parts.push(format!("-{} blocks: {}", self.blocks_removed.len(), self.blocks_removed.join(", ")));
+            parts.push(format!(
+                "-{} blocks: {}",
+                self.blocks_removed.len(),
+                self.blocks_removed.join(", ")
+            ));
         }
         parts.join("; ")
     }

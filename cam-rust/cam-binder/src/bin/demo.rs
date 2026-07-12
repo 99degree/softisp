@@ -16,17 +16,17 @@
 //!   # Real V4L2 capture (Linux with camera)
 //!   cargo run --features v4l2 --bin cam-demo -- --v4l2 /dev/video0 --width 640 --height 480 --frames 3 --out ./frames --png
 
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
-use log::{info, error};
+use log::{error, info};
 
 use cam_binder::{
-    CameraHalService,
+    callback::{ICameraDeviceCallback, IFrameCallback},
     types::*,
-    callback::{IFrameCallback, ICameraDeviceCallback},
+    CameraHalService,
 };
 
 #[derive(Parser, Debug)]
@@ -125,7 +125,11 @@ impl IFrameCallback for FrameCollector {
         let index = frames.len();
         info!(
             "Frame {}: {}x{} ({} bytes, status={})",
-            index, buffer.width, buffer.height, buffer.data.len(), buffer.status
+            index,
+            buffer.width,
+            buffer.height,
+            buffer.data.len(),
+            buffer.status
         );
         self.save_frame(&buffer, index);
         frames.push(buffer);
@@ -163,7 +167,10 @@ fn main() {
     let save_raw = args.raw || !args.png;
 
     info!("═══ Camera2-Style Demo App ═══");
-    info!("Camera: {}, Resolution: {}x{}, Frames: {}", args.camera, width, height, num_frames);
+    info!(
+        "Camera: {}, Resolution: {}x{}, Frames: {}",
+        args.camera, width, height, num_frames
+    );
     if let Some(ref dev) = args.v4l2 {
         info!("V4L2 device: {}", dev);
     }
@@ -178,14 +185,19 @@ fn main() {
     info!("Available cameras: {:?}", camera_ids);
 
     if !camera_ids.contains(&args.camera) {
-        error!("Camera {} not found! Available: {:?}", args.camera, camera_ids);
+        error!(
+            "Camera {} not found! Available: {:?}",
+            args.camera, camera_ids
+        );
         return;
     }
 
     // ── Step 3: Print camera info ──
     if let Some(info) = service.provider().get_camera_info(&args.camera) {
-        info!("Camera info: facing={}, orientation={}, max_res={:?}",
-            info.facing, info.orientation, info.max_resolution);
+        info!(
+            "Camera info: facing={}, orientation={}, max_res={:?}",
+            info.facing, info.orientation, info.max_resolution
+        );
     }
 
     // ── Step 4: Open camera ──
@@ -228,11 +240,18 @@ fn main() {
 
     // ── Summary ──
     let collected = callback.frames.lock().unwrap();
-    info!("═══ Capture complete: {} frames saved to {} ═══", collected.len(), args.out);
+    info!(
+        "═══ Capture complete: {} frames saved to {} ═══",
+        collected.len(),
+        args.out
+    );
 
     // Print hex dump of first frame's first 32 bytes
     if let Some(first) = collected.first() {
-        let hex: String = first.data.iter().take(32)
+        let hex: String = first
+            .data
+            .iter()
+            .take(32)
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join(" ");

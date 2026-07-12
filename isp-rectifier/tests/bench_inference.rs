@@ -19,10 +19,14 @@ fn bench_model(name: &str, path: &PathBuf) {
         eprintln!("Skipping {}: not found", name);
         return;
     }
-    
+
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    
-    eprintln!("\n=== Loading {} ({:.1} KB) ===", name, file_size as f64 / 1024.0);
+
+    eprintln!(
+        "\n=== Loading {} ({:.1} KB) ===",
+        name,
+        file_size as f64 / 1024.0
+    );
     let start = Instant::now();
     let model = tract_onnx::onnx()
         .model_for_path(path)
@@ -33,27 +37,31 @@ fn bench_model(name: &str, path: &PathBuf) {
         .unwrap();
     let load_time = start.elapsed();
     eprintln!("Load time: {:?}", load_time);
-    
+
     // Create input tensors
     let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
     let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
-    
+
     // Warmup
     for _ in 0..5 {
-        let _ = model.run(tvec![hist.clone().into(), meta.clone().into()]).unwrap();
+        let _ = model
+            .run(tvec![hist.clone().into(), meta.clone().into()])
+            .unwrap();
     }
-    
+
     // Benchmark
     let iterations = 20;
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = model.run(tvec![hist.clone().into(), meta.clone().into()]).unwrap();
+        let _ = model
+            .run(tvec![hist.clone().into(), meta.clone().into()])
+            .unwrap();
     }
     let elapsed = start.elapsed();
-    
+
     let avg_us = elapsed.as_micros() as f64 / iterations as f64;
     let fps = 1_000_000.0 / avg_us;
-    
+
     println!("\n=== {} Benchmark ===", name);
     println!("File size: {:.1} KB", file_size as f64 / 1024.0);
     println!("Load time: {:?}", load_time);
@@ -121,7 +129,7 @@ fn bench_fp16_model() {
 fn bench_all_models_comparison() {
     let iterations = 20;
     let mut results = Vec::new();
-    
+
     for (name, filename) in [
         // FP16 skipped: tract doesn't support FP16 properly
         ("LIT-FP32", "fusedispcontroller_light.onnx"),
@@ -135,34 +143,55 @@ fn bench_all_models_comparison() {
         if !path.exists() {
             continue;
         }
-        
+
         let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        
+
         let start = Instant::now();
-        let model = tract_onnx::onnx().model_for_path(&path).unwrap()
-            .into_optimized().unwrap().into_runnable().unwrap();
+        let model = tract_onnx::onnx()
+            .model_for_path(&path)
+            .unwrap()
+            .into_optimized()
+            .unwrap()
+            .into_runnable()
+            .unwrap();
         let load_time = start.elapsed();
-        
+
         let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
         let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
-        let _ = model.run(tvec![hist.clone().into(), meta.clone().into()]).unwrap();
-        
+        let _ = model
+            .run(tvec![hist.clone().into(), meta.clone().into()])
+            .unwrap();
+
         let start = Instant::now();
         for _ in 0..iterations {
-            let _ = model.run(tvec![hist.clone().into(), meta.clone().into()]).unwrap();
+            let _ = model
+                .run(tvec![hist.clone().into(), meta.clone().into()])
+                .unwrap();
         }
         let elapsed = start.elapsed();
         let avg_us = elapsed.as_micros() as f64 / iterations as f64;
         let fps = 1_000_000.0 / avg_us;
-        
+
         results.push((name, file_size, load_time, fps));
     }
-    
-    println!("\n=== All Models Comparison ({} iterations) ===", iterations);
-    println!("{:<10} {:>10} {:>15} {:>10}", "Model", "Size", "Load Time", "FPS");
+
+    println!(
+        "\n=== All Models Comparison ({} iterations) ===",
+        iterations
+    );
+    println!(
+        "{:<10} {:>10} {:>15} {:>10}",
+        "Model", "Size", "Load Time", "FPS"
+    );
     println!("{}", "-".repeat(50));
     for (name, size, load, fps) in &results {
-        println!("{:<10} {:>8.1} KB {:>12?} {:>10.0}", name, *size as f64 / 1024.0, load, fps);
+        println!(
+            "{:<10} {:>8.1} KB {:>12?} {:>10.0}",
+            name,
+            *size as f64 / 1024.0,
+            load,
+            fps
+        );
     }
     println!("=============================================\n");
 }

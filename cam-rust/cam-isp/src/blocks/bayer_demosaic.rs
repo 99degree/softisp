@@ -11,15 +11,13 @@ use crate::pipeline::IspBlock;
 /// Select algorithm via `DemosaicAlgo` at build time.
 /// Wraps a single ONNX Extra op with the chosen algorithm baked in.
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum DemosaicAlgo {
     Binning,
     #[default]
     Bilinear,
     Mhc,
 }
-
 
 impl DemosaicAlgo {
     pub fn as_str(&self) -> &'static str {
@@ -39,27 +37,46 @@ impl DemosaicAlgo {
     }
 
     pub fn kernel(&self) -> i64 {
-        match self { Self::Binning => 2, Self::Bilinear => 4, Self::Mhc => 6 }
+        match self {
+            Self::Binning => 2,
+            Self::Bilinear => 4,
+            Self::Mhc => 6,
+        }
     }
 
     pub fn stride(&self) -> i64 {
-        match self { Self::Binning => 2, Self::Bilinear | Self::Mhc => 1 }
+        match self {
+            Self::Binning => 2,
+            Self::Bilinear | Self::Mhc => 1,
+        }
     }
 
     pub fn output_channels(&self) -> i64 {
-        match self { Self::Binning => 4, _ => 3 }
+        match self {
+            Self::Binning => 4,
+            _ => 3,
+        }
     }
 
     pub fn group(&self) -> i64 {
-        match self { Self::Binning => 4, _ => 1 }
+        match self {
+            Self::Binning => 4,
+            _ => 1,
+        }
     }
 
     pub fn output_height(&self, h: i64) -> i64 {
-        match self { Self::Binning => h / 2, _ => h }
+        match self {
+            Self::Binning => h / 2,
+            _ => h,
+        }
     }
 
     pub fn output_width(&self, w: i64) -> i64 {
-        match self { Self::Binning => w / 2, _ => w }
+        match self {
+            Self::Binning => w / 2,
+            _ => w,
+        }
     }
 }
 
@@ -92,25 +109,69 @@ impl Default for BayerDemosaicBlock {
 }
 
 impl BayerDemosaicBlock {
-    pub fn new() -> Self { Self::default() }
-    pub fn with_algorithm(mut self, algo: DemosaicAlgo) -> Self { self.algo = algo; self }
-    pub fn with_sensor_max(mut self, max: f32) -> Self { self.sensor_max = max; self }
-    pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self { self.concrete_h = Some(h); self.concrete_w = Some(w); self }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_algorithm(mut self, algo: DemosaicAlgo) -> Self {
+        self.algo = algo;
+        self
+    }
+    pub fn with_sensor_max(mut self, max: f32) -> Self {
+        self.sensor_max = max;
+        self
+    }
+    pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
+        self.concrete_h = Some(h);
+        self.concrete_w = Some(w);
+        self
+    }
 }
 
 impl IspBlock for BayerDemosaicBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "BayerDemosaicBlock".to_string() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.output_name) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-    fn input_tensors(&self) -> Vec<String> { if self.input_source.is_empty() { vec![] } else { vec![self.input_source.clone()] } }
-    fn output_tensors(&self) -> Vec<String> { vec![self.output_name.clone()] }
-    fn graph_input_name(&self) -> Option<&str> { if self.is_head() { Some(&self.output_name) } else { None } }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "BayerDemosaicBlock".to_string()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.output_name)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        if self.input_source.is_empty() {
+            vec![]
+        } else {
+            vec![self.input_source.clone()]
+        }
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.output_name.clone()]
+    }
+    fn graph_input_name(&self) -> Option<&str> {
+        if self.is_head() {
+            Some(&self.output_name)
+        } else {
+            None
+        }
+    }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         let h = self.concrete_h.unwrap_or(0);
@@ -118,33 +179,56 @@ impl IspBlock for BayerDemosaicBlock {
         let oh = self.algo.output_height(h);
         let ow = self.algo.output_width(w);
         let oc = self.algo.output_channels();
-        Some(Proto::value_info(&self.output_name, &[
-            Proto::tensor_dim_value(1),
-            Proto::tensor_dim_value(oc),
-            if oh > 0 { Proto::tensor_dim_value(oh) } else { Proto::tensor_dim_param("H") },
-            if ow > 0 { Proto::tensor_dim_value(ow) } else { Proto::tensor_dim_param("W") },
-        ], 1))
+        Some(Proto::value_info(
+            &self.output_name,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(oc),
+                if oh > 0 {
+                    Proto::tensor_dim_value(oh)
+                } else {
+                    Proto::tensor_dim_param("H")
+                },
+                if ow > 0 {
+                    Proto::tensor_dim_value(ow)
+                } else {
+                    Proto::tensor_dim_param("W")
+                },
+            ],
+            1,
+        ))
     }
 
-    fn input_elem_type(&self) -> i32 { 6 }
-    fn output_elem_type(&self) -> i32 { 1 }
+    fn input_elem_type(&self) -> i32 {
+        6
+    }
+    fn output_elem_type(&self) -> i32 {
+        1
+    }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        if self.input_source.is_empty() { return vec![]; }
+        if self.input_source.is_empty() {
+            return vec![];
+        }
         let ns = self.tensor_ns();
         let k = self.algo.kernel();
         let s = self.algo.stride();
         let g = self.algo.group();
-        vec![Proto::node("Conv", &[
-            &self.input_source,
-            &format!("{ns}/conv_w"),
-            &format!("{ns}/conv_b"),
-        ], &[&self.output_name], &[
-            Proto::attribute_ints("kernel_shape", &[k, k]),
-            Proto::attribute_ints("strides", &[s, s]),
-            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-            Proto::attribute_int("group", g),
-        ])]
+        vec![Proto::node(
+            "Conv",
+            &[
+                &self.input_source,
+                &format!("{ns}/conv_w"),
+                &format!("{ns}/conv_b"),
+            ],
+            &[&self.output_name],
+            &[
+                Proto::attribute_ints("kernel_shape", &[k, k]),
+                Proto::attribute_ints("strides", &[s, s]),
+                Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                Proto::attribute_int("group", g),
+            ],
+        )]
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
@@ -159,7 +243,11 @@ impl IspBlock for BayerDemosaicBlock {
                 }
                 let b = vec![0.0f32; oc];
                 vec![
-                    Proto::tensor_proto_float(&format!("{ns}/conv_w"), &[oc as i64, 1, k as i64, k as i64], &w),
+                    Proto::tensor_proto_float(
+                        &format!("{ns}/conv_w"),
+                        &[oc as i64, 1, k as i64, k as i64],
+                        &w,
+                    ),
                     Proto::tensor_proto_float(&format!("{ns}/conv_b"), &[oc as i64], &b),
                 ]
             }
@@ -187,7 +275,11 @@ impl IspBlock for BayerDemosaicBlock {
                 }
                 let b = vec![0.0f32; oc];
                 vec![
-                    Proto::tensor_proto_float(&format!("{ns}/conv_w"), &[oc as i64, 1, k as i64, k as i64], &w),
+                    Proto::tensor_proto_float(
+                        &format!("{ns}/conv_w"),
+                        &[oc as i64, 1, k as i64, k as i64],
+                        &w,
+                    ),
                     Proto::tensor_proto_float(&format!("{ns}/conv_b"), &[oc as i64], &b),
                 ]
             }
@@ -213,7 +305,11 @@ impl IspBlock for BayerDemosaicBlock {
                 }
                 let b = vec![0.0f32; oc];
                 vec![
-                    Proto::tensor_proto_float(&format!("{ns}/conv_w"), &[oc as i64, 1, k as i64, k as i64], &w),
+                    Proto::tensor_proto_float(
+                        &format!("{ns}/conv_w"),
+                        &[oc as i64, 1, k as i64, k as i64],
+                        &w,
+                    ),
                     Proto::tensor_proto_float(&format!("{ns}/conv_b"), &[oc as i64], &b),
                 ]
             }
@@ -238,7 +334,8 @@ mod tests {
     }
     #[test]
     fn test_algo_output_shape() {
-        let h = 1080i64; let w = 1920i64;
+        let h = 1080i64;
+        let w = 1920i64;
         assert_eq!(DemosaicAlgo::Binning.output_height(h), 540);
         assert_eq!(DemosaicAlgo::Binning.output_width(w), 960);
         assert_eq!(DemosaicAlgo::Bilinear.output_height(h), 1080);
@@ -264,7 +361,11 @@ mod tests {
     }
     #[test]
     fn test_initializers() {
-        for algo in &[DemosaicAlgo::Binning, DemosaicAlgo::Bilinear, DemosaicAlgo::Mhc] {
+        for algo in &[
+            DemosaicAlgo::Binning,
+            DemosaicAlgo::Bilinear,
+            DemosaicAlgo::Mhc,
+        ] {
             let block = BayerDemosaicBlock::new().with_algorithm(*algo);
             assert_eq!(block.initializers().len(), 2);
         }

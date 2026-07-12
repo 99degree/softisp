@@ -1,32 +1,33 @@
+use cam_isp::mnn_sys::{MnnBackendType, MnnInterpreterSafe};
 /// Regression test: Conv packing with coefficients [65536, 256, 1]
 /// Input: R,G,B (f32), Conv(1x1) with weights [65536,256,1]
 /// Expected: R*65536 + G*256 + B (single f32)
 use cam_isp::onnx::proto::Proto;
-use cam_isp::mnn_sys::{MnnInterpreterSafe, MnnBackendType};
 
 fn build_conv_pack_model() -> Vec<u8> {
-    let inp = Proto::value_info("input",
+    let inp = Proto::value_info(
+        "input",
         &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3)],
-        1); // FLOAT
-    let out = Proto::value_info("output",
+        1,
+    ); // FLOAT
+    let out = Proto::value_info(
+        "output",
         &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(1)],
-        1); // FLOAT
-    // Conv weight: out_ch=1, in_ch=3, kernel=1x1
-    let conv_w = Proto::tensor_proto_float(
-        "pack_weights",
-        &[1, 3, 1, 1],
-        &[65536.0f32, 256.0, 1.0]
-    );
-    let nodes = vec![
-        Proto::node("Conv", &["input", "pack_weights", "bias"],
-            &["output"],
-            &[
-                Proto::attribute_ints("kernel_shape", &[1, 1]),
-                Proto::attribute_ints("strides", &[1, 1]),
-                Proto::attribute_ints("pads", &[0, 0]),
-            ]
-        )
-    ];
+        1,
+    ); // FLOAT
+       // Conv weight: out_ch=1, in_ch=3, kernel=1x1
+    let conv_w =
+        Proto::tensor_proto_float("pack_weights", &[1, 3, 1, 1], &[65536.0f32, 256.0, 1.0]);
+    let nodes = vec![Proto::node(
+        "Conv",
+        &["input", "pack_weights", "bias"],
+        &["output"],
+        &[
+            Proto::attribute_ints("kernel_shape", &[1, 1]),
+            Proto::attribute_ints("strides", &[1, 1]),
+            Proto::attribute_ints("pads", &[0, 0]),
+        ],
+    )];
     let graph = Proto::graph("conv_pack", &nodes, &[inp], &[out], &[conv_w], &[]);
     Proto::model(11, &Proto::opset("ai.onnx", 11), "conv_pack", &graph)
 }
@@ -52,18 +53,23 @@ fn main() {
     let expected = 25.0 * 65536.0 + 51.0 * 256.0 + 76.0;
 
     let mut inp_bytes = Vec::with_capacity(12);
-    for &f in &inp_values { inp_bytes.extend_from_slice(&f.to_le_bytes()); }
+    for &f in &inp_values {
+        inp_bytes.extend_from_slice(&f.to_le_bytes());
+    }
     let inp_shape = [1, 3];
 
     let mut out_buf = vec![0u8; 4];
     let n = unsafe {
         cam_isp::mnn_sys::mnn_run_true_zero_copy(
-            interp.as_ptr(), sess.as_ptr(),
+            interp.as_ptr(),
+            sess.as_ptr(),
             inp_bytes.as_ptr() as *const std::ffi::c_void,
-            2, 32,
-            inp_shape.as_ptr(), inp_shape.len() as i32,
+            2,
+            32,
+            inp_shape.as_ptr(),
+            inp_shape.len() as i32,
             out_buf.as_mut_ptr() as *mut f32,
-            1
+            1,
         )
     };
 

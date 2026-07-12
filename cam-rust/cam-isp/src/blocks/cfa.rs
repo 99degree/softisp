@@ -1,5 +1,5 @@
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// CFA unpack block — extracts 2x2 Bayer quad positions using Conv stride=2.
 ///
@@ -132,19 +132,21 @@ impl IspBlock for CfaBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        vec![
-            Proto::node(
-                "Conv",
-                &[&self.input_source, &format!("{}/w", ns), &format!("{}/b", ns)],
-                &[&self.frame_tensor],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[2, 2]),
-                    Proto::attribute_ints("strides", &[2, 2]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                    Proto::attribute_int("group", 1),
-                ],
-            ),
-        ]
+        vec![Proto::node(
+            "Conv",
+            &[
+                &self.input_source,
+                &format!("{}/w", ns),
+                &format!("{}/b", ns),
+            ],
+            &[&self.frame_tensor],
+            &[
+                Proto::attribute_ints("kernel_shape", &[2, 2]),
+                Proto::attribute_ints("strides", &[2, 2]),
+                Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                Proto::attribute_int("group", 1),
+            ],
+        )]
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
@@ -206,16 +208,24 @@ mod tests {
 
     #[test]
     fn test_cfa_pipeline_integration() {
-        let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
-            .with_elem_type(1).with_concrete_dims(48, 64));
+        let b1: Box<dyn IspBlock> = Box::new(
+            crate::blocks::RawInputBlock::new()
+                .with_elem_type(1)
+                .with_concrete_dims(48, 64),
+        );
         let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
-        let b3: Box<dyn IspBlock> = Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
-        
+        let b3: Box<dyn IspBlock> =
+            Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
+
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![b1, b2, b3];
         GraphComposer::wire_blocks(&mut blocks);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let result = GraphComposer::compose_from_vec(&refs, &[], 16);
-        assert!(result.is_ok(), "CfaBlock pipeline should compose: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "CfaBlock pipeline should compose: {:?}",
+            result.err()
+        );
         let model = result.unwrap();
         assert!(!model.is_empty(), "Model should not be empty");
         assert!(model.len() > 100, "Model should be substantial");

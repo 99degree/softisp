@@ -4,8 +4,8 @@
 //! Used to mark logical pipeline stages for profiling and debugging.
 //! Unlike PassthroughBlock, StageBlock carries a stage index for ordering.
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// StageBlock — marks a named pipeline stage.
 pub struct StageBlock {
@@ -31,33 +31,73 @@ impl StageBlock {
 }
 
 impl IspBlock for StageBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { format!("Stage/{}", self.id) }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        format!("Stage/{}", self.id)
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
-    fn output_value_info(&self) -> Option<Vec<u8>> { self.input_value_info() }
+    fn output_value_info(&self) -> Option<Vec<u8>> {
+        self.input_value_info()
+    }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        vec![Proto::node("Identity", &[&self.input_source], &[&self.frame_tensor], &[])]
+        vec![Proto::node(
+            "Identity",
+            &[&self.input_source],
+            &[&self.frame_tensor],
+            &[],
+        )]
     }
 
-    fn initializers(&self) -> Vec<Vec<u8>> { vec![] }
+    fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
 }
 
 #[cfg(test)]

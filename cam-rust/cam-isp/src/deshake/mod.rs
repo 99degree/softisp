@@ -13,7 +13,7 @@
 //! │                    Deshake Pipeline                            │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │                                                                 │
- //! │  Frame N-1 ─┐                                                  │
+//! │  Frame N-1 ─┐                                                  │
 //! │              ├→ DeshakeEngine::estimate_motion()                │
 //! │  Frame N ───┘    │                                              │
 //! │                   ↓                                              │
@@ -56,8 +56,14 @@ pub mod motion;
 pub mod warp;
 
 pub use gpu_pipeline::DeshakeGpuPipeline;
-pub use motion::{BlockMatch, block_sad, block_variance, diamond_search, full_search, parabolic_refine, weighted_median};
-pub use warp::{apply_warp_rgb_f32, bgra_to_planar_rgb_f32, compute_downscale_factor, downscale_gray, to_grayscale};
+pub use motion::{
+    block_sad, block_variance, diamond_search, full_search, parabolic_refine, weighted_median,
+    BlockMatch,
+};
+pub use warp::{
+    apply_warp_rgb_f32, bgra_to_planar_rgb_f32, compute_downscale_factor, downscale_gray,
+    to_grayscale,
+};
 
 /// Default block size for motion estimation (pixels per side at original resolution).
 const BLOCK_SIZE: u32 = 32;
@@ -156,19 +162,35 @@ impl DeshakeEngine {
     }
 
     fn effective_block_size(&self) -> u32 {
-        if self.block_size > 0 { self.block_size } else { BLOCK_SIZE }
+        if self.block_size > 0 {
+            self.block_size
+        } else {
+            BLOCK_SIZE
+        }
     }
 
     fn effective_search_radius(&self) -> i32 {
-        if self.search_radius > 0 { self.search_radius } else { SEARCH_RADIUS }
+        if self.search_radius > 0 {
+            self.search_radius
+        } else {
+            SEARCH_RADIUS
+        }
     }
 
     fn effective_smoothing_alpha(&self) -> f32 {
-        if self.smoothing_alpha > 0.0 { self.smoothing_alpha } else { MOTION_SMOOTHING_ALPHA }
+        if self.smoothing_alpha > 0.0 {
+            self.smoothing_alpha
+        } else {
+            MOTION_SMOOTHING_ALPHA
+        }
     }
 
     fn effective_downscale_target(&self) -> u32 {
-        if self.downscale_target > 0 { self.downscale_target } else { DOWNSCALE_TARGET }
+        if self.downscale_target > 0 {
+            self.downscale_target
+        } else {
+            DOWNSCALE_TARGET
+        }
     }
 
     /// Process a frame and return compensated output.
@@ -224,11 +246,12 @@ impl DeshakeEngine {
 
         // If we have a previous frame, compute motion
         let has_prev = self.prev_gray.is_some();
-        let (global_dx, global_dy) = if let (Some(ref prev), Some((pw, ph))) = (&self.prev_gray, self.prev_dims) {
-            self.compute_motion(prev, pw, ph, &gray, gw, gh)
-        } else {
-            (0.0, 0.0)
-        };
+        let (global_dx, global_dy) =
+            if let (Some(ref prev), Some((pw, ph))) = (&self.prev_gray, self.prev_dims) {
+                self.compute_motion(prev, pw, ph, &gray, gw, gh)
+            } else {
+                (0.0, 0.0)
+            };
 
         // Store current frame as reference
         self.prev_gray = Some(gray);
@@ -249,7 +272,8 @@ impl DeshakeEngine {
 
         // Apply warp
         let planar = bgra_to_planar_rgb_f32(data, width, height);
-        let warped = apply_warp_rgb_f32(&planar, width, height, smooth[0], smooth[1], CROP_FRACTION);
+        let warped =
+            apply_warp_rgb_f32(&planar, width, height, smooth[0], smooth[1], CROP_FRACTION);
 
         // Convert back to BGRA
         let n = (width * height) as usize;
@@ -266,8 +290,12 @@ impl DeshakeEngine {
 
     fn compute_motion(
         &self,
-        prev_gray: &[u8], pw: u32, ph: u32,
-        curr_gray: &[u8], cw: u32, _ch: u32,
+        prev_gray: &[u8],
+        pw: u32,
+        ph: u32,
+        curr_gray: &[u8],
+        cw: u32,
+        _ch: u32,
     ) -> (f32, f32) {
         let bs = self.effective_block_size();
         let sr = self.effective_search_radius();
@@ -284,17 +312,9 @@ impl DeshakeEngine {
                 }
 
                 let match_result = if self.use_diamond_search {
-                    diamond_search(
-                        curr_gray, cw,
-                        prev_gray, pw, ph,
-                        bx, by, bs, sr,
-                    )
+                    diamond_search(curr_gray, cw, prev_gray, pw, ph, bx, by, bs, sr)
                 } else {
-                    full_search(
-                        curr_gray, cw,
-                        prev_gray, pw, ph,
-                        bx, by, bs, sr,
-                    )
+                    full_search(curr_gray, cw, prev_gray, pw, ph, bx, by, bs, sr)
                 };
 
                 if let Some(m) = match_result {
@@ -315,10 +335,7 @@ impl DeshakeEngine {
         let dy = weighted_median(&dys, &costs);
 
         if self.debug {
-            log::debug!(
-                "Deshake: {} blocks, dx={:.1}, dy={:.1}",
-                dxs.len(), dx, dy
-            );
+            log::debug!("Deshake: {} blocks, dx={:.1}, dy={:.1}", dxs.len(), dx, dy);
         }
 
         (dx, dy)
@@ -420,7 +437,11 @@ mod tests {
 
         let motion = e.smooth_motion();
         // Should detect rightward shift (motion vector points left to compensate)
-        assert!(motion[0].abs() > 0.0, "Expected non-zero dx, got {}", motion[0]);
+        assert!(
+            motion[0].abs() > 0.0,
+            "Expected non-zero dx, got {}",
+            motion[0]
+        );
     }
 
     #[test]
@@ -449,11 +470,29 @@ mod tests {
         let dm = dm.unwrap();
         let fs = fs.unwrap();
         // Both should find non-zero motion
-        assert!(dm.dx.abs() > 0.0 || dm.dy.abs() > 0.0, "Diamond search should find motion");
-        assert!(fs.dx.abs() > 0.0 || fs.dy.abs() > 0.0, "Full search should find motion");
+        assert!(
+            dm.dx.abs() > 0.0 || dm.dy.abs() > 0.0,
+            "Diamond search should find motion"
+        );
+        assert!(
+            fs.dx.abs() > 0.0 || fs.dy.abs() > 0.0,
+            "Full search should find motion"
+        );
         // Both should find motion in similar direction
-        let dm_dir = if dm.dx > 0.0 { 1 } else if dm.dx < 0.0 { -1 } else { 0 };
-        let fs_dir = if fs.dx > 0.0 { 1 } else if fs.dx < 0.0 { -1 } else { 0 };
+        let dm_dir = if dm.dx > 0.0 {
+            1
+        } else if dm.dx < 0.0 {
+            -1
+        } else {
+            0
+        };
+        let fs_dir = if fs.dx > 0.0 {
+            1
+        } else if fs.dx < 0.0 {
+            -1
+        } else {
+            0
+        };
         assert_eq!(dm_dir, fs_dir, "Both should find motion in same direction");
     }
 }

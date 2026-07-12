@@ -175,33 +175,89 @@ impl PipelineConfig {
         } else {
             11
         };
-        if self.use_fcs { count += 1; }
-        if self.use_ldci { count += 1; }
-        if self.use_ee { count += 1; }
+        if self.use_fcs {
+            count += 1;
+        }
+        if self.use_ldci {
+            count += 1;
+        }
+        if self.use_ee {
+            count += 1;
+        }
         // bad_pixel skipped in fused path
-        if self.use_bad_pixel && !(self.profile.use_fused_unpack && self.profile.use_unpack) { count += 1; }
-        if self.use_lsc { count += 1; }
-        if self.use_warp { count += 1; }
-        if self.use_hdr { count += 1; }
+        if self.use_bad_pixel && !(self.profile.use_fused_unpack && self.profile.use_unpack) {
+            count += 1;
+        }
+        if self.use_lsc {
+            count += 1;
+        }
+        if self.use_warp {
+            count += 1;
+        }
+        if self.use_hdr {
+            count += 1;
+        }
         count
     }
 
     // ── Builder methods ──
 
-    pub fn with_unpack(mut self, v: bool) -> Self { self.use_unpack = v; self }
-    pub fn with_fcs(mut self, v: bool) -> Self { self.use_fcs = v; self }
-    pub fn with_ldci(mut self, v: bool) -> Self { self.use_ldci = v; self }
-    pub fn with_ee(mut self, v: bool) -> Self { self.use_ee = v; self }
-    pub fn with_bad_pixel(mut self, v: bool) -> Self { self.use_bad_pixel = v; self }
-    pub fn with_demosaic_quality(mut self, v: DemosaicQuality) -> Self { self.demosaic_quality = v; self }
-    pub fn with_local_contrast(mut self, v: bool) -> Self { self.use_local_contrast = v; self }
-    pub fn with_unsharp(mut self, v: bool) -> Self { self.use_unsharp = v; self }
-    pub fn with_lsc(mut self, v: bool) -> Self { self.use_lsc = v; self }
-    pub fn with_warp(mut self, v: bool) -> Self { self.use_warp = v; self }
-    pub fn with_hdr(mut self, v: bool) -> Self { self.use_hdr = v; self }
-    pub fn with_pipeline_downscale(mut self, v: u32) -> Self { self.pipeline_downscale_target = v; self }
-    pub fn with_stats_downscale(mut self, v: u32) -> Self { self.stats_downscale_max = v; self }
-    pub fn with_label(mut self, v: impl Into<String>) -> Self { self.label = v.into(); self }
+    pub fn with_unpack(mut self, v: bool) -> Self {
+        self.use_unpack = v;
+        self
+    }
+    pub fn with_fcs(mut self, v: bool) -> Self {
+        self.use_fcs = v;
+        self
+    }
+    pub fn with_ldci(mut self, v: bool) -> Self {
+        self.use_ldci = v;
+        self
+    }
+    pub fn with_ee(mut self, v: bool) -> Self {
+        self.use_ee = v;
+        self
+    }
+    pub fn with_bad_pixel(mut self, v: bool) -> Self {
+        self.use_bad_pixel = v;
+        self
+    }
+    pub fn with_demosaic_quality(mut self, v: DemosaicQuality) -> Self {
+        self.demosaic_quality = v;
+        self
+    }
+    pub fn with_local_contrast(mut self, v: bool) -> Self {
+        self.use_local_contrast = v;
+        self
+    }
+    pub fn with_unsharp(mut self, v: bool) -> Self {
+        self.use_unsharp = v;
+        self
+    }
+    pub fn with_lsc(mut self, v: bool) -> Self {
+        self.use_lsc = v;
+        self
+    }
+    pub fn with_warp(mut self, v: bool) -> Self {
+        self.use_warp = v;
+        self
+    }
+    pub fn with_hdr(mut self, v: bool) -> Self {
+        self.use_hdr = v;
+        self
+    }
+    pub fn with_pipeline_downscale(mut self, v: u32) -> Self {
+        self.pipeline_downscale_target = v;
+        self
+    }
+    pub fn with_stats_downscale(mut self, v: u32) -> Self {
+        self.stats_downscale_max = v;
+        self
+    }
+    pub fn with_label(mut self, v: impl Into<String>) -> Self {
+        self.label = v.into();
+        self
+    }
 
     /// Set label from profile name + custom markers.
     pub fn auto_label(&self) -> String {
@@ -214,7 +270,9 @@ impl PipelineConfig {
 }
 
 impl Default for PipelineConfig {
-    fn default() -> Self { Self::from_profile(PipelineProfile::MED) }
+    fn default() -> Self {
+        Self::from_profile(PipelineProfile::MED)
+    }
 }
 
 #[cfg(test)]

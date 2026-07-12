@@ -1,6 +1,6 @@
+use cam_isp::engine::ProcessParams;
 use cam_isp::pipeline::IspBlock;
 use cam_isp::profile::PipelineProfile;
-use cam_isp::engine::ProcessParams;
 
 fn run_test(label: &str, mut blocks: Vec<Box<dyn IspBlock>>) {
     cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
@@ -12,12 +12,21 @@ fn run_test(label: &str, mut blocks: Vec<Box<dyn IspBlock>>) {
     let mut engine = cam_isp::engine::select_engine_by_name("mnn_vulkan").unwrap();
     match engine.build(head, aux, None, 21) {
         Ok(_) => {}
-        Err(e) => { println!("  {:50} BUILD FAIL: {:?}", label, e); return; }
+        Err(e) => {
+            println!("  {:50} BUILD FAIL: {:?}", label, e);
+            return;
+        }
     }
     let raw: Vec<u8> = vec![128u8; (1920 * 1080 * 2) as usize];
     let params = ProcessParams::new(1920, 1080, &raw);
     match engine.process(&params) {
-        Ok(f) => println!("  {:50} OK: {}×{} data={}", label, f.width, f.height, f.data.len()),
+        Ok(f) => println!(
+            "  {:50} OK: {}×{} data={}",
+            label,
+            f.width,
+            f.height,
+            f.data.len()
+        ),
         Err(e) => println!("  {:50} ERR: {:?}", label, e),
     }
 }
@@ -25,43 +34,73 @@ fn run_test(label: &str, mut blocks: Vec<Box<dyn IspBlock>>) {
 fn main() {
     cam_isp::cpu::register_cpu_engine();
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-    
+
     // Test 1: 6 blocks (known working)
-    run_test("6 blocks (Unpack+Demosaic+EE+FCS+LDCI+Display)", vec![
-        Box::new(cam_isp::blocks::UnpackBlock::new().with_concrete_dims(1080, 1920)),
-        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
-        Box::new(cam_isp::blocks::EeBlock::new()),
-        Box::new(cam_isp::blocks::FcsBlock::new()),
-        Box::new(cam_isp::blocks::LdciBlock::new()),
-        Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
-    ]);
-    
+    run_test(
+        "6 blocks (Unpack+Demosaic+EE+FCS+LDCI+Display)",
+        vec![
+            Box::new(cam_isp::blocks::UnpackBlock::new().with_concrete_dims(1080, 1920)),
+            Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
+            Box::new(cam_isp::blocks::EeBlock::new()),
+            Box::new(cam_isp::blocks::FcsBlock::new()),
+            Box::new(cam_isp::blocks::LdciBlock::new()),
+            Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
+        ],
+    );
+
     // Test 2: 7 blocks with RawInput
-    run_test("7 blocks (RawInput+UnpackCfa+Demosaic+EE+FCS+LDCI+Display)", vec![
-        Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(6).with_concrete_width(960).with_concrete_height(1080)),
-        Box::new(cam_isp::blocks::UnpackCfaBlock::new().with_concrete_width(1920).with_blc(true)),
-        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
-        Box::new(cam_isp::blocks::EeBlock::new()),
-        Box::new(cam_isp::blocks::FcsBlock::new()),
-        Box::new(cam_isp::blocks::LdciBlock::new()),
-        Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
-    ]);
-    
+    run_test(
+        "7 blocks (RawInput+UnpackCfa+Demosaic+EE+FCS+LDCI+Display)",
+        vec![
+            Box::new(
+                cam_isp::blocks::RawInputBlock::new()
+                    .with_elem_type(6)
+                    .with_concrete_width(960)
+                    .with_concrete_height(1080),
+            ),
+            Box::new(
+                cam_isp::blocks::UnpackCfaBlock::new()
+                    .with_concrete_width(1920)
+                    .with_blc(true),
+            ),
+            Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
+            Box::new(cam_isp::blocks::EeBlock::new()),
+            Box::new(cam_isp::blocks::FcsBlock::new()),
+            Box::new(cam_isp::blocks::LdciBlock::new()),
+            Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
+        ],
+    );
+
     // Test 3: 9 blocks - add identities like HEAVY
-    run_test("9 blocks (+ 3 identities)", vec![
-        Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(6).with_concrete_width(960).with_concrete_height(1080)),
-        Box::new(cam_isp::blocks::UnpackCfaBlock::new().with_concrete_width(1920).with_blc(true)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
-        Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
-        Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
-        Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
-        Box::new(cam_isp::blocks::EeBlock::new()),
-        Box::new(cam_isp::blocks::FcsBlock::new()),
-        Box::new(cam_isp::blocks::LdciBlock::new()),
-        Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
-    ]);
-    
+    run_test(
+        "9 blocks (+ 3 identities)",
+        vec![
+            Box::new(
+                cam_isp::blocks::RawInputBlock::new()
+                    .with_elem_type(6)
+                    .with_concrete_width(960)
+                    .with_concrete_height(1080),
+            ),
+            Box::new(
+                cam_isp::blocks::UnpackCfaBlock::new()
+                    .with_concrete_width(1920)
+                    .with_blc(true),
+            ),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_src")),
+            Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0)),
+            Box::new(cam_isp::blocks::IdentityBlock::new("tone")),
+            Box::new(cam_isp::blocks::IdentityBlock::new("aux_hook_out")),
+            Box::new(cam_isp::blocks::EeBlock::new()),
+            Box::new(cam_isp::blocks::FcsBlock::new()),
+            Box::new(cam_isp::blocks::LdciBlock::new()),
+            Box::new(cam_isp::blocks::DisplayBlock::new(1920)),
+        ],
+    );
+
     // Test 4: HEAVY profile
     let blocks = PipelineProfile::HEAVY.build_blocks(1920, 0);
-    run_test(format!("HEAVY profile ({} blocks)", blocks.len()).as_str(), blocks);
+    run_test(
+        format!("HEAVY profile ({} blocks)", blocks.len()).as_str(),
+        blocks,
+    );
 }

@@ -10,8 +10,8 @@
 //! The scales are stored as initializers and can be hot-swapped via
 //! MNN's hot_swap_const_buffer() API.
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// DynResizeBlock — dynamic resolution scaling with hot-swappable params.
 ///
@@ -57,44 +57,85 @@ impl DynResizeBlock {
         if self.src_w == 0 || self.src_h == 0 {
             (1.0, 1.0) // will be computed at compose time
         } else {
-            (self.target_w as f32 / self.src_w as f32,
-             self.target_h as f32 / self.src_h as f32)
+            (
+                self.target_w as f32 / self.src_w as f32,
+                self.target_h as f32 / self.src_h as f32,
+            )
         }
     }
 }
 
 impl IspBlock for DynResizeBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "DynResize".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "DynResize".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_value(self.target_h as i64),
-              Proto::tensor_dim_value(self.target_w as i64)], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(self.target_h as i64),
+                Proto::tensor_dim_value(self.target_w as i64),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let scales = format!("{}/scales", ns);
         vec![Proto::node(
-            "Resize", &[&self.input_source, &scales], &[&self.frame_tensor],
+            "Resize",
+            &[&self.input_source, &scales],
+            &[&self.frame_tensor],
             &[Proto::attribute_string("mode", "linear")],
         )]
     }
@@ -103,7 +144,10 @@ impl IspBlock for DynResizeBlock {
         let ns = self.tensor_ns();
         let (sh, sw) = self.scale_factors();
         vec![Proto::tensor_proto_float(
-            &format!("{}/scales", ns), &[4], &[1.0, 1.0, sh, sw])]
+            &format!("{}/scales", ns),
+            &[4],
+            &[1.0, 1.0, sh, sw],
+        )]
     }
 }
 
@@ -123,7 +167,9 @@ mod tests {
     fn test_dyn_resize_emits_resize() {
         let block = DynResizeBlock::new(960, 540).with_source_size(1920, 1080);
         let nodes = block.nodes();
-        assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Resize")));
+        assert!(nodes
+            .iter()
+            .any(|n| String::from_utf8_lossy(n).contains("Resize")));
     }
 
     #[test]

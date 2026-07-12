@@ -39,7 +39,11 @@ impl OnnxSession {
                 .commit_from_memory(model_data)
                 .map_err(|e| format!("ORT model load failed: {}", e))?;
 
-            info!("OnnxSession: loaded '{}' ({} bytes)", name, model_data.len());
+            info!(
+                "OnnxSession: loaded '{}' ({} bytes)",
+                name,
+                model_data.len()
+            );
 
             Ok(Self {
                 session,
@@ -56,8 +60,7 @@ impl OnnxSession {
 
     /// Load an ONNX model from a file path.
     pub fn from_file(path: &str) -> Result<Self, String> {
-        let data = std::fs::read(path)
-            .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+        let data = std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
         let name = std::path::Path::new(path)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -77,25 +80,29 @@ impl OnnxSession {
         {
             use ort::inputs;
 
-            let tensor = ort::value::Tensor::from_array(
-                (shape.to_vec(), data.to_vec().into_boxed_slice())
-            )
-            .map_err(|e| format!("Failed to create input tensor: {}", e))?
-            .upcast();
+            let tensor =
+                ort::value::Tensor::from_array((shape.to_vec(), data.to_vec().into_boxed_slice()))
+                    .map_err(|e| format!("Failed to create input tensor: {}", e))?
+                    .upcast();
 
-            let outputs = self.session
+            let outputs = self
+                .session
                 .run(inputs![input_name => tensor])
                 .map_err(|e| format!("ORT inference failed: {}", e))?;
 
             // Get first output
-            let (_, output_val) = outputs.iter().next()
-                .ok_or("No outputs returned")?;
+            let (_, output_val) = outputs.iter().next().ok_or("No outputs returned")?;
 
-            let (shape, data) = output_val.try_extract_tensor::<f32>()
+            let (shape, data) = output_val
+                .try_extract_tensor::<f32>()
                 .map_err(|e| format!("Failed to extract output: {}", e))?;
 
-            info!("OnnxSession '{}': output shape {:?}, {} values",
-                self.model_name, shape, data.len());
+            info!(
+                "OnnxSession '{}': output shape {:?}, {} values",
+                self.model_name,
+                shape,
+                data.len()
+            );
 
             Ok(data.to_vec())
         }
@@ -108,29 +115,38 @@ impl OnnxSession {
     }
 
     /// Run inference with i16 input (common for raw sensor data).
-    pub fn run_i16(&self, input_name: &str, data: &[i16], shape: &[i64]) -> Result<Vec<f32>, String> {
+    pub fn run_i16(
+        &self,
+        input_name: &str,
+        data: &[i16],
+        shape: &[i64],
+    ) -> Result<Vec<f32>, String> {
         #[cfg(feature = "ort")]
         {
             use ort::inputs;
 
-            let tensor = ort::value::Tensor::from_array(
-                (shape.to_vec(), data.to_vec().into_boxed_slice())
-            )
-            .map_err(|e| format!("Failed to create input tensor: {}", e))?
-            .upcast();
+            let tensor =
+                ort::value::Tensor::from_array((shape.to_vec(), data.to_vec().into_boxed_slice()))
+                    .map_err(|e| format!("Failed to create input tensor: {}", e))?
+                    .upcast();
 
-            let outputs = self.session
+            let outputs = self
+                .session
                 .run(inputs![input_name => tensor])
                 .map_err(|e| format!("ORT inference failed: {}", e))?;
 
-            let (_, output_val) = outputs.iter().next()
-                .ok_or("No outputs returned")?;
+            let (_, output_val) = outputs.iter().next().ok_or("No outputs returned")?;
 
-            let (shape, data) = output_val.try_extract_tensor::<f32>()
+            let (shape, data) = output_val
+                .try_extract_tensor::<f32>()
                 .map_err(|e| format!("Failed to extract output: {}", e))?;
 
-            info!("OnnxSession '{}': output shape {:?}, {} values",
-                self.model_name, shape, data.len());
+            info!(
+                "OnnxSession '{}': output shape {:?}, {} values",
+                self.model_name,
+                shape,
+                data.len()
+            );
 
             Ok(data.to_vec())
         }
@@ -148,24 +164,28 @@ impl OnnxSession {
         {
             use ort::inputs;
 
-            let tensor = ort::value::Tensor::from_array(
-                (shape.to_vec(), data.to_vec().into_boxed_slice())
-            )
-            .map_err(|e| format!("Failed to create input tensor: {}", e))?
-            .upcast();
+            let tensor =
+                ort::value::Tensor::from_array((shape.to_vec(), data.to_vec().into_boxed_slice()))
+                    .map_err(|e| format!("Failed to create input tensor: {}", e))?
+                    .upcast();
 
-            let outputs = self.session
+            let outputs = self
+                .session
                 .run(inputs![input_name => tensor])
                 .map_err(|e| format!("ORT inference failed: {}", e))?;
 
-            let (_, output_val) = outputs.iter().next()
-                .ok_or("No outputs returned")?;
+            let (_, output_val) = outputs.iter().next().ok_or("No outputs returned")?;
 
-            let (shape, data) = output_val.try_extract_tensor::<f32>()
+            let (shape, data) = output_val
+                .try_extract_tensor::<f32>()
                 .map_err(|e| format!("Failed to extract output: {}", e))?;
 
-            info!("OnnxSession '{}': output shape {:?}, {} values",
-                self.model_name, shape, data.len());
+            info!(
+                "OnnxSession '{}': output shape {:?}, {} values",
+                self.model_name,
+                shape,
+                data.len()
+            );
 
             Ok(data.to_vec())
         }
@@ -186,9 +206,7 @@ impl OnnxSession {
     pub fn input_names(&self) -> Vec<String> {
         #[cfg(feature = "ort")]
         {
-            self.session.inputs.iter()
-                .map(|i| i.name.clone())
-                .collect()
+            self.session.inputs.iter().map(|i| i.name.clone()).collect()
         }
         #[cfg(not(feature = "ort"))]
         vec![]
@@ -198,7 +216,9 @@ impl OnnxSession {
     pub fn output_names(&self) -> Vec<String> {
         #[cfg(feature = "ort")]
         {
-            self.session.outputs.iter()
+            self.session
+                .outputs
+                .iter()
                 .map(|o| o.name.clone())
                 .collect()
         }

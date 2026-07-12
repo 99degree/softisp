@@ -196,7 +196,7 @@ impl EisEngine {
         let pitch_rad = comp_pitch * PI as f32 / 180.0;
         let yaw_rad = comp_yaw * PI as f32 / 180.0;
 
-        let dx = -(focal_length_px * yaw_rad);   // yaw → horizontal shift
+        let dx = -(focal_length_px * yaw_rad); // yaw → horizontal shift
         let dy = -(focal_length_px * pitch_rad); // pitch → vertical shift
 
         // Clamp pixel shifts to crop margin
@@ -226,11 +226,7 @@ impl EisEngine {
     ///
     /// Grid format: `[H][W][2]` where `[h,w,0]` = normalized X (column)
     /// and `[h,w,1]` = normalized Y (row), both in `[-1, 1]`.
-    pub fn compute_warp_grid(
-        w: u32,
-        h: u32,
-        comp: &[f32; 3],
-    ) -> Vec<f32> {
+    pub fn compute_warp_grid(w: u32, h: u32, comp: &[f32; 3]) -> Vec<f32> {
         let dx = comp[0];
         let dy = comp[1];
         let roll_rad = comp[2] * PI as f32 / 180.0;
@@ -298,8 +294,16 @@ mod tests {
         // Then tail = (to_ns - sample.timestamp) / 1e9 = (2e9 - 1e9) / 1e9 = 1.0
         // pitch = 0.1 * 0 (dt for sample itself) + 0.1 * 1.0 (tail) = 0.1 rad ≈ 5.73 deg
         let result = eis.integrate_gyro(1_000_000_000, 2_000_000_000);
-        assert!((result[0] - 5.73).abs() < 0.1, "Pitch should be ~5.73°, got {}", result[0]);
-        assert!((result[1]).abs() < 0.01, "Yaw should be ~0, got {}", result[1]);
+        assert!(
+            (result[0] - 5.73).abs() < 0.1,
+            "Pitch should be ~5.73°, got {}",
+            result[0]
+        );
+        assert!(
+            (result[1]).abs() < 0.01,
+            "Yaw should be ~0, got {}",
+            result[1]
+        );
     }
 
     #[test]
@@ -319,17 +323,30 @@ mod tests {
         let comp = [1.0, 2.0, 0.0]; // dx=1, dy=2, no rotation
         let grid = EisEngine::compute_warp_grid(4, 4, &comp);
         assert_eq!(grid.len(), 4 * 4 * 2); // 32 elements
-        // Center pixel (2,2) should map to (2+1, 2+2) = (3, 4)
-        // normalized: x=2*3/4-1=0.5, y=2*4/4-1=1.0
+                                           // Center pixel (2,2) should map to (2+1, 2+2) = (3, 4)
+                                           // normalized: x=2*3/4-1=0.5, y=2*4/4-1=1.0
         let center_idx = (2 * 4 + 2) * 2; // row=2, col=2
-        assert!((grid[center_idx] - 0.5).abs() < 0.01, "Center X should be 0.5, got {}", grid[center_idx]);
-        assert!((grid[center_idx + 1] - 1.0).abs() < 0.01, "Center Y should be 1.0, got {}", grid[center_idx + 1]);
+        assert!(
+            (grid[center_idx] - 0.5).abs() < 0.01,
+            "Center X should be 0.5, got {}",
+            grid[center_idx]
+        );
+        assert!(
+            (grid[center_idx + 1] - 1.0).abs() < 0.01,
+            "Center Y should be 1.0, got {}",
+            grid[center_idx + 1]
+        );
     }
 
     #[test]
     fn test_eis_reset() {
         let mut eis = EisEngine::new();
-        eis.push_sample(GyroSample { timestamp_ns: 1000, x: 0.1, y: 0.0, z: 0.0 });
+        eis.push_sample(GyroSample {
+            timestamp_ns: 1000,
+            x: 0.1,
+            y: 0.0,
+            z: 0.0,
+        });
         eis.smooth_pitch = 5.0;
         eis.reset();
         assert!(eis.buffer.is_empty());
@@ -352,7 +369,15 @@ mod tests {
         // No displacement → output pixel maps to itself
         let center_idx = (2 * 4 + 2) * 2;
         // For (2,2): normalized x = 2*2/4-1 = 0, y = 2*2/4-1 = 0
-        assert!((grid[center_idx]).abs() < 0.01, "Center X should be 0, got {}", grid[center_idx]);
-        assert!((grid[center_idx + 1]).abs() < 0.01, "Center Y should be 0, got {}", grid[center_idx + 1]);
+        assert!(
+            (grid[center_idx]).abs() < 0.01,
+            "Center X should be 0, got {}",
+            grid[center_idx]
+        );
+        assert!(
+            (grid[center_idx + 1]).abs() < 0.01,
+            "Center Y should be 0, got {}",
+            grid[center_idx + 1]
+        );
     }
 }

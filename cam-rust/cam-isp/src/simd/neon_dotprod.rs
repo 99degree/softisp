@@ -86,18 +86,39 @@ impl SimdEngine for NeonDotprod {
                     let g = vld1q_f32(rgb.as_ptr().add(idx + 4));
                     let b = vld1q_f32(rgb.as_ptr().add(idx + 8));
 
-                    let nr = vmlaq_f32(vmulq_f32(r, vdupq_n_f32(matrix[0])), g, vdupq_n_f32(matrix[1]));
+                    let nr = vmlaq_f32(
+                        vmulq_f32(r, vdupq_n_f32(matrix[0])),
+                        g,
+                        vdupq_n_f32(matrix[1]),
+                    );
                     let nr = vmlaq_f32(nr, b, vdupq_n_f32(matrix[2]));
-                    let ng = vmlaq_f32(vmulq_f32(r, vdupq_n_f32(matrix[3])), g, vdupq_n_f32(matrix[4]));
+                    let ng = vmlaq_f32(
+                        vmulq_f32(r, vdupq_n_f32(matrix[3])),
+                        g,
+                        vdupq_n_f32(matrix[4]),
+                    );
                     let ng = vmlaq_f32(ng, b, vdupq_n_f32(matrix[5]));
-                    let nb = vmlaq_f32(vmulq_f32(r, vdupq_n_f32(matrix[6])), g, vdupq_n_f32(matrix[7]));
+                    let nb = vmlaq_f32(
+                        vmulq_f32(r, vdupq_n_f32(matrix[6])),
+                        g,
+                        vdupq_n_f32(matrix[7]),
+                    );
                     let nb = vmlaq_f32(nb, b, vdupq_n_f32(matrix[8]));
 
                     let zero = vdupq_n_f32(0.0);
                     let one = vdupq_n_f32(1.0);
-                    vst1q_f32(out.as_mut_ptr().add(idx), vminq_f32(vmaxq_f32(nr, zero), one));
-                    vst1q_f32(out.as_mut_ptr().add(idx + 4), vminq_f32(vmaxq_f32(ng, zero), one));
-                    vst1q_f32(out.as_mut_ptr().add(idx + 8), vminq_f32(vmaxq_f32(nb, zero), one));
+                    vst1q_f32(
+                        out.as_mut_ptr().add(idx),
+                        vminq_f32(vmaxq_f32(nr, zero), one),
+                    );
+                    vst1q_f32(
+                        out.as_mut_ptr().add(idx + 4),
+                        vminq_f32(vmaxq_f32(ng, zero), one),
+                    );
+                    vst1q_f32(
+                        out.as_mut_ptr().add(idx + 8),
+                        vminq_f32(vmaxq_f32(nb, zero), one),
+                    );
                     idx += 12;
                 }
             }
@@ -106,9 +127,9 @@ impl SimdEngine for NeonDotprod {
                 let r = rgb[rgb_idx];
                 let g = rgb[rgb_idx + 1];
                 let b = rgb[rgb_idx + 2];
-                out[rgb_idx] = (matrix[0]*r + matrix[1]*g + matrix[2]*b).clamp(0.0, 1.0);
-                out[rgb_idx+1] = (matrix[3]*r + matrix[4]*g + matrix[5]*b).clamp(0.0, 1.0);
-                out[rgb_idx+2] = (matrix[6]*r + matrix[7]*g + matrix[8]*b).clamp(0.0, 1.0);
+                out[rgb_idx] = (matrix[0] * r + matrix[1] * g + matrix[2] * b).clamp(0.0, 1.0);
+                out[rgb_idx + 1] = (matrix[3] * r + matrix[4] * g + matrix[5] * b).clamp(0.0, 1.0);
+                out[rgb_idx + 2] = (matrix[6] * r + matrix[7] * g + matrix[8] * b).clamp(0.0, 1.0);
             }
         }
 
@@ -119,9 +140,9 @@ impl SimdEngine for NeonDotprod {
                 let r = rgb[idx];
                 let g = rgb[idx + 1];
                 let b = rgb[idx + 2];
-                out[idx] = (matrix[0]*r + matrix[1]*g + matrix[2]*b).clamp(0.0, 1.0);
-                out[idx+1] = (matrix[3]*r + matrix[4]*g + matrix[5]*b).clamp(0.0, 1.0);
-                out[idx+2] = (matrix[6]*r + matrix[7]*g + matrix[8]*b).clamp(0.0, 1.0);
+                out[idx] = (matrix[0] * r + matrix[1] * g + matrix[2] * b).clamp(0.0, 1.0);
+                out[idx + 1] = (matrix[3] * r + matrix[4] * g + matrix[5] * b).clamp(0.0, 1.0);
+                out[idx + 2] = (matrix[6] * r + matrix[7] * g + matrix[8] * b).clamp(0.0, 1.0);
             }
         }
         out
@@ -176,7 +197,7 @@ impl SimdEngine for NeonDotprod {
                 let src_idx = (sy * src_w + sx) * 3;
                 let dst_idx = (y * target_w + x) * 4;
                 if src_idx + 2 < rgb.len() {
-                    out[dst_idx]     = (rgb[src_idx + 2].clamp(0.0, 1.0) * 255.0) as u8;
+                    out[dst_idx] = (rgb[src_idx + 2].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 1] = (rgb[src_idx + 1].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 2] = (rgb[src_idx].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 3] = 255;
@@ -186,14 +207,7 @@ impl SimdEngine for NeonDotprod {
         out
     }
 
-    fn bilinear_sample_4ch(
-        &self,
-        src: &[u8],
-        width: u32,
-        height: u32,
-        x: f32,
-        y: f32,
-    ) -> [u8; 4] {
+    fn bilinear_sample_4ch(&self, src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [u8; 4] {
         // Delegate to NEON backend
         super::neon::Neon.bilinear_sample_4ch(src, width, height, x, y)
     }

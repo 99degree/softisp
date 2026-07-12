@@ -1,10 +1,10 @@
 //! Compare unpack+norm+cfa (separate) vs UnpackCfaBlock (fused).
 //! Uses the same build/process pattern as bench_blocks.
 
-use cam_isp::pipeline::{IspBlock, GraphComposer};
 use cam_isp::blocks::*;
-use cam_isp::mnnengine::{MnnEngine, MnnBackend};
 use cam_isp::engine::IspEngine;
+use cam_isp::mnnengine::{MnnBackend, MnnEngine};
+use cam_isp::pipeline::{GraphComposer, IspBlock};
 
 fn bench_separate(h: u32, w_full: u32) -> (f64, String) {
     let w_packed = w_full / 2;
@@ -15,8 +15,11 @@ fn bench_separate(h: u32, w_full: u32) -> (f64, String) {
 
     // Build blocks: raw → unpack → norm → cfa
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-        Box::new(RawInputBlock::new()
-            .with_elem_type(6).with_concrete_dims(h_i64, pw_i64)),
+        Box::new(
+            RawInputBlock::new()
+                .with_elem_type(6)
+                .with_concrete_dims(h_i64, pw_i64),
+        ),
         Box::new(UnpackBlock::new().with_concrete_dims(h_i64, w_i64)),
         Box::new(NormalizeBlock::new()),
         Box::new(CfaBlock::new().with_concrete_dims(h_i64, w_i64)),
@@ -49,7 +52,9 @@ fn bench_separate(h: u32, w_full: u32) -> (f64, String) {
             Ok(frame) => {
                 let ms = frame.inference_duration_ns as f64 / 1_000_000.0;
                 totals.push(ms);
-                if run == 0 { println!("  separate first run: {:.1}ms", ms); }
+                if run == 0 {
+                    println!("  separate first run: {:.1}ms", ms);
+                }
             }
             Err(e) => eprintln!("  separate error: {}", e),
         }
@@ -57,8 +62,13 @@ fn bench_separate(h: u32, w_full: u32) -> (f64, String) {
 
     let avg = if totals.len() > 1 {
         totals[1..].iter().sum::<f64>() / (totals.len() - 1) as f64
-    } else { 0.0 };
-    (avg, format!("{:.2}ms ({:.1}fps)", avg, 1000.0 / avg.max(0.01)))
+    } else {
+        0.0
+    };
+    (
+        avg,
+        format!("{:.2}ms ({:.1}fps)", avg, 1000.0 / avg.max(0.01)),
+    )
 }
 
 fn bench_fused(h: u32, w_full: u32) -> (f64, String) {
@@ -70,9 +80,14 @@ fn bench_fused(h: u32, w_full: u32) -> (f64, String) {
 
     // Build blocks: raw → UnpackCfaBlock
     let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
-    blocks.push(Box::new(RawInputBlock::new()
-        .with_elem_type(6).with_concrete_dims(h_i64, pw_i64)));
-    blocks.push(Box::new(UnpackCfaBlock::new().with_concrete_dims(h_i64, w_i64)));
+    blocks.push(Box::new(
+        RawInputBlock::new()
+            .with_elem_type(6)
+            .with_concrete_dims(h_i64, pw_i64),
+    ));
+    blocks.push(Box::new(
+        UnpackCfaBlock::new().with_concrete_dims(h_i64, w_i64),
+    ));
 
     GraphComposer::wire_blocks(&mut blocks);
     let mut all = blocks;
@@ -100,7 +115,9 @@ fn bench_fused(h: u32, w_full: u32) -> (f64, String) {
             Ok(frame) => {
                 let ms = frame.inference_duration_ns as f64 / 1_000_000.0;
                 totals.push(ms);
-                if run == 0 { println!("  fused first run: {:.1}ms", ms); }
+                if run == 0 {
+                    println!("  fused first run: {:.1}ms", ms);
+                }
             }
             Err(e) => eprintln!("  fused error: {}", e),
         }
@@ -108,8 +125,13 @@ fn bench_fused(h: u32, w_full: u32) -> (f64, String) {
 
     let avg = if totals.len() > 1 {
         totals[1..].iter().sum::<f64>() / (totals.len() - 1) as f64
-    } else { 0.0 };
-    (avg, format!("{:.2}ms ({:.1}fps)", avg, 1000.0 / avg.max(0.01)))
+    } else {
+        0.0
+    };
+    (
+        avg,
+        format!("{:.2}ms ({:.1}fps)", avg, 1000.0 / avg.max(0.01)),
+    )
 }
 
 fn main() {
@@ -118,7 +140,10 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let (w, h) = if args.len() > 2 {
-        (args[1].parse().unwrap_or(640), args[2].parse().unwrap_or(480))
+        (
+            args[1].parse().unwrap_or(640),
+            args[2].parse().unwrap_or(480),
+        )
     } else {
         (640u32, 480u32)
     };
@@ -140,7 +165,10 @@ fn main() {
         if ratio > 1.0 {
             println!("  ✅ Fused is {:.0}% faster!", (ratio - 1.0) * 100.0);
         } else {
-            println!("  ❌ Separate is {:.0}% faster!", (1.0 / ratio - 1.0) * 100.0);
+            println!(
+                "  ❌ Separate is {:.0}% faster!",
+                (1.0 / ratio - 1.0) * 100.0
+            );
         }
     }
 }

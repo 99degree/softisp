@@ -131,9 +131,7 @@ impl FrameRateController {
         }
 
         // Calculate average frame time
-        let total_us: u64 = self.frame_times.iter()
-            .map(|d| d.as_micros() as u64)
-            .sum();
+        let total_us: u64 = self.frame_times.iter().map(|d| d.as_micros() as u64).sum();
         let avg_us = total_us / self.frame_times.len() as u64;
 
         // Load factor = actual time / max allowed time
@@ -158,11 +156,14 @@ impl FrameRateController {
         }
 
         // Check if recent frames are taking too long
-        let recent_avg: f64 = self.frame_times.iter()
+        let recent_avg: f64 = self
+            .frame_times
+            .iter()
             .rev()
             .take(5)
             .map(|d| d.as_micros() as f64)
-            .sum::<f64>() / 5.0;
+            .sum::<f64>()
+            / 5.0;
 
         recent_avg > self.min_frame_interval_us as f64 * 0.9
     }
@@ -173,9 +174,7 @@ impl FrameRateController {
             return 0.0;
         }
 
-        let total_us: u64 = self.frame_times.iter()
-            .map(|d| d.as_micros() as u64)
-            .sum();
+        let total_us: u64 = self.frame_times.iter().map(|d| d.as_micros() as u64).sum();
         let avg_us = total_us / self.frame_times.len() as u64;
 
         if avg_us > 0 {
@@ -242,11 +241,11 @@ impl FrameRateController {
         }
 
         match self.load_factor {
-            l if l < 0.5 => 1.0,       // Full pipeline
-            l if l < 0.7 => 0.75,      // Slightly reduced
-            l if l < 0.85 => 0.5,      // Half complexity
-            l if l < 0.95 => 0.25,     // Minimal
-            _ => 0.1,                   // Emergency minimal
+            l if l < 0.5 => 1.0,   // Full pipeline
+            l if l < 0.7 => 0.75,  // Slightly reduced
+            l if l < 0.85 => 0.5,  // Half complexity
+            l if l < 0.95 => 0.25, // Minimal
+            _ => 0.1,              // Emergency minimal
         }
     }
 
@@ -255,18 +254,20 @@ impl FrameRateController {
         let avg_frame_time = if self.frame_times.is_empty() {
             Duration::ZERO
         } else {
-            let total_us: u64 = self.frame_times.iter()
-                .map(|d| d.as_micros() as u64)
-                .sum();
+            let total_us: u64 = self.frame_times.iter().map(|d| d.as_micros() as u64).sum();
             Duration::from_micros(total_us / self.frame_times.len() as u64)
         };
 
-        let max_frame_time = self.frame_times.iter()
+        let max_frame_time = self
+            .frame_times
+            .iter()
             .copied()
             .max()
             .unwrap_or(Duration::ZERO);
 
-        let min_frame_time = self.frame_times.iter()
+        let min_frame_time = self
+            .frame_times
+            .iter()
             .copied()
             .min()
             .unwrap_or(Duration::ZERO);

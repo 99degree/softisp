@@ -53,7 +53,7 @@
 
 #![allow(dead_code)]
 
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 
@@ -77,7 +77,7 @@ pub struct HdrFrame {
 #[derive(Debug, Clone)]
 pub struct CaptureMetadata {
     pub timestamp_ns: u64,
-    pub scene_brightness: f32,  // average scene luminance
+    pub scene_brightness: f32, // average scene luminance
 }
 
 /// Result of HDR processing — an enhanced, tonemapped, encoded frame.
@@ -159,7 +159,9 @@ pub enum HdrMergeMethod {
 }
 
 impl Default for HdrMergeMethod {
-    fn default() -> Self { HdrMergeMethod::Mertens }
+    fn default() -> Self {
+        HdrMergeMethod::Mertens
+    }
 }
 
 // ── HDR Capture Queue ─────────────────────────────────────────────
@@ -315,7 +317,10 @@ impl HdrWorker {
         for f in frames {
             if f.frame.width != w || f.frame.height != h {
                 return Err(HdrError::SizeMismatch {
-                    w, h, ew: f.frame.width, eh: f.frame.height,
+                    w,
+                    h,
+                    ew: f.frame.width,
+                    eh: f.frame.height,
                 });
             }
         }
@@ -498,7 +503,9 @@ impl HdrWorker {
 
             // Step 2: ACES filmic curve
             let aces_curve = |x: f32| -> f32 {
-                if x <= 0.0 { return 0.0; }
+                if x <= 0.0 {
+                    return 0.0;
+                }
                 let num = x * (2.51 * x + 0.03);
                 let den = x * (2.43 * x + 0.59) + 0.14;
                 num / den
@@ -524,7 +531,13 @@ impl HdrWorker {
     /// Encode merged frame to JPEG/HEIC.
     /// Placeholder: writes PPM format for now.
     /// Future: use libjpeg-turbo or Android Bitmap API.
-    fn encode(&self, frame: &[u8], _quality: u8, width: u32, height: u32) -> Result<Vec<u8>, HdrError> {
+    fn encode(
+        &self,
+        frame: &[u8],
+        _quality: u8,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, HdrError> {
         let pixel_count = frame.len() / 4;
         if pixel_count != (width * height) as usize {
             // Try to recover: use pixel_count dimensions
@@ -619,13 +632,16 @@ mod tests {
         let worker = HdrWorker::new();
         let frames = vec![
             make_test_frame(-2.0, 50, 50, 50),   // under — dark
-            make_test_frame(0.0, 128, 128, 128),  // neutral — mid
-            make_test_frame(2.0, 200, 200, 200),  // over — bright
+            make_test_frame(0.0, 128, 128, 128), // neutral — mid
+            make_test_frame(2.0, 200, 200, 200), // over — bright
         ];
 
         let request = HdrCaptureRequest {
             frames,
-            metadata: CaptureMetadata { timestamp_ns: 0, scene_brightness: 0.5 },
+            metadata: CaptureMetadata {
+                timestamp_ns: 0,
+                scene_brightness: 0.5,
+            },
             response_tx: std::sync::mpsc::channel().0,
         };
 
@@ -645,7 +661,10 @@ mod tests {
 
         let request = HdrCaptureRequest {
             frames,
-            metadata: CaptureMetadata { timestamp_ns: 0, scene_brightness: 0.5 },
+            metadata: CaptureMetadata {
+                timestamp_ns: 0,
+                scene_brightness: 0.5,
+            },
             response_tx: std::sync::mpsc::channel().0,
         };
 
@@ -664,7 +683,10 @@ mod tests {
                 make_test_frame(0.0, 128, 128, 128),
                 make_test_frame(2.0, 200, 200, 200),
             ],
-            metadata: CaptureMetadata { timestamp_ns: 0, scene_brightness: 0.5 },
+            metadata: CaptureMetadata {
+                timestamp_ns: 0,
+                scene_brightness: 0.5,
+            },
             response_tx: tx,
         };
 
@@ -672,7 +694,11 @@ mod tests {
 
         // Wait for result
         let result = rx.recv().expect("Should receive result");
-        assert!(result.is_ok(), "HDR queue processing failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "HDR queue processing failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -682,7 +708,10 @@ mod tests {
 
         let request = HdrCaptureRequest {
             frames,
-            metadata: CaptureMetadata { timestamp_ns: 0, scene_brightness: 0.5 },
+            metadata: CaptureMetadata {
+                timestamp_ns: 0,
+                scene_brightness: 0.5,
+            },
             response_tx: std::sync::mpsc::channel().0,
         };
 
@@ -700,7 +729,10 @@ mod tests {
 
         let request = HdrCaptureRequest {
             frames: vec![f1, f2, f3],
-            metadata: CaptureMetadata { timestamp_ns: 0, scene_brightness: 0.5 },
+            metadata: CaptureMetadata {
+                timestamp_ns: 0,
+                scene_brightness: 0.5,
+            },
             response_tx: std::sync::mpsc::channel().0,
         };
 

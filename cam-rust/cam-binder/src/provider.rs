@@ -15,9 +15,9 @@ use std::sync::{Arc, Mutex};
 
 use log::info;
 
-use crate::types::*;
 use crate::callback::ICameraProviderCallback;
 use crate::device::CameraDevice;
+use crate::types::*;
 
 /// ICameraProvider implementation.
 ///
@@ -103,21 +103,24 @@ impl CameraProvider {
 
     /// Get list of camera IDs.
     pub fn get_camera_id_list(&self) -> Vec<String> {
-        self.devices.iter()
+        self.devices
+            .iter()
             .map(|d| d.lock().unwrap().camera_id().to_string())
             .collect()
     }
 
     /// Get a camera device interface by ID.
     pub fn get_camera_device(&self, camera_id: &str) -> Option<Arc<Mutex<CameraDevice>>> {
-        self.devices.iter().find(|d| {
-            d.lock().unwrap().camera_id() == camera_id
-        }).cloned()
+        self.devices
+            .iter()
+            .find(|d| d.lock().unwrap().camera_id() == camera_id)
+            .cloned()
     }
 
     /// Get camera info for a device.
     pub fn get_camera_info(&self, camera_id: &str) -> Option<CameraInfo> {
-        self.devices.iter()
+        self.devices
+            .iter()
             .find(|d| d.lock().unwrap().camera_id() == camera_id)
             .map(|d| d.lock().unwrap().info().clone())
     }
@@ -131,7 +134,10 @@ impl CameraProvider {
         // Notify callback if camera availability may have changed
         if let Some(cb) = self.callback.lock().unwrap().as_ref() {
             let changed_bits = old ^ state;
-            if changed_bits & (DEVICE_STATE_BACK_COVERED | DEVICE_STATE_FRONT_COVERED | DEVICE_STATE_FOLDED) != 0 {
+            if changed_bits
+                & (DEVICE_STATE_BACK_COVERED | DEVICE_STATE_FRONT_COVERED | DEVICE_STATE_FOLDED)
+                != 0
+            {
                 for dev in &self.devices {
                     let id = dev.lock().unwrap().camera_id().to_string();
                     cb.on_camera_device_status_change(&id, CameraDeviceStatus::Present);

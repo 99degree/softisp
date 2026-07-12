@@ -42,7 +42,7 @@ impl OptProfile {
                 tier,
                 width: w,
                 height: h,
-                demosaic_algo: if is_4k { 2 } else { 1 },  // MHC for 4K, bilinear for smaller
+                demosaic_algo: if is_4k { 2 } else { 1 }, // MHC for 4K, bilinear for smaller
                 sharpen_strength: 0.5,
                 denoise_threshold: 0.05,
                 contrast_strength: 1.2,
@@ -55,7 +55,7 @@ impl OptProfile {
                 tier,
                 width: w,
                 height: h,
-                demosaic_algo: if is_4k { 1 } else { 0 },  // bilinear for 4K, binning for smaller
+                demosaic_algo: if is_4k { 1 } else { 0 }, // bilinear for 4K, binning for smaller
                 sharpen_strength: 0.3,
                 denoise_threshold: 0.08,
                 contrast_strength: 1.1,
@@ -68,11 +68,11 @@ impl OptProfile {
                 tier,
                 width: w,
                 height: h,
-                demosaic_algo: 0,  // binning only
+                demosaic_algo: 0, // binning only
                 sharpen_strength: 0.0,
                 denoise_threshold: 0.15,
                 contrast_strength: 1.0,
-                warp_grid_size: 0,  // no warp
+                warp_grid_size: 0, // no warp
                 use_gdc: false,
                 use_ca: false,
                 output_format: "RGB".into(),
@@ -92,13 +92,23 @@ impl OptProfile {
 
     /// Estimated dispatch count for this profile.
     pub fn estimated_dispatches(&self) -> u32 {
-        let mut n = 2u32;  // unpack + demosaic
-        if self.sharpen_strength > 0.0 { n += 1; }
-        if self.denoise_threshold < 0.5 { n += 1; }
-        if self.contrast_strength > 1.0 { n += 1; }
-        if self.needs_warp() { n += 1; }
-        if self.needs_ca() { n += 1; }
-        n += 1;  // display
+        let mut n = 2u32; // unpack + demosaic
+        if self.sharpen_strength > 0.0 {
+            n += 1;
+        }
+        if self.denoise_threshold < 0.5 {
+            n += 1;
+        }
+        if self.contrast_strength > 1.0 {
+            n += 1;
+        }
+        if self.needs_warp() {
+            n += 1;
+        }
+        if self.needs_ca() {
+            n += 1;
+        }
+        n += 1; // display
         n
     }
 }

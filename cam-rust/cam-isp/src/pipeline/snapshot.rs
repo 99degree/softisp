@@ -35,8 +35,7 @@ impl PipelineSnapshot {
 
         // Convert ONNX to MNN
         let onnx_path = mnn_dir.join(format!("pipeline_{}x{}.onnx", width, height));
-        std::fs::write(&onnx_path, onnx_bytes)
-            .map_err(|e| format!("write onnx: {}", e))?;
+        std::fs::write(&onnx_path, onnx_bytes).map_err(|e| format!("write onnx: {}", e))?;
 
         crate::mnn_converter::convert_onnx_to_mnn(
             &onnx_path.to_string_lossy(),
@@ -56,8 +55,7 @@ impl PipelineSnapshot {
     /// Restore engine from cached MNN model (skips ONNX gen + conversion).
     #[cfg(feature = "mnn")]
     pub fn restore_engine(&self) -> Result<crate::mnnengine::MnnEngine, String> {
-        let mut engine = crate::mnnengine::MnnEngine::new(
-            crate::mnnengine::MnnBackend::Vulkan);
+        let mut engine = crate::mnnengine::MnnEngine::new(crate::mnnengine::MnnBackend::Vulkan);
         engine.set_model_path(self.mnn_path.to_string_lossy().to_string());
         Ok(engine)
     }
@@ -70,13 +68,11 @@ impl PipelineSnapshot {
     /// Delete cached files.
     pub fn invalidate(&self) -> Result<(), String> {
         if self.mnn_path.exists() {
-            std::fs::remove_file(&self.mnn_path)
-                .map_err(|e| format!("remove mnn: {}", e))?;
+            std::fs::remove_file(&self.mnn_path).map_err(|e| format!("remove mnn: {}", e))?;
         }
         let onnx_path = self.mnn_path.with_extension("onnx");
         if onnx_path.exists() {
-            std::fs::remove_file(&onnx_path)
-                .map_err(|e| format!("remove onnx: {}", e))?;
+            std::fs::remove_file(&onnx_path).map_err(|e| format!("remove onnx: {}", e))?;
         }
         Ok(())
     }

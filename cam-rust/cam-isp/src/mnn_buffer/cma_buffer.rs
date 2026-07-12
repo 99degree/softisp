@@ -39,8 +39,7 @@ use std::sync::{Arc, RwLock};
 /// - 4096 = Page size (minimum for mmap)
 /// - 8192 = Common for camera/ISP
 /// - 16384 = Some ISP require 16KB alignment
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BufferAlignment {
     /// Page alignment (4096 bytes)
     #[default]
@@ -53,10 +52,8 @@ pub enum BufferAlignment {
     Align64K = 65536,
 }
 
-
 /// CMA allocation method
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CMAAllocator {
     /// Android ION (Ion Memory Allocator)
     #[default]
@@ -70,7 +67,6 @@ pub enum CMAAllocator {
     /// Regular malloc (fallback for non-Linux)
     Malloc,
 }
-
 
 /// Buffer usage flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,13 +187,16 @@ impl CMABuffer {
 
     /// Increment reference count
     pub fn acquire(&self) {
-        self.ref_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.ref_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_access.lock().unwrap() = std::time::Instant::now();
     }
 
     /// Decrement reference count
     pub fn release(&self) -> bool {
-        let count = self.ref_count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        let count = self
+            .ref_count
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         count == 1 // Was 1, now 0
     }
 
@@ -246,15 +245,30 @@ impl CMABufferInfo {
             CMAAllocator::Malloc => Self::allocate_malloc(aligned_size, alignment),
         }
     }
-    
+
     /// Deallocate a CMA buffer info
     pub fn deallocate(info: &Self) -> io::Result<()> {
         match info.allocator {
-            CMAAllocator::Ion => { Self::deallocate_ion(info); Ok(()) }
-            CMAAllocator::CMA => { Self::deallocate_cma(info); Ok(()) }
-            CMAAllocator::DMABuf => { Self::deallocate_dmabuf(info); Ok(()) }
-            CMAAllocator::Shm => { Self::deallocate_shm(info); Ok(()) }
-            CMAAllocator::Malloc => { Self::deallocate_malloc(info); Ok(()) }
+            CMAAllocator::Ion => {
+                Self::deallocate_ion(info);
+                Ok(())
+            }
+            CMAAllocator::CMA => {
+                Self::deallocate_cma(info);
+                Ok(())
+            }
+            CMAAllocator::DMABuf => {
+                Self::deallocate_dmabuf(info);
+                Ok(())
+            }
+            CMAAllocator::Shm => {
+                Self::deallocate_shm(info);
+                Ok(())
+            }
+            CMAAllocator::Malloc => {
+                Self::deallocate_malloc(info);
+                Ok(())
+            }
         }
     }
 
@@ -266,13 +280,8 @@ impl CMABufferInfo {
     /// Allocate using Android ION
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn allocate_ion(size: usize, usage: &[BufferUsage]) -> io::Result<Self> {
-        
-
         // Open /dev/ion
-        let ion_fd = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/ion")?;
+        let ion_fd = OpenOptions::new().read(true).write(true).open("/dev/ion")?;
 
         // Calculate ION flags based on usage
         let mut ion_flags = 0;
@@ -280,8 +289,8 @@ impl CMABufferInfo {
             match u {
                 BufferUsage::CPU => ion_flags |= 0x00000001, // ION_FLAG_CACHED
                 BufferUsage::ISP | BufferUsage::Camera => ion_flags |= 0x00000002, // ION_FLAG_CACHED_NEON
-                BufferUsage::GPU => ion_flags |= 0x00000004, // ION_FLAG_GPU
-                BufferUsage::MNN => ion_flags |= 0x00000001, // CPU for MNN
+                BufferUsage::GPU => ion_flags |= 0x00000004,                       // ION_FLAG_GPU
+                BufferUsage::MNN => ion_flags |= 0x00000001,                       // CPU for MNN
             }
         }
 
@@ -373,10 +382,7 @@ impl CMABufferInfo {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn allocate_cma(size: usize) -> io::Result<Self> {
         // Open /dev/cma
-        let cma_fd = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/cma")?;
+        let cma_fd = OpenOptions::new().read(true).write(true).open("/dev/cma")?;
 
         // Allocate from CMA
         let ptr = unsafe {
@@ -408,7 +414,10 @@ impl CMABufferInfo {
 
     /// Allocate using DMABuf (direct dma-buf import)
     fn allocate_dmabuf(_size: usize) -> io::Result<Self> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "DMABuf allocator not available on this platform"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "DMABuf allocator not available on this platform",
+        ))
     }
 
     /// Allocate using POSIX shared memory
@@ -420,13 +429,8 @@ impl CMABufferInfo {
             let name_c = std::ffi::CString::new(name.clone()).unwrap();
 
             // shm_open
-            let fd = unsafe {
-                libc::shm_open(
-                    name_c.as_ptr(),
-                    libc::O_CREAT | libc::O_RDWR,
-                    0o600,
-                )
-            };
+            let fd =
+                unsafe { libc::shm_open(name_c.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600) };
 
             if fd < 0 {
                 return Err(io::Error::last_os_error());
@@ -482,12 +486,7 @@ impl CMABufferInfo {
     fn allocate_malloc(size: usize, alignment: BufferAlignment) -> io::Result<Self> {
         let aligned_size = Self::align_up(size, alignment as usize);
 
-        let ptr = unsafe {
-            libc::aligned_alloc(
-                alignment as usize,
-                aligned_size,
-            ) as *mut u8
-        };
+        let ptr = unsafe { libc::aligned_alloc(alignment as usize, aligned_size) as *mut u8 };
 
         if ptr.is_null() {
             return Err(io::Error::last_os_error());
@@ -576,13 +575,8 @@ impl CMABufferInfo {
     pub fn sync_for_cpu(fd: RawFd, ptr: *mut u8, size: usize) -> io::Result<()> {
         if fd >= 0 {
             // Use msync for cache invalidation (works on both Linux and Android)
-            let result = unsafe {
-                libc::msync(
-                    ptr as *mut libc::c_void,
-                    size,
-                    libc::MS_INVALIDATE,
-                )
-            };
+            let result =
+                unsafe { libc::msync(ptr as *mut libc::c_void, size, libc::MS_INVALIDATE) };
 
             if result != 0 {
                 return Err(io::Error::last_os_error());
@@ -596,13 +590,7 @@ impl CMABufferInfo {
     pub fn sync_for_device(fd: RawFd, ptr: *mut u8, size: usize) -> io::Result<()> {
         if fd >= 0 {
             // Use msync for cache flush (works on both Linux and Android)
-            let result = unsafe {
-                libc::msync(
-                    ptr as *mut libc::c_void,
-                    size,
-                    libc::MS_SYNC,
-                )
-            };
+            let result = unsafe { libc::msync(ptr as *mut libc::c_void, size, libc::MS_SYNC) };
 
             if result != 0 {
                 return Err(io::Error::last_os_error());
@@ -636,10 +624,7 @@ impl CMABufferManager {
     }
 
     /// Create with custom settings
-    pub fn with_settings(
-        allocator: CMAAllocator,
-        alignment: BufferAlignment,
-    ) -> Self {
+    pub fn with_settings(allocator: CMAAllocator, alignment: BufferAlignment) -> Self {
         Self {
             buffers: RwLock::new(HashMap::new()),
             default_allocator: allocator,
@@ -655,7 +640,9 @@ impl CMABufferManager {
         size: usize,
         usage: &[BufferUsage],
     ) -> io::Result<Arc<CMABuffer>> {
-        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         let buffer = CMABuffer::new(
             id,
@@ -667,7 +654,9 @@ impl CMABufferManager {
         )?;
 
         let buffer = Arc::new(buffer);
-        self.buffers.write().unwrap()
+        self.buffers
+            .write()
+            .unwrap()
             .insert(name.to_string(), buffer.clone());
 
         Ok(buffer)
@@ -675,9 +664,7 @@ impl CMABufferManager {
 
     /// Get buffer by name
     pub fn get_buffer(&self, name: &str) -> Option<Arc<CMABuffer>> {
-        self.buffers.read().unwrap()
-            .get(name)
-            .cloned()
+        self.buffers.read().unwrap().get(name).cloned()
     }
 
     /// Acquire buffer (increment ref count)
@@ -711,7 +698,7 @@ impl CMABufferManager {
     pub fn get_mnn_buffer(
         &self,
         tensor_name: &str,
-        _elem_type: u8,  // MNN data type code
+        _elem_type: u8, // MNN data type code
         elem_bits: u8,  // Bits per element
         dims: &[i32],
     ) -> io::Result<Arc<CMABuffer>> {
@@ -732,10 +719,7 @@ impl CMABufferManager {
         };
 
         // Determine usage
-        let usage = vec![
-            BufferUsage::CPU,
-            BufferUsage::MNN,
-        ];
+        let usage = vec![BufferUsage::CPU, BufferUsage::MNN];
 
         self.allocate(tensor_name, total_size, &usage)
     }
@@ -769,7 +753,8 @@ impl CMABufferManager {
     ///
     /// Call this after filling the buffer and before runSession
     pub fn sync_for_mnn(&self, name: &str) -> io::Result<()> {
-        let buffer = self.get_buffer(name)
+        let buffer = self
+            .get_buffer(name)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
         buffer.sync_for_device()?;
         Ok(())
@@ -779,7 +764,8 @@ impl CMABufferManager {
     ///
     /// Call this after runSession if you need to read the output
     pub fn sync_from_mnn(&self, name: &str) -> io::Result<()> {
-        let buffer = self.get_buffer(name)
+        let buffer = self
+            .get_buffer(name)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
         buffer.sync_for_cpu()?;
         Ok(())
@@ -787,7 +773,9 @@ impl CMABufferManager {
 
     /// List all buffers
     pub fn list_buffers(&self) -> Vec<(String, Arc<CMABuffer>)> {
-        self.buffers.read().unwrap()
+        self.buffers
+            .read()
+            .unwrap()
             .iter()
             .map(|(name, buffer)| (name.clone(), buffer.clone()))
             .collect()
@@ -816,7 +804,9 @@ pub extern "C" fn cma_buffer_manager_new() -> *mut CMABufferManager {
 #[no_mangle]
 pub extern "C" fn cma_buffer_manager_free(manager: *mut CMABufferManager) {
     if !manager.is_null() {
-        unsafe { let _ = Box::from_raw(manager); }
+        unsafe {
+            let _ = Box::from_raw(manager);
+        }
     }
 }
 
@@ -830,7 +820,11 @@ pub extern "C" fn cma_buffer_manager_allocate(
         return std::ptr::null_mut();
     }
 
-    let name_str = unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() };
+    let name_str = unsafe {
+        std::ffi::CStr::from_ptr(name)
+            .to_string_lossy()
+            .into_owned()
+    };
 
     unsafe { (*manager).allocate(&name_str, size, &[BufferUsage::CPU, BufferUsage::MNN]) }
         .map(|b| Box::into_raw(Box::new(Arc::try_unwrap(b).unwrap())))
@@ -883,7 +877,9 @@ pub extern "C" fn cma_buffer_release(buffer: *mut CMABuffer) -> bool {
 #[no_mangle]
 pub extern "C" fn cma_buffer_free(buffer: *mut CMABuffer) {
     if !buffer.is_null() {
-        unsafe { let _ = Box::from_raw(buffer); }
+        unsafe {
+            let _ = Box::from_raw(buffer);
+        }
     }
 }
 
@@ -936,5 +932,3 @@ pub extern "C" fn cma_buffer_free(buffer: *mut CMABuffer) {
 //     cma_buffer_manager_free(manager);
 // }
 //
-
-

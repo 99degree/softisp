@@ -32,7 +32,7 @@ pub fn buffer_to_byte_frame(
         FrameFormat::Nv21 => width,
         _ => width,
     };
-    
+
     ByteFrame {
         data: data.to_vec(),
         width,

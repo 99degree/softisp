@@ -88,7 +88,11 @@ impl PipelineBuilder {
     /// let b = PipelineBuilder::new(3840, 2160);  // 4K pipeline
     /// ```
     pub fn new(w: u32, h: u32) -> Self {
-        Self { blocks: Vec::new(), width: w, height: h }
+        Self {
+            blocks: Vec::new(),
+            width: w,
+            height: h,
+        }
     }
 
     /// Reconstruct a PipelineBuilder from a serialized `[`PipelineConfig`]`.
@@ -180,7 +184,8 @@ impl PipelineBuilder {
     /// PipelineBuilder::new(1920, 1080).unpack_dims(2160, 3840).display().compose();
     /// ```
     pub fn unpack_dims(mut self, h: i64, w: i64) -> Self {
-        self.blocks.push(Box::new(UnpackBlock::new().with_concrete_dims(h, w)));
+        self.blocks
+            .push(Box::new(UnpackBlock::new().with_concrete_dims(h, w)));
         self
     }
 
@@ -194,7 +199,8 @@ impl PipelineBuilder {
     /// PipelineBuilder::new(1920, 1080).unpack().demosaic(2).display().compose();  // MHC
     /// ```
     pub fn demosaic(mut self, bayer_pattern: i32) -> Self {
-        self.blocks.push(Box::new(DemosaicCcmBlock::new(bayer_pattern)));
+        self.blocks
+            .push(Box::new(DemosaicCcmBlock::new(bayer_pattern)));
         self
     }
 
@@ -289,7 +295,8 @@ impl PipelineBuilder {
     /// PipelineBuilder::new(1920, 1080).unpack().warp(32).display().compose();
     /// ```
     pub fn warp(mut self, grid_w: u32) -> Self {
-        self.blocks.push(Box::new(WarpGridBlock::new(grid_w, grid_w * 3 / 4)));
+        self.blocks
+            .push(Box::new(WarpGridBlock::new(grid_w, grid_w * 3 / 4)));
         self
     }
 
@@ -304,7 +311,7 @@ impl PipelineBuilder {
     /// ```
     pub fn warp_gdc(mut self, grid_w: u32, k1: f32) -> Self {
         self.blocks.push(Box::new(
-            WarpGridBlock::new(grid_w, grid_w * 3 / 4).with_gdc(k1, 0.0, 0.0)
+            WarpGridBlock::new(grid_w, grid_w * 3 / 4).with_gdc(k1, 0.0, 0.0),
         ));
         self
     }
@@ -318,7 +325,7 @@ impl PipelineBuilder {
     /// ```
     pub fn chromatic_aberration(mut self) -> Self {
         self.blocks.push(Box::new(
-            ChromaticAberrationBlock::new().with_radial_correction(self.height, self.width, 1.0)
+            ChromaticAberrationBlock::new().with_radial_correction(self.height, self.width, 1.0),
         ));
         self
     }
@@ -334,7 +341,9 @@ impl PipelineBuilder {
     /// PipelineBuilder::new(640, 480).unpack().gamma(2.2).denoise(0.03).display().compose();
     /// ```
     pub fn denoise(mut self, threshold: f32) -> Self {
-        self.blocks.push(Box::new(TemporalDenoiseBlock::new().with_threshold(threshold)));
+        self.blocks.push(Box::new(
+            TemporalDenoiseBlock::new().with_threshold(threshold),
+        ));
         self
     }
 
@@ -361,7 +370,8 @@ impl PipelineBuilder {
     ///     .unpack().hdr_tone(ToneOperator::Aces).display().compose();
     /// ```
     pub fn hdr_tone(mut self, operator: ToneOperator) -> Self {
-        self.blocks.push(Box::new(HdrToneBlock::new().with_operator(operator)));
+        self.blocks
+            .push(Box::new(HdrToneBlock::new().with_operator(operator)));
         self
     }
 
@@ -376,7 +386,8 @@ impl PipelineBuilder {
     ///     .unpack().wavelet_denoise(0.05).display().compose();
     /// ```
     pub fn wavelet_denoise(mut self, sigma: f32) -> Self {
-        self.blocks.push(Box::new(WaveletDenoiseBlock::new().with_sigma(sigma)));
+        self.blocks
+            .push(Box::new(WaveletDenoiseBlock::new().with_sigma(sigma)));
         self
     }
 
@@ -389,7 +400,8 @@ impl PipelineBuilder {
     ///     .unpack().plugin("custom.onnx").display().compose();
     /// ```
     pub fn plugin(mut self, model_path: &str) -> Self {
-        self.blocks.push(Box::new(PluginBlock::new(model_path, "plugin")));
+        self.blocks
+            .push(Box::new(PluginBlock::new(model_path, "plugin")));
         self
     }
 
@@ -405,7 +417,9 @@ impl PipelineBuilder {
     ///     .hdr_debayer(4.0).demosaic_binning().display().compose();
     /// ```
     pub fn hdr_debayer(mut self, exposure_ratio: f32) -> Self {
-        self.blocks.push(Box::new(HdrDebayerBlock::new().with_exposure_ratio(exposure_ratio)));
+        self.blocks.push(Box::new(
+            HdrDebayerBlock::new().with_exposure_ratio(exposure_ratio),
+        ));
         self
     }
 
@@ -421,7 +435,8 @@ impl PipelineBuilder {
     ///     .unpack().blc50(10.0, 12.0, 8.0).display().compose();
     /// ```
     pub fn blc50(mut self, r: f32, g: f32, b: f32) -> Self {
-        self.blocks.push(Box::new(Blc50Block::new().with_offsets(r, g, b)));
+        self.blocks
+            .push(Box::new(Blc50Block::new().with_offsets(r, g, b)));
         self
     }
 
@@ -437,7 +452,8 @@ impl PipelineBuilder {
     ///     .unpack().laplacian_pyramid(3).display().compose();
     /// ```
     pub fn laplacian_pyramid(mut self, levels: usize) -> Self {
-        self.blocks.push(Box::new(LaplacianPyramidBlock::new().with_levels(levels)));
+        self.blocks
+            .push(Box::new(LaplacianPyramidBlock::new().with_levels(levels)));
         self
     }
 
@@ -453,7 +469,8 @@ impl PipelineBuilder {
     ///     .unpack().demosaic_binning().watermark(0.3).display().compose();
     /// ```
     pub fn watermark(mut self, opacity: f32) -> Self {
-        self.blocks.push(Box::new(WatermarkBlock::new().with_opacity(opacity)));
+        self.blocks
+            .push(Box::new(WatermarkBlock::new().with_opacity(opacity)));
         self
     }
 
@@ -493,7 +510,8 @@ impl PipelineBuilder {
     /// PipelineBuilder::new(640, 480).unpack().display_rgba().compose();
     /// ```
     pub fn display_rgba(mut self) -> Self {
-        self.blocks.push(Box::new(DisplayBlock::new(self.width).rgba()));
+        self.blocks
+            .push(Box::new(DisplayBlock::new(self.width).rgba()));
         self
     }
 
@@ -505,7 +523,8 @@ impl PipelineBuilder {
     /// PipelineBuilder::new(640, 480).unpack().display_argb().compose();
     /// ```
     pub fn display_argb(mut self) -> Self {
-        self.blocks.push(Box::new(DisplayBlock::new(self.width).argb()));
+        self.blocks
+            .push(Box::new(DisplayBlock::new(self.width).argb()));
         self
     }
 
@@ -517,7 +536,8 @@ impl PipelineBuilder {
     /// PipelineBuilder::new(640, 480).unpack().display_agbr().compose();
     /// ```
     pub fn display_agbr(mut self) -> Self {
-        self.blocks.push(Box::new(DisplayBlock::new(self.width).agbr()));
+        self.blocks
+            .push(Box::new(DisplayBlock::new(self.width).agbr()));
         self
     }
 
@@ -566,7 +586,8 @@ impl PipelineBuilder {
     /// PipelineBuilder::new(1920, 1080).unpack().resize(1280, 720).display().compose();
     /// ```
     pub fn resize(mut self, target_w: u32, target_h: u32) -> Self {
-        self.blocks.push(Box::new(DynResizeBlock::new(target_w, target_h)));
+        self.blocks
+            .push(Box::new(DynResizeBlock::new(target_w, target_h)));
         self
     }
 
@@ -646,7 +667,11 @@ impl PipelineBuilder {
     }
 
     /// Replace a block by ID. Returns true if found and replaced.
-    pub fn replace_block(&mut self, id: &str, new_block: Box<dyn crate::pipeline::IspBlock>) -> bool {
+    pub fn replace_block(
+        &mut self,
+        id: &str,
+        new_block: Box<dyn crate::pipeline::IspBlock>,
+    ) -> bool {
         if let Some(pos) = self.blocks.iter().position(|b| b.id() == id) {
             self.blocks[pos] = new_block;
             true
@@ -727,7 +752,11 @@ impl PipelineBuilder {
     }
 
     /// Wire and compose with specific resolution for accurate FLOPs/memory estimates.
-    pub fn compose_full_at(self, w: u32, h: u32) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
+    pub fn compose_full_at(
+        self,
+        w: u32,
+        h: u32,
+    ) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
         let mut blocks = self.blocks;
         GraphComposer::compose_full_at(&mut blocks, &[], 16, w, h)
     }
@@ -751,8 +780,8 @@ impl PipelineBuilder {
         };
         let onnx_path = format!("{}.onnx", mnn_path.trim_end_matches(".mnn"));
         std::fs::write(&onnx_path, &onnx).map_err(|e| format!("write onnx: {}", e))?;
-        crate::mnn_converter::convert_onnx_to_mnn(
-            &onnx_path, &mnn_path, None).map_err(|e| format!("convert: {}", e))?;
+        crate::mnn_converter::convert_onnx_to_mnn(&onnx_path, &mnn_path, None)
+            .map_err(|e| format!("convert: {}", e))?;
         Ok((onnx, mnn_path))
     }
 
@@ -765,9 +794,7 @@ impl PipelineBuilder {
     pub fn from_profile(w: u32, h: u32, tier: crate::optimizer::PerfTier) -> Self {
         use crate::optimizer::OptProfile;
         let p = OptProfile::auto_select(w, h, tier);
-        let mut builder = Self::new(w, h)
-            .unpack()
-            .demosaic(p.demosaic_algo);
+        let mut builder = Self::new(w, h).unpack().demosaic(p.demosaic_algo);
 
         if p.sharpen_strength > 0.0 {
             builder = builder.sharpen(p.sharpen_strength);
@@ -827,7 +854,7 @@ impl PipelineBuilder {
     pub fn photo_preset(w: u32, h: u32) -> Self {
         Self::new(w, h)
             .unpack()
-            .demosaic(2)  // MHC
+            .demosaic(2) // MHC
             .gamma(2.2)
             .sharpen(0.6)
             .contrast(1.3)
@@ -846,7 +873,7 @@ impl PipelineBuilder {
     pub fn video_preset(w: u32, h: u32) -> Self {
         Self::new(w, h)
             .unpack()
-            .demosaic(1)  // Bilinear
+            .demosaic(1) // Bilinear
             .gamma(2.2)
             .sharpen(0.4)
             .display()
@@ -863,7 +890,7 @@ impl PipelineBuilder {
     pub fn night_preset(w: u32, h: u32) -> Self {
         Self::new(w, h)
             .unpack()
-            .demosaic(0)  // Binning
+            .demosaic(0) // Binning
             .gamma(2.2)
             .denoise(0.02)
             .sharpen(0.3)
@@ -875,7 +902,7 @@ impl PipelineBuilder {
     pub fn minimal_preset(w: u32, h: u32) -> Self {
         Self::new(w, h)
             .unpack()
-            .demosaic(0)  // Binning
+            .demosaic(0) // Binning
             .display()
     }
 
@@ -966,7 +993,10 @@ impl PipelineBuilder {
         out.push('\n');
 
         // Input node
-        out.push_str(&format!("  input [label=\"Input\\n{}x{}\", fillcolor=lightgreen];\n", self.width, self.height));
+        out.push_str(&format!(
+            "  input [label=\"Input\\n{}x{}\", fillcolor=lightgreen];\n",
+            self.width, self.height
+        ));
 
         // Block nodes
         for (i, block) in self.blocks.iter().enumerate() {
@@ -1026,7 +1056,11 @@ mod tests {
         assert!(!onnx.is_empty());
         assert!(issues.is_empty());
         assert!(stats.block_count > 0);
-        println!("Builder pipeline: {} blocks, {} bytes", stats.block_count, onnx.len());
+        println!(
+            "Builder pipeline: {} blocks, {} bytes",
+            stats.block_count,
+            onnx.len()
+        );
     }
 
     #[test]
@@ -1105,7 +1139,11 @@ mod tests {
             .unwrap();
         assert!(!onnx.is_empty());
         assert!(stats.block_count >= 3);
-        println!("High 4K: {} blocks, {} bytes", stats.block_count, onnx.len());
+        println!(
+            "High 4K: {} blocks, {} bytes",
+            stats.block_count,
+            onnx.len()
+        );
     }
 
     #[test]
@@ -1155,7 +1193,10 @@ mod tests {
         assert_eq!(cfg.block_count(), 5);
         let text = cfg.to_text();
         let loaded = crate::serializer::PipelineConfig::from_text(&text).unwrap();
-        assert_eq!(loaded.block_ids, vec!["unpack", "demosaic_ccm", "gamma", "sharpen", "display"]);
+        assert_eq!(
+            loaded.block_ids,
+            vec!["unpack", "demosaic_ccm", "gamma", "sharpen", "display"]
+        );
     }
 
     #[test]
@@ -1169,9 +1210,11 @@ mod tests {
         assert!(!onnx.is_empty());
         assert!(stats.estimated_flops > 0);
         assert!(stats.estimated_memory_bytes > 0);
-        println!("4K: {:.1} MFLOPs, {:.1} KB",
+        println!(
+            "4K: {:.1} MFLOPs, {:.1} KB",
             stats.estimated_flops as f64 / 1e6,
-            stats.estimated_memory_bytes as f64 / 1024.0);
+            stats.estimated_memory_bytes as f64 / 1024.0
+        );
     }
 
     #[test]
@@ -1200,7 +1243,12 @@ mod tests {
             .unwrap();
         assert!(stats.len() >= 5);
         for (name, flops, mem) in &stats {
-            println!("  {:<20} {:.1} MFLOPs  {:.1} KB", name, *flops as f64 / 1e6, *mem as f64 / 1024.0);
+            println!(
+                "  {:<20} {:.1} MFLOPs  {:.1} KB",
+                name,
+                *flops as f64 / 1e6,
+                *mem as f64 / 1024.0
+            );
         }
         // All blocks should have non-zero FLOPs
         assert!(stats.iter().all(|(_, f, _)| *f > 0));
@@ -1209,7 +1257,8 @@ mod tests {
     #[test]
     fn test_photo_preset() {
         let (onnx, stats, _) = PipelineBuilder::photo_preset(1920, 1080)
-            .compose_full().unwrap();
+            .compose_full()
+            .unwrap();
         assert!(!onnx.is_empty());
         assert!(stats.block_count >= 6);
         println!("Photo: {} blocks, {} bytes", stats.block_count, onnx.len());
@@ -1246,14 +1295,20 @@ mod tests {
 
     #[test]
     fn test_block_count() {
-        let b = PipelineBuilder::new(640, 480).unpack().demosaic(0).display();
+        let b = PipelineBuilder::new(640, 480)
+            .unpack()
+            .demosaic(0)
+            .display();
         assert_eq!(b.block_count(), 3);
     }
 
     #[test]
     fn test_remove_block() {
         let mut b = PipelineBuilder::new(640, 480)
-            .unpack().demosaic(0).gamma(2.2).display();
+            .unpack()
+            .demosaic(0)
+            .gamma(2.2)
+            .display();
         assert!(b.remove_block("gamma"));
         assert!(!b.remove_block("gamma"));
         assert_eq!(b.block_ids(), vec!["unpack", "demosaic_ccm", "display"]);
@@ -1275,14 +1330,25 @@ mod tests {
     fn test_from_config_roundtrip() {
         use crate::serializer::PipelineConfig;
         let mut cfg = PipelineConfig::new(1920, 1080);
-        cfg.block_ids = vec!["unpack".into(), "demosaic_ccm".into(), "gamma".into(), "display".into()];
+        cfg.block_ids = vec![
+            "unpack".into(),
+            "demosaic_ccm".into(),
+            "gamma".into(),
+            "display".into(),
+        ];
         let b = PipelineBuilder::from_config(&cfg);
-        assert_eq!(b.block_ids(), vec!["unpack", "demosaic_ccm", "gamma", "display"]);
+        assert_eq!(
+            b.block_ids(),
+            vec!["unpack", "demosaic_ccm", "gamma", "display"]
+        );
     }
 
     #[test]
     fn test_summary() {
-        let b = PipelineBuilder::new(640, 480).unpack().demosaic(0).display();
+        let b = PipelineBuilder::new(640, 480)
+            .unpack()
+            .demosaic(0)
+            .display();
         let s = b.summary();
         assert!(s.contains("640×480"));
         assert!(s.contains("unpack"));
@@ -1344,16 +1410,22 @@ mod tests {
     #[test]
     fn test_demosaic_binning_compose() {
         let onnx = PipelineBuilder::new(640, 480)
-            .unpack().demosaic_binning().display()
-            .compose().unwrap();
+            .unpack()
+            .demosaic_binning()
+            .display()
+            .compose()
+            .unwrap();
         assert!(onnx.len() > 100);
     }
 
     #[test]
     fn test_compose_and_time() {
         let (onnx, elapsed) = PipelineBuilder::new(640, 480)
-            .unpack().demosaic_binning().display()
-            .compose_and_time().unwrap();
+            .unpack()
+            .demosaic_binning()
+            .display()
+            .compose_and_time()
+            .unwrap();
         assert!(onnx.len() > 100);
         assert!(elapsed.as_secs_f64() > 0.0);
     }
@@ -1365,7 +1437,8 @@ mod tests {
             .push(Box::new(UnpackBlock::new()))
             .push(Box::new(DemosaicCcmBlock::new(1)))
             .push(Box::new(DisplayBlock::new(640).rgba()))
-            .compose().unwrap();
+            .compose()
+            .unwrap();
         assert!(onnx.len() > 100);
     }
 
@@ -1384,8 +1457,10 @@ mod tests {
     #[test]
     fn test_compose_and_validate() {
         let onnx = PipelineBuilder::new(640, 480)
-            .unpack().display()
-            .compose_and_validate().unwrap();
+            .unpack()
+            .display()
+            .compose_and_validate()
+            .unwrap();
         assert!(onnx.len() > 100);
     }
 
@@ -1401,7 +1476,10 @@ mod tests {
 
     #[test]
     fn test_compose_and_validate_zero_res_fails() {
-        let err = PipelineBuilder::new(0, 0).unpack().display().compose_and_validate();
+        let err = PipelineBuilder::new(0, 0)
+            .unpack()
+            .display()
+            .compose_and_validate();
         assert!(err.is_err());
         match err.unwrap_err() {
             PipelineError::InvalidResolution(0, 0) => (),
@@ -1446,5 +1524,4 @@ mod tests {
         assert!(flops > 0);
         assert!(mem > 0);
     }
-
 }

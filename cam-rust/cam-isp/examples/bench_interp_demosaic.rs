@@ -5,17 +5,21 @@
 //!   ALGO: binning | bilinear | mhc  (default: bilinear)
 //!   HW:   WxH  (default: 1920x1080)
 
-use std::time::Instant;
 use cam_isp::blocks::{BayerDemosaicBlock, DemosaicAlgo};
+use std::time::Instant;
 
 fn main() {
-    let _ = env_logger::builder().is_test(false).filter_level(log::LevelFilter::Info).try_init();
+    let _ = env_logger::builder()
+        .is_test(false)
+        .filter_level(log::LevelFilter::Info)
+        .try_init();
     cam_isp::init();
 
     let hw = std::env::var("HW").unwrap_or_else(|_| "1920x1080".to_string());
     let parts: Vec<i64> = hw.split('x').map(|s| s.parse().unwrap()).collect();
     let (w, h) = (parts[0], parts[1]);
-    let algo = DemosaicAlgo::from_name(&std::env::var("ALGO").unwrap_or_else(|_| "bilinear".to_string()));
+    let algo =
+        DemosaicAlgo::from_name(&std::env::var("ALGO").unwrap_or_else(|_| "bilinear".to_string()));
     let oh = algo.output_height(h);
     let ow = algo.output_width(w);
 
@@ -26,11 +30,17 @@ fn main() {
 
     // Build pipeline
     let mut blocks: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = vec![
-        Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(6).with_concrete_dims(h, w)),
-        Box::new(BayerDemosaicBlock::new()
-            .with_algorithm(algo)
-            .with_sensor_max(1023.0)
-            .with_concrete_dims(h, w)),
+        Box::new(
+            cam_isp::blocks::RawInputBlock::new()
+                .with_elem_type(6)
+                .with_concrete_dims(h, w),
+        ),
+        Box::new(
+            BayerDemosaicBlock::new()
+                .with_algorithm(algo)
+                .with_sensor_max(1023.0)
+                .with_concrete_dims(h, w),
+        ),
         Box::new(cam_isp::blocks::FcsBlock::new()),
         Box::new(cam_isp::blocks::DisplayBlock::new(ow as u32).with_concrete_dims(oh, ow)),
     ];
@@ -42,7 +52,10 @@ fn main() {
     let engine_name = std::env::var("ENGINE").unwrap_or_else(|_| "mnn".to_string());
     let mut engine = match cam_isp::engine::select_engine_by_name(&engine_name) {
         Some(e) => e,
-        None => match cam_isp::engine::select_engine() { Some(e) => e, None => Box::new(cam_isp::cpu::CpuEngine::new()) },
+        None => match cam_isp::engine::select_engine() {
+            Some(e) => e,
+            None => Box::new(cam_isp::cpu::CpuEngine::new()),
+        },
     };
 
     eprintln!("  Engine: {}", engine.backend_name());
@@ -59,9 +72,11 @@ fn main() {
     let mut raw_buf = vec![0u8; pixel_count * 4];
     let mut rng = 42u64;
     for i in 0..pixel_count {
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let val = ((rng >> 22) as u32) & 0x3FF;
-        raw_buf[i*4..(i+1)*4].copy_from_slice(&val.to_le_bytes());
+        raw_buf[i * 4..(i + 1) * 4].copy_from_slice(&val.to_le_bytes());
     }
 
     let params = cam_isp::engine::ProcessParams::new(w as u32, h as u32, &raw_buf);
@@ -83,8 +98,13 @@ fn main() {
         times.push(elapsed);
         if i == 0 {
             match &result {
-                Ok(frame) => eprintln!("  frame 1: {:.1}ms  output {}x{} {} bytes",
-                    elapsed.as_secs_f64() * 1000.0, frame.width, frame.height, frame.data.len()),
+                Ok(frame) => eprintln!(
+                    "  frame 1: {:.1}ms  output {}x{} {} bytes",
+                    elapsed.as_secs_f64() * 1000.0,
+                    frame.width,
+                    frame.height,
+                    frame.data.len()
+                ),
                 Err(e) => eprintln!("  frame 1: ERROR: {}", e),
             }
         }

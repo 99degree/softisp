@@ -56,10 +56,7 @@ pub mod ahardware_buffer {
             rect: *const ARect,
             out_bytes: *mut *mut c_void,
         ) -> i32;
-        pub fn AHardwareBuffer_unlock(
-            buffer: *mut AHardwareBuffer,
-            fence: *mut i32,
-        ) -> i32;
+        pub fn AHardwareBuffer_unlock(buffer: *mut AHardwareBuffer, fence: *mut i32) -> i32;
         pub fn AHardwareBuffer_describe(
             buffer: *const AHardwareBuffer,
             out_desc: *mut AHardwareBuffer_Desc,
@@ -147,19 +144,39 @@ impl cam_hal::buffer::MappedBuffer for MmapFdCameraBuffer {
     fn map(&self) -> Result<(*mut u8, usize), String> {
         Ok((self.ptr, self.size))
     }
-    fn unmap(&self) -> Result<(), String> { Ok(()) }
-    fn is_mapped(&self) -> bool { !self.ptr.is_null() }
-    fn size(&self) -> usize { self.size }
-    fn fd(&self) -> Option<i32> { Some(self.fd) }
+    fn unmap(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn is_mapped(&self) -> bool {
+        !self.ptr.is_null()
+    }
+    fn size(&self) -> usize {
+        self.size
+    }
+    fn fd(&self) -> Option<i32> {
+        Some(self.fd)
+    }
 }
 
 impl cam_hal::buffer::CameraBuffer for MmapFdCameraBuffer {
-    fn width(&self) -> u32 { self.width }
-    fn height(&self) -> u32 { self.height }
-    fn stride(&self) -> u32 { self.width } // stride = width for simple case
-    fn format(&self) -> i32 { self.format }
-    fn timestamp(&self) -> u64 { 0 }
-    fn frame_number(&self) -> u64 { self.frame_number }
+    fn width(&self) -> u32 {
+        self.width
+    }
+    fn height(&self) -> u32 {
+        self.height
+    }
+    fn stride(&self) -> u32 {
+        self.width
+    } // stride = width for simple case
+    fn format(&self) -> i32 {
+        self.format
+    }
+    fn timestamp(&self) -> u64 {
+        0
+    }
+    fn frame_number(&self) -> u64 {
+        self.frame_number
+    }
 }
 
 /// Wraps an `AHardwareBuffer` pointer as a `cam_hal::buffer::CameraBuffer`.
@@ -248,12 +265,24 @@ impl cam_hal::buffer::MappedBuffer for AHardwareBufferBacked {
 }
 
 impl cam_hal::buffer::CameraBuffer for AHardwareBufferBacked {
-    fn width(&self) -> u32 { self.width }
-    fn height(&self) -> u32 { self.height }
-    fn stride(&self) -> u32 { self.stride }
-    fn format(&self) -> i32 { self.format }
-    fn timestamp(&self) -> u64 { 0 }
-    fn frame_number(&self) -> u64 { self.frame_number }
+    fn width(&self) -> u32 {
+        self.width
+    }
+    fn height(&self) -> u32 {
+        self.height
+    }
+    fn stride(&self) -> u32 {
+        self.stride
+    }
+    fn format(&self) -> i32 {
+        self.format
+    }
+    fn timestamp(&self) -> u64 {
+        0
+    }
+    fn frame_number(&self) -> u64 {
+        self.frame_number
+    }
 }
 
 /// Allocator backend for AHardwareBuffer.
@@ -282,7 +311,10 @@ impl cam_hal::buffer::BufferAllocator for AHardwareBufferAllocator {
         let bpp = util::hal_format_bpp(format);
         let size = (stride as usize) * (height as usize) * bpp;
         Ok(Box::new(hal_buffer::HeapCameraBuffer::new(
-            width, height, stride, format,
+            width,
+            height,
+            stride,
+            format,
             cam_hal::buffer::HeapBuffer::new(size),
         )))
     }
@@ -292,7 +324,8 @@ impl cam_hal::buffer::BufferAllocator for AHardwareBufferAllocator {
 //
 // A frame processing function provided by the pipeline manager.
 // Takes (raw_bytes, width, height, hal_format) and returns processed bytes.
-pub type FrameProcessor = Arc<dyn Fn(&[u8], u32, u32, i32) -> Result<Vec<u8>, String> + Send + Sync>;
+pub type FrameProcessor =
+    Arc<dyn Fn(&[u8], u32, u32, i32) -> Result<Vec<u8>, String> + Send + Sync>;
 
 // ── Buffer locking helper ───────────────────────────────────────────────────
 
@@ -387,7 +420,13 @@ impl AndroidCameraAdapter {
     }
 
     /// Process a raw buffer through the attached processor (or pass-through).
-    pub fn process_buffer(&self, data: &[u8], width: u32, height: u32, format: i32) -> Result<Vec<u8>, String> {
+    pub fn process_buffer(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        format: i32,
+    ) -> Result<Vec<u8>, String> {
         if let Some(ref proc) = self.processor {
             (proc)(data, width, height, format)
         } else {
@@ -462,7 +501,9 @@ impl AndroidCameraAdapter {
     ///
     /// - `buffer` must be a valid pointer to an AHardwareBuffer
     /// - The buffer must have been previously locked via `lock_buffer`
-    pub unsafe fn unlock_buffer(buffer: *mut ahardware_buffer::AHardwareBuffer) -> Result<(), String> {
+    pub unsafe fn unlock_buffer(
+        buffer: *mut ahardware_buffer::AHardwareBuffer,
+    ) -> Result<(), String> {
         let ret = AHardwareBuffer_unlock(buffer, std::ptr::null_mut());
         if ret != 0 {
             return Err(format!("AHB unlock failed: {}", ret));
@@ -479,7 +520,12 @@ impl ICameraAdapter for AndroidCameraAdapter {
     fn open(&mut self, config: &StreamConfig) -> Result<(), String> {
         self.config = Some(config.clone());
         self.state = CameraState::Open;
-        log::info!("Camera '{}' opened: {}x{}", self.name, config.width, config.height);
+        log::info!(
+            "Camera '{}' opened: {}x{}",
+            self.name,
+            config.width,
+            config.height
+        );
         Ok(())
     }
 

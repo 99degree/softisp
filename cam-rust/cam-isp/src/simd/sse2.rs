@@ -12,7 +12,9 @@ use super::SimdEngine;
 pub struct Sse2;
 
 impl Sse2 {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 unsafe fn normalize_u16_to_f32_sse2(input: &[u16], output: &mut [f32], max_val: f32) {
@@ -70,9 +72,18 @@ unsafe fn apply_ccm_sse2(rgb: &[f32], matrix: &[f32; 9]) -> Vec<f32> {
         let v_max = _mm_set1_ps(1.0);
         let v_zero = _mm_setzero_ps();
 
-        let out_r = _mm_add_ps(_mm_add_ps(_mm_mul_ps(m_r, v_r), _mm_mul_ps(m_g, v_g)), _mm_mul_ps(m_b, v_b));
-        let out_g = _mm_add_ps(_mm_add_ps(_mm_mul_ps(m2r, v_r), _mm_mul_ps(m2g, v_g)), _mm_mul_ps(m2b, v_b));
-        let out_b = _mm_add_ps(_mm_add_ps(_mm_mul_ps(m3r, v_r), _mm_mul_ps(m3g, v_g)), _mm_mul_ps(m3b, v_b));
+        let out_r = _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(m_r, v_r), _mm_mul_ps(m_g, v_g)),
+            _mm_mul_ps(m_b, v_b),
+        );
+        let out_g = _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(m2r, v_r), _mm_mul_ps(m2g, v_g)),
+            _mm_mul_ps(m2b, v_b),
+        );
+        let out_b = _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(m3r, v_r), _mm_mul_ps(m3g, v_g)),
+            _mm_mul_ps(m3b, v_b),
+        );
 
         let out_r = _mm_min_ps(_mm_max_ps(out_r, v_zero), v_max);
         let out_g = _mm_min_ps(_mm_max_ps(out_g, v_zero), v_max);
@@ -153,9 +164,18 @@ unsafe fn display_output_sse2(rgb: &[f32], src_w: usize, src_h: usize, target_w:
             let v_r = _mm_loadu_ps(r.as_ptr());
             let v_g = _mm_loadu_ps(g.as_ptr());
             let v_b = _mm_loadu_ps(b.as_ptr());
-            let rb = _mm_cvtps_epi32(_mm_min_ps(_mm_max_ps(_mm_mul_ps(v_r, v_255), v_zero), v_255));
-            let gb = _mm_cvtps_epi32(_mm_min_ps(_mm_max_ps(_mm_mul_ps(v_g, v_255), v_zero), v_255));
-            let bb = _mm_cvtps_epi32(_mm_min_ps(_mm_max_ps(_mm_mul_ps(v_b, v_255), v_zero), v_255));
+            let rb = _mm_cvtps_epi32(_mm_min_ps(
+                _mm_max_ps(_mm_mul_ps(v_r, v_255), v_zero),
+                v_255,
+            ));
+            let gb = _mm_cvtps_epi32(_mm_min_ps(
+                _mm_max_ps(_mm_mul_ps(v_g, v_255), v_zero),
+                v_255,
+            ));
+            let bb = _mm_cvtps_epi32(_mm_min_ps(
+                _mm_max_ps(_mm_mul_ps(v_b, v_255), v_zero),
+                v_255,
+            ));
 
             let mut rb_i = [0i32; 4];
             let mut gb_i = [0i32; 4];
@@ -204,9 +224,7 @@ pub(crate) unsafe fn bilinear_sample_4ch_sse2(
     let w01 = (1.0 - fx) * fy;
     let w11 = fx * fy;
 
-    let idx = |sx: i32, sy: i32| -> usize {
-        ((sy as u32 * width + sx as u32) * 4) as usize
-    };
+    let idx = |sx: i32, sy: i32| -> usize { ((sy as u32 * width + sx as u32) * 4) as usize };
 
     let load_4bytes = |i: usize| -> __m128 {
         let bytes = _mm_cvtsi32_si128(*(src.as_ptr().add(i) as *const i32));
@@ -246,7 +264,9 @@ pub(crate) unsafe fn bilinear_sample_4ch_sse2(
 }
 
 impl SimdEngine for Sse2 {
-    fn name(&self) -> &'static str { "sse2" }
+    fn name(&self) -> &'static str {
+        "sse2"
+    }
 
     fn normalize_u16_to_f32(&self, input: &[u16], output: &mut [f32], max_val: f32) {
         unsafe { normalize_u16_to_f32_sse2(input, output, max_val) }
@@ -264,14 +284,7 @@ impl SimdEngine for Sse2 {
         unsafe { display_output_sse2(rgb, src_w, src_h, target_w) }
     }
 
-    fn bilinear_sample_4ch(
-        &self,
-        src: &[u8],
-        width: u32,
-        height: u32,
-        x: f32,
-        y: f32,
-    ) -> [u8; 4] {
+    fn bilinear_sample_4ch(&self, src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [u8; 4] {
         unsafe { bilinear_sample_4ch_sse2(src, width, height, x, y) }
     }
 }

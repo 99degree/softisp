@@ -45,7 +45,16 @@ impl BinStats {
         }
     }
 
-    fn observe(&mut self, awb_rg: f64, awb_bg: f64, gamma: f64, lsc_k1: f64, lsc_k2: f64, target_lum: f64, max_iso: f64) {
+    fn observe(
+        &mut self,
+        awb_rg: f64,
+        awb_bg: f64,
+        gamma: f64,
+        lsc_k1: f64,
+        lsc_k2: f64,
+        target_lum: f64,
+        max_iso: f64,
+    ) {
         self.count += 1;
         self.sum_awb_rg += awb_rg;
         self.sum_awb_bg += awb_bg;
@@ -56,13 +65,27 @@ impl BinStats {
         self.sum_max_iso += max_iso;
     }
 
-    fn avg_awb_rg(&self) -> f32 { (self.sum_awb_rg / self.count as f64) as f32 }
-    fn avg_awb_bg(&self) -> f32 { (self.sum_awb_bg / self.count as f64) as f32 }
-    fn avg_gamma(&self) -> f32 { (self.sum_gamma / self.count as f64) as f32 }
-    fn avg_lsc_k1(&self) -> f32 { (self.sum_lsc_k1 / self.count as f64) as f32 }
-    fn avg_lsc_k2(&self) -> f32 { (self.sum_lsc_k2 / self.count as f64) as f32 }
-    fn avg_target_lum(&self) -> f32 { (self.sum_target_lum / self.count as f64) as f32 }
-    fn avg_max_iso(&self) -> f32 { (self.sum_max_iso / self.count as f64) as f32 }
+    fn avg_awb_rg(&self) -> f32 {
+        (self.sum_awb_rg / self.count as f64) as f32
+    }
+    fn avg_awb_bg(&self) -> f32 {
+        (self.sum_awb_bg / self.count as f64) as f32
+    }
+    fn avg_gamma(&self) -> f32 {
+        (self.sum_gamma / self.count as f64) as f32
+    }
+    fn avg_lsc_k1(&self) -> f32 {
+        (self.sum_lsc_k1 / self.count as f64) as f32
+    }
+    fn avg_lsc_k2(&self) -> f32 {
+        (self.sum_lsc_k2 / self.count as f64) as f32
+    }
+    fn avg_target_lum(&self) -> f32 {
+        (self.sum_target_lum / self.count as f64) as f32
+    }
+    fn avg_max_iso(&self) -> f32 {
+        (self.sum_max_iso / self.count as f64) as f32
+    }
 }
 
 /// Predicted ISP parameters for a given CCT.
@@ -186,7 +209,8 @@ impl FastPredictor {
             return Some(query);
         }
         // Nearest neighbor search
-        self.bins.keys()
+        self.bins
+            .keys()
             .min_by_key(|&key| (key - query).abs())
             .copied()
     }
@@ -311,6 +335,11 @@ mod tests {
             }
         }
         let c2 = fp.confidence();
-        assert!(c2 > c1, "More bins should give higher confidence ({} > {})", c2, c1);
+        assert!(
+            c2 > c1,
+            "More bins should give higher confidence ({} > {})",
+            c2,
+            c1
+        );
     }
 }

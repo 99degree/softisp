@@ -8,13 +8,15 @@
 //! - `cma_buffer` - CMA buffer management for hardware-aligned memory
 //! - `buffer` - General buffer management utilities
 
-pub mod memfd;
-pub mod cma_buffer;
 pub mod buffer;
+pub mod cma_buffer;
+pub mod memfd;
 
+pub use cma_buffer::{
+    BufferAlignment as CMAAlignment, BufferUsage, CMAAllocator, CMABuffer, CMABufferManager,
+};
 /// Re-export commonly used types
-pub use memfd::{MemfdBuffer, MemfdBufferManager, Alignment as MemfdAlignment};
-pub use cma_buffer::{CMABuffer, CMABufferManager, BufferAlignment as CMAAlignment, BufferUsage, CMAAllocator};
+pub use memfd::{Alignment as MemfdAlignment, MemfdBuffer, MemfdBufferManager};
 
 /// MNN data type codes (from MNN DataType enum)
 pub const DT_FLOAT: u8 = 2;
@@ -44,7 +46,7 @@ pub unsafe fn set_tensor_host(tensor: *mut std::ffi::c_void, data_ptr: *mut u8) 
     //     int32_t stride[4];   // offset 32
     //     ...
     // };
-    
+
     let buffer_ptr = tensor as *mut u8;
     let host_offset = 8; // After device (uint64_t = 8 bytes)
     let host_ptr_loc = buffer_ptr.add(host_offset) as *mut *mut u8;
@@ -72,7 +74,7 @@ pub unsafe fn get_tensor_shape(tensor: *mut std::ffi::c_void) -> Vec<i32> {
     let buffer_ptr = tensor as *mut u8;
     let extent_offset = 16; // After device + host
     let extent_ptr = buffer_ptr.add(extent_offset) as *const i32;
-    
+
     // Read dimensions (max 8 for MNN)
     let mut dims = Vec::new();
     for i in 0..8 {
@@ -109,13 +111,21 @@ impl OutputBufferPool {
     /// All buffers are pre-allocated and zero-filled once.
     pub fn new(count: usize, capacity: usize) -> Self {
         let total_mb = (count * capacity * 4) as f64 / 1_048_576.0;
-        log::info!("bufpool alloc: {} buffers × {} f32 = {:.1} MB",
-            count, capacity, total_mb);
+        log::info!(
+            "bufpool alloc: {} buffers × {} f32 = {:.1} MB",
+            count,
+            capacity,
+            total_mb
+        );
         let mut buffers = Vec::with_capacity(count);
         for _ in 0..count {
             buffers.push(vec![0.0f32; capacity]);
         }
-        Self { buffers, pool_size: count, next_idx: 0 }
+        Self {
+            buffers,
+            pool_size: count,
+            next_idx: 0,
+        }
     }
 
     /// Acquire the next buffer for inference output.
@@ -124,8 +134,12 @@ impl OutputBufferPool {
     pub fn acquire(&mut self) -> (usize, &mut [f32]) {
         let idx = self.next_idx;
         self.next_idx = (idx + 1) % self.pool_size;
-        log::info!("bufpool acquire: idx={}/{} cap={}",
-            idx, self.pool_size, self.buffers[idx].len());
+        log::info!(
+            "bufpool acquire: idx={}/{} cap={}",
+            idx,
+            self.pool_size,
+            self.buffers[idx].len()
+        );
         (idx, &mut self.buffers[idx])
     }
 
@@ -137,13 +151,19 @@ impl OutputBufferPool {
     }
 
     /// Number of buffers in the pool.
-    pub fn len(&self) -> usize { self.pool_size }
+    pub fn len(&self) -> usize {
+        self.pool_size
+    }
 
     /// Returns true if pool is empty.
-    pub fn is_empty(&self) -> bool { self.pool_size == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.pool_size == 0
+    }
 
     /// Capacity of each buffer (f32 elements).
-    pub fn buffer_capacity(&self) -> usize { self.buffers.first().map(|b| b.len()).unwrap_or(0) }
+    pub fn buffer_capacity(&self) -> usize {
+        self.buffers.first().map(|b| b.len()).unwrap_or(0)
+    }
 }
 
 /// MNN inference context
@@ -166,21 +186,21 @@ impl MNNContext {
     pub fn from_file(_model_path: &str) -> Result<Self, String> {
         // This would use the C++ FFI to create the interpreter and session
         // For now, we'll use the C wrapper functions
-        
+
         // In production, this would call:
         // let interpreter = mnn_interpreter_create_from_file(model_path);
         // let session = mnn_interpreter_create_session(interpreter);
         // let input = mnn_interpreter_get_session_input(session, null);
         // let output = mnn_interpreter_get_session_output(session, null);
-        
+
         Err("MNNContext::from_file not implemented - use C++ wrapper".to_string())
     }
-    
+
     /// Get input tensor pointer
     pub fn input_tensor(&self) -> *mut std::ffi::c_void {
         self.input_tensor
     }
-    
+
     /// Get output tensor pointer
     pub fn output_tensor(&self) -> *mut std::ffi::c_void {
         self.output_tensor
@@ -193,13 +213,13 @@ impl MNNContext {
 pub trait MNNBufferProvider {
     /// Allocate buffer for the given tensor spec
     fn allocate(&mut self, name: &str, size: usize) -> Result<*mut u8, Box<dyn std::error::Error>>;
-    
+
     /// Get existing buffer
     fn get(&self, name: &str) -> Option<*mut u8>;
-    
+
     /// Sync buffer for device access (before inference)
     fn sync_for_device(&self, name: &str) -> Result<(), Box<dyn std::error::Error>>;
-    
+
     /// Sync buffer for CPU access (after inference)
     fn sync_for_cpu(&self, name: &str) -> Result<(), Box<dyn std::error::Error>>;
 }
@@ -209,21 +229,27 @@ impl MNNBufferProvider for MemfdBufferManager {
         let buffer = self.get_buffer(name, size)?;
         Ok(buffer.as_ptr())
     }
-    
+
     fn get(&self, name: &str) -> Option<*mut u8> {
         self.get_existing(name).map(|b| b.as_ptr())
     }
-    
+
     fn sync_for_device(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let buffer = self.get_existing(name)
-            .ok_or_else::<Box<dyn std::error::Error>, _>(|| format!("Buffer {} not found", name).into())?;
+        let buffer = self
+            .get_existing(name)
+            .ok_or_else::<Box<dyn std::error::Error>, _>(|| {
+                format!("Buffer {} not found", name).into()
+            })?;
         buffer.sync_for_device()?;
         Ok(())
     }
-    
+
     fn sync_for_cpu(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let buffer = self.get_existing(name)
-            .ok_or_else::<Box<dyn std::error::Error>, _>(|| format!("Buffer {} not found", name).into())?;
+        let buffer = self
+            .get_existing(name)
+            .ok_or_else::<Box<dyn std::error::Error>, _>(|| {
+                format!("Buffer {} not found", name).into()
+            })?;
         buffer.sync_for_cpu()?;
         Ok(())
     }
@@ -232,14 +258,14 @@ impl MNNBufferProvider for MemfdBufferManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_tensor_size() {
         // 1x1x48x64 INT32 = 48*64*4 bytes
         let dims = vec![1, 1, 48, 64];
         let size = tensor_size(&dims, 32);
         assert_eq!(size, 48 * 64 * 4);
-        
+
         // 1x3x224x224 FLOAT = 3*224*224*4 bytes
         let dims = vec![1, 3, 224, 224];
         let size = tensor_size(&dims, 32);

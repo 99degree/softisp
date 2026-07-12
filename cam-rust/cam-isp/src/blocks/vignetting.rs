@@ -66,10 +66,16 @@ impl IspBlock for VignettingBlock {
     }
 
     fn input_source(&self) -> Option<&str> {
-        if self.input_source.is_empty() { Some("vignetting/input") } else { Some(&self.input_source) }
+        if self.input_source.is_empty() {
+            Some("vignetting/input")
+        } else {
+            Some(&self.input_source)
+        }
     }
 
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
 
     fn frame_tensor(&self) -> Option<&str> {
         Some("vignetting/output")
@@ -90,8 +96,12 @@ impl IspBlock for VignettingBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         // Vignetting correction: Apply pre-computed gain map
         // The gain_map is stored as an initializer, so we just multiply
-        let input = if self.input_source.is_empty() { "vignetting/input" } else { &self.input_source };
-        
+        let input = if self.input_source.is_empty() {
+            "vignetting/input"
+        } else {
+            &self.input_source
+        };
+
         let nodes = vec![
             // Apply vignetting gain (gain_map is an initializer)
             Proto::node(
@@ -108,43 +118,32 @@ impl IspBlock for VignettingBlock {
     fn initializers(&self) -> Vec<Vec<u8>> {
         // Pre-compute vignetting gain map
         let mut gain_map = Vec::with_capacity((self.width * self.height) as usize);
-        
+
         let cx = self.center_x * self.width as f32;
         let cy = self.center_y * self.height as f32;
-        let max_dist = ((self.width as f32 / 2.0).powi(2) + (self.height as f32 / 2.0).powi(2)).sqrt();
+        let max_dist =
+            ((self.width as f32 / 2.0).powi(2) + (self.height as f32 / 2.0).powi(2)).sqrt();
 
         for y in 0..self.height {
             for x in 0..self.width {
                 let dx = x as f32 - cx;
                 let dy = y as f32 - cy;
                 let r = (dx * dx + dy * dy).sqrt() / max_dist;
-                
+
                 // Vignetting correction: boost edges
                 let vignette = 1.0 - self.strength * r.powf(self.falloff);
                 let gain = 1.0 / vignette.max(0.1); // Prevent division by zero
-                
+
                 gain_map.push(gain);
             }
         }
 
-        vec![
-            Proto::tensor_proto_float(
-                "vignetting/gain_map",
-                &[1, 1, self.height as i64, self.width as i64],
-                &gain_map,
-            ),
-        ]
+        vec![Proto::tensor_proto_float(
+            "vignetting/gain_map",
+            &[1, 1, self.height as i64, self.width as i64],
+            &gain_map,
+        )]
     }
-
-
-
-
-
-
-
-
-
-
 }
 
 #[cfg(test)]

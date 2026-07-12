@@ -7,7 +7,10 @@ fn try_convert(name: &str, blocks: Vec<Box<dyn IspBlock>>) {
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = match cam_isp::pipeline::GraphComposer::compose_from_vec(&block_refs, &[], 13) {
         Ok(o) => o,
-        Err(e) => { println!("  [{}] FAILED: {:?}", name, e); return; }
+        Err(e) => {
+            println!("  [{}] FAILED: {:?}", name, e);
+            return;
+        }
     };
     println!("  [{}] ONNX: {} bytes", name, onnx.len());
 
@@ -36,27 +39,36 @@ fn main() {
     let h: i64 = 64;
     println!("=== 64x64 models ===\n");
 
-    try_convert("unpack_demosaic_display_64", vec![
-        Box::new(UnpackBlock::new().with_concrete_dims(h, w)),
-        Box::new(DemosaicCcmBlock::new(0)),
-        Box::new(DisplayBlock::new(w as u32)),
-    ]);
+    try_convert(
+        "unpack_demosaic_display_64",
+        vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(h, w)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(w as u32)),
+        ],
+    );
 
-    try_convert("full_64", vec![
-        Box::new(UnpackBlock::new().with_concrete_dims(h, w)),
-        Box::new(DemosaicCcmBlock::new(0)),
-        Box::new(WarpGridBlock::new(w as u32, h as u32).with_gdc(-0.1, 0.0, 0.0)),
-        Box::new(DisplayBlock::new(w as u32)),
-    ]);
+    try_convert(
+        "full_64",
+        vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(h, w)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(WarpGridBlock::new(w as u32, h as u32).with_gdc(-0.1, 0.0, 0.0)),
+            Box::new(DisplayBlock::new(w as u32)),
+        ],
+    );
 
     // HD
     let w: i64 = 1280;
     let h: i64 = 720;
     println!("\n=== 1280x720 models ===\n");
 
-    try_convert("unpack_demosaic_display_hd", vec![
-        Box::new(UnpackBlock::new().with_concrete_dims(h, w)),
-        Box::new(DemosaicCcmBlock::new(0)),
-        Box::new(DisplayBlock::new(w as u32)),
-    ]);
+    try_convert(
+        "unpack_demosaic_display_hd",
+        vec![
+            Box::new(UnpackBlock::new().with_concrete_dims(h, w)),
+            Box::new(DemosaicCcmBlock::new(0)),
+            Box::new(DisplayBlock::new(w as u32)),
+        ],
+    );
 }

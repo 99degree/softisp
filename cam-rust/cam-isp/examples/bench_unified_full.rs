@@ -3,10 +3,10 @@
 //! Usage:
 //!   cargo run --example bench_unified_full -p cam-isp --features mnn --release
 
-use cam_isp::engine::OutputFormat;
-use cam_isp::unified_pipeline::{UnifiedConfig, GpuWarpParams};
-use cam_isp::pipeline::IspBlock;
 use cam_isp::blocks::*;
+use cam_isp::engine::OutputFormat;
+use cam_isp::pipeline::IspBlock;
+use cam_isp::unified_pipeline::{GpuWarpParams, UnifiedConfig};
 use std::time::Instant;
 
 fn bench_raw_pipeline(name: &str, w: u32, h: u32, fmt: OutputFormat, iters: u32) {
@@ -41,7 +41,9 @@ fn bench_raw_pipeline(name: &str, w: u32, h: u32, fmt: OutputFormat, iters: u32)
     params.output_format = fmt;
 
     // Warmup
-    for _ in 0..3 { let _ = engine.process(&params); }
+    for _ in 0..3 {
+        let _ = engine.process(&params);
+    }
 
     // Timed
     let mut times = Vec::new();
@@ -53,7 +55,14 @@ fn bench_raw_pipeline(name: &str, w: u32, h: u32, fmt: OutputFormat, iters: u32)
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let avg: f64 = times.iter().sum::<f64>() / times.len() as f64;
     let p50 = times[times.len() / 2];
-    println!("  {:12} {:?}:  avg={:.2}ms ({:.0} FPS)  p50={:.2}ms", name, fmt, avg, 1000.0 / avg, p50);
+    println!(
+        "  {:12} {:?}:  avg={:.2}ms ({:.0} FPS)  p50={:.2}ms",
+        name,
+        fmt,
+        avg,
+        1000.0 / avg,
+        p50
+    );
 }
 
 fn main() {

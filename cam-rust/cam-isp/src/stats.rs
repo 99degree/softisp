@@ -18,11 +18,7 @@ pub(crate) fn compute_channel_means(rgb: &[f32]) -> [f32; 3] {
         b_sum += rgb[idx + 2] as f64;
     }
     let n = count as f64;
-    [
-        (r_sum / n) as f32,
-        (g_sum / n) as f32,
-        (b_sum / n) as f32,
-    ]
+    [(r_sum / n) as f32, (g_sum / n) as f32, (b_sum / n) as f32]
 }
 
 /// Compute tone statistics: mean luminance, min, max.
@@ -38,14 +34,14 @@ pub(crate) fn compute_tone_stats(rgb: &[f32]) -> [f32; 3] {
         let idx = i * 3;
         let luma = (0.299 * rgb[idx] + 0.587 * rgb[idx + 1] + 0.114 * rgb[idx + 2]) as f64;
         sum += luma;
-        if luma < min_lum { min_lum = luma; }
-        if luma > max_lum { max_lum = luma; }
+        if luma < min_lum {
+            min_lum = luma;
+        }
+        if luma > max_lum {
+            max_lum = luma;
+        }
     }
-    [
-        (sum / count as f64) as f32,
-        min_lum as f32,
-        max_lum as f32,
-    ]
+    [(sum / count as f64) as f32, min_lum as f32, max_lum as f32]
 }
 
 /// Compute 256-bin luminance histogram from RGB.

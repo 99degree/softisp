@@ -47,8 +47,8 @@ pub struct AutoExposureState {
 impl Default for AutoExposureState {
     fn default() -> Self {
         Self {
-            min_exposure_ns: 125_000,         // 1/8000 s
-            max_exposure_ns: 66_666_666,      // 1/15 s
+            min_exposure_ns: 125_000,    // 1/8000 s
+            max_exposure_ns: 66_666_666, // 1/15 s
             min_iso: 50,
             max_iso: 3200,
             base_iso: 100,
@@ -57,7 +57,7 @@ impl Default for AutoExposureState {
             smoothed_exposure_ns: 33_333_333, // 1/30 s
             smoothed_iso: 100,
             last_computed_target_lum: 0.35,
-            frame_duration_ns: 33_333_333,    // 30 fps
+            frame_duration_ns: 33_333_333, // 30 fps
         }
     }
 }
@@ -118,12 +118,20 @@ impl AutoExposureState {
 
         // Smooth with EMA
         let alpha = self.exposure_alpha.clamp(0.02, 0.5);
-        self.smoothed_exposure_ns = (self.smoothed_exposure_ns as f32 * (1.0 - alpha) + time_ns as f32 * alpha) as i64;
+        self.smoothed_exposure_ns =
+            (self.smoothed_exposure_ns as f32 * (1.0 - alpha) + time_ns as f32 * alpha) as i64;
         self.smoothed_iso = (self.smoothed_iso as f32 * (1.0 - alpha) + iso as f32 * alpha) as i32;
 
-        log::debug!("AeEngine: mL={:.4} tL={:.4} ratio={:.2} hg={:.2} sg={:.2} → exp={}ns iso={}",
-            m, target_lum, clamped_ratio, highlight_guard, shadow_guard,
-            self.smoothed_exposure_ns, self.smoothed_iso);
+        log::debug!(
+            "AeEngine: mL={:.4} tL={:.4} ratio={:.2} hg={:.2} sg={:.2} → exp={}ns iso={}",
+            m,
+            target_lum,
+            clamped_ratio,
+            highlight_guard,
+            shadow_guard,
+            self.smoothed_exposure_ns,
+            self.smoothed_iso
+        );
 
         (self.smoothed_exposure_ns, self.smoothed_iso)
     }
@@ -157,7 +165,12 @@ impl AutoExposureEngine {
         brightness_bias: f32,
     ) -> (i64, i32) {
         let mut state = self.state.lock().unwrap();
-        state.compute(mean_luminance, highlight_ratio, shadow_ratio, brightness_bias)
+        state.compute(
+            mean_luminance,
+            highlight_ratio,
+            shadow_ratio,
+            brightness_bias,
+        )
     }
 
     /// Get current smoothed values.

@@ -50,7 +50,13 @@ fn shape_str(s: &[i64]) -> String {
     if s.is_empty() {
         "scalar".into()
     } else {
-        format!("[{}]", s.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(","))
+        format!(
+            "[{}]",
+            s.iter()
+                .map(|d| d.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        )
     }
 }
 
@@ -60,11 +66,11 @@ fn parse_value_info(vi_bytes: &[u8]) -> (String, i64, Vec<i64>) {
     // - name (string)
     // - type: TensorTypeProto with elem_type and shape
     // We need to decode it. Use the same protobuf definitions.
-    
+
     // Since we can't easily parse here without duplicating protobuf definitions,
     // and the cam-isp crate doesn't expose the ValueInfoProto struct publicly,
     // we'll use a simpler approach: check known tensor names and their specs.
-    
+
     // For now, return empty - we'll fill in manually below
     ("".into(), 0, vec![])
 }
@@ -78,23 +84,19 @@ fn known_tensor_info(name: &str, block_id: &str) -> Option<(String, i64, Vec<i64
         ("demosaic_ccm", n) if n == "prev/frame" => {
             Some(("prev/frame".into(), 6, vec![1, 1, -1, -1]))
         }
-        
+
         // BayerWbBlock
         ("bayer_wb", n) if n == "BayerWbBlock/frame" => {
             Some(("BayerWbBlock/frame".into(), 1, vec![1, 1, -1, -1]))
         }
-        ("bayer_wb", n) if n == "prev/frame" => {
-            Some(("prev/frame".into(), 1, vec![1, 1, -1, -1]))
-        }
-        
+        ("bayer_wb", n) if n == "prev/frame" => Some(("prev/frame".into(), 1, vec![1, 1, -1, -1])),
+
         // ToneBlock
         ("tone", n) if n == "tone/out" || n == "ToneBlock/frame" => {
             Some(("ToneBlock/frame".into(), 1, vec![1, 3, -1, -1]))
         }
-        ("tone", n) if n == "prev/frame" => {
-            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
-        }
-        
+        ("tone", n) if n == "prev/frame" => Some(("prev/frame".into(), 1, vec![1, 3, -1, -1])),
+
         // SaturationBlock
         ("saturation", n) if n == "SaturationBlock/frame" => {
             Some(("SaturationBlock/frame".into(), 1, vec![1, 3, -1, -1]))
@@ -102,47 +104,37 @@ fn known_tensor_info(name: &str, block_id: &str) -> Option<(String, i64, Vec<i64
         ("saturation", n) if n == "prev/frame" => {
             Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
         }
-        
+
         // SharpenBlock
         ("sharpen", n) if n == "SharpenBlock/frame" => {
             Some(("SharpenBlock/frame".into(), 1, vec![1, 3, -1, -1]))
         }
-        ("sharpen", n) if n == "prev/frame" => {
-            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
-        }
-        
+        ("sharpen", n) if n == "prev/frame" => Some(("prev/frame".into(), 1, vec![1, 3, -1, -1])),
+
         // LdciBlock
         ("ldci", n) if n == "LdciBlock/frame" => {
             Some(("LdciBlock/frame".into(), 1, vec![1, 3, -1, -1]))
         }
-        ("ldci", n) if n == "prev/frame" => {
-            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
-        }
-        
+        ("ldci", n) if n == "prev/frame" => Some(("prev/frame".into(), 1, vec![1, 3, -1, -1])),
+
         // FcsBlock
         ("fcs", n) if n == "FcsBlock/frame" => {
             Some(("FcsBlock/frame".into(), 1, vec![1, 3, -1, -1]))
         }
-        ("fcs", n) if n == "prev/frame" => {
-            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
-        }
-        
+        ("fcs", n) if n == "prev/frame" => Some(("prev/frame".into(), 1, vec![1, 3, -1, -1])),
+
         // NormalizeBlock
         ("normalize", n) if n == "NormalizeBlock/frame" => {
             Some(("NormalizeBlock/frame".into(), 1, vec![1, 1, -1, -1]))
         }
-        ("normalize", n) if n == "prev/frame" => {
-            Some(("prev/frame".into(), 6, vec![1, 1, -1, -1]))
-        }
-        
+        ("normalize", n) if n == "prev/frame" => Some(("prev/frame".into(), 6, vec![1, 1, -1, -1])),
+
         // GammaBlock
         ("gamma", n) if n == "GammaBlock/frame" || n == "Gamma/frame" => {
             Some(("GammaBlock/frame".into(), 1, vec![1, 3, -1, -1]))
         }
-        ("gamma", n) if n == "prev/frame" => {
-            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
-        }
-        
+        ("gamma", n) if n == "prev/frame" => Some(("prev/frame".into(), 1, vec![1, 3, -1, -1])),
+
         // AutoContrastBlock
         ("auto_contrast", n) if n == "AutoContrastBlock/frame" || n == "AutoContrast/frame" => {
             Some(("AutoContrastBlock/frame".into(), 1, vec![1, 3, -1, -1]))
@@ -150,7 +142,7 @@ fn known_tensor_info(name: &str, block_id: &str) -> Option<(String, i64, Vec<i64
         ("auto_contrast", n) if n == "prev/frame" => {
             Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
         }
-        
+
         // DisplayBlock
         ("display", n) if n == "DisplayBlock/frame" => {
             Some(("DisplayBlock/frame".into(), 1, vec![1, 4, -1, -1]))
@@ -158,10 +150,8 @@ fn known_tensor_info(name: &str, block_id: &str) -> Option<(String, i64, Vec<i64
         ("display", n) if n == "DisplayBlock/postprocess" => {
             Some(("DisplayBlock/postprocess".into(), 1, vec![1, 3, -1, -1]))
         }
-        ("display", n) if n == "prev/frame" => {
-            Some(("prev/frame".into(), 1, vec![1, 3, -1, -1]))
-        }
-        
+        ("display", n) if n == "prev/frame" => Some(("prev/frame".into(), 1, vec![1, 3, -1, -1])),
+
         _ => None,
     }
 }
@@ -417,9 +407,15 @@ fn collect_all() -> (Vec<DocParam>, Vec<DocTensor>) {
         b.set_input_source("prev/frame");
         for (name, etype, shape) in b.extra_inputs() {
             let (desc, default) = if name.contains("gain") {
-                ("Per-channel gain [R,G,B]. 1.0 = identity", "[1.0, 1.0, 1.0]")
+                (
+                    "Per-channel gain [R,G,B]. 1.0 = identity",
+                    "[1.0, 1.0, 1.0]",
+                )
             } else {
-                ("Per-channel bias [R,G,B]. 0.0 = identity", "[0.0, 0.0, 0.0]")
+                (
+                    "Per-channel bias [R,G,B]. 0.0 = identity",
+                    "[0.0, 0.0, 0.0]",
+                )
             };
             params.push(DocParam {
                 block_id: "fcs",
@@ -498,15 +494,24 @@ fn collect_all() -> (Vec<DocParam>, Vec<DocTensor>) {
         b.set_input_source("prev/frame");
         for (name, etype, shape) in b.extra_inputs() {
             let (desc, default) = if name.contains("inv_gamma") {
-                ("Inverse gamma: 1/γ for gamma=2.2 → ~0.4545", format!("{:.4}", 1.0/2.2))
+                (
+                    "Inverse gamma: 1/γ for gamma=2.2 → ~0.4545",
+                    format!("{:.4}", 1.0 / 2.2),
+                )
             } else if name.contains("min") {
                 ("Clamp minimum (0.0) — Max(input, min)", "0.0".into())
             } else if name.contains("max") {
                 ("Clamp maximum (1.0) — Min(input, max)", "1.0".into())
             } else if name.contains("lift") {
-                ("Shadow lift offset (only when shadow_lift > 0)", "0.0".into())
+                (
+                    "Shadow lift offset (only when shadow_lift > 0)",
+                    "0.0".into(),
+                )
             } else {
-                ("Shadow lift norm factor (only when shadow_lift > 0)", "1.0".into())
+                (
+                    "Shadow lift norm factor (only when shadow_lift > 0)",
+                    "1.0".into(),
+                )
             };
             params.push(DocParam {
                 block_id: "gamma",
@@ -526,14 +531,24 @@ fn collect_all() -> (Vec<DocParam>, Vec<DocTensor>) {
         let mut b = GammaBlock::new(2.2).with_shadow_lift(0.05);
         b.set_input_source("prev/frame");
         for (name, _etype, _shape) in b.extra_inputs() {
-            if !name.contains("lift") && !name.contains("norm") { continue; }
+            if !name.contains("lift") && !name.contains("norm") {
+                continue;
+            }
         }
         for (name, etype, shape) in b.extra_inputs() {
-            if !name.contains("lift") && !name.contains("norm") { continue; }
+            if !name.contains("lift") && !name.contains("norm") {
+                continue;
+            }
             let (desc, default) = if name.contains("lift") {
-                ("Shadow lift offset (~0.01-0.10). Conditional: only when shadow_lift > 0.", "0.05")
+                (
+                    "Shadow lift offset (~0.01-0.10). Conditional: only when shadow_lift > 0.",
+                    "0.05",
+                )
             } else {
-                ("Shadow lift re-normalize factor. Conditional: only when shadow_lift > 0.", "1.0")
+                (
+                    "Shadow lift re-normalize factor. Conditional: only when shadow_lift > 0.",
+                    "1.0",
+                )
             };
             params.push(DocParam {
                 block_id: "gamma",
@@ -574,7 +589,10 @@ fn collect_all() -> (Vec<DocParam>, Vec<DocTensor>) {
         b.set_input_source("prev/frame");
         for (name, etype, shape) in b.extra_inputs() {
             let (desc, default) = if name.contains("lift") {
-                ("Shadow lift offset. Conditional: only when shadow_lift > 0.01.", "0.0")
+                (
+                    "Shadow lift offset. Conditional: only when shadow_lift > 0.01.",
+                    "0.0",
+                )
             } else if name.contains("half") {
                 ("0.5 constant for center/uncenter S-curve.", "0.5")
             } else if name.contains("contrast_w") {
@@ -602,7 +620,9 @@ fn collect_all() -> (Vec<DocParam>, Vec<DocTensor>) {
         let mut b = AutoContrastBlock::new(1.5).with_highlight_compress(0.1);
         b.set_input_source("prev/frame");
         for (name, etype, shape) in b.extra_inputs() {
-            if !name.contains("zero") && !name.contains("one") { continue; }
+            if !name.contains("zero") && !name.contains("one") {
+                continue;
+            }
             let default = if name.contains("zero") { "0.0" } else { "1.0" };
             let desc = if name.contains("zero") {
                 "Clip lower bound. Conditional: only when highlight_compress > 0.01."
@@ -648,13 +668,25 @@ fn collect_all() -> (Vec<DocParam>, Vec<DocTensor>) {
         b.set_input_source("prev/frame");
         for (name, etype, shape) in b.extra_inputs() {
             let (desc, default) = if name.contains("scale") {
-                ("Scale factor. Used in Mul for FloatRgb path.".to_string(), "1.0".to_string())
+                (
+                    "Scale factor. Used in Mul for FloatRgb path.".to_string(),
+                    "1.0".to_string(),
+                )
             } else if name.contains("gamma_exp") {
-                ("Gamma exponent for sRGB (1/2.4 ≈ 0.4167). Used in Pow.".to_string(), format!("{:.4}", 1.0/2.4))
+                (
+                    "Gamma exponent for sRGB (1/2.4 ≈ 0.4167). Used in Pow.".to_string(),
+                    format!("{:.4}", 1.0 / 2.4),
+                )
             } else if name.contains("zero") {
-                ("Clip lower bound (0.0) after gamma.".to_string(), "0.0".to_string())
+                (
+                    "Clip lower bound (0.0) after gamma.".to_string(),
+                    "0.0".to_string(),
+                )
             } else {
-                ("Clip upper bound (1.0) after gamma.".to_string(), "1.0".to_string())
+                (
+                    "Clip upper bound (1.0) after gamma.".to_string(),
+                    "1.0".to_string(),
+                )
             };
             params.push(DocParam {
                 block_id: "display",
@@ -730,10 +762,16 @@ fn write_markdown(params: &[DocParam], tensors: &[DocTensor], path: &Path) {
     let mut md = String::new();
     md.push_str("# Runtime Parameters (extra_inputs) API\n\n");
     md.push_str("This document lists all runtime-feedable input tensors exposed by ISP blocks\n");
-    md.push_str("via the `extra_inputs()` trait method. These tensors default to initializer values\n");
-    md.push_str("but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.\n\n");
+    md.push_str(
+        "via the `extra_inputs()` trait method. These tensors default to initializer values\n",
+    );
+    md.push_str(
+        "but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.\n\n",
+    );
     md.push_str("> **Note**: Conditional tensors are only present in the ONNX graph when the\n");
-    md.push_str("> corresponding block parameter is active. Feeding a non-existent tensor is harmless\n");
+    md.push_str(
+        "> corresponding block parameter is active. Feeding a non-existent tensor is harmless\n",
+    );
     md.push_str("> — the engine skips it via `Option::None`.\n\n");
 
     // Group by block
@@ -790,13 +828,17 @@ fn write_markdown(params: &[DocParam], tensors: &[DocTensor], path: &Path) {
     }
 
     md.push_str("## Notes\n\n");
-    md.push_str("- **Feed safety**: All extra_input tensors are also present as ONNX initializers.\n");
+    md.push_str(
+        "- **Feed safety**: All extra_input tensors are also present as ONNX initializers.\n",
+    );
     md.push_str("  If the engine does not feed a value, the initializer default is used.\n");
     md.push_str("- **Conditional tensors**: Documented per-config above. Only created when the\n");
     md.push_str("  block's parameter exceeds its activation threshold.\n");
     md.push_str("- **Shape convention**: `scalar` = rank-0 tensor; `[N]` = 1D; `[H,W]` = 2D\n");
     md.push_str("- **Data type**: All runtime params are FLOAT (32-bit).\n");
-    md.push_str("- **Tensor naming**: `{Namespace}/{suffix}`. Namespace = block's `tensor_ns()`.\n");
+    md.push_str(
+        "- **Tensor naming**: `{Namespace}/{suffix}`. Namespace = block's `tensor_ns()`.\n",
+    );
     md.push_str("- **Dynamic dims**: `-1` denotes dynamic (H/W) resolved at inference time.\n");
 
     fs::write(path, md).expect("Failed to write API docs");
@@ -806,8 +848,10 @@ fn write_markdown(params: &[DocParam], tensors: &[DocTensor], path: &Path) {
 fn main() {
     let (params, tensors) = collect_all();
     let out_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join("docs")
         .join("api")
         .join("RUNTIME_PARAMS.md");
@@ -815,5 +859,9 @@ fn main() {
     let mut ids: Vec<&str> = params.iter().map(|p| p.block_id).collect();
     ids.sort();
     ids.dedup();
-    println!("Generated {} parameters across {} blocks", params.len(), ids.len());
+    println!(
+        "Generated {} parameters across {} blocks",
+        params.len(),
+        ids.len()
+    );
 }

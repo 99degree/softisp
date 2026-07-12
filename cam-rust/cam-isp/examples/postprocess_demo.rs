@@ -7,9 +7,9 @@
 //!   cargo run --example postprocess_demo -p cam-isp
 //!   cargo run --example postprocess_demo -p cam-isp -- --eis --gdc --denoise
 
-use std::time::Instant;
 use clap::Parser;
 use log::info;
+use std::time::Instant;
 
 use cam_isp::eis::GyroSample;
 use cam_isp::pipeline::IspFrame;
@@ -83,8 +83,14 @@ fn main() {
     let args = Args::parse();
 
     info!("═══ Post-Processing Pipeline Demo ═══");
-    info!("Resolution: {}x{}, Frames: {}", args.width, args.height, args.frames);
-    info!("EIS: {}, GDC: {}, Denoise: {}", args.eis, args.gdc, args.denoise);
+    info!(
+        "Resolution: {}x{}, Frames: {}",
+        args.width, args.height, args.frames
+    );
+    info!(
+        "EIS: {}, GDC: {}, Denoise: {}",
+        args.eis, args.gdc, args.denoise
+    );
 
     // Build post-process config
     let config = PostProcessConfig {
@@ -155,13 +161,25 @@ fn main() {
 
     // Summary
     let avg = frame_latencies.iter().sum::<f64>() / frame_latencies.len() as f64;
-    let min = frame_latencies.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max = frame_latencies.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let min = frame_latencies
+        .iter()
+        .cloned()
+        .fold(f64::INFINITY, f64::min);
+    let max = frame_latencies
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
     let fps = 1000.0 / avg;
 
     info!("═══ Summary ═══");
     info!("Frames: {}", args.frames);
-    info!("Latency: avg={:.2}ms min={:.2}ms max={:.2}ms", avg, min, max);
+    info!(
+        "Latency: avg={:.2}ms min={:.2}ms max={:.2}ms",
+        avg, min, max
+    );
     info!("Throughput: {:.1} FPS", fps);
-    info!("Features: EIS={}, GDC={}, Denoise={}", args.eis, args.gdc, args.denoise);
+    info!(
+        "Features: EIS={}, GDC={}, Denoise={}",
+        args.eis, args.gdc, args.denoise
+    );
 }

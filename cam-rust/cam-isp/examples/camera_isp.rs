@@ -17,12 +17,12 @@
 //!     --engine mnn --width 1920 --height 1080 --frames 10
 
 use std::path::PathBuf;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use log::info;
 
-use cam_isp::engine::{ProcessParams, IspEngine, select_engine, select_engine_by_name};
+use cam_isp::engine::{select_engine, select_engine_by_name, IspEngine, ProcessParams};
 
 #[derive(Parser, Debug)]
 #[clap(about = "Camera → ISP pipeline integration")]
@@ -96,8 +96,14 @@ fn main() {
     let args = Args::parse();
 
     info!("═══ Camera → ISP Pipeline ═══");
-    info!("Resolution: {}x{}, Frames: {}", args.width, args.height, args.frames);
-    info!("Engine: {}, Sensor: {}, Bayer: {}", args.engine, args.sensor_max, args.bayer_pattern);
+    info!(
+        "Resolution: {}x{}, Frames: {}",
+        args.width, args.height, args.frames
+    );
+    info!(
+        "Engine: {}, Sensor: {}, Bayer: {}",
+        args.engine, args.sensor_max, args.bayer_pattern
+    );
     if let Some(ref dev) = args.v4l2 {
         info!("V4L2 device: {}", dev);
     }
@@ -169,7 +175,11 @@ fn main() {
                 if let Err(e) = std::fs::write(&out_path, &frame.data) {
                     log::error!("Failed to save {}: {}", out_path.display(), e);
                 } else {
-                    info!("  Saved: {} ({} bytes)", out_path.display(), frame.data.len());
+                    info!(
+                        "  Saved: {} ({} bytes)",
+                        out_path.display(),
+                        frame.data.len()
+                    );
                 }
 
                 total_latency += latency;
@@ -186,10 +196,19 @@ fn main() {
     info!("Frames processed: {}", frame_latencies.len());
     if !frame_latencies.is_empty() {
         let avg = frame_latencies.iter().sum::<f64>() / frame_latencies.len() as f64;
-        let min = frame_latencies.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max = frame_latencies.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let min = frame_latencies
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min);
+        let max = frame_latencies
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
         let fps = 1000.0 / avg;
-        info!("Latency: avg={:.1}ms min={:.1}ms max={:.1}ms", avg, min, max);
+        info!(
+            "Latency: avg={:.1}ms min={:.1}ms max={:.1}ms",
+            avg, min, max
+        );
         info!("Throughput: {:.1} FPS", fps);
         info!("Output: {}", args.out);
     }

@@ -7,8 +7,8 @@
 //!   ENGINE=vulkan cargo run --example bench_e2e_pipeline -p cam-isp --features mnn
 
 use cam_isp::blocks::*;
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::pipeline::IspBlock;
-use cam_isp::engine::{ProcessParams, OutputFormat};
 use std::time::Instant;
 
 fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
@@ -16,12 +16,13 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
 
     // Build pipeline
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-        Box::new(UnpackBlock::new()
-            .with_concrete_dims(h as i64, w as i64)),
+        Box::new(UnpackBlock::new().with_concrete_dims(h as i64, w as i64)),
         Box::new(DemosaicCcmBlock::new(0)),
-        Box::new(WarpGridBlock::new(w, h)
-            .with_gdc(-0.1, 0.0, 0.0)
-            .with_lens_shading(1.2, 1.0)),
+        Box::new(
+            WarpGridBlock::new(w, h)
+                .with_gdc(-0.1, 0.0, 0.0)
+                .with_lens_shading(1.2, 1.0),
+        ),
         Box::new(DisplayBlock::new(w)),
     ];
 
@@ -29,8 +30,7 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
 
     // Generate ONNX
     let t0 = Instant::now();
-    let onnx = cam_isp::pipeline::GraphComposer::compose_from_vec(
-        &block_refs, &[], 8).unwrap();
+    let onnx = cam_isp::pipeline::GraphComposer::compose_from_vec(&block_refs, &[], 8).unwrap();
     let emit_ms = t0.elapsed().as_secs_f64() * 1000.0;
     println!("  ONNX emit:  {:.2} ms  ({} bytes)", emit_ms, onnx.len());
 
@@ -89,7 +89,10 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let avg: f64 = times.iter().sum::<f64>() / times.len() as f64;
     let p50 = times[times.len() / 2];
-    let p99 = { let idx = ((times.len() as f64 * 0.99) as usize).min(times.len() - 1); times[idx] };
+    let p99 = {
+        let idx = ((times.len() as f64 * 0.99) as usize).min(times.len() - 1);
+        times[idx]
+    };
 
     println!("  Inference ({} iter):", iterations);
     println!("    Avg:   {:.2} ms  ({:.0} FPS)", avg, 1000.0 / avg);
@@ -99,10 +102,10 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
 
 fn main() {
     println!("=== E2E Pipeline Benchmark ===\n");
-    bench_resolution("HD",  1280, 720, 20);
+    bench_resolution("HD", 1280, 720, 20);
     println!();
     bench_resolution("FHD", 1920, 1080, 20);
     println!();
-    bench_resolution("4K",  3840, 2160, 10);
+    bench_resolution("4K", 3840, 2160, 10);
     println!("\nDone.");
 }

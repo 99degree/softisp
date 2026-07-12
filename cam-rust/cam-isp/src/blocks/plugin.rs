@@ -16,8 +16,8 @@
 //!   - Have exactly one float32 output named "output"
 //!   - Be in NCHW format: `[1, C, H, W]`
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 use std::path::{Path, PathBuf};
 
 /// PluginBlock — loads and runs arbitrary ONNX models as ISP blocks.
@@ -60,13 +60,11 @@ impl PluginBlock {
 
     pub fn from_file(model_path: impl AsRef<Path>, block_id: &str) -> Self {
         let path = model_path.as_ref().to_path_buf();
-        let name = path.file_stem()
+        let name = path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(block_id);
-        Self::new(
-            &path.to_string_lossy(),
-            &format!("plugin_{}", name),
-        )
+        Self::new(&path.to_string_lossy(), &format!("plugin_{}", name))
     }
 
     pub fn with_input_channels(mut self, c: i64) -> Self {
@@ -81,43 +79,80 @@ impl PluginBlock {
 }
 
 impl IspBlock for PluginBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { format!("Plugin/{}", self.id) }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        format!("Plugin/{}", self.id)
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1),
-              Proto::tensor_dim_value(self.input_channels),
-              Proto::tensor_dim_param("H"),
-              Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(self.input_channels),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1),
-              Proto::tensor_dim_value(self.output_channels),
-              Proto::tensor_dim_param("H"),
-              Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(self.output_channels),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         // PluginBlock emits a single Identity node.
         // The actual model is loaded separately by the engine at runtime.
         // The ONNX graph here is a placeholder for topology validation.
-        vec![
-            Proto::node("Identity", &[&self.input_source], &[&self.frame_tensor], &[]),
-        ]
+        vec![Proto::node(
+            "Identity",
+            &[&self.input_source],
+            &[&self.frame_tensor],
+            &[],
+        )]
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {

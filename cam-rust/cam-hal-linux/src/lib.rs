@@ -23,8 +23,8 @@ pub mod v4l2_compliance;
 #[cfg(feature = "v4l2")]
 use crate::v4l2::V4l2CameraAdapter;
 
-use log::warn;
 use cam_hal::camera::ICameraAdapter;
+use log::warn;
 
 /// Create a Linux V4L2 camera adapter.
 /// Create a Linux V4L2 camera adapter.
@@ -87,8 +87,8 @@ pub fn capture_single_v4l2_frame(
     // Use ARGB32 (RGBA 8888) fourcc = 0x47503241 "RGBA"
     let mut cfg = rscam::Config::new();
     cfg.resolution(width, height)
-       .format(0x47503241)   // "RGBA" — V4L2_PIX_FMT_RGBA32
-       .frame_rate(30, 1);
+        .format(0x47503241) // "RGBA" — V4L2_PIX_FMT_RGBA32
+        .frame_rate(30, 1);
 
     cam.configure(&cfg)
         .map_err(|e| format!("Failed to configure V4L2 {}x{}: {}", width, height, e))?;
@@ -96,13 +96,15 @@ pub fn capture_single_v4l2_frame(
     cam.start_streaming(1)
         .map_err(|e| format!("Failed to start V4L2 streaming: {}", e))?;
 
-    let buf = cam.read_frame()
+    let buf = cam
+        .read_frame()
         .map_err(|e| format!("Failed to read V4L2 frame: {}", e))?;
 
     let _ = cam.stop_streaming();
 
     // Get actual resolution from format
-    let actual_fmt = cam.get_format()
+    let actual_fmt = cam
+        .get_format()
         .map_err(|_| "Failed to get format".to_string())?;
     let actual_w = actual_fmt.width;
     let actual_h = actual_fmt.height;

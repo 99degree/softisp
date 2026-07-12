@@ -22,15 +22,33 @@ use cam_types::BayerPattern;
 pub struct CalibrationStats(pub [f32; 24]);
 
 impl CalibrationStats {
-    pub fn quad_means(&self) -> &[f32] { &self.0[0..4] }
-    pub fn quad_vars(&self) -> &[f32] { &self.0[4..8] }
-    pub fn quad_mins(&self) -> &[f32] { &self.0[8..12] }
-    pub fn quad_maxs(&self) -> &[f32] { &self.0[12..16] }
-    pub fn quad_ranges(&self) -> &[f32] { &self.0[16..20] }
-    pub fn frame_luminance(&self) -> f32 { self.0[20] }
-    pub fn frame_noise(&self) -> f32 { self.0[21] }
-    pub fn frame_min(&self) -> f32 { self.0[22] }
-    pub fn frame_max(&self) -> f32 { self.0[23] }
+    pub fn quad_means(&self) -> &[f32] {
+        &self.0[0..4]
+    }
+    pub fn quad_vars(&self) -> &[f32] {
+        &self.0[4..8]
+    }
+    pub fn quad_mins(&self) -> &[f32] {
+        &self.0[8..12]
+    }
+    pub fn quad_maxs(&self) -> &[f32] {
+        &self.0[12..16]
+    }
+    pub fn quad_ranges(&self) -> &[f32] {
+        &self.0[16..20]
+    }
+    pub fn frame_luminance(&self) -> f32 {
+        self.0[20]
+    }
+    pub fn frame_noise(&self) -> f32 {
+        self.0[21]
+    }
+    pub fn frame_min(&self) -> f32 {
+        self.0[22]
+    }
+    pub fn frame_max(&self) -> f32 {
+        self.0[23]
+    }
 }
 
 /// Extract calibration statistics from raw Bayer data.
@@ -195,10 +213,10 @@ mod tests {
         for ch in 0..4 {
             for i in 0..9 {
                 let v = match ch {
-                    0 => 0.01,      // dark R
-                    1 => 0.5,       // mid Gr
-                    2 => 0.5,       // mid Gb
-                    3 => 0.99,      // bright B
+                    0 => 0.01, // dark R
+                    1 => 0.5,  // mid Gr
+                    2 => 0.5,  // mid Gb
+                    3 => 0.99, // bright B
                     _ => 0.0,
                 };
                 cfa.push(v + i as f32 * 0.001);

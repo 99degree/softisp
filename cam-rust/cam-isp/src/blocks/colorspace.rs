@@ -33,7 +33,10 @@ pub struct ColorSpaceBlock {
 impl ColorSpaceBlock {
     /// Create with specific conversion.
     pub fn new(conversion: ColorSpace) -> Self {
-        Self { conversion, input_source: String::new() }
+        Self {
+            conversion,
+            input_source: String::new(),
+        }
     }
 
     /// Create RGB to HSV converter.
@@ -88,7 +91,9 @@ impl IspBlock for ColorSpaceBlock {
         }
     }
 
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
 
     fn frame_tensor(&self) -> Option<&str> {
         Some(match self.conversion {
@@ -133,51 +138,47 @@ impl ColorSpaceBlock {
     fn rgb_to_hsv_nodes(&self) -> Vec<Vec<u8>> {
         // RGB to HSV: Simplified passthrough for now
         // Full implementation requires complex per-pixel logic
-        let input = if self.input_source.is_empty() { format!("{}/input", self.id()) } else { self.input_source.clone() };
-        vec![
-            Proto::node(
-                "Identity",
-                &[&input],
-                &[self.frame_tensor().unwrap_or("colorspace/output")],
-                &[],
-            ),
-        ]
+        let input = if self.input_source.is_empty() {
+            format!("{}/input", self.id())
+        } else {
+            self.input_source.clone()
+        };
+        vec![Proto::node(
+            "Identity",
+            &[&input],
+            &[self.frame_tensor().unwrap_or("colorspace/output")],
+            &[],
+        )]
     }
 
     fn hsv_to_rgb_nodes(&self) -> Vec<Vec<u8>> {
         // HSV to RGB (placeholder - real implementation is complex)
-        vec![
-            Proto::node(
-                "Identity",
-                &[&format!("{}/input", self.id())],
-                &[&format!("{}/output", self.id())],
-                &[],
-            ),
-        ]
+        vec![Proto::node(
+            "Identity",
+            &[&format!("{}/input", self.id())],
+            &[&format!("{}/output", self.id())],
+            &[],
+        )]
     }
 
     fn rgb_to_lab_nodes(&self) -> Vec<Vec<u8>> {
         // RGB to LAB (simplified)
-        vec![
-            Proto::node(
-                "Identity",
-                &[&format!("{}/input", self.id())],
-                &[&format!("{}/output", self.id())],
-                &[],
-            ),
-        ]
+        vec![Proto::node(
+            "Identity",
+            &[&format!("{}/input", self.id())],
+            &[&format!("{}/output", self.id())],
+            &[],
+        )]
     }
 
     fn lab_to_rgb_nodes(&self) -> Vec<Vec<u8>> {
         // LAB to RGB (simplified)
-        vec![
-            Proto::node(
-                "Identity",
-                &[&format!("{}/input", self.id())],
-                &[&format!("{}/output", self.id())],
-                &[],
-            ),
-        ]
+        vec![Proto::node(
+            "Identity",
+            &[&format!("{}/input", self.id())],
+            &[&format!("{}/output", self.id())],
+            &[],
+        )]
     }
 
     fn rgb_to_ycbcr_nodes(&self) -> Vec<Vec<u8>> {
@@ -198,14 +199,12 @@ impl ColorSpaceBlock {
 
     fn ycbcr_to_rgb_nodes(&self) -> Vec<Vec<u8>> {
         // YCbCr to RGB (BT.601)
-        vec![
-            Proto::node(
-                "Identity",
-                &[&format!("{}/input", self.id())],
-                &[&format!("{}/output", self.id())],
-                &[],
-            ),
-        ]
+        vec![Proto::node(
+            "Identity",
+            &[&format!("{}/input", self.id())],
+            &[&format!("{}/output", self.id())],
+            &[],
+        )]
     }
 }
 

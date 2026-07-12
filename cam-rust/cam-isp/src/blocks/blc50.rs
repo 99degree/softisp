@@ -12,8 +12,8 @@
 //! The dark frame is captured once during calibration and stored as an
 //! initializer tensor. The subtraction is per-pixel, per-channel.
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// Blc50Block — 50Hz FPN subtraction via dark frame.
 pub struct Blc50Block {
@@ -51,27 +51,60 @@ impl Blc50Block {
 }
 
 impl IspBlock for Blc50Block {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "Blc50".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "Blc50".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
-    fn output_value_info(&self) -> Option<Vec<u8>> { self.input_value_info() }
+    fn output_value_info(&self) -> Option<Vec<u8>> {
+        self.input_value_info()
+    }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
@@ -99,9 +132,11 @@ impl IspBlock for Blc50Block {
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![
-            (format!("{}/{}", self.tensor_ns(), "dark_frame"), 1, vec![1, 3, 1, 1]),
-        ]
+        vec![(
+            format!("{}/{}", self.tensor_ns(), "dark_frame"),
+            1,
+            vec![1, 3, 1, 1],
+        )]
     }
 }
 

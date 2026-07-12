@@ -1,5 +1,5 @@
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// Fused Demosaic + CCM block — single Conv1×1 with runtime‑fused weights.
 ///
@@ -69,25 +69,21 @@ impl DemosaicCcmBlock {
     /// Demosaic weights `[3, 4, 1, 1]` — same as DemosaicBlock.
     pub fn demosaic_weights(&self) -> Vec<f32> {
         match self.bayer_pattern {
-            0 => vec![ // RGGB
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 0.5, 0.5, 0.0,
-                0.0, 0.0, 0.0, 1.0,
+            0 => vec![
+                // RGGB
+                1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0,
             ],
-            1 => vec![ // GRBG
-                0.0, 1.0, 0.0, 0.0,
-                0.5, 0.0, 0.0, 0.5,
-                0.0, 0.0, 1.0, 0.0,
+            1 => vec![
+                // GRBG
+                0.0, 1.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.5, 0.0, 0.0, 1.0, 0.0,
             ],
-            2 => vec![ // GBRG
-                0.0, 0.0, 1.0, 0.0,
-                0.5, 0.0, 0.0, 0.5,
-                0.0, 1.0, 0.0, 0.0,
+            2 => vec![
+                // GBRG
+                0.0, 0.0, 1.0, 0.0, 0.5, 0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0,
             ],
-            _ => vec![ // BGGR
-                0.0, 0.0, 0.0, 1.0,
-                0.0, 0.5, 0.5, 0.0,
-                1.0, 0.0, 0.0, 0.0,
+            _ => vec![
+                // BGGR
+                0.0, 0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 0.0,
             ],
         }
     }
@@ -104,8 +100,14 @@ impl DemosaicCcmBlock {
     /// fused_bias`[i]` = - Σⱼ fused_w`[i,j]` · blcⱼ
     ///
     /// Call at runtime when CCM, WB gains, or BLC offsets change.
-    pub fn fuse_weights_ext(&self, ccm_matrix: &[f32; 9], wb_gains: &[f32; 4], blc_vals: &[f32; 4], sensor_max: f32) -> (Vec<f32>, Vec<f32>) {
-        let demo = self.demosaic_weights();     // [3, 4] row-major
+    pub fn fuse_weights_ext(
+        &self,
+        ccm_matrix: &[f32; 9],
+        wb_gains: &[f32; 4],
+        blc_vals: &[f32; 4],
+        sensor_max: f32,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let demo = self.demosaic_weights(); // [3, 4] row-major
         let sm = sensor_max;
         // fused_w[i,j] = Σₖ ccm[i,k] * demo[k,j] * wb_gains[j] / sensor_max
         let mut fused_w = vec![0.0f32; 12];
@@ -143,7 +145,9 @@ impl DemosaicCcmBlock {
     /// otherwise `graph_input_name()`.
     fn effective_input(&self) -> String {
         if self.input_source.is_empty() {
-            self.graph_input_name().unwrap_or("DemosaicCcmBlock/frame").to_string()
+            self.graph_input_name()
+                .unwrap_or("DemosaicCcmBlock/frame")
+                .to_string()
         } else {
             self.input_source.clone()
         }
@@ -151,27 +155,49 @@ impl DemosaicCcmBlock {
 }
 
 impl IspBlock for DemosaicCcmBlock {
-    fn id(&self) -> &str { &self.id }
+    fn id(&self) -> &str {
+        &self.id
+    }
 
     fn tensor_ns(&self) -> String {
         "DemosaicCcmBlock".to_string()
     }
 
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
 
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
 
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn input_elem_type(&self) -> i32 { 1 } // FLOAT — accepts F32 Bayer planes
+    fn input_elem_type(&self) -> i32 {
+        1
+    } // FLOAT — accepts F32 Bayer planes
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let dims: Vec<Vec<u8>> = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
@@ -230,7 +256,11 @@ impl IspBlock for DemosaicCcmBlock {
             // Clip to [0, 1]
             Proto::node(
                 "Clip",
-                &[&format!("{}/conv_out", ns), &format!("{}/zero", ns), &format!("{}/one", ns)],
+                &[
+                    &format!("{}/conv_out", ns),
+                    &format!("{}/zero", ns),
+                    &format!("{}/one", ns),
+                ],
                 &[&self.frame_tensor],
                 &[],
             ),
@@ -243,17 +273,9 @@ impl IspBlock for DemosaicCcmBlock {
         let sm = self.sensor_max;
         let raw_w: Vec<f32> = self.demosaic_weights().iter().map(|v| v / sm).collect();
         vec![
-            Proto::tensor_proto_float(
-                &format!("{}/w", ns),
-                &[3, 4, 1, 1],
-                &raw_w,
-            ),
+            Proto::tensor_proto_float(&format!("{}/w", ns), &[3, 4, 1, 1], &raw_w),
             // Bias [3]
-            Proto::tensor_proto_float(
-                &format!("{}/b", ns),
-                &[3],
-                &[0.0; 3],
-            ),
+            Proto::tensor_proto_float(&format!("{}/b", ns), &[3], &[0.0; 3]),
             // Clip constants
             Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
             Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
@@ -287,7 +309,11 @@ mod tests {
     fn test_demosaic_ccm_initializers() {
         let block = DemosaicCcmBlock::new(0);
         let inits = block.initializers();
-        assert_eq!(inits.len(), 4, "Should have 4 initializers (w, b, zero, one)");
+        assert_eq!(
+            inits.len(),
+            4,
+            "Should have 4 initializers (w, b, zero, one)"
+        );
         // w should be demosaic/sensor_max
         let raw_w = block.demosaic_weights();
         let _sm = block.sensor_max; // 1023.0
@@ -320,7 +346,7 @@ mod tests {
     fn test_fuse_weights_identity() {
         // fuse_weights(identity) should produce demosaic_weights / sensor_max
         let block = DemosaicCcmBlock::new(0);
-        let identity: [f32; 9] = [1.0,0.0,0.0, 0.0,1.0,0.0, 0.0,0.0,1.0];
+        let identity: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let fused = block.fuse_weights(&identity);
         let raw = block.demosaic_weights();
         assert_eq!(fused.len(), raw.len());
@@ -334,7 +360,7 @@ mod tests {
     fn test_fuse_weights_ext_normalized() {
         // fuse_weights_ext should produce demosaic * CCM / sensor_max
         let block = DemosaicCcmBlock::new(0);
-        let identity: [f32; 9] = [1.0,0.0,0.0, 0.0,1.0,0.0, 0.0,0.0,1.0];
+        let identity: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let wb = [1.0, 1.0, 1.0, 1.0];
         let blc = [0.0, 0.0, 0.0, 0.0];
         let sm = 1023.0;
@@ -346,8 +372,13 @@ mod tests {
         for i in 0..12 {
             let j = i % 4;
             let expected = raw[i] * wb[j] / sm;
-            assert!((fused_w[i] - expected).abs() < 1e-6,
-                "w[{}]: {} vs {}", i, fused_w[i], expected);
+            assert!(
+                (fused_w[i] - expected).abs() < 1e-6,
+                "w[{}]: {} vs {}",
+                i,
+                fused_w[i],
+                expected
+            );
         }
         // bias should be 0 (blc=0, wb=1 → -Σ fused*1*0 = 0)
         for i in 0..3 {
@@ -359,7 +390,7 @@ mod tests {
     fn test_fuse_weights_ext_blc_wb() {
         // With non-zero blc and wb, verify bias calculation
         let block = DemosaicCcmBlock::new(0); // RGGB
-        let identity: [f32; 9] = [1.0,0.0,0.0, 0.0,1.0,0.0, 0.0,0.0,1.0];
+        let identity: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let wb = [2.0, 1.5, 1.5, 2.0];
         let blc = [16.0, 8.0, 8.0, 16.0];
         let sm = 1023.0;
@@ -368,33 +399,59 @@ mod tests {
         // fused_w[i,j] = demosaic[i,j] * ccm[i,i] * wb[j] / 1023
         // R: w[0,0]=1*1*2/1023, w[0,1]=0, w[0,2]=0, w[0,3]=0
         let expected_w0 = 1.0 * 1.0 * 2.0 / 1023.0;
-        assert!((fused_w[0] - expected_w0).abs() < 1e-6, "w[0]: {} vs {}", fused_w[0], expected_w0);
+        assert!(
+            (fused_w[0] - expected_w0).abs() < 1e-6,
+            "w[0]: {} vs {}",
+            fused_w[0],
+            expected_w0
+        );
         // G: w[1,0]=0, w[1,1]=0.5*1*1.5/1023, w[1,2]=0.5*1*1.5/1023, w[1,3]=0
         let expected_w5 = 0.5 * 1.0 * 1.5 / 1023.0;
         let expected_w6 = 0.5 * 1.0 * 1.5 / 1023.0;
-        assert!((fused_w[5] - expected_w5).abs() < 1e-6, "w[5]: {} vs {}", fused_w[5], expected_w5);
-        assert!((fused_w[6] - expected_w6).abs() < 1e-6, "w[6]: {} vs {}", fused_w[6], expected_w6);
+        assert!(
+            (fused_w[5] - expected_w5).abs() < 1e-6,
+            "w[5]: {} vs {}",
+            fused_w[5],
+            expected_w5
+        );
+        assert!(
+            (fused_w[6] - expected_w6).abs() < 1e-6,
+            "w[6]: {} vs {}",
+            fused_w[6],
+            expected_w6
+        );
         // bias[0] = -Σ_j fused_w[0,j] * blc[j]  (wb already in fused_w)
         // fused_w[0,0] = demosaic[0,0]*wb[0]/1023 = 2/1023
         // bias[0] = -(2/1023) * 16 = -32/1023
         let expected_b0 = -(1.0 * 2.0 / 1023.0) * 16.0;
-        assert!((fused_b[0] - expected_b0).abs() < 1e-6, "b[0]: {} vs {}", fused_b[0], expected_b0);
+        assert!(
+            (fused_b[0] - expected_b0).abs() < 1e-6,
+            "b[0]: {} vs {}",
+            fused_b[0],
+            expected_b0
+        );
     }
 
     #[test]
     fn test_demosaic_ccm_pipeline_integration() {
-        let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
-            .with_elem_type(1).with_concrete_dims(48, 64));
+        let b1: Box<dyn IspBlock> = Box::new(
+            crate::blocks::RawInputBlock::new()
+                .with_elem_type(1)
+                .with_concrete_dims(48, 64),
+        );
         let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
-        let b3: Box<dyn IspBlock> = Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
+        let b3: Box<dyn IspBlock> =
+            Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
         let b4: Box<dyn IspBlock> = Box::new(DemosaicCcmBlock::new(2).with_concrete_dims(24, 32));
 
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![b1, b2, b3, b4];
         GraphComposer::wire_blocks(&mut blocks);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let result = GraphComposer::compose_from_vec(&refs, &[], 16);
-        assert!(result.is_ok(), "Pipeline through DemosaicCcmBlock: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Pipeline through DemosaicCcmBlock: {:?}",
+            result.err()
+        );
     }
-
-
 }

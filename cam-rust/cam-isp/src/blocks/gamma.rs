@@ -21,8 +21,8 @@
 //!   - HDR -> SDR tone mapping via gamma
 //!   - Film-like curves with shadow lift
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// GammaBlock — sRGB gamma correction via Log→Mul→Exp.
 ///
@@ -58,15 +58,33 @@ impl GammaBlock {
 }
 
 impl IspBlock for GammaBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "Gamma".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "Gamma".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
     fn input_tensors(&self) -> Vec<String> {
         vec![self.input_source.clone()]
@@ -83,15 +101,27 @@ impl IspBlock for GammaBlock {
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -103,18 +133,17 @@ impl IspBlock for GammaBlock {
         let min_name = format!("{}/min", ns);
         let max_name = format!("{}/max", ns);
         nodes.push(Proto::node(
-            "Max", &[&self.input_source, &min_name], &[&clamped], &[],
+            "Max",
+            &[&self.input_source, &min_name],
+            &[&clamped],
+            &[],
         ));
-        nodes.push(Proto::node(
-            "Min", &[&clamped, &max_name], &[&clamped], &[],
-        ));
+        nodes.push(Proto::node("Min", &[&clamped, &max_name], &[&clamped], &[]));
 
         // 2. Add epsilon to avoid log(0)
         let eps_name = format!("{}/eps", ns);
         let safe = format!("{}/safe", ns);
-        nodes.push(Proto::node(
-            "Add", &[&clamped, &eps_name], &[&safe], &[],
-        ));
+        nodes.push(Proto::node("Add", &[&clamped, &eps_name], &[&safe], &[]));
 
         // 3. Log → Mul(inv_gamma) → Exp  (pow(x, 1/gamma))
         let log_out = format!("{}/log", ns);
@@ -135,11 +164,12 @@ impl IspBlock for GammaBlock {
             let lift_name = format!("{}/lift", ns);
             let lifted = format!("{}/lifted", ns);
             let norm_name = format!("{}/norm", ns);
+            nodes.push(Proto::node("Add", &[&output, &lift_name], &[&lifted], &[]));
             nodes.push(Proto::node(
-                "Add", &[&output, &lift_name], &[&lifted], &[],
-            ));
-            nodes.push(Proto::node(
-                "Mul", &[&lifted, &norm_name], &[&self.frame_tensor], &[],
+                "Mul",
+                &[&lifted, &norm_name],
+                &[&self.frame_tensor],
+                &[],
             ));
         }
 
@@ -152,24 +182,36 @@ impl IspBlock for GammaBlock {
 
         // Clamp bounds
         inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/min", ns), 0.0));
+            &format!("{}/min", ns),
+            0.0,
+        ));
         inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/max", ns), 1.0));
+            &format!("{}/max", ns),
+            1.0,
+        ));
 
         // Epsilon
         inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/eps", ns), 1e-6));
+            &format!("{}/eps", ns),
+            1e-6,
+        ));
 
         // Inverse gamma: pow(x, 1/gamma) = exp(log(x) / gamma)
         inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/inv_gamma", ns), 1.0 / self.gamma));
+            &format!("{}/inv_gamma", ns),
+            1.0 / self.gamma,
+        ));
 
         // Shadow lift parameters
         if self.shadow_lift > 0.0 {
             inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/lift", ns), self.shadow_lift));
+                &format!("{}/lift", ns),
+                self.shadow_lift,
+            ));
             inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/norm", ns), 1.0 / (1.0 + self.shadow_lift)));
+                &format!("{}/norm", ns),
+                1.0 / (1.0 + self.shadow_lift),
+            ));
         }
 
         inits
@@ -201,7 +243,11 @@ mod tests {
         // Log + Mul + Exp + Max + Min + Add(eps) = 6 nodes
         assert!(nodes.len() >= 5, "need >= 5 nodes, got {}", nodes.len());
         let inits = block.initializers();
-        assert!(inits.len() >= 4, "need >= 4 initializers, got {}", inits.len());
+        assert!(
+            inits.len() >= 4,
+            "need >= 4 initializers, got {}",
+            inits.len()
+        );
     }
 
     #[test]
@@ -209,7 +255,11 @@ mod tests {
         let block = GammaBlock::new(2.2).with_shadow_lift(0.05);
         let nodes = block.nodes();
         // Extra Add + Mul for shadow lift
-        assert!(nodes.len() >= 7, "shadow lift needs >= 7 nodes, got {}", nodes.len());
+        assert!(
+            nodes.len() >= 7,
+            "shadow lift needs >= 7 nodes, got {}",
+            nodes.len()
+        );
     }
 
     #[test]
@@ -217,10 +267,13 @@ mod tests {
         let block = GammaBlock::new(2.2);
         let inits = block.initializers();
         // Check inv_gamma = 1/2.2 ≈ 0.4545
-        assert!(inits.iter().any(|i| {
-            let s = String::from_utf8_lossy(i);
-            s.contains("inv_gamma")
-        }), "must have inv_gamma initializer");
+        assert!(
+            inits.iter().any(|i| {
+                let s = String::from_utf8_lossy(i);
+                s.contains("inv_gamma")
+            }),
+            "must have inv_gamma initializer"
+        );
     }
 
     #[test]

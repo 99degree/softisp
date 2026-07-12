@@ -8,11 +8,9 @@
 
 use std::os::raw::c_int;
 
-use cam_hal::buffer::{CameraBuffer};
+use cam_hal::buffer::CameraBuffer;
 
-use crate::adapter::ahardware_buffer::{
-    AHardwareBuffer, AHardwareBuffer_Desc,
-};
+use crate::adapter::ahardware_buffer::{AHardwareBuffer, AHardwareBuffer_Desc};
 
 // ── native_handle_t FFI ────────────────────────────────────────────────────
 //
@@ -59,8 +57,14 @@ pub trait GrallocInterop: Send + Sync {
     ///
     /// # Safety
     /// `handle` must be a valid `BufferHandleT` from a `camera3_stream_buffer_t`.
-    unsafe fn import(&self, handle: BufferHandleT, format: i32, width: u32, height: u32, frame_number: u64)
-        -> Result<Box<dyn CameraBuffer>, String>;
+    unsafe fn import(
+        &self,
+        handle: BufferHandleT,
+        format: i32,
+        width: u32,
+        height: u32,
+        frame_number: u64,
+    ) -> Result<Box<dyn CameraBuffer>, String>;
 
     /// Allocate a new gralloc buffer (for internal processing).
     fn allocate(&self, desc: &AHardwareBuffer_Desc) -> Result<Box<dyn CameraBuffer>, String>;
@@ -89,7 +93,11 @@ impl GrallocInterop for AHardwareBufferInterop {
             return Err("AHardwareBuffer_fromHardwareBuffer returned NULL".to_string());
         }
         Ok(Box::new(crate::adapter::AHardwareBufferBacked::new(
-            ahb, width, height, format, frame_number,
+            ahb,
+            width,
+            height,
+            format,
+            frame_number,
         )))
     }
 
@@ -101,7 +109,11 @@ impl GrallocInterop for AHardwareBufferInterop {
         }
         unsafe {
             Ok(Box::new(crate::adapter::AHardwareBufferBacked::new(
-                ahb, desc.width, desc.height, desc.format as i32, 0,
+                ahb,
+                desc.width,
+                desc.height,
+                desc.format as i32,
+                0,
             )))
         }
     }
@@ -138,9 +150,7 @@ impl GrallocInterop for RawFdInterop {
             .find(|&fd| fd != -1)
             .ok_or("No valid fd in native_handle")?;
 
-        let buf = crate::adapter::MmapFdCameraBuffer::new(
-            fd, format, width, height, frame_number,
-        )?;
+        let buf = crate::adapter::MmapFdCameraBuffer::new(fd, format, width, height, frame_number)?;
         Ok(Box::new(buf))
     }
 
@@ -149,7 +159,10 @@ impl GrallocInterop for RawFdInterop {
         // Fall back to heap for internal allocations.
         let size = (desc.width as usize) * (desc.height as usize) * 4; // assume RGBA
         Ok(Box::new(cam_hal::buffer::GenericCameraBuffer::new(
-            desc.width, desc.height, desc.stride, desc.format as i32,
+            desc.width,
+            desc.height,
+            desc.stride,
+            desc.format as i32,
             Box::new(cam_hal::buffer::HeapBuffer::new(size)),
         )))
     }

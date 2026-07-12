@@ -8,8 +8,8 @@
 //! - display_rgba_w / display_argb_w / display_agbr_w (format+width)
 //! - workgroup on WarpGridBlock through builder
 
-use cam_isp::pipeline_builder::PipelineBuilder;
 use cam_isp::blocks::ToneOperator;
+use cam_isp::pipeline_builder::PipelineBuilder;
 
 #[test]
 fn test_builder_compose_to_file() {
@@ -22,7 +22,11 @@ fn test_builder_compose_to_file() {
         .expect("should compose");
     assert!(len > 100, "compose produced valid ONNX: {} bytes", len);
     let metadata = std::fs::metadata(path).expect("file should exist");
-    assert_eq!(metadata.len() as usize, len, "file size matches compose length");
+    assert_eq!(
+        metadata.len() as usize,
+        len,
+        "file size matches compose length"
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -50,8 +54,16 @@ fn test_builder_compose_and_time() {
         .compose_and_time()
         .expect("should compose");
     assert!(onnx.len() > 100, "ONNX bytes: {}", onnx.len());
-    assert!(elapsed.as_secs_f64() > 0.0, "elapsed must be positive: {:?}", elapsed);
-    assert!(elapsed.as_secs() < 60, "compose should be fast: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs_f64() > 0.0,
+        "elapsed must be positive: {:?}",
+        elapsed
+    );
+    assert!(
+        elapsed.as_secs() < 60,
+        "compose should be fast: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -146,7 +158,10 @@ fn test_builder_replace_block() {
         .display();
     let replaced = b.replace_block("gamma", Box::new(GammaBlock::new(1.8)));
     assert!(replaced, "replace_block should succeed");
-    assert!(b.block_ids().contains(&"gamma".to_string()), "gamma still in pipeline");
+    assert!(
+        b.block_ids().contains(&"gamma".to_string()),
+        "gamma still in pipeline"
+    );
 }
 
 #[test]
@@ -160,13 +175,19 @@ fn test_builder_display_all_format_methods() {
     let agbr = PipelineBuilder::new(640, 480).unpack().display_agbr();
     assert_eq!(agbr.block_count(), 2);
 
-    let rgba_w = PipelineBuilder::new(1920, 1080).unpack().display_rgba_w(960);
+    let rgba_w = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .display_rgba_w(960);
     assert_eq!(rgba_w.block_count(), 2);
 
-    let argb_w = PipelineBuilder::new(1920, 1080).unpack().display_argb_w(960);
+    let argb_w = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .display_argb_w(960);
     assert_eq!(argb_w.block_count(), 2);
 
-    let agbr_w = PipelineBuilder::new(1920, 1080).unpack().display_agbr_w(960);
+    let agbr_w = PipelineBuilder::new(1920, 1080)
+        .unpack()
+        .display_agbr_w(960);
     assert_eq!(agbr_w.block_count(), 2);
 }
 
@@ -175,10 +196,19 @@ fn test_builder_from_config_roundtrip() {
     use cam_isp::serializer::PipelineConfig;
 
     let mut cfg = PipelineConfig::new(1920, 1080);
-    cfg.block_ids = vec!["unpack".into(), "demosaic".into(), "gamma".into(), "display".into()];
+    cfg.block_ids = vec![
+        "unpack".into(),
+        "demosaic".into(),
+        "gamma".into(),
+        "display".into(),
+    ];
 
     let b = PipelineBuilder::from_config(&cfg);
-    assert_eq!(b.block_count(), 4, "should reconstruct 4 blocks from config");
+    assert_eq!(
+        b.block_count(),
+        4,
+        "should reconstruct 4 blocks from config"
+    );
 
     let onnx = b.compose().expect("reconstructed pipeline should compose");
     assert!(onnx.len() > 100);
@@ -209,8 +239,8 @@ fn test_builder_workgroup_via_add() {
 
     let b = PipelineBuilder::new(640, 480)
         .unpack()
-        .push(Box::new(WarpGridBlock::new(32, 32).workgroup(32, 8)))  // Mali preset
-        .push(Box::new(DisplayBlock::new(640).rgba().workgroup(64, 4)))  // Adreno preset
+        .push(Box::new(WarpGridBlock::new(32, 32).workgroup(32, 8))) // Mali preset
+        .push(Box::new(DisplayBlock::new(640).rgba().workgroup(64, 4))) // Adreno preset
         .compose()
         .expect("should compose");
     assert!(b.len() > 100);
@@ -226,7 +256,11 @@ fn test_builder_compose_full_includes_stats() {
         .compose_full()
         .expect("should compose");
     assert!(onnx.len() > 100, "ONNX bytes: {}", onnx.len());
-    assert!(stats.block_count >= 4, "stats block_count: {}", stats.block_count);
+    assert!(
+        stats.block_count >= 4,
+        "stats block_count: {}",
+        stats.block_count
+    );
 }
 
 #[test]
@@ -246,15 +280,27 @@ fn test_builder_all_stats() {
 
 #[test]
 fn test_builder_presets_compose() {
-    let photo = PipelineBuilder::photo_preset(1920, 1080).compose().expect("photo");
-    let video = PipelineBuilder::video_preset(1920, 1080).compose().expect("video");
-    let night = PipelineBuilder::night_preset(1920, 1080).compose().expect("night");
-    let minimal = PipelineBuilder::minimal_preset(640, 480).compose().expect("minimal");
+    let photo = PipelineBuilder::photo_preset(1920, 1080)
+        .compose()
+        .expect("photo");
+    let video = PipelineBuilder::video_preset(1920, 1080)
+        .compose()
+        .expect("video");
+    let night = PipelineBuilder::night_preset(1920, 1080)
+        .compose()
+        .expect("night");
+    let minimal = PipelineBuilder::minimal_preset(640, 480)
+        .compose()
+        .expect("minimal");
 
     assert!(photo.len() > 1000, "photo preset: {} bytes", photo.len());
     assert!(video.len() > 1000, "video preset: {} bytes", video.len());
     assert!(night.len() > 1000, "night preset: {} bytes", night.len());
-    assert!(minimal.len() > 100, "minimal preset: {} bytes", minimal.len());
+    assert!(
+        minimal.len() > 100,
+        "minimal preset: {} bytes",
+        minimal.len()
+    );
 }
 
 #[test]
@@ -316,20 +362,25 @@ fn test_builder_cost_estimator() {
 
 #[test]
 fn test_builder_cost_scales_with_resolution() {
-    let (flops_small, _) = PipelineBuilder::new(640, 480)
-        .unpack().display().cost();
-    let (flops_large, _) = PipelineBuilder::new(3840, 2160)
-        .unpack().display().cost();
+    let (flops_small, _) = PipelineBuilder::new(640, 480).unpack().display().cost();
+    let (flops_large, _) = PipelineBuilder::new(3840, 2160).unpack().display().cost();
     assert!(flops_large > flops_small, "4K should cost more than HD");
 }
 
 #[test]
 fn test_builder_cost_varies_by_pipeline() {
-    let (flops_simple, _) = PipelineBuilder::new(1920, 1080)
-        .unpack().display().cost();
+    let (flops_simple, _) = PipelineBuilder::new(1920, 1080).unpack().display().cost();
     let (flops_full, _) = PipelineBuilder::new(1920, 1080)
-        .unpack().demosaic_binning().gamma(2.2).sharpen(0.5).display().cost();
-    assert!(flops_full > flops_simple, "Full pipeline should cost more than simple");
+        .unpack()
+        .demosaic_binning()
+        .gamma(2.2)
+        .sharpen(0.5)
+        .display()
+        .cost();
+    assert!(
+        flops_full > flops_simple,
+        "Full pipeline should cost more than simple"
+    );
 }
 
 #[test]

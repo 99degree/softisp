@@ -33,8 +33,12 @@ impl ImuData {
 impl Default for ImuData {
     fn default() -> Self {
         Self {
-            gyro_x: 0.0, gyro_y: 0.0, gyro_z: 0.0,
-            accel_x: 0.0, accel_y: 0.0, accel_z: 0.0,
+            gyro_x: 0.0,
+            gyro_y: 0.0,
+            gyro_z: 0.0,
+            accel_x: 0.0,
+            accel_y: 0.0,
+            accel_z: 0.0,
             timestamp_ns: 0,
         }
     }
@@ -58,8 +62,11 @@ pub struct MotionCorrection {
 impl Default for MotionCorrection {
     fn default() -> Self {
         Self {
-            delta_x: 0.0, delta_y: 0.0, delta_angle: 0.0,
-            confidence: 1.0, stabilized: false,
+            delta_x: 0.0,
+            delta_y: 0.0,
+            delta_angle: 0.0,
+            confidence: 1.0,
+            stabilized: false,
         }
     }
 }
@@ -106,7 +113,12 @@ impl EisStabilizer {
     ///
     /// `focal_length_px` is the approximate focal length in pixels (e.g. `width * 1.2`).
     /// `sensitivity` scales gyro → pixel displacement (default 0.02).
-    pub fn compute_correction(&mut self, imu: &ImuData, focal_length_px: f32, sensitivity: f32) -> MotionCorrection {
+    pub fn compute_correction(
+        &mut self,
+        imu: &ImuData,
+        focal_length_px: f32,
+        sensitivity: f32,
+    ) -> MotionCorrection {
         // Convert gyro (rad/s) to pixel displacement
         let raw_dx = imu.gyro_y * sensitivity * focal_length_px;
         let raw_dy = imu.gyro_x * sensitivity * focal_length_px;
@@ -141,9 +153,12 @@ impl EisStabilizer {
 
         // EMA smoothing
         let smooth = MotionCorrection {
-            delta_x: self.prev_correction.delta_x + (avg.delta_x - self.prev_correction.delta_x) * self.smooth_factor,
-            delta_y: self.prev_correction.delta_y + (avg.delta_y - self.prev_correction.delta_y) * self.smooth_factor,
-            delta_angle: self.prev_correction.delta_angle + (avg.delta_angle - self.prev_correction.delta_angle) * self.smooth_factor,
+            delta_x: self.prev_correction.delta_x
+                + (avg.delta_x - self.prev_correction.delta_x) * self.smooth_factor,
+            delta_y: self.prev_correction.delta_y
+                + (avg.delta_y - self.prev_correction.delta_y) * self.smooth_factor,
+            delta_angle: self.prev_correction.delta_angle
+                + (avg.delta_angle - self.prev_correction.delta_angle) * self.smooth_factor,
             confidence: 1.0 / (1.0 + imu.gyro_magnitude()),
             stabilized: true,
         };
@@ -183,7 +198,11 @@ mod tests {
 
     #[test]
     fn test_gyro_magnitude() {
-        let imu = ImuData { gyro_x: 3.0, gyro_y: 4.0, ..Default::default() };
+        let imu = ImuData {
+            gyro_x: 3.0,
+            gyro_y: 4.0,
+            ..Default::default()
+        };
         assert!((imu.gyro_magnitude() - 5.0).abs() < 1e-6);
     }
 
@@ -198,7 +217,11 @@ mod tests {
     #[test]
     fn test_stabilizer_initial_correction() {
         let mut stab = EisStabilizer::new();
-        let imu = ImuData { gyro_x: 0.1, gyro_y: 0.05, ..Default::default() };
+        let imu = ImuData {
+            gyro_x: 0.1,
+            gyro_y: 0.05,
+            ..Default::default()
+        };
         let corr = stab.compute_correction(&imu, 100.0, 0.02);
         assert!(corr.stabilized);
         assert!(corr.confidence > 0.0 && corr.confidence <= 1.0);
@@ -207,7 +230,11 @@ mod tests {
     #[test]
     fn test_stabilizer_convergence() {
         let mut stab = EisStabilizer::with_smooth(0.8);
-        let imu = ImuData { gyro_x: 0.2, gyro_y: 0.0, ..Default::default() };
+        let imu = ImuData {
+            gyro_x: 0.2,
+            gyro_y: 0.0,
+            ..Default::default()
+        };
         // After multiple frames with same input, correction should converge to steady state
         let mut last_dx = 0.0;
         for _ in 0..20 {
@@ -225,7 +252,10 @@ mod tests {
     #[test]
     fn test_stabilizer_reset() {
         let mut stab = EisStabilizer::new();
-        let imu = ImuData { gyro_x: 1.0, ..Default::default() };
+        let imu = ImuData {
+            gyro_x: 1.0,
+            ..Default::default()
+        };
         stab.compute_correction(&imu, 100.0, 0.02);
         stab.reset();
         let corr = stab.compute_correction(&ImuData::default(), 100.0, 0.02);

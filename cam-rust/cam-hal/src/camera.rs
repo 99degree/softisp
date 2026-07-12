@@ -20,7 +20,7 @@
 //! Camera → ByteFrame → ISP Pipeline → Output
 //! ```
 
-use cam_types::{FrameFormat, CameraSourceType};
+use cam_types::{CameraSourceType, FrameFormat};
 
 /// A byte frame sent from the camera adapter to the ISP pipeline.
 ///
@@ -50,12 +50,22 @@ pub struct ByteFrame {
 impl ByteFrame {
     /// Create an empty frame.
     pub fn empty() -> Self {
-        Self { data: Vec::new(), width: 0, height: 0, format: FrameFormat::Rgba8888, timestamp: 0 }
+        Self {
+            data: Vec::new(),
+            width: 0,
+            height: 0,
+            format: FrameFormat::Rgba8888,
+            timestamp: 0,
+        }
     }
 
     /// Frame size in bytes.
-    pub fn len(&self) -> usize { self.data.len() }
-    pub fn is_empty(&self) -> bool { self.data.is_empty() }
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
 }
 
 /// Frame callback type.
@@ -81,7 +91,12 @@ pub struct StreamConfig {
 
 impl StreamConfig {
     pub fn new(width: u32, height: u32, format: FrameFormat) -> Self {
-        Self { width, height, format, fps: 30 }
+        Self {
+            width,
+            height,
+            format,
+            fps: 30,
+        }
     }
 }
 

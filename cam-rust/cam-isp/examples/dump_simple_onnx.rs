@@ -13,7 +13,7 @@ fn main() {
     let path = std::env::temp_dir().join("simple_model.onnx");
     std::fs::write(&path, &onnx).unwrap();
     println!("Saved to {}", path.display());
-    
+
     // Now dump the heavy model
     use cam_isp::profile::PipelineProfile;
     let mut blocks2 = PipelineProfile::HEAVY.build_blocks(1920, 0);

@@ -14,11 +14,11 @@
 //! // frame.output is the ISP-processed RGBA data
 //! ```
 
+use log::{error, info};
 use std::sync::{Arc, Mutex};
-use log::{info, error};
 
-use crate::types::*;
 use crate::callback::*;
+use crate::types::*;
 
 /// ISP-processed frame result.
 #[derive(Debug, Clone)]
@@ -56,7 +56,12 @@ impl IspCameraSession {
     /// - `camera_id`: Camera to open (e.g., "0")
     /// - `width`, `height`: Capture resolution
     /// - `engine_name`: ISP engine ("cpu", "mnn", "auto")
-    pub fn new(camera_id: &str, width: i32, height: i32, engine_name: &str) -> Result<Self, String> {
+    pub fn new(
+        camera_id: &str,
+        width: i32,
+        height: i32,
+        engine_name: &str,
+    ) -> Result<Self, String> {
         // Initialize ISP engine
         let engine = if engine_name == "none" {
             None
@@ -105,7 +110,8 @@ impl IspCameraSession {
 
         // Create provider and open camera
         let provider = crate::provider::CameraProvider::new();
-        let device = provider.get_camera_device(&self.camera_id)
+        let device = provider
+            .get_camera_device(&self.camera_id)
             .ok_or_else(|| format!("Camera {} not found", self.camera_id))?;
 
         let session = device.lock().unwrap().open(Arc::new(SyncCallback))?;
@@ -123,8 +129,7 @@ impl IspCameraSession {
         let request = CaptureRequest::preview(frame_number as i64, 0);
         let buffers = session.lock().unwrap().process_capture_request(&request);
 
-        let raw_buffer = buffers.into_iter().next()
-            .ok_or("No buffers returned")?;
+        let raw_buffer = buffers.into_iter().next().ok_or("No buffers returned")?;
 
         if raw_buffer.status != 0 {
             return Err(format!("Capture failed with status {}", raw_buffer.status));
@@ -146,9 +151,14 @@ impl IspCameraSession {
 
                 match engine.process(&params) {
                     Ok(frame) => {
-                        info!("ISP: {}x{} → {}x{} ({} bytes)",
-                            raw_buffer.width, raw_buffer.height,
-                            frame.width, frame.height, frame.data.len());
+                        info!(
+                            "ISP: {}x{} → {}x{} ({} bytes)",
+                            raw_buffer.width,
+                            raw_buffer.height,
+                            frame.width,
+                            frame.height,
+                            frame.data.len()
+                        );
                         frame.data
                     }
                     Err(e) => {

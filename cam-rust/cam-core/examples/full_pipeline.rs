@@ -10,9 +10,9 @@
 
 use std::time::Instant;
 
-use cam_hal::{ICameraAdapter, camera::StreamConfig};
-use cam_hal_android::adapter::AndroidCameraAdapter;
 use cam_core::hal_bridge::attach_isp_to_android_adapter;
+use cam_hal::{camera::StreamConfig, ICameraAdapter};
+use cam_hal_android::adapter::AndroidCameraAdapter;
 use cam_types::FrameFormat;
 
 fn main() -> Result<(), String> {
@@ -44,7 +44,7 @@ fn main() -> Result<(), String> {
     // Create a test raw frame (640x480 RAW16 = 614,400 bytes)
     let frame_size = 640 * 480 * 2;
     let mut raw_frame = vec![0u8; frame_size as usize];
-    
+
     // Fill with a simple gradient pattern (simulating Bayer data)
     for y in 0..480 {
         for x in 0..640 {
@@ -63,11 +63,14 @@ fn main() -> Result<(), String> {
         format: FrameFormat::RawSensor,
         timestamp: 0,
     };
-    
+
     // Note: In real usage, the adapter's processor is invoked by the HAL
     // when process_capture_request is called. Here we demonstrate the
     // processor exists by checking the adapter state.
-    assert_eq!(ICameraAdapter::state(&adapter), cam_hal::camera::CameraState::Streaming);
+    assert_eq!(
+        ICameraAdapter::state(&adapter),
+        cam_hal::camera::CameraState::Streaming
+    );
     log::info!("Adapter state: Streaming, processor attached");
 
     let elapsed = start.elapsed();

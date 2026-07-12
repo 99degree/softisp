@@ -8,8 +8,8 @@
 //!
 //! Default strength: 0.5 (moderate sharpening).
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// SharpenBlock — unsharp mask enhancement.
 ///
@@ -38,29 +38,67 @@ impl SharpenBlock {
 }
 
 impl IspBlock for SharpenBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "Sharpen".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "Sharpen".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -70,29 +108,50 @@ impl IspBlock for SharpenBlock {
         // 1. Blur: AvgPool(3×3) with padding
         let blurred = format!("{}/blurred", ns);
         nodes.push(Proto::node(
-            "AveragePool", &[&self.input_source], &[&blurred],
-            &[Proto::attribute_ints("kernel_shape", &[3, 3]),
-              Proto::attribute_ints("pads", &[1, 1, 1, 1])],
+            "AveragePool",
+            &[&self.input_source],
+            &[&blurred],
+            &[
+                Proto::attribute_ints("kernel_shape", &[3, 3]),
+                Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+            ],
         ));
 
         // 2. Diff = input - blur
         let diff = format!("{}/diff", ns);
-        nodes.push(Proto::node("Sub", &[&self.input_source, &blurred], &[&diff], &[]));
+        nodes.push(Proto::node(
+            "Sub",
+            &[&self.input_source, &blurred],
+            &[&diff],
+            &[],
+        ));
 
         // 3. Scaled diff = strength * diff
         let strength_name = format!("{}/strength", ns);
         let scaled = format!("{}/scaled", ns);
-        nodes.push(Proto::node("Mul", &[&diff, &strength_name], &[&scaled], &[]));
+        nodes.push(Proto::node(
+            "Mul",
+            &[&diff, &strength_name],
+            &[&scaled],
+            &[],
+        ));
 
         // 4. Output = input + scaled
-        nodes.push(Proto::node("Add", &[&self.input_source, &scaled], &[&self.frame_tensor], &[]));
+        nodes.push(Proto::node(
+            "Add",
+            &[&self.input_source, &scaled],
+            &[&self.frame_tensor],
+            &[],
+        ));
 
         nodes
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         vec![Proto::tensor_proto_float_scalar(
-            &format!("{}/strength", self.tensor_ns()), self.strength)]
+            &format!("{}/strength", self.tensor_ns()),
+            self.strength,
+        )]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -110,8 +169,13 @@ mod tests {
         let nodes = block.nodes();
         let tags = ["AveragePool", "Sub", "Mul", "Add"];
         for tag in &tags {
-            assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains(tag)),
-                "must emit {}", tag);
+            assert!(
+                nodes
+                    .iter()
+                    .any(|n| String::from_utf8_lossy(n).contains(tag)),
+                "must emit {}",
+                tag
+            );
         }
     }
 

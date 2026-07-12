@@ -11,7 +11,11 @@ impl IspController {
     // ── Smoothing ──
 
     pub(crate) fn tone_alpha(&self) -> f32 {
-        if self.frame_count < 10 { 0.5 } else { self.smoothing_alpha }
+        if self.frame_count < 10 {
+            0.5
+        } else {
+            self.smoothing_alpha
+        }
     }
 
     // ── Tone update ──
@@ -55,7 +59,8 @@ impl IspController {
 
         // Blend with histogram-constrained gain
         let hist_weight = (self.highlight_ratio * 3.0).clamp(0.0, 0.6);
-        let blended_gain = self.exposure_gain * (1.0 - hist_weight) + self.hist_constrained_gain * hist_weight;
+        let blended_gain =
+            self.exposure_gain * (1.0 - hist_weight) + self.hist_constrained_gain * hist_weight;
         self.exposure_gain = blended_gain.clamp(0.5, 8.0);
 
         // ── Brightness ──
@@ -77,13 +82,18 @@ impl IspController {
             0.5
         };
         let gamma_center = 2.2 + 0.6 * (normalized_mean - 0.5);
-        let gamma_floor = if self.avg_lum_mean < 0.2 { 2.0 } else { gamma_center };
+        let gamma_floor = if self.avg_lum_mean < 0.2 {
+            2.0
+        } else {
+            gamma_center
+        };
         self.tone_gamma += (gamma_floor.clamp(2.0, 2.6) - self.tone_gamma) * alpha * 0.5;
 
         // ── S-curve: shadow lift + highlight roll ──
         let raw_shadow_lift = (0.04 + 0.08 * (-self.avg_lum_mean * 5.0).exp()).clamp(0.02, 0.12);
         let target_shadow_lift = raw_shadow_lift * dim_factor;
-        let target_highlight_roll = (0.05 + 0.15 * (1.0 - (-self.avg_lum_mean * 3.0).exp())).clamp(0.04, 0.20);
+        let target_highlight_roll =
+            (0.05 + 0.15 * (1.0 - (-self.avg_lum_mean * 3.0).exp())).clamp(0.04, 0.20);
         self.tone_shadow_lift += (target_shadow_lift - self.tone_shadow_lift) * alpha;
         self.tone_highlight_roll += (target_highlight_roll - self.tone_highlight_roll) * alpha;
 

@@ -9,14 +9,13 @@
 //! - ICameraDevice: 1-7
 //! - ICameraDeviceSession: 1-12
 
-
 use log::{info, warn};
 
-use crate::provider::CameraProvider;
 use crate::device::CameraDevice;
+use crate::metadata::{build_camera_characteristics, build_capture_result_metadata};
+use crate::provider::CameraProvider;
 use crate::session::CameraDeviceSession;
 use crate::types::*;
-use crate::metadata::{build_camera_characteristics, build_capture_result_metadata};
 
 /// AIDL transaction dispatch for ICameraProvider.
 pub fn dispatch_provider_transaction(
@@ -56,7 +55,7 @@ pub fn dispatch_provider_transaction(
             if data.len() < 4 + id_len {
                 return Err("truncated camera ID".into());
             }
-            let camera_id = String::from_utf8_lossy(&data[4..4+id_len]).to_string();
+            let camera_id = String::from_utf8_lossy(&data[4..4 + id_len]).to_string();
             match provider.get_camera_device(&camera_id) {
                 Some(_device) => Ok(Vec::new()),
                 None => Err(format!("camera {} not found", camera_id)),
@@ -146,7 +145,11 @@ pub fn dispatch_device_transaction(
             Ok(Vec::new())
         }
         _ => {
-            warn!("Device({}): unknown transaction {}", device.camera_id(), code);
+            warn!(
+                "Device({}): unknown transaction {}",
+                device.camera_id(),
+                code
+            );
             Err(format!("unknown transaction: {}", code))
         }
     }
@@ -235,10 +238,10 @@ fn parse_stream_configs(data: &[u8]) -> Vec<StreamConfig> {
         if offset + 16 > data.len() {
             break;
         }
-        let stream_id = i32::from_ne_bytes(data[offset..offset+4].try_into().unwrap());
-        let width = i32::from_ne_bytes(data[offset+4..offset+8].try_into().unwrap());
-        let height = i32::from_ne_bytes(data[offset+8..offset+12].try_into().unwrap());
-        let format = i32::from_ne_bytes(data[offset+12..offset+16].try_into().unwrap());
+        let stream_id = i32::from_ne_bytes(data[offset..offset + 4].try_into().unwrap());
+        let width = i32::from_ne_bytes(data[offset + 4..offset + 8].try_into().unwrap());
+        let height = i32::from_ne_bytes(data[offset + 8..offset + 12].try_into().unwrap());
+        let format = i32::from_ne_bytes(data[offset + 12..offset + 16].try_into().unwrap());
         configs.push(StreamConfig::new(stream_id, width, height, format));
         offset += 16;
     }
@@ -269,7 +272,14 @@ pub fn build_result_metadata(
     exposure_ns: i64,
     sensitivity: i32,
 ) -> Vec<u8> {
-    let meta = build_capture_result_metadata(frame_number, ae_state, af_state, awb_state, exposure_ns, sensitivity);
+    let meta = build_capture_result_metadata(
+        frame_number,
+        ae_state,
+        af_state,
+        awb_state,
+        exposure_ns,
+        sensitivity,
+    );
     meta.to_bytes()
 }
 

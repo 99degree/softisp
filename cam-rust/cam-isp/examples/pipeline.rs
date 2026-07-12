@@ -6,8 +6,8 @@
 //! Run:
 //!   cargo run --example pipeline -p cam-isp -- --frames 30 --verbose --out out.png
 
-use std::path::PathBuf;
 use clap::Parser;
+use std::path::PathBuf;
 
 use cam_isp::cpu::CpuEngine;
 use cam_isp::engine::IspEngine;
@@ -75,9 +75,17 @@ fn generate_raw_bayer_frame(width: u32, height: u32) -> Vec<u8> {
 
             // BGGR Bayer pattern
             let bayer_val: u16 = if y % 2 == 0 {
-                if x % 2 == 0 { b } else { g }
+                if x % 2 == 0 {
+                    b
+                } else {
+                    g
+                }
             } else {
-                if x % 2 == 0 { g } else { r }
+                if x % 2 == 0 {
+                    g
+                } else {
+                    r
+                }
             };
 
             raw.extend_from_slice(&bayer_val.to_le_bytes());
@@ -108,7 +116,10 @@ fn main() {
     env_logger::init();
     let args = Args::parse();
 
-    println!("ISP Pipeline Demo — {} frame(s), {}x{}", args.frames, args.width, args.height);
+    println!(
+        "ISP Pipeline Demo — {} frame(s), {}x{}",
+        args.frames, args.width, args.height
+    );
 
     // 1. Generate synthetic RAW Bayer data
     let raw_data = generate_raw_bayer_frame(args.width, args.height);
@@ -116,7 +127,9 @@ fn main() {
 
     // 2. Parse black level
     let _blc_values: [f32; 4] = {
-        let parts: Vec<f32> = args.black_level.split(',')
+        let parts: Vec<f32> = args
+            .black_level
+            .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
         if parts.len() == 4 {
@@ -129,7 +142,8 @@ fn main() {
     // 3. Create CpuEngine
     let mut engine = CpuEngine::new();
     let head = cam_isp::blocks::RawInputBlock::new();
-    engine.build(Box::new(head), vec![], None, 21)
+    engine
+        .build(Box::new(head), vec![], None, 21)
         .expect("Build CpuEngine failed");
 
     let _tone_params = cam_types::ToneParams {
@@ -152,7 +166,11 @@ fn main() {
         };
 
         let start = std::time::Instant::now();
-        let result = engine.process(&cam_isp::engine::ProcessParams::new(args.width, args.height, &frame_raw));
+        let result = engine.process(&cam_isp::engine::ProcessParams::new(
+            args.width,
+            args.height,
+            &frame_raw,
+        ));
         let elapsed = start.elapsed();
         total_elapsed += elapsed;
 
@@ -161,15 +179,25 @@ fn main() {
                 if args.verbose {
                     let cal = frame.aux.as_ref().and_then(|a| a.calibration_stats);
                     let ctrl = engine.controller.lock().unwrap();
-                    let scene = cam_isp::scene::SceneCategory::classify(ctrl.avg_lum_mean, ctrl.estimated_cct.unwrap_or(5500) as u32);
-                    print!("Frame {:3}: {:6.1?} | AWB [{:.3} {:.3} {:.3}] | CCT {:>4?} | AE {:.3}",
-                        frame_idx, elapsed,
-                        ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2],
+                    let scene = cam_isp::scene::SceneCategory::classify(
+                        ctrl.avg_lum_mean,
+                        ctrl.estimated_cct.unwrap_or(5500) as u32,
+                    );
+                    print!(
+                        "Frame {:3}: {:6.1?} | AWB [{:.3} {:.3} {:.3}] | CCT {:>4?} | AE {:.3}",
+                        frame_idx,
+                        elapsed,
+                        ctrl.awb_gains[0],
+                        ctrl.awb_gains[1],
+                        ctrl.awb_gains[2],
                         ctrl.estimated_cct.unwrap_or(0),
-                        ctrl.get_effective_exposure_gain());
+                        ctrl.get_effective_exposure_gain()
+                    );
                     if let Some(cs) = cal {
-                        print!(" | Cal: qm=[{:.4},{:.4},{:.4},{:.4}] noise={:.5} lum={:.4}",
-                            cs[0], cs[1], cs[2], cs[3], cs[21], cs[20]);
+                        print!(
+                            " | Cal: qm=[{:.4},{:.4},{:.4},{:.4}] noise={:.5} lum={:.4}",
+                            cs[0], cs[1], cs[2], cs[3], cs[21], cs[20]
+                        );
                     }
                     let avg_lum = (ctrl.avg_r + ctrl.avg_g + ctrl.avg_b) / 3.0;
                     println!(" | {} | Luma: {:.4}", scene.name(), avg_lum);
@@ -183,31 +211,52 @@ fn main() {
     // Summary
     let avg_time = total_elapsed / args.frames.max(1);
     println!("───");
-    println!("Processed {} frame(s) | Avg {:?}/frame | Total {:?}",
-        args.frames, avg_time, total_elapsed);
+    println!(
+        "Processed {} frame(s) | Avg {:?}/frame | Total {:?}",
+        args.frames, avg_time, total_elapsed
+    );
 
     {
         let ctrl = engine.controller.lock().unwrap();
-        let scene = cam_isp::scene::SceneCategory::classify(ctrl.avg_lum_mean, ctrl.estimated_cct.unwrap_or(5500) as u32);
-        println!("Final | AWB: [{:.3} {:.3} {:.3}]  CCT: {:?}  AE: {:.3}  Scene: {}",
-            ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2],
-            ctrl.estimated_cct, ctrl.get_effective_exposure_gain(),
-            scene.name());
-        println!("      | Means: R={:.4} G={:.4} B={:.4} (target R={:.1} G={:.1} B={:.1})",
-            ctrl.avg_r, ctrl.avg_g, ctrl.avg_b,
-            ctrl.target_r, ctrl.target_g, ctrl.target_b);
+        let scene = cam_isp::scene::SceneCategory::classify(
+            ctrl.avg_lum_mean,
+            ctrl.estimated_cct.unwrap_or(5500) as u32,
+        );
+        println!(
+            "Final | AWB: [{:.3} {:.3} {:.3}]  CCT: {:?}  AE: {:.3}  Scene: {}",
+            ctrl.awb_gains[0],
+            ctrl.awb_gains[1],
+            ctrl.awb_gains[2],
+            ctrl.estimated_cct,
+            ctrl.get_effective_exposure_gain(),
+            scene.name()
+        );
+        println!(
+            "      | Means: R={:.4} G={:.4} B={:.4} (target R={:.1} G={:.1} B={:.1})",
+            ctrl.avg_r, ctrl.avg_g, ctrl.avg_b, ctrl.target_r, ctrl.target_g, ctrl.target_b
+        );
     }
 
     // 4. Save last frame as PNG
     if let Some(frame) = last_frame {
         println!("───");
-        println!("Output: {}x{} RGBA ({} bytes)", frame.width, frame.height, frame.data.len());
+        println!(
+            "Output: {}x{} RGBA ({} bytes)",
+            frame.width,
+            frame.height,
+            frame.data.len()
+        );
 
         let img = match image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(
-            frame.width, frame.height, frame.data.clone(),
+            frame.width,
+            frame.height,
+            frame.data.clone(),
         ) {
             Some(img) => img,
-            None => { eprintln!("Failed to create image"); return; }
+            None => {
+                eprintln!("Failed to create image");
+                return;
+            }
         };
 
         if let Err(e) = img.save(&args.out) {

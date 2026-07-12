@@ -10,10 +10,14 @@ pub struct BlockMatch {
 
 /// Compute SAD between two blocks, normalized by block area.
 pub fn block_sad(
-    curr: &[u8], cw: u32,
-    prev: &[u8], pw: u32,
-    cx: u32, cy: u32,
-    sx: i32, sy: i32,
+    curr: &[u8],
+    cw: u32,
+    prev: &[u8],
+    pw: u32,
+    cx: u32,
+    cy: u32,
+    sx: i32,
+    sy: i32,
     size: u32,
 ) -> f32 {
     let mut sad = 0.0f32;
@@ -50,9 +54,13 @@ pub fn block_variance(data: &[u8], stride: u32, bx: u32, by: u32, size: u32) -> 
 /// Checks at most 1 + 8*log2(search_radius) positions instead of
 /// (2*radius+1)^2 for full scan. Typically 25-33 SAD ops vs 1089.
 pub fn diamond_search(
-    curr_gray: &[u8], cw: u32,
-    prev_gray: &[u8], pw: u32, ph: u32,
-    bx: u32, by: u32,
+    curr_gray: &[u8],
+    cw: u32,
+    prev_gray: &[u8],
+    pw: u32,
+    ph: u32,
+    bx: u32,
+    by: u32,
     block_size: u32,
     search_radius: i32,
 ) -> Option<BlockMatch> {
@@ -118,9 +126,13 @@ pub fn diamond_search(
 /// Full exhaustive search for motion estimation.
 /// O((2R+1)^2) SADs — use only for small search radii or debugging.
 pub fn full_search(
-    curr_gray: &[u8], cw: u32,
-    prev_gray: &[u8], pw: u32, ph: u32,
-    bx: u32, by: u32,
+    curr_gray: &[u8],
+    cw: u32,
+    prev_gray: &[u8],
+    pw: u32,
+    ph: u32,
+    bx: u32,
+    by: u32,
     block_size: u32,
     search_radius: i32,
 ) -> Option<BlockMatch> {
@@ -129,7 +141,11 @@ pub fn full_search(
     let max_x = (pw as i32) - block_size as i32;
     let max_y = (ph as i32) - block_size as i32;
 
-    let mut best = BlockMatch { dx: 0.0, dy: 0.0, cost: f32::MAX };
+    let mut best = BlockMatch {
+        dx: 0.0,
+        dy: 0.0,
+        cost: f32::MAX,
+    };
 
     for sy in (cy - search_radius).max(0)..=(cy + search_radius).min(max_y) {
         for sx in (cx - search_radius).max(0)..=(cx + search_radius).min(max_x) {
@@ -150,10 +166,14 @@ pub fn full_search(
 /// Parabolic interpolation for sub-pixel refinement.
 /// Fits a parabola to the SAD curve at (x-1, x, x+1) and returns the minimum.
 pub fn parabolic_refine(
-    curr_gray: &[u8], cw: u32,
-    prev_gray: &[u8], pw: u32,
-    bx: u32, by: u32,
-    best_dx: f32, best_dy: f32,
+    curr_gray: &[u8],
+    cw: u32,
+    prev_gray: &[u8],
+    pw: u32,
+    bx: u32,
+    by: u32,
+    best_dx: f32,
+    best_dy: f32,
     block_size: u32,
 ) -> (f32, f32) {
     let cx = bx as f32;
@@ -162,12 +182,39 @@ pub fn parabolic_refine(
     let by_u = by;
 
     // Refine X axis
-    let cost_left = block_sad(curr_gray, cw, prev_gray, pw, bx_u, by_u,
-        (cx + best_dx - 1.0) as i32, (cy + best_dy) as i32, block_size);
-    let cost_center = block_sad(curr_gray, cw, prev_gray, pw, bx_u, by_u,
-        (cx + best_dx) as i32, (cy + best_dy) as i32, block_size);
-    let cost_right = block_sad(curr_gray, cw, prev_gray, pw, bx_u, by_u,
-        (cx + best_dx + 1.0) as i32, (cy + best_dy) as i32, block_size);
+    let cost_left = block_sad(
+        curr_gray,
+        cw,
+        prev_gray,
+        pw,
+        bx_u,
+        by_u,
+        (cx + best_dx - 1.0) as i32,
+        (cy + best_dy) as i32,
+        block_size,
+    );
+    let cost_center = block_sad(
+        curr_gray,
+        cw,
+        prev_gray,
+        pw,
+        bx_u,
+        by_u,
+        (cx + best_dx) as i32,
+        (cy + best_dy) as i32,
+        block_size,
+    );
+    let cost_right = block_sad(
+        curr_gray,
+        cw,
+        prev_gray,
+        pw,
+        bx_u,
+        by_u,
+        (cx + best_dx + 1.0) as i32,
+        (cy + best_dy) as i32,
+        block_size,
+    );
 
     let denom_x = 2.0 * (cost_left + cost_right - 2.0 * cost_center);
     let refined_dx = if denom_x.abs() > 1e-6 {
@@ -177,12 +224,39 @@ pub fn parabolic_refine(
     };
 
     // Refine Y axis
-    let cost_left = block_sad(curr_gray, cw, prev_gray, pw, bx_u, by_u,
-        (cx + refined_dx) as i32, (cy + best_dy - 1.0) as i32, block_size);
-    let cost_center = block_sad(curr_gray, cw, prev_gray, pw, bx_u, by_u,
-        (cx + refined_dx) as i32, (cy + best_dy) as i32, block_size);
-    let cost_right = block_sad(curr_gray, cw, prev_gray, pw, bx_u, by_u,
-        (cx + refined_dx) as i32, (cy + best_dy + 1.0) as i32, block_size);
+    let cost_left = block_sad(
+        curr_gray,
+        cw,
+        prev_gray,
+        pw,
+        bx_u,
+        by_u,
+        (cx + refined_dx) as i32,
+        (cy + best_dy - 1.0) as i32,
+        block_size,
+    );
+    let cost_center = block_sad(
+        curr_gray,
+        cw,
+        prev_gray,
+        pw,
+        bx_u,
+        by_u,
+        (cx + refined_dx) as i32,
+        (cy + best_dy) as i32,
+        block_size,
+    );
+    let cost_right = block_sad(
+        curr_gray,
+        cw,
+        prev_gray,
+        pw,
+        bx_u,
+        by_u,
+        (cx + refined_dx) as i32,
+        (cy + best_dy + 1.0) as i32,
+        block_size,
+    );
 
     let denom_y = 2.0 * (cost_left + cost_right - 2.0 * cost_center);
     let refined_dy = if denom_y.abs() > 1e-6 {
@@ -201,7 +275,11 @@ pub fn weighted_median(values: &[f32], weights: &[f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
     }
-    let mut pairs: Vec<(f32, f32)> = values.iter().zip(weights.iter()).map(|(&v, &w)| (v, 1.0 / (w + 1e-6))).collect();
+    let mut pairs: Vec<(f32, f32)> = values
+        .iter()
+        .zip(weights.iter())
+        .map(|(&v, &w)| (v, 1.0 / (w + 1e-6)))
+        .collect();
     pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     let total_weight: f32 = pairs.iter().map(|(_, w)| w).sum();
     let mut acc = 0.0;

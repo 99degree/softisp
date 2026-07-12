@@ -6,7 +6,7 @@
 use crate::engine::OutputFormat;
 
 /// Orientation transform constants (32-bit integer for fast comparison).
-pub const ROTATE_NONE:  i32 = 0; // No transform
+pub const ROTATE_NONE: i32 = 0; // No transform
 pub const ROTATE_ROT90: i32 = 1; // 90° clockwise
 pub const ROTATE_ROT180: i32 = 2; // 180°
 pub const ROTATE_ROT270: i32 = 3; // 90° counter-clockwise
@@ -14,8 +14,7 @@ pub const ROTATE_HFLIP: i32 = 4; // Horizontal mirror
 pub const ROTATE_VFLIP: i32 = 5; // Vertical mirror
 
 /// Demosaic quality selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DemosaicQuality {
     /// Fast bilinear demosaic.
     #[default]
@@ -26,7 +25,6 @@ pub enum DemosaicQuality {
     Edge,
 }
 
-
 /// Feature complexity level — gates controller features.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PipelineLevel {
@@ -35,7 +33,6 @@ pub enum PipelineLevel {
     Heavy = 2,
     Pro = 3,
 }
-
 
 /// Pipeline profile defining which ISP blocks to enable.
 ///
@@ -159,11 +156,11 @@ impl PipelineProfile {
         use_demosaic_ccm: true,
         use_fused_tone: true,
         rotate_mode: 0,
-        use_zone_stats: true,      // zone RGB means for basic AWB
-        use_channel_means: true,   // channel means for grey-world AWB
-        use_tone_stats: false,     // skip AE tone stats (LITE)
-        use_histogram: false,      // skip histogram (LITE)
-        stats_downscale_max: 0,    // full resolution
+        use_zone_stats: true,    // zone RGB means for basic AWB
+        use_channel_means: true, // channel means for grey-world AWB
+        use_tone_stats: false,   // skip AE tone stats (LITE)
+        use_histogram: false,    // skip histogram (LITE)
+        stats_downscale_max: 0,  // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
         use_bilateral: false,
@@ -201,11 +198,11 @@ impl PipelineProfile {
         use_demosaic_ccm: true,
         use_fused_tone: true,
         rotate_mode: 0,
-        use_zone_stats: true,      // zone stats for multi-illuminant AWB
-        use_channel_means: true,   // channel means for grey-world AWB
-        use_tone_stats: true,      // tone stats for AE metering
-        use_histogram: false,      // skip histogram (MED)
-        stats_downscale_max: 0,    // full resolution
+        use_zone_stats: true,    // zone stats for multi-illuminant AWB
+        use_channel_means: true, // channel means for grey-world AWB
+        use_tone_stats: true,    // tone stats for AE metering
+        use_histogram: false,    // skip histogram (MED)
+        stats_downscale_max: 0,  // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
         use_bilateral: false,
@@ -247,8 +244,8 @@ impl PipelineProfile {
         use_channel_means: true,
         use_tone_stats: true,
         use_histogram: true,
-        stats_downscale_max: 540,   // stats read from ~540p (downscaled from aux_hook_src)
-        pipeline_downscale_target: 0,    // 0 = disabled; set to e.g. 1920 for perf measurement
+        stats_downscale_max: 540, // stats read from ~540p (downscaled from aux_hook_src)
+        pipeline_downscale_target: 0, // 0 = disabled; set to e.g. 1920 for perf measurement
         eis_margin: 0.0,
         use_bilateral: true,
         use_saturation: true,
@@ -285,11 +282,11 @@ impl PipelineProfile {
         use_demosaic_ccm: true,
         use_fused_tone: true,
         rotate_mode: 0,
-        use_zone_stats: true,      // zone stats for multi-illuminant AWB
-        use_channel_means: true,   // channel means for grey-world AWB
-        use_tone_stats: true,      // tone stats for AE metering
-        use_histogram: true,       // 16-bin histogram (full AE stats)
-        stats_downscale_max: 0,    // full resolution
+        use_zone_stats: true,    // zone stats for multi-illuminant AWB
+        use_channel_means: true, // channel means for grey-world AWB
+        use_tone_stats: true,    // tone stats for AE metering
+        use_histogram: true,     // 16-bin histogram (full AE stats)
+        stats_downscale_max: 0,  // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
         use_bilateral: true,
@@ -328,11 +325,11 @@ impl PipelineProfile {
         use_demosaic_ccm: true,
         use_fused_tone: true,
         rotate_mode: 0,
-        use_zone_stats: true,      // zone stats for AWB (single block test)
-        use_channel_means: false,  // skip channel means
-        use_tone_stats: false,     // skip tone stats
-        use_histogram: false,      // skip histogram
-        stats_downscale_max: 0,    // full resolution
+        use_zone_stats: true,     // zone stats for AWB (single block test)
+        use_channel_means: false, // skip channel means
+        use_tone_stats: false,    // skip tone stats
+        use_histogram: false,     // skip histogram
+        stats_downscale_max: 0,   // full resolution
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
         use_bilateral: false,
@@ -380,16 +377,16 @@ impl PipelineProfile {
         stats_downscale_max: 0,
         pipeline_downscale_target: 0,
         eis_margin: 0.0,
-        use_bilateral: true,    // Simplified: AveragePool blur
+        use_bilateral: true, // Simplified: AveragePool blur
         use_saturation: true,
-        use_vignetting: true,   // Simplified: Mul with gain_map
-        use_colorspace: true,   // Simplified: Identity passthrough
+        use_vignetting: true, // Simplified: Mul with gain_map
+        use_colorspace: true, // Simplified: Identity passthrough
         use_gamma: true,
         use_sharpen: true,
         use_wavelet_denoise: true, // Simplified: AveragePool denoise
         use_auto_contrast: true,   // GPU-accelerated via ISP op
         use_normalize: true,
-        use_tiled_rendering: true,  // Enable for 4K→4K
+        use_tiled_rendering: true, // Enable for 4K→4K
         tile_count_x: 2,
         tile_count_y: 2,
         tile_overlap: 2,
@@ -420,7 +417,7 @@ impl PipelineProfile {
         use_local_contrast: false,
         use_unsharp: false,
         use_lsc: true,
-        use_warp: true,         // EIS alignment between exposures
+        use_warp: true, // EIS alignment between exposures
         use_hdr: true,
         use_fused_unpack: true,
         use_demosaic_ccm: true,
@@ -432,7 +429,7 @@ impl PipelineProfile {
         use_histogram: false,
         stats_downscale_max: 0,
         pipeline_downscale_target: 0,
-        eis_margin: 0.05,       // 5% margin for EIS alignment warp
+        eis_margin: 0.05, // 5% margin for EIS alignment warp
         use_bilateral: false,
         use_saturation: false,
         use_vignetting: true,
@@ -450,7 +447,15 @@ impl PipelineProfile {
     };
 
     /// All built-in profiles.
-    pub const ALL: [Self; 7] = [Self::LITE, Self::MED, Self::HEAVY, Self::PRO, Self::TEST, Self::UNIFIED, Self::HDR];
+    pub const ALL: [Self; 7] = [
+        Self::LITE,
+        Self::MED,
+        Self::HEAVY,
+        Self::PRO,
+        Self::TEST,
+        Self::UNIFIED,
+        Self::HDR,
+    ];
 
     /// Create a custom profile with override flags.
     pub const fn custom(
@@ -470,27 +475,27 @@ impl PipelineProfile {
         use_fused_unpack: bool,
         use_demosaic_ccm: bool,
         use_fused_tone: bool,
-        rotate_mode: i32,         // 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip
-        use_zone_stats: bool,      // per-zone RGB means (AveragePool) for multi-illuminant AWB
-        use_channel_means: bool,   // global channel means (ReduceMean) for grey-world AWB
-        use_tone_stats: bool,      // luma mean/min/max + clipped/shadows for AE metering
-        use_histogram: bool,       // 16-bin luminance histogram for AE and clipping detection
-        stats_downscale_max: u32,  // max pixel dimension for stats (0 = full res)
+        rotate_mode: i32, // 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip
+        use_zone_stats: bool, // per-zone RGB means (AveragePool) for multi-illuminant AWB
+        use_channel_means: bool, // global channel means (ReduceMean) for grey-world AWB
+        use_tone_stats: bool, // luma mean/min/max + clipped/shadows for AE metering
+        use_histogram: bool, // 16-bin luminance histogram for AE and clipping detection
+        stats_downscale_max: u32, // max pixel dimension for stats (0 = full res)
         pipeline_downscale_target: u32, // max pixel dimension for main pipeline (0 = full res)
-        eis_margin: f64,         // EIS margin fraction (0.05 = 5%), default 0.0
-        use_bilateral: bool,     // bilateral filter (edge-preserving denoise)
-        use_saturation: bool,    // saturation control
-        use_vignetting: bool,    // vignetting correction
-        use_colorspace: bool,    // color space conversion
-        use_gamma: bool,         // gamma correction
-        use_sharpen: bool,       // sharpening
+        eis_margin: f64,  // EIS margin fraction (0.05 = 5%), default 0.0
+        use_bilateral: bool, // bilateral filter (edge-preserving denoise)
+        use_saturation: bool, // saturation control
+        use_vignetting: bool, // vignetting correction
+        use_colorspace: bool, // color space conversion
+        use_gamma: bool,  // gamma correction
+        use_sharpen: bool, // sharpening
         use_wavelet_denoise: bool, // wavelet denoising
         use_auto_contrast: bool, // auto contrast
-        use_normalize: bool,     // normalization
+        use_normalize: bool, // normalization
         use_tiled_rendering: bool, // enable tiled rendering for high-res output
-        tile_count_x: u32,       // horizontal tile count (e.g., 2 for 4K→4K)
-        tile_count_y: u32,       // vertical tile count (e.g., 2 for 4K→4K)
-        tile_overlap: u32,       // overlap pixels between tiles for convolution
+        tile_count_x: u32, // horizontal tile count (e.g., 2 for 4K→4K)
+        tile_count_y: u32, // vertical tile count (e.g., 2 for 4K→4K)
+        tile_overlap: u32, // overlap pixels between tiles for convolution
     ) -> Self {
         Self {
             label,
@@ -510,26 +515,26 @@ impl PipelineProfile {
             use_demosaic_ccm,
             use_fused_tone,
             rotate_mode,
-            use_zone_stats,      // per-zone RGB means (AWB multi-illuminant)
-            use_channel_means,   // global channel means (grey-world AWB)
-            use_tone_stats,      // luma stats for AE metering
-            use_histogram,       // 16-bin luminance histogram
-            stats_downscale_max, // adaptive stats downscale
+            use_zone_stats,            // per-zone RGB means (AWB multi-illuminant)
+            use_channel_means,         // global channel means (grey-world AWB)
+            use_tone_stats,            // luma stats for AE metering
+            use_histogram,             // 16-bin luminance histogram
+            stats_downscale_max,       // adaptive stats downscale
             pipeline_downscale_target, // main pipeline downscale target
-            eis_margin,          // EIS margin fraction
-            use_bilateral,       // bilateral filter
-            use_saturation,      // saturation control
-            use_vignetting,      // vignetting correction
-            use_colorspace,      // color space conversion
-            use_gamma,           // gamma correction
-            use_sharpen,         // sharpening
-            use_wavelet_denoise, // wavelet denoising
-            use_auto_contrast,   // auto contrast
-            use_normalize,       // normalization
-            use_tiled_rendering, // enable tiled rendering
-            tile_count_x,        // horizontal tile count
-            tile_count_y,        // vertical tile count
-            tile_overlap,        // overlap pixels
+            eis_margin,                // EIS margin fraction
+            use_bilateral,             // bilateral filter
+            use_saturation,            // saturation control
+            use_vignetting,            // vignetting correction
+            use_colorspace,            // color space conversion
+            use_gamma,                 // gamma correction
+            use_sharpen,               // sharpening
+            use_wavelet_denoise,       // wavelet denoising
+            use_auto_contrast,         // auto contrast
+            use_normalize,             // normalization
+            use_tiled_rendering,       // enable tiled rendering
+            tile_count_x,              // horizontal tile count
+            tile_count_y,              // vertical tile count
+            tile_overlap,              // overlap pixels
             output_format: OutputFormat::PackedRgb,
         }
     }
@@ -572,14 +577,31 @@ mod tests {
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
         // HEAVY: all 16 main blocks present (4 new: bilateral, vignetting, saturation, colorspace)
-        assert_eq!(blocks.len(), 20, "HEAVY (fused, demosaic_ccm) should have 20 blocks (15 main + 5 postproc), got {}", blocks.len());
+        assert_eq!(
+            blocks.len(),
+            20,
+            "HEAVY (fused, demosaic_ccm) should have 20 blocks (15 main + 5 postproc), got {}",
+            blocks.len()
+        );
     }
 
     #[test]
     fn test_custom_profile() {
         let p = PipelineProfile::custom(
-            "CUSTOM", PipelineLevel::Pro, true, true, true, true, true,
-            DemosaicQuality::Edge, true, true, true, true, false, false,
+            "CUSTOM",
+            PipelineLevel::Pro,
+            true,
+            true,
+            true,
+            true,
+            true,
+            DemosaicQuality::Edge,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false,
             true,  // use_demosaic_ccm
             true,  // use_fused_tone
             0,     // rotate_mode: none
@@ -617,8 +639,20 @@ mod tests {
     fn test_legacy_float_path() {
         // Old FLOAT path: use_unpack=false, no UnpackBlock in pipeline
         let p = PipelineProfile::custom(
-            "LEGACY", PipelineLevel::Lite, false, false, false, false, false,
-            DemosaicQuality::Standard, false, false, false, false, false, false,
+            "LEGACY",
+            PipelineLevel::Lite,
+            false,
+            false,
+            false,
+            false,
+            false,
+            DemosaicQuality::Standard,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
             false, // use_demosaic_ccm
             false, // use_fused_tone
             0,     // rotate_mode: none
@@ -644,15 +678,32 @@ mod tests {
             0,     // tile_overlap
         );
         let blocks = p.build_blocks(128, 0);
-        assert_eq!(blocks.len(), 23, "Legacy should have 23 blocks (all with identity placeholders), got {}", blocks.len());
+        assert_eq!(
+            blocks.len(),
+            23,
+            "Legacy should have 23 blocks (all with identity placeholders), got {}",
+            blocks.len()
+        );
         assert_eq!(blocks[0].id(), "raw_input");
-        assert_eq!(blocks[1].id(), "normalize", "Second block should be Normalize (no Unpack)");
+        assert_eq!(
+            blocks[1].id(),
+            "normalize",
+            "Second block should be Normalize (no Unpack)"
+        );
     }
 
     #[test]
     fn test_block_count() {
-        assert_eq!(PipelineProfile::LITE.block_count(), 23, "LITE: 20 main + 3 stats");
-        assert_eq!(PipelineProfile::HEAVY.block_count(), 25, "HEAVY: 20 main + 5 stats");
+        assert_eq!(
+            PipelineProfile::LITE.block_count(),
+            23,
+            "LITE: 20 main + 3 stats"
+        );
+        assert_eq!(
+            PipelineProfile::HEAVY.block_count(),
+            25,
+            "HEAVY: 20 main + 5 stats"
+        );
     }
 
     #[test]

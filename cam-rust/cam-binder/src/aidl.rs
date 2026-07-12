@@ -88,12 +88,12 @@ use std::sync::{Arc, Mutex};
 
 use log::{info, warn};
 
-use crate::binder::{Parcel, IBinder, BinderStatus, TransactionCode};
-use crate::provider::CameraProvider;
+use crate::binder::{BinderStatus, IBinder, Parcel, TransactionCode};
 use crate::device::CameraDevice;
+use crate::metadata::build_camera_characteristics;
+use crate::provider::CameraProvider;
 use crate::session::CameraDeviceSession;
 use crate::types::*;
-use crate::metadata::build_camera_characteristics;
 
 // ── BnCameraProvider (Server/Stub) ──
 
@@ -111,7 +111,11 @@ impl BnCameraProvider {
     }
 
     /// Handle a binder transaction.
-    pub fn on_transact(&self, code: TransactionCode, data: &mut Parcel) -> Result<Parcel, BinderStatus> {
+    pub fn on_transact(
+        &self,
+        code: TransactionCode,
+        data: &mut Parcel,
+    ) -> Result<Parcel, BinderStatus> {
         // Verify interface token
         let _token = data.read_string16()?;
 
@@ -194,7 +198,10 @@ impl BnCameraProvider {
         Ok(reply)
     }
 
-    fn is_concurrent_stream_combination_supported(&self, _data: &mut Parcel) -> Result<Parcel, BinderStatus> {
+    fn is_concurrent_stream_combination_supported(
+        &self,
+        _data: &mut Parcel,
+    ) -> Result<Parcel, BinderStatus> {
         info!("BnCameraProvider::isConcurrentStreamCombinationSupported");
         let mut reply = Parcel::new();
         reply.write_i32(0); // false
@@ -224,7 +231,11 @@ impl BnCameraDevice {
         Self { device }
     }
 
-    pub fn on_transact(&self, code: TransactionCode, data: &mut Parcel) -> Result<Parcel, BinderStatus> {
+    pub fn on_transact(
+        &self,
+        code: TransactionCode,
+        data: &mut Parcel,
+    ) -> Result<Parcel, BinderStatus> {
         let _token = data.read_string16()?;
 
         match code {
@@ -325,7 +336,11 @@ impl BnCameraDeviceSession {
         Self { session }
     }
 
-    pub fn on_transact(&self, code: TransactionCode, data: &mut Parcel) -> Result<Parcel, BinderStatus> {
+    pub fn on_transact(
+        &self,
+        code: TransactionCode,
+        data: &mut Parcel,
+    ) -> Result<Parcel, BinderStatus> {
         let _token = data.read_string16()?;
 
         match code {
@@ -418,7 +433,10 @@ impl BnCameraDeviceSession {
         let notify_type = data.read_i32()?;
         let frame_number = data.read_i64()?;
         let timestamp = data.read_i64()?;
-        info!("BnCameraDeviceSession::notify type={} frame={} ts={}", notify_type, frame_number, timestamp);
+        info!(
+            "BnCameraDeviceSession::notify type={} frame={} ts={}",
+            notify_type, frame_number, timestamp
+        );
         Ok(Parcel::new())
     }
 
@@ -447,7 +465,9 @@ impl BnCameraDeviceSession {
         let stream_id = data.read_i32()?;
         let request = CaptureRequest::preview(frame_number, stream_id);
         let session = self.session.lock().unwrap();
-        session.set_repeating_request(&request).map_err(|_| BinderStatus::UnknownError)?;
+        session
+            .set_repeating_request(&request)
+            .map_err(|_| BinderStatus::UnknownError)?;
         Ok(Parcel::new())
     }
 
@@ -519,6 +539,9 @@ mod tests {
     fn test_bn_provider_interface() {
         let provider = Arc::new(CameraProvider::new());
         let bn = BnCameraProvider::new(provider);
-        assert_eq!(bn.interface_descriptor(), "android.hardware.camera.provider.ICameraProvider");
+        assert_eq!(
+            bn.interface_descriptor(),
+            "android.hardware.camera.provider.ICameraProvider"
+        );
     }
 }

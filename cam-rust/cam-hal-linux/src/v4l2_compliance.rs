@@ -48,27 +48,26 @@ mod v4l2_impl {
     /// Verifies VIDIOC_QUERYCAP returns valid driver/card information
     pub fn test_query_caps(device_path: &str) -> ComplianceResult {
         if !Path::new(device_path).exists() {
-            return ComplianceResult::fail("query_caps", 
-                format!("Device {} not found (skip if no camera)", device_path));
+            return ComplianceResult::fail(
+                "query_caps",
+                format!("Device {} not found (skip if no camera)", device_path),
+            );
         }
         match rscam::Camera::new(device_path) {
-            Ok(cam) => {
-                match cam.query_capability() {
-                    Ok(caps) => {
-                        let driver = String::from_utf8_lossy(&caps.driver);
-                        let card = String::from_utf8_lossy(&caps.card);
-                        if driver.is_empty() || card.is_empty() {
-                            return ComplianceResult::fail("query_caps", 
-                                "Empty driver or card string");
-                        }
-                        ComplianceResult::ok("query_caps")
+            Ok(cam) => match cam.query_capability() {
+                Ok(caps) => {
+                    let driver = String::from_utf8_lossy(&caps.driver);
+                    let card = String::from_utf8_lossy(&caps.card);
+                    if driver.is_empty() || card.is_empty() {
+                        return ComplianceResult::fail("query_caps", "Empty driver or card string");
                     }
-                    Err(e) => ComplianceResult::fail("query_caps", 
-                        format!("VIDIOC_QUERYCAP failed: {}", e)),
+                    ComplianceResult::ok("query_caps")
                 }
-            }
-            Err(e) => ComplianceResult::fail("query_caps", 
-                format!("Camera::new failed: {}", e)),
+                Err(e) => {
+                    ComplianceResult::fail("query_caps", format!("VIDIOC_QUERYCAP failed: {}", e))
+                }
+            },
+            Err(e) => ComplianceResult::fail("query_caps", format!("Camera::new failed: {}", e)),
         }
     }
 
@@ -80,9 +79,7 @@ mod v4l2_impl {
         }
         // Open camera at default format, query format
         match rscam::Camera::new(device_path) {
-            Ok(_cam) => {
-                ComplianceResult::ok("enum_formats")
-            }
+            Ok(_cam) => ComplianceResult::ok("enum_formats"),
             Err(e) => ComplianceResult::fail("enum_formats", e.to_string()),
         }
     }
@@ -183,10 +180,12 @@ mod tests {
             v4l2_impl::test_buffer_management("/dev/video0"),
         ];
         for r in results {
-            println!("[{}] {}: {}", 
+            println!(
+                "[{}] {}: {}",
                 if r.passed { "PASS" } else { "FAIL" },
                 r.test_name,
-                r.message);
+                r.message
+            );
         }
     }
 }

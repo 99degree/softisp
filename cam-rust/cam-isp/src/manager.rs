@@ -9,10 +9,10 @@ use std::time::Instant;
 use log::info;
 
 use crate::controller::IspController;
-use crate::engine::{IspEngine, ProcessParams, OutputFormat};
 use crate::cpu::CpuEngine;
-use crate::profile::PipelineProfile;
+use crate::engine::{IspEngine, OutputFormat, ProcessParams};
 use crate::pipeline::IspBlock;
+use crate::profile::PipelineProfile;
 
 /// Result of a single frame pipeline process.
 #[derive(Debug, Clone)]
@@ -82,7 +82,7 @@ impl PipelineManager {
             profile: PipelineProfile::MED,
             controller: IspController::new(),
             target_width: 480,
-            bayer_pattern: 3, // BGGR default
+            bayer_pattern: 3,                  // BGGR default
             output_format: OutputFormat::Bgra, // convert to BGRA by default
             status: PipelineStatus::Building,
             engine: Mutex::new(None),
@@ -93,7 +93,10 @@ impl PipelineManager {
     /// Set the pipeline profile and trigger rebuild.
     pub fn set_profile(&mut self, profile: PipelineProfile) {
         if self.profile.label != profile.label {
-            info!("PipelineManager: profile {} -> {}", self.profile.label, profile.label);
+            info!(
+                "PipelineManager: profile {} -> {}",
+                self.profile.label, profile.label
+            );
             self.profile = profile;
             self.status = PipelineStatus::Building;
         }
@@ -122,8 +125,11 @@ impl PipelineManager {
         let h = target_w as i64 * 9 / 16;
         let w = target_w as i64;
 
-        info!("PipelineManager: building profile {} ({} blocks)",
-            profile.label, profile.block_count());
+        info!(
+            "PipelineManager: building profile {} ({} blocks)",
+            profile.label,
+            profile.block_count()
+        );
 
         // 1. Build main chain blocks
         let blocks = profile.build_blocks(target_w, self.bayer_pattern);
@@ -147,7 +153,9 @@ impl PipelineManager {
         // 4. Build engine with blocks
         let mut all_blocks: Vec<Box<dyn IspBlock>> = blocks;
         if all_blocks.is_empty() {
-            return Err(crate::error::IspError::Pipeline("No blocks built from profile".into()));
+            return Err(crate::error::IspError::Pipeline(
+                "No blocks built from profile".into(),
+            ));
         }
         let head = all_blocks.remove(0);
         let mut combined: Vec<Box<dyn IspBlock>> = all_blocks;
@@ -158,7 +166,10 @@ impl PipelineManager {
         self.status = PipelineStatus::Active;
         self.last_build = Some(Instant::now());
 
-        info!("PipelineManager: build complete (profile={})", profile.label);
+        info!(
+            "PipelineManager: build complete (profile={})",
+            profile.label
+        );
         Ok(())
     }
 
@@ -176,11 +187,17 @@ impl PipelineManager {
     ) -> crate::error::IspResult<PipelineResult> {
         let t0 = Instant::now();
 
-        let engine_guard = self.engine.lock().map_err(|e| format!("Engine lock: {}", e))?;
+        let engine_guard = self
+            .engine
+            .lock()
+            .map_err(|e| format!("Engine lock: {}", e))?;
         let engine = engine_guard.as_ref().ok_or("Pipeline not built")?;
 
         // Read controller params for this frame's inference
-        let ctrl = engine.controller().lock().map_err(|e| format!("Ctrl lock: {}", e))?;
+        let ctrl = engine
+            .controller()
+            .lock()
+            .map_err(|e| format!("Ctrl lock: {}", e))?;
         let ccm: [f32; 9] = ctrl.get_ccm();
         let tone = ctrl.get_tone_params();
         let bayer_gains = [1.0f32; 4];
@@ -217,7 +234,10 @@ impl PipelineManager {
         let latency = t0.elapsed();
 
         // Read controller state (updated by engine during process() via stats feedback)
-        let ctrl = engine.controller().lock().map_err(|e| format!("Ctrl lock: {}", e))?;
+        let ctrl = engine
+            .controller()
+            .lock()
+            .map_err(|e| format!("Ctrl lock: {}", e))?;
         let awb_gains = ctrl.get_awb_gains();
         let estimated_cct = ctrl.estimated_cct;
         let exposure_gain = ctrl.get_effective_exposure_gain();
@@ -260,7 +280,9 @@ impl PipelineManager {
 }
 
 impl Default for PipelineManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -286,9 +308,17 @@ mod tests {
         for y in 0..32u32 {
             for x in 0..32u32 {
                 let val: u16 = if y % 2 == 0 {
-                    if x % 2 == 0 { 2000 } else { 4000 }
+                    if x % 2 == 0 {
+                        2000
+                    } else {
+                        4000
+                    }
                 } else {
-                    if x % 2 == 0 { 4000 } else { 6000 }
+                    if x % 2 == 0 {
+                        4000
+                    } else {
+                        6000
+                    }
                 };
                 raw.extend_from_slice(&val.to_le_bytes());
             }

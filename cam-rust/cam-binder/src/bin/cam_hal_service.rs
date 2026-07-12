@@ -30,22 +30,25 @@
 //! cargo run --features v4l2 --bin cam-hal-service -- --auto-detect --isp --png --out ./output
 //! ```
 
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
-use log::{info, error, warn};
+use log::{error, info, warn};
 
 use cam_binder::{
-    CameraHalService, CameraProviderFactory,
+    callback::{ICameraDeviceCallback, IFrameCallback},
     types::*,
-    callback::{IFrameCallback, ICameraDeviceCallback},
-    v4l2_aidl_bridge::{V4l2AidlBridge, SensorSpec, BridgeStats, BayerPattern},
+    v4l2_aidl_bridge::{BayerPattern, BridgeStats, SensorSpec, V4l2AidlBridge},
+    CameraHalService, CameraProviderFactory,
 };
 
 #[derive(Parser, Debug)]
-#[clap(name = "cam-hal-service", about = "Android HAL Service for Development & Testing")]
+#[clap(
+    name = "cam-hal-service",
+    about = "Android HAL Service for Development & Testing"
+)]
 struct Args {
     /// Camera ID to use (default: auto-detect)
     #[clap(long, default_value = "0")]
@@ -96,7 +99,10 @@ struct Args {
     service: bool,
 
     /// Binder service name
-    #[clap(long, default_value = "android.hardware.camera.provider.ICameraProvider/internal/0")]
+    #[clap(
+        long,
+        default_value = "android.hardware.camera.provider.ICameraProvider/internal/0"
+    )]
     service_name: String,
 
     /// Enable temporal denoise plugin (multi-frame noise reduction)
@@ -173,7 +179,10 @@ impl IFrameCallback for FrameCollector {
     fn on_frame(&self, buffer: StreamBuffer) {
         info!(
             "Frame: {}x{} ({} bytes, status={})",
-            buffer.width, buffer.height, buffer.data.len(), buffer.status
+            buffer.width,
+            buffer.height,
+            buffer.data.len(),
+            buffer.status
         );
         self.save_frame(&buffer);
         self.frames.lock().unwrap().push(buffer);
@@ -229,14 +238,20 @@ fn print_hal_info(service: &CameraHalService) {
     for id in &camera_ids {
         if let Some(info) = service.provider().get_camera_info(id) {
             info!("  Camera {}:", id);
-            info!("    Facing: {}", match info.facing {
-                0 => "BACK",
-                1 => "FRONT",
-                2 => "EXTERNAL",
-                _ => "UNKNOWN",
-            });
+            info!(
+                "    Facing: {}",
+                match info.facing {
+                    0 => "BACK",
+                    1 => "FRONT",
+                    2 => "EXTERNAL",
+                    _ => "UNKNOWN",
+                }
+            );
             info!("    Orientation: {}°", info.orientation);
-            info!("    Max resolution: {}x{}", info.max_resolution.0, info.max_resolution.1);
+            info!(
+                "    Max resolution: {}x{}",
+                info.max_resolution.0, info.max_resolution.1
+            );
             info!("    Formats: {:?}", info.supported_formats);
         }
     }
@@ -288,10 +303,14 @@ fn run_capture_pipeline(args: &Args, device_path: Option<String>) {
         let stats: Result<BridgeStats, _> = bridge.capture_loop(args.frames, &*collector);
         match stats {
             Ok(s) => {
-                info!("═══ Bridge stats: capt={} proc={} drop={} ═══",
-                    s.frames_captured, s.frames_processed, s.frames_dropped);
-                info!("Avg timings: capture_us={:.1} proc_us={:.1}",
-                    s.avg_capture_us, s.avg_processing_us);
+                info!(
+                    "═══ Bridge stats: capt={} proc={} drop={} ═══",
+                    s.frames_captured, s.frames_processed, s.frames_dropped
+                );
+                info!(
+                    "Avg timings: capture_us={:.1} proc_us={:.1}",
+                    s.avg_capture_us, s.avg_processing_us
+                );
             }
             Err(e) => error!("Bridge failed: {}", e),
         }
@@ -321,7 +340,10 @@ fn run_capture_pipeline(args: &Args, device_path: Option<String>) {
 
     // Print first frame hex
     if let Some(first) = collected.first() {
-        let hex: String = first.data.iter().take(32)
+        let hex: String = first
+            .data
+            .iter()
+            .take(32)
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join(" ");
@@ -361,7 +383,11 @@ fn run_binder_service(args: &Args) {
 
 fn main() {
     env_logger::Builder::new()
-        .filter_level(if args_verbose() { log::LevelFilter::Debug } else { log::LevelFilter::Info })
+        .filter_level(if args_verbose() {
+            log::LevelFilter::Debug
+        } else {
+            log::LevelFilter::Info
+        })
         .format_timestamp_millis()
         .init();
 

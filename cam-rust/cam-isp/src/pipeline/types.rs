@@ -13,12 +13,12 @@
 //!   Stats (AE, AWB, etc.)
 //! ```
 
-use std::collections::{HashMap, HashSet};
-use log::{info, warn};
 use cam_types::FrameFormat;
+use log::{info, warn};
+use std::collections::{HashMap, HashSet};
 
-use crate::onnx::proto::Proto;
 use crate::isp_params::IspParams;
+use crate::onnx::proto::Proto;
 
 /// Auxiliary outputs from ISP processing.
 ///
@@ -189,13 +189,21 @@ pub trait IspBlock: Send {
 
     /// If non-None, this block is the pipeline input.
     fn graph_input_name(&self) -> Option<&str> {
-        if self.is_head() { self.frame_tensor() } else { None }
+        if self.is_head() {
+            self.frame_tensor()
+        } else {
+            None
+        }
     }
 
     /// If non-None, this block produces the pipeline output.
     /// Default: tail only. Override in specific blocks (stats, aux hooks) to always output.
     fn graph_output_name(&self) -> Option<&str> {
-        if self.is_tail() { self.frame_tensor() } else { None }
+        if self.is_tail() {
+            self.frame_tensor()
+        } else {
+            None
+        }
     }
 
     fn input_elem_type(&self) -> i32 {
@@ -279,7 +287,8 @@ pub struct PipelineStats {
 
 impl std::fmt::Display for PipelineStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f,
+        write!(
+            f,
             "Pipeline: {} blocks ({}), {} ops, {} params, {} bytes ONNX, {:.1} MFLOPs, {:.1} KB",
             self.block_count,
             self.block_names.join(" → "),
@@ -309,30 +318,50 @@ impl GraphComposer {
         aux_blocks: &[&dyn IspBlock],
         opset_version: i64,
     ) -> Result<Vec<u8>, String> {
-        eprintln!("GraphComposer::compose_from_vec: pipeline len={}, aux len={}", pipeline.len(), aux_blocks.len());
+        eprintln!(
+            "GraphComposer::compose_from_vec: pipeline len={}, aux len={}",
+            pipeline.len(),
+            aux_blocks.len()
+        );
         if pipeline.is_empty() {
             return Err("Empty pipeline".to_string());
         }
 
         // 1. Validate chain count
-        let names: Vec<String> = pipeline.iter().map(|b| format!("{}[{}]", b.id(), b.tensor_ns())).collect();
-        info!("{}: Pipeline: {} blocks: {}", Self::TAG, pipeline.len(), names.join(" → "));
+        let names: Vec<String> = pipeline
+            .iter()
+            .map(|b| format!("{}[{}]", b.id(), b.tensor_ns()))
+            .collect();
+        info!(
+            "{}: Pipeline: {} blocks: {}",
+            Self::TAG,
+            pipeline.len(),
+            names.join(" → ")
+        );
 
         let pipeline_head = pipeline[0];
         let pipeline_tail = pipeline[pipeline.len() - 1];
-        eprintln!("GraphComposer::compose_from_vec: head={}, tail={}", pipeline_head.id(), pipeline_tail.id());
+        eprintln!(
+            "GraphComposer::compose_from_vec: head={}, tail={}",
+            pipeline_head.id(),
+            pipeline_tail.id()
+        );
 
         // 2. Walk blocks and set inputSource based on predecessor
         // Since blocks hold their own `input_source` as mutable state,
         // but we only have & references, the caller must set input_source
         // properly before calling this function.
         // We validate the input_source is set to the previous block's frame_tensor.
-        
+
         // Validate pipeline (warnings only — callers may not call wire_blocks)
         let issues = Self::validate_pipeline(pipeline);
         if !issues.is_empty() {
-            warn!("{}: Pipeline validation ({} issues): {}",
-                Self::TAG, issues.len(), issues.join("; "));
+            warn!(
+                "{}: Pipeline validation ({} issues): {}",
+                Self::TAG,
+                issues.len(),
+                issues.join("; ")
+            );
         }
 
         // 3. Index all produced tensor names
@@ -351,9 +380,15 @@ impl GraphComposer {
         // 4. Validate aux block inputs
         for blk in aux_blocks {
             for t in blk.input_tensors() {
-                let extra_names: HashSet<String> = blk.extra_inputs().iter().map(|e| e.0.clone()).collect();
+                let extra_names: HashSet<String> =
+                    blk.extra_inputs().iter().map(|e| e.0.clone()).collect();
                 if !produced_by.contains_key(&t) && !extra_names.contains(&t) {
-                    warn!("{}: Aux block {} needs '{}' — no producer found", Self::TAG, blk.id(), t);
+                    warn!(
+                        "{}: Aux block {} needs '{}' — no producer found",
+                        Self::TAG,
+                        blk.id(),
+                        t
+                    );
                 }
             }
         }
@@ -384,23 +419,32 @@ impl GraphComposer {
         for blk in &all_blocks {
             all_nodes.extend(blk.nodes());
             all_initializers.extend(blk.initializers());
-            
+
             // Intermediate tensor value info for type inference (→ field 13)
             // Only for non-Identity blocks
-            let is_identity = blk.id() == "normalize" || blk.id() == "cfa" || blk.id() == "blc" 
-                || blk.id() == "wb" || blk.id() == "ccm" || blk.id() == "tone" || blk.id() == "demosaic";
+            let is_identity = blk.id() == "normalize"
+                || blk.id() == "cfa"
+                || blk.id() == "blc"
+                || blk.id() == "wb"
+                || blk.id() == "ccm"
+                || blk.id() == "tone"
+                || blk.id() == "demosaic";
             if !is_identity {
                 // Add value_info for all output tensors (except graph input/output)
                 for tname in blk.output_tensors() {
                     let is_input = pipeline_head.graph_input_name().is_some_and(|n| n == tname);
                     let is_output = graph_output_names.contains(&tname);
                     if !is_input && !is_output {
-                        value_infos.push(Proto::value_info(&tname, &[
-                            Proto::tensor_dim_param("N"),
-                            Proto::tensor_dim_param("C"),
-                            Proto::tensor_dim_param("H"),
-                            Proto::tensor_dim_param("W"),
-                        ], blk.output_elem_type()));
+                        value_infos.push(Proto::value_info(
+                            &tname,
+                            &[
+                                Proto::tensor_dim_param("N"),
+                                Proto::tensor_dim_param("C"),
+                                Proto::tensor_dim_param("H"),
+                                Proto::tensor_dim_param("W"),
+                            ],
+                            blk.output_elem_type(),
+                        ));
                     }
                 }
                 // Add value_info for all input tensors that have a producer
@@ -408,12 +452,16 @@ impl GraphComposer {
                     if produced_by.contains_key(&tname) && !tname.is_empty() {
                         let is_input = pipeline_head.graph_input_name().is_some_and(|n| n == tname);
                         if !is_input {
-                            value_infos.push(Proto::value_info(&tname, &[
-                                Proto::tensor_dim_param("N"),
-                                Proto::tensor_dim_param("C"),
-                                Proto::tensor_dim_param("H"),
-                                Proto::tensor_dim_param("W"),
-                            ], blk.input_elem_type()));
+                            value_infos.push(Proto::value_info(
+                                &tname,
+                                &[
+                                    Proto::tensor_dim_param("N"),
+                                    Proto::tensor_dim_param("C"),
+                                    Proto::tensor_dim_param("H"),
+                                    Proto::tensor_dim_param("W"),
+                                ],
+                                blk.input_elem_type(),
+                            ));
                         }
                     }
                 }
@@ -422,8 +470,9 @@ impl GraphComposer {
             // Graph input from head block (→ field 11)
             if std::ptr::eq(*blk as *const _, pipeline_head as *const _) {
                 if let Some(name) = blk.graph_input_name() {
-                    let vi = blk.input_value_info()
-                        .ok_or_else(|| format!("Head block {} has no input_value_info", blk.id()))?;
+                    let vi = blk.input_value_info().ok_or_else(|| {
+                        format!("Head block {} has no input_value_info", blk.id())
+                    })?;
                     graph_inputs.push(vi);
                     info!("{}: graph input: {} → {}", Self::TAG, blk.id(), name);
                 }
@@ -444,8 +493,12 @@ impl GraphComposer {
             } else if is_tail && !is_head {
                 if let Some(vi) = blk.output_value_info() {
                     all_outputs.insert(0, vi);
-                    info!("{}: graph output (tail): {} → {}", Self::TAG, blk.id(),
-                        blk.frame_tensor().unwrap_or("?"));
+                    info!(
+                        "{}: graph output (tail): {} → {}",
+                        Self::TAG,
+                        blk.id(),
+                        blk.frame_tensor().unwrap_or("?")
+                    );
                 }
             }
 
@@ -454,16 +507,20 @@ impl GraphComposer {
             // the input value overrides the initializer at runtime.)
             for (name, elem_type, dims) in blk.extra_inputs() {
                 if extra_input_names.contains(&name) {
-                    continue;  // Already registered (dedup across blocks)
+                    continue; // Already registered (dedup across blocks)
                 }
                 extra_input_names.insert(name.clone());
-                let shape_dims: Vec<Vec<u8>> = dims.iter()
-                    .map(|d| Proto::tensor_dim_value(*d))
-                    .collect();
+                let shape_dims: Vec<Vec<u8>> =
+                    dims.iter().map(|d| Proto::tensor_dim_value(*d)).collect();
                 let vi = Proto::value_info(&name, &shape_dims, elem_type as i32);
                 value_infos.push(vi.clone());
                 graph_inputs.push(vi);
-                info!("{}: extra input: {} (elem_type={})", Self::TAG, name, elem_type);
+                info!(
+                    "{}: extra input: {} (elem_type={})",
+                    Self::TAG,
+                    name,
+                    elem_type
+                );
             }
         }
 
@@ -474,9 +531,15 @@ impl GraphComposer {
             return Err("No graph outputs".to_string());
         }
 
-        info!("{}: {} nodes, {} initializers, {} graph inputs, {} outputs, {} value_infos",
-            Self::TAG, all_nodes.len(), all_initializers.len(),
-            graph_inputs.len(), all_outputs.len(), value_infos.len());
+        info!(
+            "{}: {} nodes, {} initializers, {} graph inputs, {} outputs, {} value_infos",
+            Self::TAG,
+            all_nodes.len(),
+            all_initializers.len(),
+            graph_inputs.len(),
+            all_outputs.len(),
+            value_infos.len()
+        );
 
         let graph = Proto::graph(
             &graph_name,
@@ -500,13 +563,19 @@ impl GraphComposer {
     ) -> Result<Vec<u8>, String> {
         let chain = Self::walk_chain(head)?;
         eprintln!("GraphComposer::compose: chain length = {}", chain.len());
-        eprintln!("GraphComposer::compose: aux_blocks length = {}", aux_blocks.len());
+        eprintln!(
+            "GraphComposer::compose: aux_blocks length = {}",
+            aux_blocks.len()
+        );
         // If the chain only has the head and there are aux_blocks,
         // treat aux_blocks as part of the main pipeline
         if chain.len() == 1 && !aux_blocks.is_empty() {
             let mut full_chain = chain;
             full_chain.extend_from_slice(aux_blocks);
-            eprintln!("GraphComposer::compose: using full_chain length = {}", full_chain.len());
+            eprintln!(
+                "GraphComposer::compose: using full_chain length = {}",
+                full_chain.len()
+            );
             Self::compose_from_vec(&full_chain, &[], opset_version)
         } else {
             eprintln!("GraphComposer::compose: using chain + aux_blocks");
@@ -520,7 +589,9 @@ impl GraphComposer {
         loop {
             chain.push(block);
             match block.next() {
-                Some(next) => { block = &**next; }
+                Some(next) => {
+                    block = &**next;
+                }
                 None => break,
             }
         }
@@ -582,7 +653,9 @@ impl GraphComposer {
                     if !produced.contains(src) && !src.is_empty() {
                         issues.push(format!(
                             "Block '{}' input '{}' not produced by any predecessor",
-                            blk.id(), src));
+                            blk.id(),
+                            src
+                        ));
                     }
                 }
             }
@@ -608,10 +681,14 @@ impl GraphComposer {
 
         for issue in &issues {
             if issue.contains("empty input_source") {
-                fixes.push("Set input_source to predecessor's frame_tensor via wire_blocks()".into());
+                fixes.push(
+                    "Set input_source to predecessor's frame_tensor via wire_blocks()".into(),
+                );
             }
             if issue.contains("not produced by any predecessor") {
-                fixes.push("Add missing block before this one to produce the required tensor".into());
+                fixes.push(
+                    "Add missing block before this one to produce the required tensor".into(),
+                );
             }
             if issue.contains("Duplicate block ID") {
                 fixes.push("Remove duplicate block or give it a unique ID".into());
@@ -726,13 +803,22 @@ impl GraphComposer {
             let outputs = blk.output_tensors().join(", ");
             lines.push(format!(
                 "  {:2}. {:<20} nodes={:<3} inits={:<2} [{}] → [{}]",
-                i + 1, blk.id(), nodes, inits, inputs, outputs));
+                i + 1,
+                blk.id(),
+                nodes,
+                inits,
+                inputs,
+                outputs
+            ));
         }
 
         lines.push("─".repeat(60));
         let total_nodes: usize = blocks.iter().map(|b| b.nodes().len()).sum();
         let total_inits: usize = blocks.iter().map(|b| b.initializers().len()).sum();
-        lines.push(format!("  Total: {} ops, {} initializers", total_nodes, total_inits));
+        lines.push(format!(
+            "  Total: {} ops, {} initializers",
+            total_nodes, total_inits
+        ));
 
         lines.join("\n")
     }
@@ -741,7 +827,12 @@ impl GraphComposer {
     pub fn pipeline_summary(blocks: &[&dyn IspBlock]) -> String {
         let total_nodes: usize = blocks.iter().map(|b| b.nodes().len()).sum();
         let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
-        format!("{} blocks ({} ops): {}", blocks.len(), total_nodes, names.join(" → "))
+        format!(
+            "{} blocks ({} ops): {}",
+            blocks.len(),
+            total_nodes,
+            names.join(" → ")
+        )
     }
 
     /// Compose ONNX + convert to MNN in one call.
@@ -764,8 +855,7 @@ impl GraphComposer {
 
         let onnx_path = mnn_dir.join(format!("{}.onnx", name));
         let mnn_path = mnn_dir.join(format!("{}.mnn", name));
-        std::fs::write(&onnx_path, &onnx)
-            .map_err(|e| format!("write onnx: {}", e))?;
+        std::fs::write(&onnx_path, &onnx).map_err(|e| format!("write onnx: {}", e))?;
 
         crate::mnn_converter::convert_onnx_to_mnn(
             &onnx_path.to_string_lossy(),
@@ -802,17 +892,17 @@ impl GraphComposer {
         for blk in blocks {
             let flops = match blk.id() {
                 // Conv: 2 * out_ch * in_ch * kH * kW * pixels
-                id if id.starts_with("demosaic") => 9 * pixels,       // 3x3 conv per channel
-                id if id.starts_with("ccm") => 18 * pixels,          // 3x3 matrix * 3 channels
-                id if id.starts_with("warp") => 5 * pixels,          // bilinear sample + grid
-                id if id.starts_with("chromatic") => 15 * pixels,     // 3x GridSample
-                id if id.starts_with("sharpen") => 8 * pixels,       // AvgPool + Sub + Add
-                id if id.starts_with("colorspace") => 18 * pixels,    // 3x3 matrix
-                id if id.starts_with("gamma") => 6 * pixels,         // Log + Mul + Exp
-                id if id.starts_with("auto_contrast") => 4 * pixels,  // Sub + Mul + Add
-                id if id.starts_with("display") => 3 * pixels,        // scale + clamp
-                id if id.starts_with("unpack") => 2 * pixels,         // scale + channel extract
-                _ => pixels,                                           // default: 1 flop/pixel
+                id if id.starts_with("demosaic") => 9 * pixels, // 3x3 conv per channel
+                id if id.starts_with("ccm") => 18 * pixels,     // 3x3 matrix * 3 channels
+                id if id.starts_with("warp") => 5 * pixels,     // bilinear sample + grid
+                id if id.starts_with("chromatic") => 15 * pixels, // 3x GridSample
+                id if id.starts_with("sharpen") => 8 * pixels,  // AvgPool + Sub + Add
+                id if id.starts_with("colorspace") => 18 * pixels, // 3x3 matrix
+                id if id.starts_with("gamma") => 6 * pixels,    // Log + Mul + Exp
+                id if id.starts_with("auto_contrast") => 4 * pixels, // Sub + Mul + Add
+                id if id.starts_with("display") => 3 * pixels,  // scale + clamp
+                id if id.starts_with("unpack") => 2 * pixels,   // scale + channel extract
+                _ => pixels,                                    // default: 1 flop/pixel
             };
             total += flops;
             per_block.push((blk.id().to_string(), flops));
@@ -837,9 +927,9 @@ impl GraphComposer {
             // Each block typically has one [1,3,H,W] output = 3*H*W*4 bytes
             // Some blocks (unpack) produce 4ch, some (demosaic) produce 3ch
             let channels: u64 = match blk.id() {
-                id if id.starts_with("display") => 4,  // RGBA
-                id if id.starts_with("noise") => 1,    // noise map
-                _ => 3,                                 // RGB
+                id if id.starts_with("display") => 4, // RGBA
+                id if id.starts_with("noise") => 1,   // noise map
+                _ => 3,                               // RGB
             };
             let output_bytes = channels * pixels * f32_size;
             // Initializer data
@@ -865,11 +955,7 @@ impl GraphComposer {
     }
 
     /// Generate a complete pipeline analysis report.
-    pub fn compose_report(
-        blocks: &[&dyn IspBlock],
-        w: u32,
-        h: u32,
-    ) -> String {
+    pub fn compose_report(blocks: &[&dyn IspBlock], w: u32, h: u32) -> String {
         let mut lines = Vec::new();
         lines.push(format!("Pipeline Analysis ({}×{})", w, h));
         lines.push("═".repeat(60));
@@ -932,7 +1018,8 @@ mod tests {
         tone.set_input_source(ccm.frame_tensor().unwrap_or(""));
         disp.set_input_source(tone.frame_tensor().unwrap_or(""));
 
-        let pipeline: Vec<&dyn IspBlock> = vec![&raw, &norm, &cfa, &blc, &wb, &dem, &ccm, &tone, &disp];
+        let pipeline: Vec<&dyn IspBlock> =
+            vec![&raw, &norm, &cfa, &blc, &wb, &dem, &ccm, &tone, &disp];
         let model = GraphComposer::compose_from_vec(&pipeline, &[], 16).expect("Compose failed");
         assert!(!model.is_empty());
         assert!(model.len() > 2000); // Expected ~2719 bytes
@@ -980,7 +1067,11 @@ mod tests {
         GraphComposer::wire_blocks(&mut blocks);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let issues = GraphComposer::validate_pipeline(&refs);
-        assert!(issues.is_empty(), "good pipeline should have no issues: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "good pipeline should have no issues: {:?}",
+            issues
+        );
     }
 
     #[test]
@@ -1044,9 +1135,16 @@ mod tests {
         let (onnx, stats, issues) = GraphComposer::compose_full(&mut blocks, &[], 16).unwrap();
         assert!(!onnx.is_empty());
         assert_eq!(stats.block_count, 3);
-        assert!(issues.is_empty(), "wired pipeline should have no issues: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "wired pipeline should have no issues: {:?}",
+            issues
+        );
         assert!(stats.estimated_flops > 0, "FLOPs should be auto-populated");
-        assert!(stats.estimated_memory_bytes > 0, "memory should be auto-populated");
+        assert!(
+            stats.estimated_memory_bytes > 0,
+            "memory should be auto-populated"
+        );
     }
 
     #[test]
@@ -1056,11 +1154,15 @@ mod tests {
             Box::new(DemosaicCcmBlock::new(2)),
             Box::new(DisplayBlock::new(3840)),
         ];
-        let (onnx, stats, _) = GraphComposer::compose_full_at(
-            &mut blocks, &[], 16, 3840, 2160).unwrap();
+        let (onnx, stats, _) =
+            GraphComposer::compose_full_at(&mut blocks, &[], 16, 3840, 2160).unwrap();
         assert!(!onnx.is_empty());
         assert!(stats.estimated_flops > 0);
-        println!("4K: {} MFLOPs, {} KB", stats.estimated_flops / 1_000_000, stats.estimated_memory_bytes / 1024);
+        println!(
+            "4K: {} MFLOPs, {} KB",
+            stats.estimated_flops / 1_000_000,
+            stats.estimated_memory_bytes / 1024
+        );
     }
 
     #[test]
@@ -1103,7 +1205,8 @@ mod tests {
             Box::new(DemosaicCcmBlock::new(0)),
             Box::new(DisplayBlock::new(640)),
         ];
-        let (onnx, stats, elapsed_ms) = GraphComposer::compose_benchmark(&mut blocks, &[], 16).unwrap();
+        let (onnx, stats, elapsed_ms) =
+            GraphComposer::compose_benchmark(&mut blocks, &[], 16).unwrap();
         assert!(!onnx.is_empty());
         assert!(elapsed_ms >= 0.0);
         assert!(stats.block_count == 3);
@@ -1164,8 +1267,8 @@ mod tests {
             Box::new(DemosaicCcmBlock::new(0)),
             Box::new(DisplayBlock::new(640)),
         ];
-        let (onnx, stats, issues, elapsed) = GraphComposer::compose_full_benchmark(
-            &mut blocks, &[], 16).unwrap();
+        let (onnx, stats, issues, elapsed) =
+            GraphComposer::compose_full_benchmark(&mut blocks, &[], 16).unwrap();
         assert!(!onnx.is_empty());
         assert_eq!(stats.block_count, 3);
         assert!(issues.is_empty());

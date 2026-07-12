@@ -71,9 +71,9 @@ impl SimdEngine for Neon {
                 let r = rgb[idx];
                 let g = rgb[idx + 1];
                 let b = rgb[idx + 2];
-                out[idx] = (matrix[0]*r + matrix[1]*g + matrix[2]*b).clamp(0.0, 1.0);
-                out[idx+1] = (matrix[3]*r + matrix[4]*g + matrix[5]*b).clamp(0.0, 1.0);
-                out[idx+2] = (matrix[6]*r + matrix[7]*g + matrix[8]*b).clamp(0.0, 1.0);
+                out[idx] = (matrix[0] * r + matrix[1] * g + matrix[2] * b).clamp(0.0, 1.0);
+                out[idx + 1] = (matrix[3] * r + matrix[4] * g + matrix[5] * b).clamp(0.0, 1.0);
+                out[idx + 2] = (matrix[6] * r + matrix[7] * g + matrix[8] * b).clamp(0.0, 1.0);
             }
         }
 
@@ -90,17 +90,23 @@ impl SimdEngine for Neon {
 
                     let nr = vmlaq_f32(
                         vmulq_f32(r, vdupq_n_f32(matrix[0])),
-                        g, vdupq_n_f32(matrix[1]));
+                        g,
+                        vdupq_n_f32(matrix[1]),
+                    );
                     let nr = vmlaq_f32(nr, b, vdupq_n_f32(matrix[2]));
 
                     let ng = vmlaq_f32(
                         vmulq_f32(r, vdupq_n_f32(matrix[3])),
-                        g, vdupq_n_f32(matrix[4]));
+                        g,
+                        vdupq_n_f32(matrix[4]),
+                    );
                     let ng = vmlaq_f32(ng, b, vdupq_n_f32(matrix[5]));
 
                     let nb = vmlaq_f32(
                         vmulq_f32(r, vdupq_n_f32(matrix[6])),
-                        g, vdupq_n_f32(matrix[7]));
+                        g,
+                        vdupq_n_f32(matrix[7]),
+                    );
                     let nb = vmlaq_f32(nb, b, vdupq_n_f32(matrix[8]));
 
                     let zero = vdupq_n_f32(0.0);
@@ -120,9 +126,9 @@ impl SimdEngine for Neon {
                 let r = rgb[rgb_idx];
                 let g = rgb[rgb_idx + 1];
                 let b = rgb[rgb_idx + 2];
-                out[rgb_idx] = (matrix[0]*r + matrix[1]*g + matrix[2]*b).clamp(0.0, 1.0);
-                out[rgb_idx+1] = (matrix[3]*r + matrix[4]*g + matrix[5]*b).clamp(0.0, 1.0);
-                out[rgb_idx+2] = (matrix[6]*r + matrix[7]*g + matrix[8]*b).clamp(0.0, 1.0);
+                out[rgb_idx] = (matrix[0] * r + matrix[1] * g + matrix[2] * b).clamp(0.0, 1.0);
+                out[rgb_idx + 1] = (matrix[3] * r + matrix[4] * g + matrix[5] * b).clamp(0.0, 1.0);
+                out[rgb_idx + 2] = (matrix[6] * r + matrix[7] * g + matrix[8] * b).clamp(0.0, 1.0);
             }
         }
         out
@@ -176,21 +182,21 @@ impl SimdEngine for Neon {
         #[cfg(target_arch = "aarch64")]
         if target_w == src_w && target_h == src_h {
             for y in 0..src_h {
-                    for x in (0..src_w).step_by(4) {
-                        let src_base = (y * src_w + x) * 3;
-                        let dst_base = (y * src_w + x) * 4;
-                        for px in 0..4 {
-                            let s = src_base + px * 3;
-                            let d = dst_base + px * 4;
-                            if s + 2 < rgb.len() {
-                                out[d]     = (rgb[s + 2].clamp(0.0, 1.0) * 255.0) as u8;
-                                out[d + 1] = (rgb[s + 1].clamp(0.0, 1.0) * 255.0) as u8;
-                                out[d + 2] = (rgb[s].clamp(0.0, 1.0) * 255.0) as u8;
-                                out[d + 3] = 255;
-                            }
+                for x in (0..src_w).step_by(4) {
+                    let src_base = (y * src_w + x) * 3;
+                    let dst_base = (y * src_w + x) * 4;
+                    for px in 0..4 {
+                        let s = src_base + px * 3;
+                        let d = dst_base + px * 4;
+                        if s + 2 < rgb.len() {
+                            out[d] = (rgb[s + 2].clamp(0.0, 1.0) * 255.0) as u8;
+                            out[d + 1] = (rgb[s + 1].clamp(0.0, 1.0) * 255.0) as u8;
+                            out[d + 2] = (rgb[s].clamp(0.0, 1.0) * 255.0) as u8;
+                            out[d + 3] = 255;
                         }
                     }
                 }
+            }
             return out;
         }
 
@@ -202,7 +208,7 @@ impl SimdEngine for Neon {
                 let src_idx = (sy * src_w + sx) * 3;
                 let dst_idx = (y * target_w + x) * 4;
                 if src_idx + 2 < rgb.len() {
-                    out[dst_idx]     = (rgb[src_idx + 2].clamp(0.0, 1.0) * 255.0) as u8;
+                    out[dst_idx] = (rgb[src_idx + 2].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 1] = (rgb[src_idx + 1].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 2] = (rgb[src_idx].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 3] = 255;
@@ -212,14 +218,7 @@ impl SimdEngine for Neon {
         out
     }
 
-    fn bilinear_sample_4ch(
-        &self,
-        src: &[u8],
-        width: u32,
-        height: u32,
-        x: f32,
-        y: f32,
-    ) -> [u8; 4] {
+    fn bilinear_sample_4ch(&self, src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [u8; 4] {
         #[cfg(not(target_arch = "aarch64"))]
         {
             // Fallback to scalar on non-aarch64
@@ -236,10 +235,30 @@ impl SimdEngine for Neon {
             let x1 = x1.clamp(0, w) as u32;
             let y1 = y1.clamp(0, h) as u32;
             let idx = |sx: u32, sy: u32| -> usize { ((sy * width + sx) * 4) as usize };
-            let p00 = [src[idx(x0, y0)], src[idx(x0, y0)+1], src[idx(x0, y0)+2], src[idx(x0, y0)+3]];
-            let p10 = [src[idx(x1, y0)], src[idx(x1, y0)+1], src[idx(x1, y0)+2], src[idx(x1, y0)+3]];
-            let p01 = [src[idx(x0, y1)], src[idx(x0, y1)+1], src[idx(x0, y1)+2], src[idx(x0, y1)+3]];
-            let p11 = [src[idx(x1, y1)], src[idx(x1, y1)+1], src[idx(x1, y1)+2], src[idx(x1, y1)+3]];
+            let p00 = [
+                src[idx(x0, y0)],
+                src[idx(x0, y0) + 1],
+                src[idx(x0, y0) + 2],
+                src[idx(x0, y0) + 3],
+            ];
+            let p10 = [
+                src[idx(x1, y0)],
+                src[idx(x1, y0) + 1],
+                src[idx(x1, y0) + 2],
+                src[idx(x1, y0) + 3],
+            ];
+            let p01 = [
+                src[idx(x0, y1)],
+                src[idx(x0, y1) + 1],
+                src[idx(x0, y1) + 2],
+                src[idx(x0, y1) + 3],
+            ];
+            let p11 = [
+                src[idx(x1, y1)],
+                src[idx(x1, y1) + 1],
+                src[idx(x1, y1) + 2],
+                src[idx(x1, y1) + 3],
+            ];
             let mut result = [0u8; 4];
             for c in 0..4 {
                 let v = p00[c] as f32 * (1.0 - fx) * (1.0 - fy)
@@ -259,13 +278,7 @@ impl SimdEngine for Neon {
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn neon_bilinear_sample_4ch(
-    src: &[u8],
-    width: u32,
-    height: u32,
-    x: f32,
-    y: f32,
-) -> [u8; 4] {
+unsafe fn neon_bilinear_sample_4ch(src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [u8; 4] {
     use std::arch::aarch64::*;
 
     let x0 = x.floor() as i32;
@@ -294,9 +307,9 @@ unsafe fn neon_bilinear_sample_4ch(
 
     // Expand u8 → u16 → u32 → f32
     let expand_to_f32 = |v: uint8x8_t| -> float32x4_t {
-        let u16 = vmovl_u8(v);           // u8 → u16 (8 lanes)
+        let u16 = vmovl_u8(v); // u8 → u16 (8 lanes)
         let u32 = vmovl_u16(vget_low_u16(u16)); // lower 4 × u16 → u32
-        vcvtq_f32_u32(u32)               // u32 → f32
+        vcvtq_f32_u32(u32) // u32 → f32
     };
 
     let v_p00 = expand_to_f32(p00_u8);
@@ -326,8 +339,8 @@ unsafe fn neon_bilinear_sample_4ch(
     v_result = vmaxq_f32(vminq_f32(v_result, v_255), v_zero);
 
     // f32 → u32 → u16 → u8
-    let u32_result = vcvtq_u32_f32(v_result);      // f32 → u32
-    let u16_result = vqmovn_u32(u32_result);        // u32 → u16 (saturating)
+    let u32_result = vcvtq_u32_f32(v_result); // f32 → u32
+    let u16_result = vqmovn_u32(u32_result); // u32 → u16 (saturating)
     let u8_result = vqmovn_u16(vcombine_u16(u16_result, u16_result)); // u16 → u8 (saturating)
 
     let mut result = [0u8; 4];

@@ -3,16 +3,16 @@
 
 pub mod proto;
 
-use proto::Proto;
+use cam_types::FrameFormat;
 use log::info;
 #[cfg(feature = "ort")]
 use log::warn;
-use cam_types::FrameFormat;
+use proto::Proto;
 
-use std::sync::Mutex;
 use crate::controller::IspController;
 use crate::engine::{IspEngine, ProcessParams};
-use crate::pipeline::{IspBlock, IspFrame, GraphComposer};
+use crate::pipeline::{GraphComposer, IspBlock, IspFrame};
+use std::sync::Mutex;
 
 // ---------------------------------------------------------------------------
 // OrtBackend - available ONNX Runtime execution backends
@@ -95,8 +95,12 @@ impl IspEngine for OnnxEngine {
         self.initialized
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 
     fn controller(&self) -> &Mutex<IspController> {
         &self.controller
@@ -111,17 +115,24 @@ impl IspEngine for OnnxEngine {
     ) -> crate::error::IspResult<()> {
         // Build full pipeline: head + aux_blocks
         let mut all_blocks: Vec<&dyn IspBlock> = vec![pipeline_head.as_ref()];
-        let aux_refs: Vec<&dyn IspBlock> = aux_blocks.iter().map(|b| b.as_ref() as &dyn IspBlock).collect();
+        let aux_refs: Vec<&dyn IspBlock> = aux_blocks
+            .iter()
+            .map(|b| b.as_ref() as &dyn IspBlock)
+            .collect();
         all_blocks.extend(aux_refs);
-        
+
         eprintln!("OnnxEngine::build: all_blocks count = {}", all_blocks.len());
-        
+
         // Compose using compose_from_vec to avoid linked list requirement
         let model = GraphComposer::compose_from_vec(&all_blocks, &[], opset_version)
             .map_err(crate::error::IspError::Pipeline)?;
 
         eprintln!("OnnxEngine::build: model size = {} bytes", model.len());
-        info!("OnnxEngine({}) composed ONNX model ({} bytes)", self.backend.id(), model.len());
+        info!(
+            "OnnxEngine({}) composed ONNX model ({} bytes)",
+            self.backend.id(),
+            model.len()
+        );
 
         #[cfg(feature = "ort")]
         {
@@ -131,7 +142,13 @@ impl IspEngine for OnnxEngine {
             // Build session from model
             let session = ::ort::session::Session::builder()
                 .and_then(|mut b| b.commit_from_memory(&model))
-                .map_err(|e| crate::error::IspError::Onnx(format!("OnnxEngine({}) failed to load ORT session: {}", self.backend.id(), e)))?;
+                .map_err(|e| {
+                    crate::error::IspError::Onnx(format!(
+                        "OnnxEngine({}) failed to load ORT session: {}",
+                        self.backend.id(),
+                        e
+                    ))
+                })?;
             info!("OnnxEngine({}) loaded ORT session", self.backend.id());
             let mut guard = self.session.lock().unwrap();
             *guard = Some(session);
@@ -139,7 +156,10 @@ impl IspEngine for OnnxEngine {
 
         self.model_bytes = Some(model);
         self.initialized = true;
-        info!("OnnxEngine({}) built pipeline successfully", self.backend.id());
+        info!(
+            "OnnxEngine({}) built pipeline successfully",
+            self.backend.id()
+        );
         Ok(())
     }
 
@@ -150,34 +170,52 @@ impl IspEngine for OnnxEngine {
         let _buf = p.buf;
 
         if !self.initialized {
-            return Err(crate::error::IspError::Config("Engine not initialized".into()));
+            return Err(crate::error::IspError::Config(
+                "Engine not initialized".into(),
+            ));
         }
 
-        eprintln!("OnnxEngine::process called, feature ort={}, initialized={}", cfg!(feature = "ort"), self.initialized);
+        eprintln!(
+            "OnnxEngine::process called, feature ort={}, initialized={}",
+            cfg!(feature = "ort"),
+            self.initialized
+        );
 
-        info!("OnnxEngine({}) processing frame {}x{} -> {}x{}",
-            self.backend.id(), width, height, target_width, height);
+        info!(
+            "OnnxEngine({}) processing frame {}x{} -> {}x{}",
+            self.backend.id(),
+            width,
+            height,
+            target_width,
+            height
+        );
 
         #[cfg(feature = "ort")]
         {
             let buf = _buf;
             let mut guard = self.session.lock().unwrap();
-            eprintln!("OnnxEngine: session lock acquired, session is_some={}", guard.is_some());
+            eprintln!(
+                "OnnxEngine: session lock acquired, session is_some={}",
+                guard.is_some()
+            );
             if let Some(ref mut session) = *guard {
                 // Build input tensor: INT16 [1, 1, height, width]
                 // Reinterpret raw u8 bytes as i16
                 let input_i16: Vec<i16> = unsafe {
-                    std::slice::from_raw_parts(
-                        buf.as_ptr() as *const i16,
-                        buf.len() / 2,
-                    )
-                }.to_vec();
+                    std::slice::from_raw_parts(buf.as_ptr() as *const i16, buf.len() / 2)
+                }
+                .to_vec();
 
-                eprintln!("OnnxEngine: input_i16 len={}, buf len={}", input_i16.len(), buf.len());
+                eprintln!(
+                    "OnnxEngine: input_i16 len={}, buf len={}",
+                    input_i16.len(),
+                    buf.len()
+                );
 
-                let tensor = match ::ort::value::Tensor::from_array(
-                    (vec![1i64, 1, height as i64, width as i64], input_i16.into_boxed_slice())
-                ) {
+                let tensor = match ::ort::value::Tensor::from_array((
+                    vec![1i64, 1, height as i64, width as i64],
+                    input_i16.into_boxed_slice(),
+                )) {
                     Ok(t) => t.upcast(),
                     Err(e) => {
                         warn!("OnnxEngine: failed to create input tensor: {}", e);
@@ -190,10 +228,16 @@ impl IspEngine for OnnxEngine {
                 // Run inference
                 let input_name = "RawInputBlock/frame";
                 let output_name = "DisplayBlock/frame";
-                eprintln!("OnnxEngine: running inference with input='{}', output='{}'", input_name, output_name);
+                eprintln!(
+                    "OnnxEngine: running inference with input='{}', output='{}'",
+                    input_name, output_name
+                );
                 let outputs = match session.run(ort::inputs![input_name => tensor]) {
                     Ok(o) => {
-                        eprintln!("OnnxEngine: session.run() returned Ok, outputs count={}", o.len());
+                        eprintln!(
+                            "OnnxEngine: session.run() returned Ok, outputs count={}",
+                            o.len()
+                        );
                         o
                     }
                     Err(e) => {
@@ -202,7 +246,10 @@ impl IspEngine for OnnxEngine {
                     }
                 };
 
-                eprintln!("OnnxEngine: inference completed, outputs count={}", outputs.len());
+                eprintln!(
+                    "OnnxEngine: inference completed, outputs count={}",
+                    outputs.len()
+                );
 
                 // Extract output tensor (UINT8 BGRA)
                 if let Some(output_val) = outputs.get(output_name) {
@@ -211,7 +258,8 @@ impl IspEngine for OnnxEngine {
                         Ok((_, data)) => {
                             let output_data = data.to_vec();
                             eprintln!("OnnxEngine: inference done, {} bytes", output_data.len());
-                            let mut frame = IspFrame::new(target_width, height, FrameFormat::Rgba8888);
+                            let mut frame =
+                                IspFrame::new(target_width, height, FrameFormat::Rgba8888);
                             frame.data = output_data;
                             return Ok(frame);
                         }
@@ -291,12 +339,10 @@ impl OnnxModelComposer {
 #[macro_export]
 macro_rules! register_onnx_engine {
     ($backend:expr) => {
-        cam_isp::engine::register_engine(
-            cam_isp::engine::EngineFactory {
-                name: $backend.id(),
-                priority: $backend.priority(),
-                create_fn: Box::new(|| Box::new(cam_isp::onnx::OnnxEngine::new($backend))),
-            }
-        );
+        cam_isp::engine::register_engine(cam_isp::engine::EngineFactory {
+            name: $backend.id(),
+            priority: $backend.priority(),
+            create_fn: Box::new(|| Box::new(cam_isp::onnx::OnnxEngine::new($backend))),
+        });
     };
 }

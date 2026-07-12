@@ -18,8 +18,8 @@
 //! The `sigma` parameter controls denoising strength (higher = more denoising).
 //! Typical range: 0.01–0.1 for normalized [0,1] images.
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// WaveletDenoiseBlock — single-level Haar wavelet denoising.
 ///
@@ -61,30 +61,68 @@ impl WaveletDenoiseBlock {
 }
 
 impl IspBlock for WaveletDenoiseBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "WaveletDenoise".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "WaveletDenoise".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -92,14 +130,26 @@ impl IspBlock for WaveletDenoiseBlock {
 
         // Simplified wavelet denoise: Just use box filter (AveragePool)
         // Full wavelet thresholding is too complex for standard ONNX
-        let kernel_size = 3;  // 3x3 kernel
-        
-        nodes.push(Proto::node("AveragePool",
+        let kernel_size = 3; // 3x3 kernel
+
+        nodes.push(Proto::node(
+            "AveragePool",
             &[&self.input_source],
             &[self.frame_tensor.as_str()],
-            &[Proto::attribute_ints("kernel_shape", &[kernel_size, kernel_size]),
-              Proto::attribute_ints("pads", &[kernel_size / 2, kernel_size / 2, kernel_size / 2, kernel_size / 2]),
-              Proto::attribute_ints("strides", &[1, 1])]));
+            &[
+                Proto::attribute_ints("kernel_shape", &[kernel_size, kernel_size]),
+                Proto::attribute_ints(
+                    "pads",
+                    &[
+                        kernel_size / 2,
+                        kernel_size / 2,
+                        kernel_size / 2,
+                        kernel_size / 2,
+                    ],
+                ),
+                Proto::attribute_ints("strides", &[1, 1]),
+            ],
+        ));
 
         nodes
     }
@@ -136,7 +186,7 @@ mod tests {
     fn test_wavelet_initializers() {
         let b = WaveletDenoiseBlock::new();
         let inits = b.initializers();
-        assert_eq!(inits.len(), 0);  // Simplified: no initializers
+        assert_eq!(inits.len(), 0); // Simplified: no initializers
     }
 
     #[test]

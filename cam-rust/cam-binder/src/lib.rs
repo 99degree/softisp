@@ -145,42 +145,46 @@
 //! - Interface token verification
 //! - CameraMetadata serialize/deserialize
 
-pub mod provider;
-pub mod device;
-pub mod session;
-pub mod types;
-pub mod error;
+pub mod aidl;
+pub mod binder;
 pub mod callback;
-pub mod service;
+pub mod device;
+pub mod dispatch;
+pub mod error;
+pub mod factory;
+pub mod hal_bridge;
 pub mod isp_session;
 pub mod metadata;
-pub mod dispatch;
-pub mod factory;
-pub mod binder;
-pub mod aidl;
-pub mod hal_bridge;
+pub mod provider;
+pub mod service;
+pub mod session;
+pub mod types;
 pub mod v4l2_aidl_bridge;
 
 // Re-export buffer management from cam-hal (unified across all crates)
 pub use cam_hal::buffer::{
-    MappedBuffer, CameraBuffer, BufferAllocator,
-    HeapAllocator, HeapBuffer, HeapCameraBuffer, GenericCameraBuffer,
-    allocator, set_allocator, allocate, allocate_frame,
+    allocate, allocate_frame, allocator, set_allocator, BufferAllocator, CameraBuffer,
+    GenericCameraBuffer, HeapAllocator, HeapBuffer, HeapCameraBuffer, MappedBuffer,
 };
 
 // Re-export platform-specific buffer backends
-#[cfg(feature = "v4l2")]
-pub use cam_hal_linux::list_v4l2_devices;
 #[cfg(feature = "android")]
 pub use cam_hal_android::gralloc::{native_handle_t, BufferHandleT, GrallocInterop};
+#[cfg(feature = "v4l2")]
+pub use cam_hal_linux::list_v4l2_devices;
 
-pub use provider::CameraProvider;
+pub use aidl::{BnCameraDevice, BnCameraDeviceSession, BnCameraProvider};
+pub use binder::{
+    BinderStatus, BinderThreadPool, BpCameraDevice, BpCameraDeviceSession, BpCameraProvider,
+    IBinder, LocalBinder, Parcel, ServiceManager,
+};
 pub use device::CameraDevice;
-pub use session::CameraDeviceSession;
-pub use service::CameraHalService;
+pub use dispatch::{
+    dispatch_device_transaction, dispatch_provider_transaction, dispatch_session_transaction,
+};
+pub use factory::{CameraProviderFactory, HidlToAidlShim, VintfManifestEntry, VndkCompatLayer};
 pub use isp_session::IspCameraSession;
 pub use metadata::{CameraMetadata, MetadataEntry, MetadataType};
-pub use dispatch::{dispatch_provider_transaction, dispatch_device_transaction, dispatch_session_transaction};
-pub use factory::{CameraProviderFactory, HidlToAidlShim, VndkCompatLayer, VintfManifestEntry};
-pub use binder::{Parcel, IBinder, BinderStatus, BpCameraProvider, BpCameraDevice, BpCameraDeviceSession, ServiceManager, BinderThreadPool, LocalBinder};
-pub use aidl::{BnCameraProvider, BnCameraDevice, BnCameraDeviceSession};
+pub use provider::CameraProvider;
+pub use service::CameraHalService;
+pub use session::CameraDeviceSession;

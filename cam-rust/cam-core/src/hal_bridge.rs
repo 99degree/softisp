@@ -3,10 +3,10 @@
 //! Creates a `FrameProcessor` that routes raw camera frames through
 //! `IspEngine` and can be attached to `AndroidCameraAdapter`.
 
+use cam_isp::engine::select_engine;
+use log::info;
 use std::sync::Arc;
 use std::sync::Mutex;
-use log::info;
-use cam_isp::engine::select_engine;
 
 /// Frame processing function type (matches AndroidCameraAdapter expectation).
 pub type FrameProcessor =
@@ -35,13 +35,11 @@ pub fn create_isp_processor(
     let tone = Box::new(blocks::ToneBlock::new());
     let display = Box::new(blocks::DisplayBlock::new(target_width));
 
-    let aux: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = vec![
-        normalize, cfa, blc, bayer_wb, demosaic, ccm, tone, display,
-    ];
+    let aux: Vec<Box<dyn cam_isp::pipeline::IspBlock>> =
+        vec![normalize, cfa, blc, bayer_wb, demosaic, ccm, tone, display];
 
     // 2. Select and build engine
-    let mut engine = select_engine()
-        .ok_or_else(|| "No ISP engine available".to_string())?;
+    let mut engine = select_engine().ok_or_else(|| "No ISP engine available".to_string())?;
 
     info!(
         "Building ISP pipeline with engine: {}, target {}x{}",
@@ -60,8 +58,12 @@ pub fn create_isp_processor(
     use cam_isp::engine::IspEngine;
     let processor: FrameProcessor = Arc::new(move |data: &[u8], w: u32, h: u32, _fmt: i32| {
         let proc_start = std::time::Instant::now();
-        let mut guard = engine.lock().map_err(|e| cam_isp::error::IspError::Pipeline(format!("Lock failed: {}", e)))?;
-        let eng = guard.as_mut().ok_or(cam_isp::error::IspError::Config("Engine taken".into()))?;
+        let mut guard = engine
+            .lock()
+            .map_err(|e| cam_isp::error::IspError::Pipeline(format!("Lock failed: {}", e)))?;
+        let eng = guard
+            .as_mut()
+            .ok_or(cam_isp::error::IspError::Config("Engine taken".into()))?;
         let mut params = cam_isp::engine::ProcessParams::new(w, h, data);
         params.target_width = target_width;
         params.sensor_max = 65535.0;
@@ -71,8 +73,13 @@ pub fn create_isp_processor(
             .unwrap_or(0);
         let result = eng.process(&params)?;
         let proc_elapsed = proc_start.elapsed();
-        log::trace!("ISP process: {}x{} -> {} bytes in {:.2}ms",
-            w, h, result.data.len(), proc_elapsed.as_secs_f64() * 1000.0);
+        log::trace!(
+            "ISP process: {}x{} -> {} bytes in {:.2}ms",
+            w,
+            h,
+            result.data.len(),
+            proc_elapsed.as_secs_f64() * 1000.0
+        );
         Ok(result.data)
     });
 
