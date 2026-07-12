@@ -12,6 +12,7 @@ use cam_types::{CameraSourceType, FrameFormat};
 
 /// V4L2 Camera Adapter that streams frames via callback.
 pub struct V4l2CameraAdapter {
+    base: Arc<BaseCameraAdapter>,
     device_path: String,
     config: Option<StreamConfig>,
     callback: Option<FrameCallback>,
@@ -30,7 +31,7 @@ impl V4l2CameraAdapter {
             drop(cam); // close — we'll reopen on start_streaming
 
             Ok(Self {
-                base: BaseCameraAdapter::new(CameraSourceType::V4l2),
+                base: Arc::new(BaseCameraAdapter::new(CameraSourceType::V4l2)),
                 device_path: device_path.to_string(),
                 config: None,
                 callback: None,
@@ -104,12 +105,40 @@ impl ICameraAdapter for V4l2CameraAdapter {
             }
         }));
 
+        // SIMPLEST: Just use a raw pointer to self.base which is 'static enough.
+        // Since V4l2CameraAdapter is heap-allocated and lives for the duration of streaming,
+        // and we control stop_streaming, this is safe in practice.
+        // But it's not safe in Rust's model. Let's use Arc instead.
+
+        // We'll create an Arc<Mutex<VecDeque<ByteFrame>>> as a frame queue,
+        // and a drain thread that calls the callback.
+        // This avoids moving the callback.
+
+        // Actually, the simplest correct approach: store the callback in an Arc<Mutex<Option<FrameCallback>>>
+        // directly in V4l2CameraAdapter instead of BaseCameraAdapter.
+        // But that defeats the purpose of BaseCameraAdapter.
+
+        // OK, pragmatic solution: just use a static-ish pattern.
+        // We'll use Arc<dyn Fn(ByteFrame) + Send + Sync> instead of Box.
+        // Wrap the callback when it's set.
+
+        // Let me just use a crossbeam channel approach:
+        // streaming thread -> channel -> main thread drains and calls callback.
+        // But that requires the main thread to poll.
+
+        // Easiest correct solution: store callback as Arc in a shared struct.
+        // I'll create a small SharedState struct for the thread.
+
+        let base = Arc::clone(&self.base);
+        *self.running.lock().unwrap() = true;
+
+        let running_clone = Arc::clone(&self.running);
         let width = config.width;
         let height = config.height;
         let format = config.format;
         let fps = config.fps;
 
-        let handle = thread::spawn(move || {
+        thread::spawn(move || {
             #[cfg(feature = "v4l2")]
             {
                 let mut cam = match rscam::Camera::new(&device_path) {
@@ -157,12 +186,7 @@ impl ICameraAdapter for V4l2CameraAdapter {
                             let byte_frame = crate::v4l2::buffer::buffer_to_byte_frame(
                                 &frame, width, height, format,
                             );
-                            // SAFETY: base_ptr is valid as long as self is alive,
-                            // and the thread stops (running=false) before self is dropped.
-                            unsafe {
-                                let base = &*base_ptr;
-                                base.invoke_frame_callback(byte_frame);
-                            }
+                            base.invoke_frame_callback(byte_frame);
                         }
                         Err(e) => {
                             error!("V4L2 capture frame error: {:?}", e);
