@@ -24,7 +24,7 @@ pub fn buffer_to_byte_frame(
         data: frame.to_vec(),
         width,
         height,
-        format: format!("{:?}", format),
+        format,
         timestamp: frame.get_timestamp(),
     }
 }
