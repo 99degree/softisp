@@ -233,73 +233,73 @@ jobs:
           echo "=== Release binaries ==="
           find target/release -maxdepth 1 -type f -executable -exec ls -lh {} \; 2>/dev/null | head -20
 
-  # Python tests
-  python:
-    name: Python Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    defaults:
-      run:
-        working-directory: ./isp-rectifier
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-          submodules: false
+  # Python tests (DISABLED - no Python package in this repo)
+  # python:
+  #   name: Python Tests
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 25
+  #   defaults:
+  #     run:
+  #       working-directory: ./isp-rectifier
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #       with:
+  #         persist-credentials: false
+  #         fetch-depth: 0
+  #         submodules: false
 
-      - name: Git config safe directory
-        run: git config --global --add safe.directory '*'
+  #     - name: Git config safe directory
+  #       run: git config --global --add safe.directory '*'
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+  #     - name: Cache pip
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: ~/.cache/pip
+  #         key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-pip-
 
-      - name: Install dependencies
-        run: |
-          pip install -q pytest pytest-cov onnxruntime numpy
-          pip install -q -r requirements.txt
+  #     - name: Install dependencies
+  #       run: |
+  #         pip install -q pytest pytest-cov onnxruntime numpy
+  #         pip install -q -r requirements.txt
 
-      - name: Run Python tests
-        run: |
-          python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing
+  #     - name: Run Python tests
+  #       run: |
+  #         python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing
 
-      - name: Model validation (quick)
-        run: python3 scripts/validate_model_ci.py
+  #     - name: Model validation (quick)
+  #       run: python3 scripts/validate_model_ci.py
 
-  # ONNX model validation
-  model-validation:
-    name: Model Validation
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [rust-test, python]
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-          submodules: false
+  # ONNX model validation (DISABLED - depends on Python package)
+  # model-validation:
+  #   name: Model Validation
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 20
+  #   needs: [rust-test]
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #       with:
+  #         persist-credentials: false
+  #         fetch-depth: 0
+  #         submodules: false
 
-      - name: Git config safe directory
-        run: git config --global --add safe.directory '*'
+  #     - name: Git config safe directory
+  #       run: git config --global --add safe.directory '*'
 
-      - name: Install onnxruntime
-        run: pip install -q onnxruntime numpy
+  #     - name: Install onnxruntime
+  #       run: pip install -q onnxruntime numpy
 
-      - name: Validate ONNX models
-        run: python3 isp-rectifier/scripts/validate_models_ci.py
+  #     - name: Validate ONNX models
+  #       run: python3 isp-rectifier/scripts/validate_models_ci.py
 
-      - name: Validate model I/O shapes
-        run: python3 isp-rectifier/scripts/validate_model_io.py
+  #     - name: Validate model I/O shapes
+  #       run: python3 isp-rectifier/scripts/validate_model_io.py
 
   # Documentation build (placeholder)
   docs:
@@ -322,7 +322,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [rust-lint, rust-test, rust-clean-rebuild, python, model-validation, docs]
+    needs: [rust-lint, rust-test, rust-clean-rebuild, docs]
     if: always()
     steps:
       - name: Check job statuses
@@ -331,8 +331,6 @@ jobs:
           if [[ "${{ needs.rust-lint.result }}" != "success" ]]; then echo "❌ rust-lint failed"; exit 1; fi
           if [[ "${{ needs.rust-test.result }}" != "success" ]]; then echo "❌ rust-test failed"; exit 1; fi
           if [[ "${{ needs.rust-clean-rebuild.result }}" != "success" ]]; then echo "❌ rust-clean-rebuild failed"; exit 1; fi
-          if [[ "${{ needs.python.result }}" != "success" ]]; then echo "❌ python failed"; exit 1; fi
-          if [[ "${{ needs.model-validation.result }}" != "success" ]]; then echo "❌ model-validation failed"; exit 1; fi
           if [[ "${{ needs.docs.result }}" != "success" ]]; then echo "❌ docs failed"; exit 1; fi
           echo "✅ All jobs passed!"
 
