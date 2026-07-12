@@ -61,3 +61,6 @@ __pycache__/
 .mnn_last_pipeline.onnx
 .mnn_temp_*.onnx
 ~/android-sdk
+
+# Android SDK/NDK (outside repo)
+~/android-sdk/
