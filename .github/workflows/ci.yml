@@ -36,7 +36,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q libv4l-dev libv4l2-dev
+          sudo apt-get install -y -q libv4l-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -101,7 +101,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q libv4l-dev libv4l2-dev
+          sudo apt-get install -y -q libv4l-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -163,7 +163,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q libv4l-dev libv4l2-dev
+          sudo apt-get install -y -q libv4l-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
