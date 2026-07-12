@@ -26,8 +26,11 @@ pub fn bgra_to_planar_rgb_f32(data: &[u8], width: u32, height: u32) -> Vec<f32> 
 /// Apply warp to RGB planar f32 data using bilinear interpolation.
 /// Returns warped RGB planar f32.
 pub fn apply_warp_rgb_f32(
-    rgb: &[f32], width: u32, height: u32,
-    dx: f32, dy: f32,
+    rgb: &[f32],
+    width: u32,
+    height: u32,
+    dx: f32,
+    dy: f32,
     crop_fraction: f32,
 ) -> Vec<f32> {
     let n = (width * height) as usize;

@@ -23,10 +23,13 @@
 //! ## Errors
 //! All methods return `Result<T, BridgeError>` for explicit error handling.
 
-use log::{info, warn, error};
-use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
+use log::{error, info, warn};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 
-use crate::callback::{IFrameCallback, ICameraDeviceCallback};
+use crate::callback::{ICameraDeviceCallback, IFrameCallback};
 use crate::types::*;
 
 /// Sensor specification for raw capture
@@ -142,19 +145,17 @@ impl V4l2AidlBridge {
 
     /// Capture one frame from V4L2 and forward to AIDL callback
     #[cfg(feature = "v4l2")]
-    pub fn capture_and_forward<C: IFrameCallback>(
-        &self,
-        callback: &C,
-    ) -> Result<(), BridgeError> {
+    pub fn capture_and_forward<C: IFrameCallback>(&self, callback: &C) -> Result<(), BridgeError> {
         use std::time::Instant;
         let sensor = self.sensor.lock().unwrap().clone();
-        
+
         let t_cap = Instant::now();
         let (_w, _h, data) = cam_hal_linux::capture_single_v4l2_frame(
             &self.device_path,
             sensor.width,
             sensor.height,
-        ).map_err(|e| BridgeError::DeviceError(e))?;
+        )
+        .map_err(|e| BridgeError::DeviceError(e))?;
         let capture_us = t_cap.elapsed().as_micros() as u64;
 
         // Convert Bayer to RGB (simplified — real impl uses ISP)
@@ -190,10 +191,7 @@ impl V4l2AidlBridge {
 
     /// Stub for non-v4l2 builds
     #[cfg(not(feature = "v4l2"))]
-    pub fn capture_and_forward<C: IFrameCallback>(
-        &self,
-        callback: &C,
-    ) -> Result<(), BridgeError> {
+    pub fn capture_and_forward<C: IFrameCallback>(&self, callback: &C) -> Result<(), BridgeError> {
         // Generate synthetic frame
         let sensor = self.sensor.lock().unwrap().clone();
         let rgb = vec![0u8; (sensor.width * sensor.height * 4) as usize];
@@ -221,7 +219,7 @@ impl V4l2AidlBridge {
     ) -> Result<BridgeStats, BridgeError> {
         let mut stats = BridgeStats::default();
         *self.running.lock().unwrap() = true;
-        
+
         for i in 0..count {
             if !*self.running.lock().unwrap() {
                 info!("Capture loop stopped at frame {}/{}", i, count);
@@ -238,7 +236,7 @@ impl V4l2AidlBridge {
                 }
             }
         }
-        
+
         *self.running.lock().unwrap() = false;
         Ok(stats)
     }
@@ -255,8 +253,16 @@ impl V4l2AidlBridge {
             frames_captured: n,
             frames_processed: self.stats.frames_processed,
             frames_dropped: self.stats.frames_dropped,
-            avg_capture_us: if n > 0 { self.capture_us_sum.load(Ordering::Relaxed) as f64 / n as f64 } else { 0.0 },
-            avg_processing_us: if n > 0 { self.process_us_sum.load(Ordering::Relaxed) as f64 / n as f64 } else { 0.0 },
+            avg_capture_us: if n > 0 {
+                self.capture_us_sum.load(Ordering::Relaxed) as f64 / n as f64
+            } else {
+                0.0
+            },
+            avg_processing_us: if n > 0 {
+                self.process_us_sum.load(Ordering::Relaxed) as f64 / n as f64
+            } else {
+                0.0
+            },
         }
     }
 }
@@ -266,16 +272,18 @@ impl V4l2AidlBridge {
 fn bayer_to_rgb_quick(bayer: &[u8], width: usize, height: usize) -> Vec<u8> {
     let pixels = width * height;
     let mut rgb = Vec::with_capacity(pixels * 4);
-    
+
     // Simple bilinear demosaic (placeholder; real impl uses MHC/bilinear)
     let stride = width;
-    
+
     for y in 0..height {
         for x in 0..width {
             let idx = (y * stride + x).min(bayer.len().saturating_sub(1)) * 2;
             let val = if idx + 1 < bayer.len() {
                 ((bayer[idx] as u16) | ((bayer[idx + 1] as u16) << 8)) as f32 / 1024.0
-            } else { 0.5 };
+            } else {
+                0.5
+            };
             let v = (val.clamp(0.0, 1.0) * 255.0) as u8;
             rgb.extend_from_slice(&[v, v, v, 255]);
         }

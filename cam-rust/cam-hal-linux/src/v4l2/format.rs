@@ -24,9 +24,9 @@ pub fn fourcc_to_frame_format(fourcc: u32) -> Option<FrameFormat> {
         b'B' if fourcc == 0x47553241 => Some(FrameFormat::Rgba8888), // "ARGB"
         b'R' if fourcc == 0x32424752 => Some(FrameFormat::Rgba8888), // "RGB24"
         // YUV formats
-        b'Y' if fourcc == 0x32595559 => Some(FrameFormat::Yuv420),    // "YUYV"
-        b'N' if fourcc == 0x32554E4E => Some(FrameFormat::Nv12),     // "NV12"
-        b'U' if fourcc == 0x32315555 => Some(FrameFormat::Nv21),     // "UYVY"
+        b'Y' if fourcc == 0x32595559 => Some(FrameFormat::Yuv420), // "YUYV"
+        b'N' if fourcc == 0x32554E4E => Some(FrameFormat::Nv12),   // "NV12"
+        b'U' if fourcc == 0x32315555 => Some(FrameFormat::Nv21),   // "UYVY"
         _ => None,
     }
 }

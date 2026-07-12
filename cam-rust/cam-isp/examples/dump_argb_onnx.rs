@@ -1,5 +1,5 @@
-use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::engine::OutputFormat;
+use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::profile::PipelineProfile;
 use std::io::Write;
 

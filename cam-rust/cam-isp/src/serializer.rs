@@ -24,7 +24,12 @@ pub struct PipelineConfig {
 
 impl PipelineConfig {
     pub fn new(w: u32, h: u32) -> Self {
-        Self { version: 1, width: w, height: h, block_ids: Vec::new() }
+        Self {
+            version: 1,
+            width: w,
+            height: h,
+            block_ids: Vec::new(),
+        }
     }
 
     /// Create a config from a pipeline (block list).
@@ -59,7 +64,9 @@ impl PipelineConfig {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 if line.starts_with("# softisp pipeline v") {
-                    version = line.split_whitespace().last()
+                    version = line
+                        .split_whitespace()
+                        .last()
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(1);
                 }
@@ -79,7 +86,12 @@ impl PipelineConfig {
             block_ids.push(line.to_string());
         }
 
-        Ok(Self { version, width, height, block_ids })
+        Ok(Self {
+            version,
+            width,
+            height,
+            block_ids,
+        })
     }
 
     /// Number of blocks.
@@ -109,16 +121,35 @@ impl PipelineConfig {
             issues.push("Pipeline has no blocks".into());
         }
         if self.width == 0 || self.height == 0 {
-            issues.push(format!("Invalid resolution: {}x{}", self.width, self.height));
+            issues.push(format!(
+                "Invalid resolution: {}x{}",
+                self.width, self.height
+            ));
         }
         // Check for known block IDs
         let known: &[&str] = &[
-            "unpack", "demosaic_ccm", "display", "gamma", "sharpen",
-            "auto_contrast", "warp_grid", "chromatic_aberration",
-            "temporal_denoise", "noise_estimate", "dyn_resize",
-            "tone", "normalize", "grayscale", "aspect_crop",
-            "ee_ldci", "fcs", "hdr_merge", "stereo_depth",
-            "coarse_histogram", "channel_means", "tone_stats",
+            "unpack",
+            "demosaic_ccm",
+            "display",
+            "gamma",
+            "sharpen",
+            "auto_contrast",
+            "warp_grid",
+            "chromatic_aberration",
+            "temporal_denoise",
+            "noise_estimate",
+            "dyn_resize",
+            "tone",
+            "normalize",
+            "grayscale",
+            "aspect_crop",
+            "ee_ldci",
+            "fcs",
+            "hdr_merge",
+            "stereo_depth",
+            "coarse_histogram",
+            "channel_means",
+            "tone_stats",
         ];
         for id in &self.block_ids {
             if !known.contains(&id.as_str()) {
@@ -136,7 +167,11 @@ mod tests {
     #[test]
     fn test_pipeline_config_roundtrip() {
         let mut cfg = PipelineConfig::new(1920, 1080);
-        cfg.block_ids.extend(["unpack", "demosaic", "display"].iter().map(|s| s.to_string()));
+        cfg.block_ids.extend(
+            ["unpack", "demosaic", "display"]
+                .iter()
+                .map(|s| s.to_string()),
+        );
 
         let text = cfg.to_text();
         let loaded = PipelineConfig::from_text(&text).unwrap();
@@ -157,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_pipeline_config_from_blocks() {
-        use crate::blocks::{UnpackBlock, DemosaicCcmBlock, DisplayBlock};
+        use crate::blocks::{DemosaicCcmBlock, DisplayBlock, UnpackBlock};
         use crate::pipeline::GraphComposer;
 
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![

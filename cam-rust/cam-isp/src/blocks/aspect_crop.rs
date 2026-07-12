@@ -9,8 +9,8 @@
 //!
 //! Supported modes: 16:9, 4:3, 1:1, or custom ratio.
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// AspectCropBlock — center-crop to target aspect ratio.
 ///
@@ -39,35 +39,79 @@ impl AspectCropBlock {
         }
     }
 
-    pub fn ratio_16_9() -> Self { Self::new(16, 9) }
-    pub fn ratio_4_3() -> Self { Self::new(4, 3) }
-    pub fn ratio_1_1() -> Self { Self::new(1, 1) }
+    pub fn ratio_16_9() -> Self {
+        Self::new(16, 9)
+    }
+    pub fn ratio_4_3() -> Self {
+        Self::new(4, 3)
+    }
+    pub fn ratio_1_1() -> Self {
+        Self::new(1, 1)
+    }
 }
 
 impl IspBlock for AspectCropBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "AspectCrop".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "AspectCrop".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("crop_h"), Proto::tensor_dim_param("crop_w")], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("crop_h"),
+                Proto::tensor_dim_param("crop_w"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -76,8 +120,10 @@ impl IspBlock for AspectCropBlock {
         let ends = format!("{}/ends", ns);
         let axes = format!("{}/axes", ns);
         vec![Proto::node(
-            "Slice", &[&self.input_source, &starts, &ends, &axes],
-            &[&self.frame_tensor], &[],
+            "Slice",
+            &[&self.input_source, &starts, &ends, &axes],
+            &[&self.frame_tensor],
+            &[],
         )]
     }
 
@@ -88,7 +134,10 @@ impl IspBlock for AspectCropBlock {
         // Since ONNX Slice needs concrete values, we emit the target aspect ratio as metadata.
         vec![
             Proto::tensor_proto_int64(&format!("{}/starts", ns), &[0, 0, 0, 0]),
-            Proto::tensor_proto_int64(&format!("{}/ends", ns), &[1, 3, self.target_h, self.target_w]),
+            Proto::tensor_proto_int64(
+                &format!("{}/ends", ns),
+                &[1, 3, self.target_h, self.target_w],
+            ),
             Proto::tensor_proto_int64(&format!("{}/axes", ns), &[0, 1, 2, 3]),
         ]
     }
@@ -113,7 +162,9 @@ mod tests {
     fn test_aspect_crop_emits_slice() {
         let block = AspectCropBlock::new(16, 9);
         let nodes = block.nodes();
-        assert!(nodes.iter().any(|n| String::from_utf8_lossy(n).contains("Slice")));
+        assert!(nodes
+            .iter()
+            .any(|n| String::from_utf8_lossy(n).contains("Slice")));
     }
 
     #[test]

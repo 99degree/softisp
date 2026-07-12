@@ -16,23 +16,22 @@ impl Default for DeshakeGpuPipeline {
 
 impl DeshakeGpuPipeline {
     pub fn new() -> Self {
-        Self { enabled: false, debug: false }
+        Self {
+            enabled: false,
+            debug: false,
+        }
     }
 
     /// Run GPU pipeline: grayscale + downscale.
-    pub fn run(
-        &self,
-        rgb: &[f32],
-        w: u32,
-        h: u32,
-    ) -> Result<(Vec<u8>, u32, u32), String> {
+    pub fn run(&self, rgb: &[f32], w: u32, h: u32) -> Result<(Vec<u8>, u32, u32), String> {
         if !self.enabled {
             return Err("GPU pipeline not enabled".into());
         }
         // Fallback to CPU for now
         let gray = super::warp::to_grayscale(
             &rgb.iter().map(|&v| (v * 255.0) as u8).collect::<Vec<_>>(),
-            w, h,
+            w,
+            h,
         );
         let ds = super::warp::compute_downscale_factor(w, h, 384);
         if ds > 1 {
@@ -56,12 +55,12 @@ pub fn build_mnn_model(width: u32, height: u32) -> Result<Vec<u8>, String> {
         Proto::tensor_dim_value(width as i64),
     ];
     let output_shape = input_shape.clone();
-    
+
     let input_vi = Proto::value_info("input", &input_shape, 1); // 1 = FLOAT
     let output_vi = Proto::value_info("output", &output_shape, 1);
-    
+
     let node = Proto::node("Identity", &["input"], &["output"], &[]);
-    
+
     Ok(Proto::graph(
         "deshake",
         &[node],

@@ -10,7 +10,7 @@ use std::fs;
 #[cfg(feature = "v4l2")]
 pub fn list_devices() -> Vec<String> {
     let mut devices = Vec::new();
-    
+
     // Scan /dev/video* devices
     if let Ok(entries) = fs::read_dir("/dev") {
         for entry in entries.flatten() {
@@ -27,7 +27,7 @@ pub fn list_devices() -> Vec<String> {
             }
         }
     }
-    
+
     devices
 }
 
@@ -36,12 +36,18 @@ pub fn list_devices() -> Vec<String> {
 pub fn get_device_info(device_path: &str) -> Option<DeviceInfo> {
     let cam = Camera::new(device_path).ok()?;
     let caps = cam.query_capability().ok()?;
-    
+
     Some(DeviceInfo {
         path: device_path.to_string(),
-        driver: String::from_utf8_lossy(&caps.driver).trim_end_matches('\0').to_string(),
-        card: String::from_utf8_lossy(&caps.card).trim_end_matches('\0').to_string(),
-        bus_info: String::from_utf8_lossy(&caps.bus_info).trim_end_matches('\0').to_string(),
+        driver: String::from_utf8_lossy(&caps.driver)
+            .trim_end_matches('\0')
+            .to_string(),
+        card: String::from_utf8_lossy(&caps.card)
+            .trim_end_matches('\0')
+            .to_string(),
+        bus_info: String::from_utf8_lossy(&caps.bus_info)
+            .trim_end_matches('\0')
+            .to_string(),
         version: caps.version,
         capabilities: caps.capabilities,
         device_caps: caps.device_caps,

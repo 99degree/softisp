@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::blocks::*;
-use crate::engine::{IspEngine, ProcessParams, select_engine};
+use crate::engine::{select_engine, IspEngine, ProcessParams};
 use crate::error::IspResult;
-use crate::pipeline::{IspBlock, IspFrame};
 use crate::pipeline::traits::ProcessPipeline;
-use crate::pipeline_config::{PipelineConfig, BlockConfig, PipelineProfiler};
+use crate::pipeline::{IspBlock, IspFrame};
+use crate::pipeline_config::{BlockConfig, PipelineConfig, PipelineProfiler};
 
 /// Auto-profile configuration — automatically optimized for HW.
 pub struct AutoProfile {
@@ -148,9 +148,9 @@ impl HwTier {
     /// Get recommended memory limit.
     pub fn max_memory(&self) -> usize {
         match self {
-            Self::Low => 64 * 1024 * 1024,    // 64MB
+            Self::Low => 64 * 1024 * 1024,     // 64MB
             Self::Medium => 256 * 1024 * 1024, // 256MB
-            Self::High => 1024 * 1024 * 1024,   // 1GB
+            Self::High => 1024 * 1024 * 1024,  // 1GB
         }
     }
 }
@@ -305,8 +305,8 @@ impl AutoProfile {
             "unpack" => Ok(Box::new(UnpackBlock::new())),
             "blc" => Ok(Box::new(BlcBlock::new())),
             "bayer_wb" => Ok(Box::new(BayerWbBlock::new())),
-            "demosaic" => Ok(Box::new(DemosaicBlock::new(0))),           // demosaic only, not fused CCM
-            "ccm" => Ok(Box::new(CcmBlock::new())),                      // separate CCM after demosaic
+            "demosaic" => Ok(Box::new(DemosaicBlock::new(0))), // demosaic only, not fused CCM
+            "ccm" => Ok(Box::new(CcmBlock::new())),            // separate CCM after demosaic
             "fcs" => Ok(Box::new(FcsBlock::new())),
             "tone" => Ok(Box::new(ToneBlock::new())),
             "ee" => Ok(Box::new(EeBlock::new())),
@@ -319,9 +319,10 @@ impl AutoProfile {
                 self.config.width,
                 self.config.height,
             ))),
-            _ => Err(crate::error::IspError::Pipeline(
-                format!("Unknown block: {}", id),
-            )),
+            _ => Err(crate::error::IspError::Pipeline(format!(
+                "Unknown block: {}",
+                id
+            ))),
         }
     }
 
@@ -343,7 +344,8 @@ impl AutoProfile {
             let total_time = start.elapsed();
 
             // Record total time (individual block timing requires instrumentation)
-            block_times.entry("total".to_string())
+            block_times
+                .entry("total".to_string())
                 .and_modify(|t| *t += total_time)
                 .or_insert(total_time);
         }
@@ -364,8 +366,14 @@ impl AutoProfile {
 
         lines.push("=== Auto Profile Report ===".to_string());
         lines.push(format!("HW Tier: {:?}", self.hw_caps.tier()));
-        lines.push(format!("CPU: {} cores, SIMD: {}", self.hw_caps.cpu_cores, self.hw_caps.has_simd));
-        lines.push(format!("GPU: {} (compute: {:.1})", self.hw_caps.gpu_name, self.hw_caps.gpu_compute));
+        lines.push(format!(
+            "CPU: {} cores, SIMD: {}",
+            self.hw_caps.cpu_cores, self.hw_caps.has_simd
+        ));
+        lines.push(format!(
+            "GPU: {} (compute: {:.1})",
+            self.hw_caps.gpu_name, self.hw_caps.gpu_compute
+        ));
         lines.push("".to_string());
 
         lines.push(self.config.optimization_report());
@@ -466,11 +474,17 @@ fn num_cpus() -> usize {
 /// Helper to detect SIMD support.
 fn has_simd_support() -> bool {
     #[cfg(target_arch = "aarch64")]
-    { true }
+    {
+        true
+    }
     #[cfg(target_arch = "x86_64")]
-    { true }
+    {
+        true
+    }
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    { false }
+    {
+        false
+    }
 }
 
 #[cfg(test)]

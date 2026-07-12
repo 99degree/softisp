@@ -37,7 +37,10 @@ fn main() {
 
     println!("═══ HEAVY Pipeline + Deshake Benchmark ═══");
     println!("Sensor:      {}×{} Bayer INT32", sensor_w, sensor_h);
-    println!("ISP output:  {}×{} FloatRgb [1,3,H,W] f32 (no repack)", pipe_w, pipe_h);
+    println!(
+        "ISP output:  {}×{} FloatRgb [1,3,H,W] f32 (no repack)",
+        pipe_w, pipe_h
+    );
     println!("Postproc:    EIS(off) Deshake(on) GDC(off) Denoise(off)");
     println!("Display:     {}×{} (after crop)", display_w, display_h);
     println!("Frames:      {} ({} warmup)", n_frames, warmup);
@@ -66,14 +69,18 @@ fn main() {
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
         // 1. Packed INT32 input
-        Box::new(RawInputBlock::new()
-            .with_elem_type(6)
-            .with_concrete_dims(full_h, full_w / 2)),
+        Box::new(
+            RawInputBlock::new()
+                .with_elem_type(6)
+                .with_concrete_dims(full_h, full_w / 2),
+        ),
         // 2. Fused unpack+normalize+CFA+BLC
-        Box::new(UnpackCfaBlock::new()
-            .with_concrete_width(full_w)
-            .with_blc(true)
-            .with_mode(UnpackMode::PackedInt32)),
+        Box::new(
+            UnpackCfaBlock::new()
+                .with_concrete_width(full_w)
+                .with_blc(true)
+                .with_mode(UnpackMode::PackedInt32),
+        ),
         // 3–5. Pipeline blocks
         Box::new(IdentityBlock::new("aux_hook_src")),
         Box::new(BayerWbBlock::new()),
@@ -86,9 +93,11 @@ fn main() {
         // 11. Display → FloatRgb [1,3,H,W] f32 in [0,1]
         //     Uses identity path: Pow+Clip → isp.display (R6 detection)
         //     No format conversion — postproc reads planar float directly
-        Box::new(DisplayBlock::new(pipe_w)
-            .with_output_format(OutputFormat::FloatRgb)
-            .with_concrete_dims(ds_h, ds_w)),
+        Box::new(
+            DisplayBlock::new(pipe_w)
+                .with_output_format(OutputFormat::FloatRgb)
+                .with_concrete_dims(ds_h, ds_w),
+        ),
     ];
 
     GraphComposer::wire_blocks(&mut blocks);
@@ -96,15 +105,18 @@ fn main() {
     // ── Select engine and build ────────────────────────────────
     let mut all = blocks;
     let head = all.remove(0);
-    let mut engine: Box<dyn IspEngine> =
-        match cam_isp::engine::select_engine_by_name("vulkan") {
+    let mut engine: Box<dyn IspEngine> = match cam_isp::engine::select_engine_by_name("vulkan") {
+        Some(e) => e,
+        None => match cam_isp::engine::select_engine() {
             Some(e) => e,
-            None => match cam_isp::engine::select_engine() {
-                Some(e) => e,
-                None => Box::new(cam_isp::cpu::CpuEngine::new()),
-            },
-        };
-    println!("Engine: {} (priority {})", engine.backend_name(), engine.priority());
+            None => Box::new(cam_isp::cpu::CpuEngine::new()),
+        },
+    };
+    println!(
+        "Engine: {} (priority {})",
+        engine.backend_name(),
+        engine.priority()
+    );
 
     let result = engine.build(head, all, None, 21);
     if let Err(ref e) = result {
@@ -170,30 +182,25 @@ fn main() {
         let float_data: Vec<f32> = if frame.data.len() == (out_w * out_h * 3 * 4) as usize {
             // Planar float32 RGB: reinterpret bytes as f32 slice, then copy
             unsafe {
-                std::slice::from_raw_parts(
-                    frame.data.as_ptr() as *const f32,
-                    frame.data.len() / 4,
-                )
+                std::slice::from_raw_parts(frame.data.as_ptr() as *const f32, frame.data.len() / 4)
             }
             .to_vec()
         } else if let Some(ref fd) = frame.float_data {
             fd.clone()
         } else {
-            eprintln!("  [{:2}] Unexpected output format: {} bytes", i, frame.data.len());
+            eprintln!(
+                "  [{:2}] Unexpected output format: {} bytes",
+                i,
+                frame.data.len()
+            );
             continue;
         };
 
         // ── Stage 2: Post-process with deshake ──────────────────
         // process_float() converts planar [0,1] f32 → packed u8 RGBA internally
         let t_postproc = Instant::now();
-        let postproc_result = postproc.process_float(
-            &float_data,
-            out_w,
-            out_h,
-            None,
-            params.timestamp_ns,
-            None,
-        );
+        let postproc_result =
+            postproc.process_float(&float_data, out_w, out_h, None, params.timestamp_ns, None);
         let postproc_ms = t_postproc.elapsed().as_secs_f64() * 1000.0;
 
         let _output_pixels = match &postproc_result {
@@ -213,7 +220,12 @@ fn main() {
 
         println!(
             "  [{:2}] ISP={:>6.1}ms  Post={:>6.1}ms  Total={:>7.1}ms  {}×{} ({:>5.1}MP/s)",
-            i, isp_ms, postproc_ms, total_ms, out_w, out_h,
+            i,
+            isp_ms,
+            postproc_ms,
+            total_ms,
+            out_w,
+            out_h,
             out_pixels / (total_ms / 1000.0) / 1_000_000.0
         );
     }
@@ -245,23 +257,47 @@ fn main() {
     println!();
     println!("═══ Results (steady-state, frames {}+) ═══", steady_start);
     println!("             avg     min     max");
-    println!("ISP:     {:>7.1} {:>7.1} {:>7.1}  ms", avg_isp, mn(&steady_isp), mx(&steady_isp));
-    println!("Deshake: {:>7.1} {:>7.1} {:>7.1}  ms",
-        avg_postproc, mn(&steady_postproc), mx(&steady_postproc));
-    println!("Total:   {:>7.1} {:>7.1} {:>7.1}  ms",
-        avg_total, mn(&steady_latencies), mx(&steady_latencies));
+    println!(
+        "ISP:     {:>7.1} {:>7.1} {:>7.1}  ms",
+        avg_isp,
+        mn(&steady_isp),
+        mx(&steady_isp)
+    );
+    println!(
+        "Deshake: {:>7.1} {:>7.1} {:>7.1}  ms",
+        avg_postproc,
+        mn(&steady_postproc),
+        mx(&steady_postproc)
+    );
+    println!(
+        "Total:   {:>7.1} {:>7.1} {:>7.1}  ms",
+        avg_total,
+        mn(&steady_latencies),
+        mx(&steady_latencies)
+    );
     println!();
-    println!("Throughput: {:.1} FPS  ({:.1} MP/s  @ {}×{})",
-        fps, mp_s, pipe_w, pipe_h);
+    println!(
+        "Throughput: {:.1} FPS  ({:.1} MP/s  @ {}×{})",
+        fps, mp_s, pipe_w, pipe_h
+    );
     println!("Pipeline: HEAVY (11 blocks) + FloatRgb → process_float → deshake");
     println!("Engine: {}", engine.backend_name());
     println!();
 
     if avg_total < 33.3 {
-        println!("✅ {:.1}ms ({:.1} FPS) — real-time (≤33.3ms)!", avg_total, fps);
+        println!(
+            "✅ {:.1}ms ({:.1} FPS) — real-time (≤33.3ms)!",
+            avg_total, fps
+        );
     } else if avg_total < 66.7 {
-        println!("⚠️  {:.1}ms ({:.1} FPS) — near real-time (≤66.7ms)", avg_total, fps);
+        println!(
+            "⚠️  {:.1}ms ({:.1} FPS) — near real-time (≤66.7ms)",
+            avg_total, fps
+        );
     } else {
-        println!("❌ {:.1}ms ({:.1} FPS) — above 66.7ms (15 FPS target)", avg_total, fps);
+        println!(
+            "❌ {:.1}ms ({:.1} FPS) — above 66.7ms (15 FPS target)",
+            avg_total, fps
+        );
     }
 }

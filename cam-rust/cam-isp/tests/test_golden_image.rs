@@ -73,8 +73,7 @@ fn load_sensor(name: &str) -> Option<(u32, u32, Vec<u8>, &'static str, u32)> {
 
 #[test]
 fn test_imx586_corpus_loads() {
-    let (w, h, data, bayer, bits) = load_sensor("imx586")
-        .expect("imx586 corpus must exist");
+    let (w, h, data, bayer, bits) = load_sensor("imx586").expect("imx586 corpus must exist");
     assert_eq!(bayer, "RGGB");
     assert_eq!(bits, 10);
     assert_eq!(w, 8000, "Real imx586 has 8000 wide");
@@ -84,16 +83,14 @@ fn test_imx586_corpus_loads() {
 
 #[test]
 fn test_ov13858_corpus_loads() {
-    let (_, _, _, bayer, bits) = load_sensor("ov13858")
-        .expect("ov13858 corpus must exist");
+    let (_, _, _, bayer, bits) = load_sensor("ov13858").expect("ov13858 corpus must exist");
     assert_eq!(bayer, "RGGB");
     assert_eq!(bits, 10);
 }
 
 #[test]
 fn test_hi1336_grbg_pattern() {
-    let (_, _, _, bayer, _) = load_sensor("hi1336")
-        .expect("hi1336 corpus must exist");
+    let (_, _, _, bayer, _) = load_sensor("hi1336").expect("hi1336 corpus must exist");
     assert_eq!(bayer, "GRBG");
 }
 
@@ -120,5 +117,8 @@ fn test_gradient_pattern_correct_size() {
     // Synthetic gradient should be substantial pixel data
     let (_w, _h, data, _, _) = load_sensor("imx586").unwrap();
     assert!(!data.is_empty(), "Data should not be empty");
-    assert!(data.len() >= 1024, "Data should be at least 1024 bytes per pixel");
+    assert!(
+        data.len() >= 1024,
+        "Data should be at least 1024 bytes per pixel"
+    );
 }

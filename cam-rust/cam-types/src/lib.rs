@@ -219,11 +219,32 @@ pub struct Frame {
 
 impl Frame {
     pub fn new(data: Vec<u8>, width: u32, height: u32, format: FrameFormat, stride: u32) -> Self {
-        Self { data, width, height, format, stride, timestamp_ns: 0 }
+        Self {
+            data,
+            width,
+            height,
+            format,
+            stride,
+            timestamp_ns: 0,
+        }
     }
 
-    pub fn new_with_timestamp(data: Vec<u8>, width: u32, height: u32, format: FrameFormat, stride: u32, timestamp_ns: u64) -> Self {
-        Self { data, width, height, format, stride, timestamp_ns }
+    pub fn new_with_timestamp(
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+        format: FrameFormat,
+        stride: u32,
+        timestamp_ns: u64,
+    ) -> Self {
+        Self {
+            data,
+            width,
+            height,
+            format,
+            stride,
+            timestamp_ns,
+        }
     }
 
     pub fn bytes_per_pixel(&self) -> u32 {
@@ -289,18 +310,20 @@ impl Frame {
 pub trait IspBlock: Send + Sync {
     /// Unique identifier for this block type
     fn id(&self) -> &str;
-    
+
     /// Human-readable name for logging
     fn name(&self) -> &str;
-    
+
     /// Types of coefficients this block consumes
     fn input_types(&self) -> Vec<MatrixType>;
-    
+
     /// Types of coefficients this block produces
     fn output_types(&self) -> Vec<MatrixType>;
-    
+
     /// Whether this block is enabled (can be disabled at runtime)
-    fn enabled(&self) -> bool { true }
+    fn enabled(&self) -> bool {
+        true
+    }
 
     /// Compute the block's output based on input coefficients.
     ///

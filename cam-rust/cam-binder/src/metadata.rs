@@ -144,19 +144,22 @@ impl MetadataEntry {
     }
 
     pub fn to_int32_slice(&self) -> Vec<i32> {
-        self.value.chunks_exact(4)
+        self.value
+            .chunks_exact(4)
             .map(|c| i32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
             .collect()
     }
 
     pub fn to_int64_slice(&self) -> Vec<i64> {
-        self.value.chunks_exact(8)
+        self.value
+            .chunks_exact(8)
             .map(|c| i64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
             .collect()
     }
 
     pub fn to_float_slice(&self) -> Vec<f32> {
-        self.value.chunks_exact(4)
+        self.value
+            .chunks_exact(4)
             .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
             .collect()
     }
@@ -292,26 +295,31 @@ impl CameraMetadata {
         let entries_size = entry_count as usize * 16;
         let expected = header_size + entries_size + data_size as usize;
         if data.len() < expected {
-            return Err(format!("metadata too short: need {}, got {}", expected, data.len()));
+            return Err(format!(
+                "metadata too short: need {}, got {}",
+                expected,
+                data.len()
+            ));
         }
 
         let mut entries = HashMap::new();
         let mut offset = header_size;
 
         for _ in 0..entry_count {
-            let tag_id = u32::from_ne_bytes(data[offset..offset+4].try_into().unwrap());
-            let count = u32::from_ne_bytes(data[offset+4..offset+8].try_into().unwrap());
-            let data_type = u32::from_ne_bytes(data[offset+8..offset+12].try_into().unwrap());
-            let value_offset = u32::from_ne_bytes(data[offset+12..offset+16].try_into().unwrap());
+            let tag_id = u32::from_ne_bytes(data[offset..offset + 4].try_into().unwrap());
+            let count = u32::from_ne_bytes(data[offset + 4..offset + 8].try_into().unwrap());
+            let data_type = u32::from_ne_bytes(data[offset + 8..offset + 12].try_into().unwrap());
+            let value_offset =
+                u32::from_ne_bytes(data[offset + 12..offset + 16].try_into().unwrap());
             offset += 16;
 
             let type_size = match data_type {
-                0 => 1,  // Byte
-                1 => 4,  // Int32
-                2 => 4,  // Float
-                3 => 8,  // Int64
-                4 => 8,  // Double
-                5 => 8,  // Rational (i32 numerator + i32 denominator)
+                0 => 1, // Byte
+                1 => 4, // Int32
+                2 => 4, // Float
+                3 => 8, // Int64
+                4 => 8, // Double
+                5 => 8, // Rational (i32 numerator + i32 denominator)
                 _ => return Err(format!("unknown type: {}", data_type)),
             };
 
@@ -319,20 +327,23 @@ impl CameraMetadata {
             let value_end = value_start + (count as usize * type_size);
             let value = data[value_start..value_end].to_vec();
 
-            entries.insert(tag_id, MetadataEntry {
+            entries.insert(
                 tag_id,
-                data_type: match data_type {
-                    0 => MetadataType::Byte,
-                    1 => MetadataType::Int32,
-                    2 => MetadataType::Float,
-                    3 => MetadataType::Int64,
-                    4 => MetadataType::Double,
-                    5 => MetadataType::Rational,
-                    _ => unreachable!(),
+                MetadataEntry {
+                    tag_id,
+                    data_type: match data_type {
+                        0 => MetadataType::Byte,
+                        1 => MetadataType::Int32,
+                        2 => MetadataType::Float,
+                        3 => MetadataType::Int64,
+                        4 => MetadataType::Double,
+                        5 => MetadataType::Rational,
+                        _ => unreachable!(),
+                    },
+                    count,
+                    value,
                 },
-                count,
-                value,
-            });
+            );
         }
 
         Ok(Self {
@@ -469,34 +480,70 @@ pub fn build_camera_characteristics(
     meta.set(MetadataEntry::new_int32(ANDROID_CONTROL_AE_MODE, &[1])); // ON
     meta.set(MetadataEntry::new_int32(ANDROID_CONTROL_AF_MODE, &[4])); // CONTINUOUS_PICTURE
     meta.set(MetadataEntry::new_int32(ANDROID_CONTROL_AWB_MODE, &[1])); // AUTO
-    meta.set(MetadataEntry::new_int32(ANDROID_CONTROL_AVAILABLE_MODES, &[0, 1, 2, 3, 4]));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_CONTROL_AVAILABLE_MODES,
+        &[0, 1, 2, 3, 4],
+    ));
 
     // Sensor
-    meta.set(MetadataEntry::new_int32(ANDROID_SENSOR_INFO_ACTIVE_ARRAY_SIZE, &[0, 0, width, height]));
-    meta.set(MetadataEntry::new_int32(ANDROID_SENSOR_INFO_PIXEL_ARRAY_SIZE, &[width, height]));
-    meta.set(MetadataEntry::new_int32(ANDROID_SENSOR_ORIENTATION, &[orientation]));
-    meta.set(MetadataEntry::new_int32(ANDROID_SENSOR_INFO_SENSITIVITY_RANGE, &[100, 3200]));
-    meta.set(MetadataEntry::new_int64(ANDROID_SENSOR_INFO_EXPOSURE_TIME_RANGE, &[100000, 300000000])); // 100µs - 300ms
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_SENSOR_INFO_ACTIVE_ARRAY_SIZE,
+        &[0, 0, width, height],
+    ));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_SENSOR_INFO_PIXEL_ARRAY_SIZE,
+        &[width, height],
+    ));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_SENSOR_ORIENTATION,
+        &[orientation],
+    ));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_SENSOR_INFO_SENSITIVITY_RANGE,
+        &[100, 3200],
+    ));
+    meta.set(MetadataEntry::new_int64(
+        ANDROID_SENSOR_INFO_EXPOSURE_TIME_RANGE,
+        &[100000, 300000000],
+    )); // 100µs - 300ms
 
     // Lens
     meta.set(MetadataEntry::new_int32(ANDROID_LENS_FACING, &[facing]));
-    meta.set(MetadataEntry::new_float(ANDROID_LENS_INFO_AVAILABLE_FOCAL_LENGTHS, &[3.5]));
+    meta.set(MetadataEntry::new_float(
+        ANDROID_LENS_INFO_AVAILABLE_FOCAL_LENGTHS,
+        &[3.5],
+    ));
 
     // Request
-    meta.set(MetadataEntry::new_int32(ANDROID_REQUEST_MAX_NUM_INPUT_STREAMS, &[1]));
-    meta.set(MetadataEntry::new_int32(ANDROID_REQUEST_MAX_NUM_OUTPUT_STREAMS, &[3, 1, 0]));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_REQUEST_MAX_NUM_INPUT_STREAMS,
+        &[1],
+    ));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_REQUEST_MAX_NUM_OUTPUT_STREAMS,
+        &[3, 1, 0],
+    ));
 
     // Scaler (stream configurations: format, width, height, input?)
     // Format 0x23 = YUV_420_888, 0x1 = RGBA_8888
-    meta.set(MetadataEntry::new_int32(ANDROID_SCALER_AVAILABLE_FORMATS, &[0x23, 0x1, 0x20]));
-    meta.set(MetadataEntry::new_int32(ANDROID_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, &[
-        0x23, width, height, 0,  // YUV 420 output
-        0x1, width, height, 0,   // RGBA output
-        0x20, width, height, 0,  // BLOB output
-    ]));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_SCALER_AVAILABLE_FORMATS,
+        &[0x23, 0x1, 0x20],
+    ));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_SCALER_AVAILABLE_STREAM_CONFIGURATIONS,
+        &[
+            0x23, width, height, 0, // YUV 420 output
+            0x1, width, height, 0, // RGBA output
+            0x20, width, height, 0, // BLOB output
+        ],
+    ));
 
     // Info
-    meta.set(MetadataEntry::new_int32(ANDROID_INFO_SUPPORTED_HARDWARE_LEVEL, &[INFO_SUPPORTED_HARDWARE_LEVEL_FULL]));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_INFO_SUPPORTED_HARDWARE_LEVEL,
+        &[INFO_SUPPORTED_HARDWARE_LEVEL_FULL],
+    ));
 
     meta
 }
@@ -512,11 +559,26 @@ pub fn build_capture_result_metadata(
 ) -> CameraMetadata {
     let mut meta = CameraMetadata::new();
 
-    meta.set(MetadataEntry::new_int32(ANDROID_CONTROL_AE_STATE, &[ae_state]));
-    meta.set(MetadataEntry::new_int32(ANDROID_CONTROL_AF_STATE, &[af_state]));
-    meta.set(MetadataEntry::new_int32(ANDROID_CONTROL_AWB_STATE, &[awb_state]));
-    meta.set(MetadataEntry::new_int64(ANDROID_SENSOR_INFO_EXPOSURE_TIME_RANGE, &[exposure_time_ns]));
-    meta.set(MetadataEntry::new_int32(ANDROID_SENSOR_INFO_SENSITIVITY_RANGE, &[sensitivity]));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_CONTROL_AE_STATE,
+        &[ae_state],
+    ));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_CONTROL_AF_STATE,
+        &[af_state],
+    ));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_CONTROL_AWB_STATE,
+        &[awb_state],
+    ));
+    meta.set(MetadataEntry::new_int64(
+        ANDROID_SENSOR_INFO_EXPOSURE_TIME_RANGE,
+        &[exposure_time_ns],
+    ));
+    meta.set(MetadataEntry::new_int32(
+        ANDROID_SENSOR_INFO_SENSITIVITY_RANGE,
+        &[sensitivity],
+    ));
 
     meta
 }
@@ -606,11 +668,14 @@ mod tests {
             CONTROL_AE_STATE_CONVERGED,
             CONTROL_AF_STATE_FOCUSED_LOCKED,
             CONTROL_AWB_STATE_CONVERGED,
-            33333333,  // 30fps
+            33333333, // 30fps
             400,
         );
         assert!(!meta.is_empty());
-        assert_eq!(meta.get_int32(ANDROID_CONTROL_AE_STATE), Some(vec![CONTROL_AE_STATE_CONVERGED]));
+        assert_eq!(
+            meta.get_int32(ANDROID_CONTROL_AE_STATE),
+            Some(vec![CONTROL_AE_STATE_CONVERGED])
+        );
     }
 
     #[test]

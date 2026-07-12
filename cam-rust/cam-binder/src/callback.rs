@@ -4,7 +4,7 @@
 //! - ICameraDeviceCallback
 //! - IFrameCallback
 
-use crate::types::{CameraDeviceStatus, TorchModeStatus, CaptureResult};
+use crate::types::{CameraDeviceStatus, CaptureResult, TorchModeStatus};
 
 /// Callback from camera provider to framework.
 ///
@@ -31,7 +31,8 @@ impl ICameraProviderCallback for CameraProviderCallbackNoop {
         _camera_id: &str,
         _physical_camera_id: &str,
         _new_status: CameraDeviceStatus,
-    ) {}
+    ) {
+    }
 }
 
 /// Callback from camera device to client.

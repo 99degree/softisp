@@ -3,9 +3,9 @@
 //! Provides common types and utilities used by both `FusedPipeline`
 //! and `UnifiedPipeline`.
 
+use super::IspFrame;
 use crate::engine::{IspEngine, ProcessParams};
 use crate::error::IspResult;
-use super::IspFrame;
 
 /// Base struct for pipelines that wrap an IspEngine.
 ///
@@ -30,10 +30,7 @@ impl EnginePipeline {
     }
 
     /// Build from blocks using auto-selected engine.
-    pub fn build(
-        blocks: Vec<Box<dyn super::IspBlock>>,
-        _target_width: u32,
-    ) -> IspResult<Self> {
+    pub fn build(blocks: Vec<Box<dyn super::IspBlock>>, _target_width: u32) -> IspResult<Self> {
         if blocks.is_empty() {
             return Err(crate::error::IspError::Pipeline(
                 "No blocks provided".into(),
@@ -58,7 +55,7 @@ impl EnginePipeline {
     /// Build with a specific engine.
     pub fn build_with_engine(
         blocks: Vec<Box<dyn super::IspBlock>>,
-        mut engine: Box<dyn IspEngine>
+        mut engine: Box<dyn IspEngine>,
     ) -> IspResult<Self> {
         if blocks.is_empty() {
             return Err(crate::error::IspError::Pipeline(

@@ -56,8 +56,8 @@
 //! ```
 //! Where k1<0 = barrel distortion, k1>0 = pincushion distortion.
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// # WarpGridBlock — Unified Geometric Correction Block
 ///
@@ -267,11 +267,7 @@ impl WarpGridBlock {
         let w = self.output_width;
         let lut = Self::generate_radial_lut(h, w, corner_gain, center_gain);
         let name = format!("{}/shading_lut", self.tensor_ns());
-        let init = Proto::tensor_proto_float(
-            &name,
-            &[1, 3, h as i64, w as i64],
-            &lut,
-        );
+        let init = Proto::tensor_proto_float(&name, &[1, 3, h as i64, w as i64], &lut);
         self.shading_lut = Some(init);
         self
     }
@@ -279,11 +275,7 @@ impl WarpGridBlock {
     /// Use a pre-built shading LUT (already packed as `[1,3,H,W]` f32).
     pub fn with_shading_lut(mut self, h: u32, w: u32, lut: Vec<f32>) -> Self {
         let name = format!("{}/shading_lut", self.tensor_ns());
-        let init = Proto::tensor_proto_float(
-            &name,
-            &[1, 3, h as i64, w as i64],
-            &lut,
-        );
+        let init = Proto::tensor_proto_float(&name, &[1, 3, h as i64, w as i64], &lut);
         self.shading_lut = Some(init);
         self
     }
@@ -326,7 +318,9 @@ impl WarpGridBlock {
     /// otherwise `graph_input_name()`.
     fn effective_input(&self) -> String {
         if self.input_source.is_empty() {
-            self.graph_input_name().unwrap_or("WarpGrid/frame").to_string()
+            self.graph_input_name()
+                .unwrap_or("WarpGrid/frame")
+                .to_string()
         } else {
             self.input_source.clone()
         }
@@ -334,15 +328,33 @@ impl WarpGridBlock {
 }
 
 impl IspBlock for WarpGridBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "WarpGrid".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "WarpGrid".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
 
     fn input_tensors(&self) -> Vec<String> {
         vec![self.input_source.clone()]
@@ -359,16 +371,27 @@ impl IspBlock for WarpGridBlock {
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.effective_input(),
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_value(self.output_height as i64),
-              Proto::tensor_dim_value(self.output_width as i64)], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(self.output_height as i64),
+                Proto::tensor_dim_value(self.output_width as i64),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -398,32 +421,46 @@ impl IspBlock for WarpGridBlock {
         // ── 2. Rotate/flip (optional) ─────────────────────────────
         if self.swaps_dims() {
             let t = format!("{}/transposed", ns);
-            nodes.push(Proto::node("Transpose", &[&prev], &[&t],
-                &[Proto::attribute_ints("perm", &[0, 1, 3, 2])]));
+            nodes.push(Proto::node(
+                "Transpose",
+                &[&prev],
+                &[&t],
+                &[Proto::attribute_ints("perm", &[0, 1, 3, 2])],
+            ));
             prev = t;
         }
 
         if self.needs_hflip() {
             let h = format!("{}/hflipped", ns);
-            nodes.push(Proto::node("Slice",
-                &[&prev,
-                  &format!("{}/hflip_starts", ns),
-                  &format!("{}/hflip_ends", ns),
-                  &format!("{}/hflip_axes", ns),
-                  &format!("{}/hflip_steps", ns)],
-                &[&h], &[]));
+            nodes.push(Proto::node(
+                "Slice",
+                &[
+                    &prev,
+                    &format!("{}/hflip_starts", ns),
+                    &format!("{}/hflip_ends", ns),
+                    &format!("{}/hflip_axes", ns),
+                    &format!("{}/hflip_steps", ns),
+                ],
+                &[&h],
+                &[],
+            ));
             prev = h;
         }
 
         if self.needs_vflip() {
             let v = format!("{}/vflipped", ns);
-            nodes.push(Proto::node("Slice",
-                &[&prev,
-                  &format!("{}/vflip_starts", ns),
-                  &format!("{}/vflip_ends", ns),
-                  &format!("{}/vflip_axes", ns),
-                  &format!("{}/vflip_steps", ns)],
-                &[&v], &[]));
+            nodes.push(Proto::node(
+                "Slice",
+                &[
+                    &prev,
+                    &format!("{}/vflip_starts", ns),
+                    &format!("{}/vflip_ends", ns),
+                    &format!("{}/vflip_axes", ns),
+                    &format!("{}/vflip_steps", ns),
+                ],
+                &[&v],
+                &[],
+            ));
             prev = v;
         }
 
@@ -447,23 +484,53 @@ impl IspBlock for WarpGridBlock {
             let luma_vec = format!("{}/luma_out", scope);
             let final_out = format!("{}/final", scope);
 
-            nodes.push(Proto::node("Add", &[&prev, &format!("{}/bright_add", scope)],
-                &[&bright_out], &[]));
-            nodes.push(Proto::node("Sub", &[&bright_out, &format!("{}/half", scope)],
-                &[&contr_mul], &[]));
-            nodes.push(Proto::node("Mul", &[&contr_mul, &format!("{}/contr_w", scope)],
-                &[&contr_out], &[]));
-            nodes.push(Proto::node("Add", &[&contr_out, &format!("{}/half", scope)],
-                &[&luma_vec], &[]));
-            nodes.push(Proto::node("Mul", &[&luma_vec, &format!("{}/luma_w", scope)],
-                &[&final_out], &[]));
-            nodes.push(Proto::node("Identity", &[&final_out], &[&self.frame_tensor], &[]));
+            nodes.push(Proto::node(
+                "Add",
+                &[&prev, &format!("{}/bright_add", scope)],
+                &[&bright_out],
+                &[],
+            ));
+            nodes.push(Proto::node(
+                "Sub",
+                &[&bright_out, &format!("{}/half", scope)],
+                &[&contr_mul],
+                &[],
+            ));
+            nodes.push(Proto::node(
+                "Mul",
+                &[&contr_mul, &format!("{}/contr_w", scope)],
+                &[&contr_out],
+                &[],
+            ));
+            nodes.push(Proto::node(
+                "Add",
+                &[&contr_out, &format!("{}/half", scope)],
+                &[&luma_vec],
+                &[],
+            ));
+            nodes.push(Proto::node(
+                "Mul",
+                &[&luma_vec, &format!("{}/luma_w", scope)],
+                &[&final_out],
+                &[],
+            ));
+            nodes.push(Proto::node(
+                "Identity",
+                &[&final_out],
+                &[&self.frame_tensor],
+                &[],
+            ));
             return nodes;
         }
 
         // ── 5. Final output ───────────────────────────────────────
         if prev != self.frame_tensor {
-            nodes.push(Proto::node("Identity", &[&prev], &[&self.frame_tensor], &[]));
+            nodes.push(Proto::node(
+                "Identity",
+                &[&prev],
+                &[&self.frame_tensor],
+                &[],
+            ));
         }
 
         nodes
@@ -490,29 +557,73 @@ impl IspBlock for WarpGridBlock {
         let (height, width) = (self.output_height as i64, self.output_width as i64);
 
         if self.needs_hflip() && width > 0 {
-            inits.push(Proto::tensor_proto_int64(&format!("{}/hflip_starts", ns), &[width - 1]));
-            inits.push(Proto::tensor_proto_int64(&format!("{}/hflip_ends", ns), &[-1]));
-            inits.push(Proto::tensor_proto_int64(&format!("{}/hflip_axes", ns), &[3]));
-            inits.push(Proto::tensor_proto_int64(&format!("{}/hflip_steps", ns), &[-1]));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/hflip_starts", ns),
+                &[width - 1],
+            ));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/hflip_ends", ns),
+                &[-1],
+            ));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/hflip_axes", ns),
+                &[3],
+            ));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/hflip_steps", ns),
+                &[-1],
+            ));
         }
 
         if self.needs_vflip() && height > 0 {
-            inits.push(Proto::tensor_proto_int64(&format!("{}/vflip_starts", ns), &[height - 1]));
-            inits.push(Proto::tensor_proto_int64(&format!("{}/vflip_ends", ns), &[-1]));
-            inits.push(Proto::tensor_proto_int64(&format!("{}/vflip_axes", ns), &[2]));
-            inits.push(Proto::tensor_proto_int64(&format!("{}/vflip_steps", ns), &[-1]));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/vflip_starts", ns),
+                &[height - 1],
+            ));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/vflip_ends", ns),
+                &[-1],
+            ));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/vflip_axes", ns),
+                &[2],
+            ));
+            inits.push(Proto::tensor_proto_int64(
+                &format!("{}/vflip_steps", ns),
+                &[-1],
+            ));
         }
 
         // BCS constants
         if let Some((bright, contr, sat)) = self.bcs {
             let scope = format!("{}/bcs", ns);
-            inits.push(Proto::tensor_proto_float_scalar(&format!("{}/bright_add", scope), bright));
-            inits.push(Proto::tensor_proto_float_scalar(&format!("{}/half", scope), 0.5));
-            inits.push(Proto::tensor_proto_float_scalar(&format!("{}/contr_w", scope), contr));
-            inits.push(Proto::tensor_proto_float(&format!("{}/luma_w", scope), &[3],
-                &[0.299, 0.587, 0.114]));
-            let sat_w = if sat >= 0.0 { vec![1.0, sat, sat] } else { vec![1.0, 1.4, 0.5] };
-            inits.push(Proto::tensor_proto_float(&format!("{}/sat_w", scope), &[3], &sat_w));
+            inits.push(Proto::tensor_proto_float_scalar(
+                &format!("{}/bright_add", scope),
+                bright,
+            ));
+            inits.push(Proto::tensor_proto_float_scalar(
+                &format!("{}/half", scope),
+                0.5,
+            ));
+            inits.push(Proto::tensor_proto_float_scalar(
+                &format!("{}/contr_w", scope),
+                contr,
+            ));
+            inits.push(Proto::tensor_proto_float(
+                &format!("{}/luma_w", scope),
+                &[3],
+                &[0.299, 0.587, 0.114],
+            ));
+            let sat_w = if sat >= 0.0 {
+                vec![1.0, sat, sat]
+            } else {
+                vec![1.0, 1.4, 0.5]
+            };
+            inits.push(Proto::tensor_proto_float(
+                &format!("{}/sat_w", scope),
+                &[3],
+                &sat_w,
+            ));
         }
 
         inits
@@ -527,7 +638,11 @@ mod tests {
     fn test_radial_lut_center_is_identity() {
         let lut = WarpGridBlock::generate_radial_lut(100, 100, 1.5, 1.0);
         let center = lut[5050];
-        assert!((center - 1.0).abs() < 0.05, "center gain should be ~1.0, got {}", center);
+        assert!(
+            (center - 1.0).abs() < 0.05,
+            "center gain should be ~1.0, got {}",
+            center
+        );
     }
 
     #[test]
@@ -536,7 +651,11 @@ mod tests {
         let center = lut[5050];
         let corner = lut[0];
         assert!(corner > center, "corner {} > center {}", corner, center);
-        assert!((corner - 2.0).abs() < 0.05, "corner gain should be ~2.0, got {}", corner);
+        assert!(
+            (corner - 2.0).abs() < 0.05,
+            "corner gain should be ~2.0, got {}",
+            corner
+        );
     }
 
     #[test]
@@ -556,8 +675,7 @@ mod tests {
     #[test]
     fn test_warp_without_lens_shading() {
         let grid = vec![0.0f32; 32 * 32 * 2];
-        let block = WarpGridBlock::new(32, 32)
-            .with_grid(Some(grid));
+        let block = WarpGridBlock::new(32, 32).with_grid(Some(grid));
         let nodes = block.nodes();
         // GridSample + Identity = 2 nodes
         assert_eq!(nodes.len(), 2);
@@ -578,10 +696,20 @@ mod tests {
                 let expected_y = (y as f32 - cx) / cx;
                 let gx = grid[idx];
                 let gy = grid[idx + 1];
-                assert!((gx - expected_x).abs() < 0.01,
-                    "GDC identity ({}): expected x={}, got {}", x, expected_x, gx);
-                assert!((gy - expected_y).abs() < 0.01,
-                    "GDC identity ({}): expected y={}, got {}", y, expected_y, gy);
+                assert!(
+                    (gx - expected_x).abs() < 0.01,
+                    "GDC identity ({}): expected x={}, got {}",
+                    x,
+                    expected_x,
+                    gx
+                );
+                assert!(
+                    (gy - expected_y).abs() < 0.01,
+                    "GDC identity ({}): expected y={}, got {}",
+                    y,
+                    expected_y,
+                    gy
+                );
             }
         }
     }
@@ -596,8 +724,12 @@ mod tests {
         let idx = (48 * 64 + 48) * 2;
         let r_neg = (grid_neg[idx].powi(2) + grid_neg[idx + 1].powi(2)).sqrt();
         let r_zero = (grid_zero[idx].powi(2) + grid_zero[idx + 1].powi(2)).sqrt();
-        assert!(r_neg > r_zero,
-            "barrel GDC: radius {} > identity {}", r_neg, r_zero);
+        assert!(
+            r_neg > r_zero,
+            "barrel GDC: radius {} > identity {}",
+            r_neg,
+            r_zero
+        );
     }
 
     #[test]
@@ -609,14 +741,17 @@ mod tests {
         let idx = (48 * 64 + 48) * 2;
         let r_pos = (grid_pos[idx].powi(2) + grid_pos[idx + 1].powi(2)).sqrt();
         let r_zero = (grid_zero[idx].powi(2) + grid_zero[idx + 1].powi(2)).sqrt();
-        assert!(r_pos < r_zero,
-            "pincushion GDC: radius {} < identity {}", r_pos, r_zero);
+        assert!(
+            r_pos < r_zero,
+            "pincushion GDC: radius {} < identity {}",
+            r_pos,
+            r_zero
+        );
     }
 
     #[test]
     fn test_gdc_onnx_emission() {
-        let block = WarpGridBlock::new(32, 32)
-            .with_gdc(-0.3, 0.1, 0.0);
+        let block = WarpGridBlock::new(32, 32).with_gdc(-0.3, 0.1, 0.0);
         let nodes = block.nodes();
         // GridSample + Identity = 2 nodes
         assert_eq!(nodes.len(), 2, "GDC should emit GridSample + Identity");

@@ -10,8 +10,8 @@
 //! - `ToneStatsBlock` — luma mean, min, max, clipped/shadows `[6]`
 //! - `CoarseHistogramBlock` — 16-bin luminance histogram `[16]`
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 // ═══════════════════════════════════════════════════════════════════
 // ZoneStatsBlock
@@ -42,58 +42,108 @@ impl ZoneStatsBlock {
     pub fn new(rows: i64, cols: i64) -> Self {
         Self {
             id: "zone_stats".into(),
-            prev: None, next: None,
+            prev: None,
+            next: None,
             frame_tensor: "ZoneStatsBlock/frame".into(),
             input_source: String::new(),
-            zone_rows: rows, zone_cols: cols,
-            concrete_h: None, concrete_w: None,
+            zone_rows: rows,
+            zone_cols: cols,
+            concrete_h: None,
+            concrete_w: None,
         }
     }
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
-        self.concrete_h = Some(h); self.concrete_w = Some(w); self
+        self.concrete_h = Some(h);
+        self.concrete_w = Some(w);
+        self
     }
     /// Kernel height = input_h / zone_rows  (e.g. 1080/6 = 180 @ FHD landscape)
-    fn kernel_h(&self) -> i64 { self.concrete_h.map_or(1, |h| ((h + self.zone_rows - 1) / self.zone_rows).max(1)) }
+    fn kernel_h(&self) -> i64 {
+        self.concrete_h
+            .map_or(1, |h| ((h + self.zone_rows - 1) / self.zone_rows).max(1))
+    }
     /// Kernel width  = ceil(input_w / zone_cols).
     /// Uses ceil division so the full frame is covered even when resolution
     /// doesn't divide evenly (e.g. 1900/8 → 238, not 237).
-    fn kernel_w(&self) -> i64 { self.concrete_w.map_or(1, |w| ((w + self.zone_cols - 1) / self.zone_cols).max(1)) }
+    fn kernel_w(&self) -> i64 {
+        self.concrete_w
+            .map_or(1, |w| ((w + self.zone_cols - 1) / self.zone_cols).max(1))
+    }
 }
 
 impl IspBlock for ZoneStatsBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "ZoneStatsBlock".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "ZoneStatsBlock".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        let dims = vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                        Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")];
+        let dims = vec![
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(3),
+            Proto::tensor_dim_param("H"),
+            Proto::tensor_dim_param("W"),
+        ];
         Some(Proto::value_info(&self.input_source, &dims, 1))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        let dims = vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                        Proto::tensor_dim_value(self.zone_rows),
-                        Proto::tensor_dim_value(self.zone_cols)];
+        let dims = vec![
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(3),
+            Proto::tensor_dim_value(self.zone_rows),
+            Proto::tensor_dim_value(self.zone_cols),
+        ];
         Some(Proto::value_info(&self.frame_tensor, &dims, 1))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        vec![Proto::node("AveragePool", &[&self.input_source], &[&self.frame_tensor],
-            &[Proto::attribute_ints("kernel_shape", &[self.kernel_h(), self.kernel_w()]),
-              Proto::attribute_ints("strides", &[self.kernel_h(), self.kernel_w()]),
-              Proto::attribute_int("ceil_mode", 1)])]
+        vec![Proto::node(
+            "AveragePool",
+            &[&self.input_source],
+            &[&self.frame_tensor],
+            &[
+                Proto::attribute_ints("kernel_shape", &[self.kernel_h(), self.kernel_w()]),
+                Proto::attribute_ints("strides", &[self.kernel_h(), self.kernel_w()]),
+                Proto::attribute_int("ceil_mode", 1),
+            ],
+        )]
     }
-    fn initializers(&self) -> Vec<Vec<u8>> { vec![] }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+    fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        vec![]
+    }
 
     fn graph_output_name(&self) -> Option<&str> {
         Some(&self.frame_tensor)
@@ -125,36 +175,72 @@ impl Default for ChannelMeansBlock {
 impl ChannelMeansBlock {
     pub fn new() -> Self {
         Self {
-            id: "channel_means".into(), prev: None, next: None,
+            id: "channel_means".into(),
+            prev: None,
+            next: None,
             frame_tensor: "ChannelMeansBlock/frame".into(),
-            input_source: String::new(), concrete_h: None, concrete_w: None,
+            input_source: String::new(),
+            concrete_h: None,
+            concrete_w: None,
         }
     }
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
-        self.concrete_h = Some(h); self.concrete_w = Some(w); self
+        self.concrete_h = Some(h);
+        self.concrete_w = Some(w);
+        self
     }
 }
 
 impl IspBlock for ChannelMeansBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "ChannelMeansBlock".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "ChannelMeansBlock".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
-            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                 Proto::tensor_dim_value(h), Proto::tensor_dim_value(w)]
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ]
         } else {
-            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                 Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")]
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ]
         };
         Some(Proto::value_info(&self.input_source, &dims, 1))
     }
@@ -165,12 +251,22 @@ impl IspBlock for ChannelMeansBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        vec![Proto::node("ReduceMean", &[&self.input_source], &[&self.frame_tensor],
-            &[Proto::attribute_ints("axes", &[2, 3]),
-              Proto::attribute_int("keepdims", 0)])]
+        vec![Proto::node(
+            "ReduceMean",
+            &[&self.input_source],
+            &[&self.frame_tensor],
+            &[
+                Proto::attribute_ints("axes", &[2, 3]),
+                Proto::attribute_int("keepdims", 0),
+            ],
+        )]
     }
-    fn initializers(&self) -> Vec<Vec<u8>> { vec![] }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+    fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        vec![]
+    }
 
     fn graph_output_name(&self) -> Option<&str> {
         Some(&self.frame_tensor)
@@ -212,33 +308,67 @@ impl Default for ToneStatsBlock {
 impl ToneStatsBlock {
     pub fn new() -> Self {
         Self {
-            id: "tone_stats".into(), prev: None, next: None,
+            id: "tone_stats".into(),
+            prev: None,
+            next: None,
             frame_tensor: "ToneStatsBlock/frame".into(),
-            input_source: String::new(), concrete_h: None, concrete_w: None,
+            input_source: String::new(),
+            concrete_h: None,
+            concrete_w: None,
         }
     }
 }
 
 impl IspBlock for ToneStatsBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "ToneStatsBlock".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "ToneStatsBlock".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
-            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                 Proto::tensor_dim_value(h), Proto::tensor_dim_value(w)]
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ]
         } else {
-            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                 Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")]
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ]
         };
         Some(Proto::value_info(&self.input_source, &dims, 1))
     }
@@ -256,43 +386,103 @@ impl IspBlock for ToneStatsBlock {
         vec![
             // ── Compute luma via Conv1×1 ──
             // Weight shape [1, 3, 1, 1], single output channel
-            Proto::node("Conv", &[&self.input_source, &format!("{}/luma_w", ns),
-                                  &format!("{}/luma_b", ns)], &[&format!("{}/luma", ns)],
-                &[Proto::attribute_ints("kernel_shape", &[1, 1]),
-                  Proto::attribute_ints("strides", &[1, 1]),
-                  Proto::attribute_ints("pads", &[0, 0, 0, 0])]),
+            Proto::node(
+                "Conv",
+                &[
+                    &self.input_source,
+                    &format!("{}/luma_w", ns),
+                    &format!("{}/luma_b", ns),
+                ],
+                &[&format!("{}/luma", ns)],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[1, 1]),
+                    Proto::attribute_ints("strides", &[1, 1]),
+                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                ],
+            ),
             // ── Mean luma ──
-            Proto::node("ReduceMean", &[&format!("{}/luma", ns)], &[&format!("{}/mean", ns)],
-                &[Proto::attribute_ints("axes", &[2, 3]),
-                  Proto::attribute_int("keepdims", 0)]),
+            Proto::node(
+                "ReduceMean",
+                &[&format!("{}/luma", ns)],
+                &[&format!("{}/mean", ns)],
+                &[
+                    Proto::attribute_ints("axes", &[2, 3]),
+                    Proto::attribute_int("keepdims", 0),
+                ],
+            ),
             // ── Min luma ──
-            Proto::node("ReduceMin", &[&format!("{}/luma", ns)], &[&format!("{}/min", ns)],
-                &[Proto::attribute_ints("axes", &[2, 3]),
-                  Proto::attribute_int("keepdims", 0)]),
+            Proto::node(
+                "ReduceMin",
+                &[&format!("{}/luma", ns)],
+                &[&format!("{}/min", ns)],
+                &[
+                    Proto::attribute_ints("axes", &[2, 3]),
+                    Proto::attribute_int("keepdims", 0),
+                ],
+            ),
             // ── Max luma ──
-            Proto::node("ReduceMax", &[&format!("{}/luma", ns)], &[&format!("{}/max", ns)],
-                &[Proto::attribute_ints("axes", &[2, 3]),
-                  Proto::attribute_int("keepdims", 0)]),
+            Proto::node(
+                "ReduceMax",
+                &[&format!("{}/luma", ns)],
+                &[&format!("{}/max", ns)],
+                &[
+                    Proto::attribute_ints("axes", &[2, 3]),
+                    Proto::attribute_int("keepdims", 0),
+                ],
+            ),
             // ── Clipped mask (luma > 0.95) ──
-            Proto::node("Greater", &[&format!("{}/luma", ns), &format!("{}/clip_thresh", ns)],
-                &[&format!("{}/clip_mask", ns)], &[]),
-            Proto::node("ReduceSum", &[&format!("{}/clip_mask", ns)], &[&format!("{}/clip_cnt", ns)],
-                &[Proto::attribute_ints("axes", &[2, 3]),
-                  Proto::attribute_int("keepdims", 0)]),
+            Proto::node(
+                "Greater",
+                &[&format!("{}/luma", ns), &format!("{}/clip_thresh", ns)],
+                &[&format!("{}/clip_mask", ns)],
+                &[],
+            ),
+            Proto::node(
+                "ReduceSum",
+                &[&format!("{}/clip_mask", ns)],
+                &[&format!("{}/clip_cnt", ns)],
+                &[
+                    Proto::attribute_ints("axes", &[2, 3]),
+                    Proto::attribute_int("keepdims", 0),
+                ],
+            ),
             // ── Shadow mask (luma < 0.05) ──
-            Proto::node("Less", &[&format!("{}/luma", ns), &format!("{}/shadow_thresh", ns)],
-                &[&format!("{}/shadow_mask", ns)], &[]),
-            Proto::node("ReduceSum", &[&format!("{}/shadow_mask", ns)], &[&format!("{}/shadow_cnt", ns)],
-                &[Proto::attribute_ints("axes", &[2, 3]),
-                  Proto::attribute_int("keepdims", 0)]),
+            Proto::node(
+                "Less",
+                &[&format!("{}/luma", ns), &format!("{}/shadow_thresh", ns)],
+                &[&format!("{}/shadow_mask", ns)],
+                &[],
+            ),
+            Proto::node(
+                "ReduceSum",
+                &[&format!("{}/shadow_mask", ns)],
+                &[&format!("{}/shadow_cnt", ns)],
+                &[
+                    Proto::attribute_ints("axes", &[2, 3]),
+                    Proto::attribute_int("keepdims", 0),
+                ],
+            ),
             // ── Total pixel count ──
-            Proto::node("Size", &[&format!("{}/luma", ns)], &[&format!("{}/total_px", ns)], &[]),
+            Proto::node(
+                "Size",
+                &[&format!("{}/luma", ns)],
+                &[&format!("{}/total_px", ns)],
+                &[],
+            ),
             // ── Concat into [6] output ──
-            Proto::node("Concat", &[&format!("{}/mean", ns), &format!("{}/min", ns),
-                                     &format!("{}/max", ns), &format!("{}/clip_cnt", ns),
-                                     &format!("{}/shadow_cnt", ns), &format!("{}/total_px", ns)],
+            Proto::node(
+                "Concat",
+                &[
+                    &format!("{}/mean", ns),
+                    &format!("{}/min", ns),
+                    &format!("{}/max", ns),
+                    &format!("{}/clip_cnt", ns),
+                    &format!("{}/shadow_cnt", ns),
+                    &format!("{}/total_px", ns),
+                ],
                 &[&self.frame_tensor],
-                &[Proto::attribute_int("axis", 1)]),
+                &[Proto::attribute_int("axis", 1)],
+            ),
         ]
     }
 
@@ -300,14 +490,19 @@ impl IspBlock for ToneStatsBlock {
         let ns = self.tensor_ns();
         vec![
             // Luma weights [1, 3, 1, 1]: [0.299, 0.587, 0.114]
-            Proto::tensor_proto_float(&format!("{}/luma_w", ns), &[1, 3, 1, 1],
-                &[0.299, 0.587, 0.114]),
+            Proto::tensor_proto_float(
+                &format!("{}/luma_w", ns),
+                &[1, 3, 1, 1],
+                &[0.299, 0.587, 0.114],
+            ),
             Proto::tensor_proto_float(&format!("{}/luma_b", ns), &[1], &[0.0]),
             Proto::tensor_proto_float_scalar(&format!("{}/clip_thresh", ns), 0.95),
             Proto::tensor_proto_float_scalar(&format!("{}/shadow_thresh", ns), 0.05),
         ]
     }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        vec![]
+    }
 
     fn graph_output_name(&self) -> Option<&str> {
         Some(&self.frame_tensor)
@@ -343,36 +538,68 @@ pub struct CoarseHistogramBlock {
 impl CoarseHistogramBlock {
     pub fn new(num_bins: i64) -> Self {
         Self {
-            id: "histogram".into(), prev: None, next: None,
+            id: "histogram".into(),
+            prev: None,
+            next: None,
             frame_tensor: "CoarseHistogramBlock/frame".into(),
             input_source: String::new(),
             num_bins: num_bins.clamp(2, 64),
-            concrete_h: None, concrete_w: None,
+            concrete_h: None,
+            concrete_w: None,
         }
     }
 }
 
 impl IspBlock for CoarseHistogramBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "CoarseHistogramBlock".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "CoarseHistogramBlock".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        let dims = vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-                        Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")];
+        let dims = vec![
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(3),
+            Proto::tensor_dim_param("H"),
+            Proto::tensor_dim_param("W"),
+        ];
         Some(Proto::value_info(&self.input_source, &dims, 1))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        let dims = vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(self.num_bins)];
+        let dims = vec![
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(self.num_bins),
+        ];
         Some(Proto::value_info(&self.frame_tensor, &dims, 1))
     }
 
@@ -381,12 +608,20 @@ impl IspBlock for CoarseHistogramBlock {
         let mut nodes = Vec::new();
 
         // ── Compute luma via Conv1×1 ──
-        nodes.push(Proto::node("Conv",
-            &[&self.input_source, &format!("{}/luma_w", ns), &format!("{}/luma_b", ns)],
+        nodes.push(Proto::node(
+            "Conv",
+            &[
+                &self.input_source,
+                &format!("{}/luma_w", ns),
+                &format!("{}/luma_b", ns),
+            ],
             &[&format!("{}/luma", ns)],
-            &[Proto::attribute_ints("kernel_shape", &[1, 1]),
-              Proto::attribute_ints("strides", &[1, 1]),
-              Proto::attribute_ints("pads", &[0, 0, 0, 0])]));
+            &[
+                Proto::attribute_ints("kernel_shape", &[1, 1]),
+                Proto::attribute_ints("strides", &[1, 1]),
+                Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+            ],
+        ));
 
         // ── For each bin: bin_value < luma <= bin_value_next ──
         // Bin edges: [0, 1/num_bins, 2/num_bins, ..., 1]
@@ -398,24 +633,36 @@ impl IspBlock for CoarseHistogramBlock {
 
             if i == 0 {
                 // First bin: luma <= hi  →  Less(luma, hi)
-                nodes.push(Proto::node("Less",
+                nodes.push(Proto::node(
+                    "Less",
                     &[&format!("{}/luma", ns), &format!("{}/e{}", ns, i + 1)],
-                    &[&bin_name], &[]));
+                    &[&bin_name],
+                    &[],
+                ));
             } else if i == self.num_bins - 1 {
                 // Last bin: luma > lo  →  Greater(luma, lo)
-                nodes.push(Proto::node("Greater",
+                nodes.push(Proto::node(
+                    "Greater",
                     &[&format!("{}/luma", ns), &format!("{}/e{}", ns, i)],
-                    &[&bin_name], &[]));
+                    &[&bin_name],
+                    &[],
+                ));
             } else {
                 // Inner bins: luma > lo AND luma <= hi
                 let low = format!("{}/b{}_lo", ns, i);
                 let high = format!("{}/b{}_hi", ns, i);
-                nodes.push(Proto::node("Greater",
+                nodes.push(Proto::node(
+                    "Greater",
                     &[&format!("{}/luma", ns), &format!("{}/e{}", ns, i)],
-                    &[&low], &[]));
-                nodes.push(Proto::node("Less",
+                    &[&low],
+                    &[],
+                ));
+                nodes.push(Proto::node(
+                    "Less",
                     &[&format!("{}/luma", ns), &format!("{}/e{}", ns, i + 1)],
-                    &[&high], &[]));
+                    &[&high],
+                    &[],
+                ));
                 nodes.push(Proto::node("Mul", &[&low, &high], &[&bin_name], &[]));
             }
         }
@@ -425,18 +672,27 @@ impl IspBlock for CoarseHistogramBlock {
         for i in 0..self.num_bins {
             let cnt = format!("{}/c{}", ns, i);
             bin_counts.push(cnt.clone());
-            nodes.push(Proto::node("ReduceSum",
-                &[&format!("{}/b{}", ns, i)], &[&cnt],
-                &[Proto::attribute_ints("axes", &[2, 3]),
-                  Proto::attribute_int("keepdims", 0)]));
+            nodes.push(Proto::node(
+                "ReduceSum",
+                &[&format!("{}/b{}", ns, i)],
+                &[&cnt],
+                &[
+                    Proto::attribute_ints("axes", &[2, 3]),
+                    Proto::attribute_int("keepdims", 0),
+                ],
+            ));
         }
 
         // ── Concat all bin counts → [1, num_bins] ──
         let axis_name = format!("{}/axis", ns);
         let mut inputs: Vec<&str> = bin_counts.iter().map(|s| s.as_str()).collect();
         inputs.push(&axis_name);
-        nodes.push(Proto::node("Concat", &inputs, &[&self.frame_tensor],
-            &[Proto::attribute_int("axis", 1)]));
+        nodes.push(Proto::node(
+            "Concat",
+            &inputs,
+            &[&self.frame_tensor],
+            &[Proto::attribute_int("axis", 1)],
+        ));
 
         nodes
     }
@@ -444,25 +700,31 @@ impl IspBlock for CoarseHistogramBlock {
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let mut inits = vec![
-            Proto::tensor_proto_float(&format!("{}/luma_w", ns), &[1, 3, 1, 1],
-                &[0.299, 0.587, 0.114]),
+            Proto::tensor_proto_float(
+                &format!("{}/luma_w", ns),
+                &[1, 3, 1, 1],
+                &[0.299, 0.587, 0.114],
+            ),
             Proto::tensor_proto_float(&format!("{}/luma_b", ns), &[1], &[0.0]),
         ];
 
         // Bin edges: [0, 1/N, 2/N, ..., 1]
         for i in 0..=self.num_bins {
             let edge_val = i as f32 / self.num_bins as f32;
-            inits.push(
-                Proto::tensor_proto_float_scalar(&format!("{}/e{}", ns, i), edge_val));
+            inits.push(Proto::tensor_proto_float_scalar(
+                &format!("{}/e{}", ns, i),
+                edge_val,
+            ));
         }
 
         // Concat axis
-        inits.push(
-            Proto::tensor_proto_int64(&format!("{}/axis", ns), &[1]));
+        inits.push(Proto::tensor_proto_int64(&format!("{}/axis", ns), &[1]));
 
         inits
     }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        vec![]
+    }
 
     fn graph_output_name(&self) -> Option<&str> {
         Some(&self.frame_tensor)
@@ -507,36 +769,72 @@ impl Default for CalibrationBlock {
 impl CalibrationBlock {
     pub fn new() -> Self {
         Self {
-            id: "calibration".into(), prev: None, next: None,
+            id: "calibration".into(),
+            prev: None,
+            next: None,
             frame_tensor: "CalibrationBlock/frame".into(),
-            input_source: String::new(), concrete_h: None, concrete_w: None,
+            input_source: String::new(),
+            concrete_h: None,
+            concrete_w: None,
         }
     }
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
-        self.concrete_h = Some(h); self.concrete_w = Some(w); self
+        self.concrete_h = Some(h);
+        self.concrete_w = Some(w);
+        self
     }
 }
 
 impl IspBlock for CalibrationBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "CalibrationBlock".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "CalibrationBlock".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
-            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
-                 Proto::tensor_dim_value(h), Proto::tensor_dim_value(w)]
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(4),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ]
         } else {
-            vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(4),
-                 Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")]
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(4),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ]
         };
         Some(Proto::value_info(&self.input_source, &dims, 1))
     }
@@ -551,20 +849,20 @@ impl IspBlock for CalibrationBlock {
         let x = &self.input_source;
         let ns = |name: &str| format!("CalibrationBlock/{}", name);
 
-        let x2 = ns("x2");       // X²
-        let e_x = ns("e_x");     // E[X]
-        let e_x2 = ns("e_x2");   // E[X²]
+        let x2 = ns("x2"); // X²
+        let e_x = ns("e_x"); // E[X]
+        let e_x2 = ns("e_x2"); // E[X²]
         let e_x_2 = ns("e_x_2"); // E[X]²
-        let var = ns("var");     // Var[X]
-        let min = ns("min");     // per-quad min
-        let max = ns("max");     // per-quad max
+        let var = ns("var"); // Var[X]
+        let min = ns("min"); // per-quad min
+        let max = ns("max"); // per-quad max
         let r_pre = ns("r_pre"); // max - min
         let r_max = ns("r_max"); // max + ε
         let range = ns("range"); // (max-min)/(max+ε)
-        let lum = ns("lum");     // frame luminance
+        let lum = ns("lum"); // frame luminance
         let noise = ns("noise"); // frame noise
-        let fmin = ns("fmin");   // frame min
-        let fmax = ns("fmax");   // frame max
+        let fmin = ns("fmin"); // frame min
+        let fmax = ns("fmax"); // frame max
         let c_all = ns("c_all");
         let out = &self.frame_tensor;
 
@@ -572,21 +870,49 @@ impl IspBlock for CalibrationBlock {
             // 1. X² = Mul(x, x)
             P::node("Mul", &[x, x], &[&x2], &[]),
             // 2. E[X] = ReduceMean(x, axes=[2,3])
-            P::node("ReduceMean", &[x], &[&e_x],
-                &[P::attribute_ints("axes", &[2, 3]), P::attribute_int("keepdims", 1)]),
+            P::node(
+                "ReduceMean",
+                &[x],
+                &[&e_x],
+                &[
+                    P::attribute_ints("axes", &[2, 3]),
+                    P::attribute_int("keepdims", 1),
+                ],
+            ),
             // 3. E[X²] = ReduceMean(x², axes=[2,3])
-            P::node("ReduceMean", &[&x2], &[&e_x2],
-                &[P::attribute_ints("axes", &[2, 3]), P::attribute_int("keepdims", 1)]),
+            P::node(
+                "ReduceMean",
+                &[&x2],
+                &[&e_x2],
+                &[
+                    P::attribute_ints("axes", &[2, 3]),
+                    P::attribute_int("keepdims", 1),
+                ],
+            ),
             // 4. E[X]² = Mul(E[X], E[X])
             P::node("Mul", &[&e_x, &e_x], &[&e_x_2], &[]),
             // 5. Var = E[X²] - E[X]²
             P::node("Sub", &[&e_x2, &e_x_2], &[&var], &[]),
             // 6. Min = ReduceMin(x, axes=[2,3])
-            P::node("ReduceMin", &[x], &[&min],
-                &[P::attribute_ints("axes", &[2, 3]), P::attribute_int("keepdims", 1)]),
+            P::node(
+                "ReduceMin",
+                &[x],
+                &[&min],
+                &[
+                    P::attribute_ints("axes", &[2, 3]),
+                    P::attribute_int("keepdims", 1),
+                ],
+            ),
             // 7. Max = ReduceMax(x, axes=[2,3])
-            P::node("ReduceMax", &[x], &[&max],
-                &[P::attribute_ints("axes", &[2, 3]), P::attribute_int("keepdims", 1)]),
+            P::node(
+                "ReduceMax",
+                &[x],
+                &[&max],
+                &[
+                    P::attribute_ints("axes", &[2, 3]),
+                    P::attribute_int("keepdims", 1),
+                ],
+            ),
             // 8. Range_pre = Max - Min
             P::node("Sub", &[&max, &min], &[&r_pre], &[]),
             // 9. Max_safe = Max + ε (avoid div-by-zero)
@@ -594,18 +920,50 @@ impl IspBlock for CalibrationBlock {
             // 10. Range = Range_pre / Max_safe
             P::node("Div", &[&r_pre, &r_max], &[&range], &[]),
             // 11-14. Scalar frame stats (ReduceMean/Min/Max on axis=1 of [1,4,1,1])
-            P::node("ReduceMean", &[&e_x], &[&lum],
-                &[P::attribute_ints("axes", &[1]), P::attribute_int("keepdims", 1)]),
-            P::node("ReduceMean", &[&var], &[&noise],
-                &[P::attribute_ints("axes", &[1]), P::attribute_int("keepdims", 1)]),
-            P::node("ReduceMin", &[&min], &[&fmin],
-                &[P::attribute_ints("axes", &[1]), P::attribute_int("keepdims", 1)]),
-            P::node("ReduceMax", &[&max], &[&fmax],
-                &[P::attribute_ints("axes", &[1]), P::attribute_int("keepdims", 1)]),
+            P::node(
+                "ReduceMean",
+                &[&e_x],
+                &[&lum],
+                &[
+                    P::attribute_ints("axes", &[1]),
+                    P::attribute_int("keepdims", 1),
+                ],
+            ),
+            P::node(
+                "ReduceMean",
+                &[&var],
+                &[&noise],
+                &[
+                    P::attribute_ints("axes", &[1]),
+                    P::attribute_int("keepdims", 1),
+                ],
+            ),
+            P::node(
+                "ReduceMin",
+                &[&min],
+                &[&fmin],
+                &[
+                    P::attribute_ints("axes", &[1]),
+                    P::attribute_int("keepdims", 1),
+                ],
+            ),
+            P::node(
+                "ReduceMax",
+                &[&max],
+                &[&fmax],
+                &[
+                    P::attribute_ints("axes", &[1]),
+                    P::attribute_int("keepdims", 1),
+                ],
+            ),
             // 15. Concat all 9 tensors along axis=1
             //   [1,4,1,1] ×5 + [1,1,1,1] ×4 → [1,24,1,1]
-            P::node("Concat", &[&e_x, &var, &min, &max, &range, &lum, &noise, &fmin, &fmax],
-                &[&c_all], &[P::attribute_int("axis", 1)]),
+            P::node(
+                "Concat",
+                &[&e_x, &var, &min, &max, &range, &lum, &noise, &fmin, &fmax],
+                &[&c_all],
+                &[P::attribute_int("axis", 1)],
+            ),
             // 16. Reshape [1,24,1,1] → [1,24]
             P::node("Reshape", &[&c_all, "CalibrationBlock/shape"], &[out], &[]),
         ]
@@ -618,7 +976,9 @@ impl IspBlock for CalibrationBlock {
         ]
     }
 
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> { vec![] }
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        vec![]
+    }
 
     fn graph_output_name(&self) -> Option<&str> {
         Some(&self.frame_tensor)
@@ -628,8 +988,8 @@ impl IspBlock for CalibrationBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::GraphComposer;
     use crate::blocks::DemosaicCcmBlock;
+    use crate::pipeline::GraphComposer;
 
     // ── ZoneStatsBlock ──
     #[test]
@@ -667,7 +1027,11 @@ mod tests {
     #[test]
     fn test_zone_stats_pipeline() {
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(crate::blocks::RawInputBlock::new().with_elem_type(1).with_concrete_dims(48, 64)),
+            Box::new(
+                crate::blocks::RawInputBlock::new()
+                    .with_elem_type(1)
+                    .with_concrete_dims(48, 64),
+            ),
             Box::new(crate::blocks::NormalizeBlock::new()),
             Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64)),
             Box::new(crate::blocks::BlcBlock::new()),
@@ -689,7 +1053,11 @@ mod tests {
     #[test]
     fn test_channel_means_pipeline() {
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(crate::blocks::RawInputBlock::new().with_elem_type(1).with_concrete_dims(48, 64)),
+            Box::new(
+                crate::blocks::RawInputBlock::new()
+                    .with_elem_type(1)
+                    .with_concrete_dims(48, 64),
+            ),
             Box::new(crate::blocks::NormalizeBlock::new()),
             Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64)),
             Box::new(crate::blocks::BlcBlock::new()),
@@ -705,13 +1073,21 @@ mod tests {
     #[test]
     fn test_tone_stats_nodes() {
         let nodes = ToneStatsBlock::new().nodes();
-        assert_eq!(nodes.len(), 10, "ToneStats: luma+mean+min+max+clip+shadow+px+concat=10");
+        assert_eq!(
+            nodes.len(),
+            10,
+            "ToneStats: luma+mean+min+max+clip+shadow+px+concat=10"
+        );
     }
 
     #[test]
     fn test_tone_stats_pipeline() {
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(crate::blocks::RawInputBlock::new().with_elem_type(1).with_concrete_dims(48, 64)),
+            Box::new(
+                crate::blocks::RawInputBlock::new()
+                    .with_elem_type(1)
+                    .with_concrete_dims(48, 64),
+            ),
             Box::new(crate::blocks::NormalizeBlock::new()),
             Box::new(crate::blocks::DemosaicCcmBlock::new(2).with_concrete_dims(24, 32)),
             Box::new(ToneStatsBlock::new()),
@@ -739,7 +1115,11 @@ mod tests {
     #[test]
     fn test_histogram_pipeline() {
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(crate::blocks::RawInputBlock::new().with_elem_type(1).with_concrete_dims(8, 8)),
+            Box::new(
+                crate::blocks::RawInputBlock::new()
+                    .with_elem_type(1)
+                    .with_concrete_dims(8, 8),
+            ),
             Box::new(crate::blocks::NormalizeBlock::new()),
             Box::new(crate::blocks::DemosaicCcmBlock::new(2).with_concrete_dims(4, 4)),
             Box::new(CoarseHistogramBlock::new(4)),

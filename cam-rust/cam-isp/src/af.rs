@@ -16,7 +16,7 @@ pub mod vcm {
     pub const RANGE: i32 = MAX - MIN; // 1024
     pub const COARSE_STEP: i32 = 64; // ~16 coarse positions
     pub const FINE_RADIUS: i32 = 48; // fine scan ±48 around peak
-    pub const FINE_STEP: i32 = 16;   // fine scan step size
+    pub const FINE_STEP: i32 = 16; // fine scan step size
 }
 
 /// AF mode enum — matches Android Camera2 AF modes.
@@ -155,7 +155,12 @@ impl AfState {
         if self.af_locked {
             format!("🔒 AF-LOCK {} {}", self.mode.display_name(), state_str)
         } else {
-            format!("AF {} {} dist={:.2}m", self.mode.display_name(), state_str, self.focus_distance)
+            format!(
+                "AF {} {} dist={:.2}m",
+                self.mode.display_name(),
+                state_str,
+                self.focus_distance
+            )
         }
     }
 
@@ -181,8 +186,7 @@ impl AfState {
             return vcm::MIN;
         }
         let n = (1.0 - 1.0 / (1.0 + diopters * 0.5)).clamp(0.0, 1.0);
-        ((vcm::MIN as f32 + n * vcm::RANGE as f32) as i32)
-            .clamp(vcm::MIN, vcm::MAX)
+        ((vcm::MIN as f32 + n * vcm::RANGE as f32) as i32).clamp(vcm::MIN, vcm::MAX)
     }
 
     // ── Focus metric ──
@@ -196,8 +200,8 @@ impl AfState {
         if calibration_data.len() < 22 {
             return 0.0;
         }
-        let var_sum = calibration_data[4] + calibration_data[5]
-            + calibration_data[6] + calibration_data[7];
+        let var_sum =
+            calibration_data[4] + calibration_data[5] + calibration_data[6] + calibration_data[7];
         var_sum / 4.0
     }
 
@@ -274,7 +278,11 @@ impl AfState {
                     self.scan_total = self.scan_positions.len();
                     self.scan_metrics.clear();
                     self.scan_phase = AfScanPhase::FineScan;
-                    log::info!("Coarse peak at VCM={}, fine scan {} steps around it", peak, self.scan_total);
+                    log::info!(
+                        "Coarse peak at VCM={}, fine scan {} steps around it",
+                        peak,
+                        self.scan_total
+                    );
                     // Fall through to fine scan
                 } else {
                     let pos = self.scan_positions[self.scan_step];
@@ -289,7 +297,11 @@ impl AfState {
                     let best = self.find_best_position();
                     self.scan_best_pos = best;
                     self.scan_phase = AfScanPhase::Settled;
-                    log::info!("AF scan DONE: best VCM={} (metric={:.2})", best, self.scan_best_metric);
+                    log::info!(
+                        "AF scan DONE: best VCM={} (metric={:.2})",
+                        best,
+                        self.scan_best_metric
+                    );
                     self.vcm_pos = best;
                     return None;
                 } else {
@@ -385,7 +397,12 @@ impl AfState {
     // ── Hardware AF passthrough ──
 
     /// Update AF state from camera adapter.
-    pub fn update_from_adapter(&mut self, adapter_mode: &str, adapter_state: i32, adapter_focus_distance: f32) {
+    pub fn update_from_adapter(
+        &mut self,
+        adapter_mode: &str,
+        adapter_state: i32,
+        adapter_focus_distance: f32,
+    ) {
         self.mode = AfMode::from_name(adapter_mode);
         self.af_state = adapter_state.clamp(-1, 6);
         self.focus_distance = adapter_focus_distance.max(0.0);
@@ -408,7 +425,11 @@ impl AfState {
             clamped = true;
         }
         if clamped {
-            log::warn!("AF params clamped: state={} dist={:.2}", self.af_state, self.focus_distance);
+            log::warn!(
+                "AF params clamped: state={} dist={:.2}",
+                self.af_state,
+                self.focus_distance
+            );
         }
         clamped
     }
@@ -443,7 +464,13 @@ mod tests {
         let d = 0.5;
         let vcm = AfState::diopters_to_vcm(d);
         let d2 = AfState::vcm_to_diopters(vcm);
-        assert!((d - d2).abs() < 0.1, "Roundtrip: {} → VCM={} → {}", d, vcm, d2);
+        assert!(
+            (d - d2).abs() < 0.1,
+            "Roundtrip: {} → VCM={} → {}",
+            d,
+            vcm,
+            d2
+        );
     }
 
     #[test]
@@ -454,14 +481,22 @@ mod tests {
         data[6] = 30.0;
         data[7] = 40.0;
         let metric = AfState::focus_metric_from_calibration(&data);
-        assert!((metric - 25.0).abs() < 0.01, "Metric should be 25.0, got {}", metric);
+        assert!(
+            (metric - 25.0).abs() < 0.01,
+            "Metric should be 25.0, got {}",
+            metric
+        );
     }
 
     #[test]
     fn test_focus_metric_short_array() {
         let data = [1.0f32; 4];
         let metric = AfState::focus_metric_from_calibration(&data);
-        assert!((metric - 0.0).abs() < 0.01, "Short array should return 0, got {}", metric);
+        assert!(
+            (metric - 0.0).abs() < 0.01,
+            "Short array should return 0, got {}",
+            metric
+        );
     }
 
     #[test]
@@ -530,12 +565,7 @@ mod tests {
     #[test]
     fn test_find_peak() {
         let mut af = AfState::default();
-        af.scan_metrics = vec![
-            (0, 10.0),
-            (64, 50.0),
-            (128, 100.0),
-            (192, 80.0),
-        ];
+        af.scan_metrics = vec![(0, 10.0), (64, 50.0), (128, 100.0), (192, 80.0)];
         let peak = af.find_peak_position();
         assert_eq!(peak, 128);
     }
@@ -543,15 +573,14 @@ mod tests {
     #[test]
     fn test_find_best_smoothed() {
         let mut af = AfState::default();
-        af.scan_metrics = vec![
-            (0, 10.0),
-            (64, 50.0),
-            (128, 100.0),
-            (192, 80.0),
-        ];
+        af.scan_metrics = vec![(0, 10.0), (64, 50.0), (128, 100.0), (192, 80.0)];
         let best = af.find_best_position();
         // After neighbor smoothing, position 192 has the best
         // neighborhood average (100+80)/2 = 90 vs (50+100+80)/3 = 76.67
-        assert!(best == 192 || best == 128, "Best should be 128 or 192, got {}", best);
+        assert!(
+            best == 192 || best == 128,
+            "Best should be 128 or 192, got {}",
+            best
+        );
     }
 }

@@ -17,7 +17,14 @@ fn main() {
     let node = Proto::node("Identity", &[input_name], &[output_name], &[]);
     let input = Proto::value_info(input_name, &shape, 5); // INT16
     let output = Proto::value_info(output_name, &shape, 1); // FLOAT
-    let graph = Proto::graph("preserve_input_type", &[node], &[input], &[output], &[], &[]);
+    let graph = Proto::graph(
+        "preserve_input_type",
+        &[node],
+        &[input],
+        &[output],
+        &[],
+        &[],
+    );
     let opset = Proto::opset("", 21);
     let model = Proto::model(11, &opset, "test_preserve", &graph);
 
@@ -26,7 +33,10 @@ fn main() {
 
     convert_onnx_to_mnn("_test_int16.onnx", "_test_int16_default.mnn", None).unwrap();
 
-    let opts = MnnConvertOptions { preserve_input_type: true, ..Default::default() };
+    let opts = MnnConvertOptions {
+        preserve_input_type: true,
+        ..Default::default()
+    };
     convert_onnx_to_mnn("_test_int16.onnx", "_test_int16_preserved.mnn", Some(&opts)).unwrap();
 
     for (label, path) in [

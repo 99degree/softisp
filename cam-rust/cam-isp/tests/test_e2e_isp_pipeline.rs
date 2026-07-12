@@ -30,8 +30,10 @@ const EXPECTED_B: f32 = 0.2449;
 /// Generate a standard-op ONNX model using Python.
 fn generate_onnx(output_path: &str, bayer_w: u32, bayer_h: u32) -> Result<(), String> {
     let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join("vulkan_isp")
         .join("gen_isp_onnx_standard.py");
 
@@ -65,8 +67,8 @@ fn convert_onnx_to_mnn_via_ffi(onnx_path: &str, mnn_path: &str) -> Result<(), St
 /// Run inference using mnn_run_host_tensors FFI.
 /// For multi-input models, also sets extra inputs (fcs_gain, ldci_strength, ee_gain).
 fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), String> {
-    use std::ffi::CString;
     use cam_isp::mnn_sys::*;
+    use std::ffi::CString;
 
     let c_path = CString::new(mnn_path).map_err(|_| "NUL in path")?;
     let interp = unsafe { mnn_interpreter_create_from_file(c_path.as_ptr()) };
@@ -74,17 +76,26 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
         return Err("Failed to open model".to_string());
     }
 
-    let backend = if use_vulkan { MnnBackendType::Vulkan } else { MnnBackendType::Cpu };
+    let backend = if use_vulkan {
+        MnnBackendType::Vulkan
+    } else {
+        MnnBackendType::Cpu
+    };
     let session = unsafe { mnn_session_create(interp, backend, 1) };
     if session.is_null() {
-        unsafe { mnn_interpreter_destroy(interp); }
+        unsafe {
+            mnn_interpreter_destroy(interp);
+        }
         return Err("Failed to create session".to_string());
     }
 
     // Get input shape
     let input_tensor = unsafe { mnn_session_get_input_v2(interp, session, std::ptr::null()) };
     if input_tensor.is_null() {
-        unsafe { mnn_session_release(interp, session); mnn_interpreter_destroy(interp); }
+        unsafe {
+            mnn_session_release(interp, session);
+            mnn_interpreter_destroy(interp);
+        }
         return Err("Failed to get input tensor".to_string());
     }
 
@@ -128,15 +139,27 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
     for name in &names {
         let c_name = CString::new(*name).unwrap();
         unsafe {
-            mnn_set_input_float(interp, session, c_name.as_ptr(),
-                identity_val.as_ptr(), shape_1.as_ptr(), 1);
+            mnn_set_input_float(
+                interp,
+                session,
+                c_name.as_ptr(),
+                identity_val.as_ptr(),
+                shape_1.as_ptr(),
+                1,
+            );
         }
     }
     {
         let c_name = CString::new("zzz_LdciBlock/ldci_strength_scaled").unwrap();
         unsafe {
-            mnn_set_input_float(interp, session, c_name.as_ptr(),
-                ldci_val.as_ptr(), shape_1.as_ptr(), 1);
+            mnn_set_input_float(
+                interp,
+                session,
+                c_name.as_ptr(),
+                ldci_val.as_ptr(),
+                shape_1.as_ptr(),
+                1,
+            );
         }
     }
 
@@ -148,14 +171,21 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
     let in_shape: [i32; 4] = [1, in_c as i32, in_h as i32, in_w as i32];
     let n_out = unsafe {
         mnn_run_host_tensors(
-            interp, session,
-            input_data.as_ptr(), in_shape.as_ptr(), 4,
-            output_data.as_mut_ptr(), max_out as i32,
+            interp,
+            session,
+            input_data.as_ptr(),
+            in_shape.as_ptr(),
+            4,
+            output_data.as_mut_ptr(),
+            max_out as i32,
         )
     };
 
     if n_out < 0 {
-        unsafe { mnn_session_release(interp, session); mnn_interpreter_destroy(interp); }
+        unsafe {
+            mnn_session_release(interp, session);
+            mnn_interpreter_destroy(interp);
+        }
         return Err(format!("mnn_run_host_tensors failed: {}", n_out));
     }
 
@@ -169,7 +199,11 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
     };
 
     let (_out_c, out_h, out_w) = if out_ndim >= 4 {
-        (out_dims[1] as usize, out_dims[2] as usize, out_dims[3] as usize)
+        (
+            out_dims[1] as usize,
+            out_dims[2] as usize,
+            out_dims[3] as usize,
+        )
     } else {
         (1, 1, n_out as usize)
     };
@@ -179,7 +213,10 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
     let g = output_data[ch_stride];
     let b = output_data[2 * ch_stride];
 
-    unsafe { mnn_session_release(interp, session); mnn_interpreter_destroy(interp); }
+    unsafe {
+        mnn_session_release(interp, session);
+        mnn_interpreter_destroy(interp);
+    }
 
     Ok((r, g, b))
 }
@@ -187,31 +224,39 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
 /// Run the full e2e test for a given Bayer resolution.
 fn run_e2e_test(label: &str, prefix: &str, bayer_w: u32, bayer_h: u32) {
     let onnx_path = format!("{}.onnx", prefix);
-    let mnn_path  = format!("{}.mnn", prefix);
+    let mnn_path = format!("{}.mnn", prefix);
 
     // 1. Generate ONNX
-    generate_onnx(&onnx_path, bayer_w, bayer_h)
-        .expect("ONNX generation failed");
+    generate_onnx(&onnx_path, bayer_w, bayer_h).expect("ONNX generation failed");
 
     // 2. Convert to MNN via FFI
-    convert_onnx_to_mnn_via_ffi(&onnx_path, &mnn_path)
-        .expect("MNN conversion failed");
+    convert_onnx_to_mnn_via_ffi(&onnx_path, &mnn_path).expect("MNN conversion failed");
 
     // 3. Run on Vulkan
-    let (r, g, b) = run_inference(&mnn_path, true)
-        .expect("Vulkan inference failed");
+    let (r, g, b) = run_inference(&mnn_path, true).expect("Vulkan inference failed");
 
     // 4. Verify
     let ok = (r - EXPECTED_R).abs() < 0.01
-          && (g - EXPECTED_G).abs() < 0.01
-          && (b - EXPECTED_B).abs() < 0.01;
-    println!("  {}: R={:.4} G={:.4} B={:.4}",
-        if ok { "\u{2713} PASS" } else { "\u{2717} FAIL" }, r, g, b);
-    assert!(ok, "{} output mismatch: got R={:.4} G={:.4} B={:.4}", label, r, g, b);
+        && (g - EXPECTED_G).abs() < 0.01
+        && (b - EXPECTED_B).abs() < 0.01;
+    println!(
+        "  {}: R={:.4} G={:.4} B={:.4}",
+        if ok { "\u{2713} PASS" } else { "\u{2717} FAIL" },
+        r,
+        g,
+        b
+    );
+    assert!(
+        ok,
+        "{} output mismatch: got R={:.4} G={:.4} B={:.4}",
+        label, r, g, b
+    );
 
     // Cleanup
     for p in [&onnx_path, &mnn_path] {
-        if Path::new(p).exists() { let _ = std::fs::remove_file(p); }
+        if Path::new(p).exists() {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }
 
@@ -244,7 +289,11 @@ fn test_heavy_profile_mnn_convert() {
     let blocks = PipelineProfile::HEAVY.build_blocks(48, 0);
     let refs: Vec<&dyn cam_isp::pipeline::IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = GraphComposer::compose_from_vec(&refs, &[], 16).unwrap();
-    assert!(onnx.len() > 2000, "HEAVY ONNX too small: {} bytes", onnx.len());
+    assert!(
+        onnx.len() > 2000,
+        "HEAVY ONNX too small: {} bytes",
+        onnx.len()
+    );
 
     // Write to disk
     let onnx_path = ".mnn_heavy_rust.onnx";
@@ -255,15 +304,25 @@ fn test_heavy_profile_mnn_convert() {
     let result = cam_isp::mnn_converter::convert_onnx_to_mnn(onnx_path, mnn_path, None);
     match &result {
         Ok(log) => {
-            let mnn_size = PathBuf::from(mnn_path).metadata().map(|m| m.len()).unwrap_or(0);
-            println!("HEAVY Rust ONNX ({} bytes) -> MNN ({} bytes)", onnx.len(), mnn_size);
+            let mnn_size = PathBuf::from(mnn_path)
+                .metadata()
+                .map(|m| m.len())
+                .unwrap_or(0);
+            println!(
+                "HEAVY Rust ONNX ({} bytes) -> MNN ({} bytes)",
+                onnx.len(),
+                mnn_size
+            );
             println!("  Converter log: {}", log);
             assert!(mnn_size > 1000, "MNN model too small: {} bytes", mnn_size);
         }
         Err(e) => {
             // Conversion failure is acceptable for Rust pipeline patterns
             // (IspChainFusion may not match all Rust-generated patterns yet)
-            println!("HEAVY Rust ONNX conversion: {} (expected for Rust patterns)", e);
+            println!(
+                "HEAVY Rust ONNX conversion: {} (expected for Rust patterns)",
+                e
+            );
         }
     }
 
@@ -293,16 +352,30 @@ fn test_fp16_output_display_block() {
         let inits = block.initializers();
 
         // Float16Rgb: [Mul, Cast], Float16Bgra: [Conv, Identity, Cast]
-        assert_eq!(nodes.len(), expected_nodes,
-            "{}: expected {} nodes, got {}", label, expected_nodes, nodes.len());
+        assert_eq!(
+            nodes.len(),
+            expected_nodes,
+            "{}: expected {} nodes, got {}",
+            label,
+            expected_nodes,
+            nodes.len()
+        );
 
         // output_value_info should be present
-        assert!(block.output_value_info().is_some(),
-            "{}: output_value_info should be present", label);
+        assert!(
+            block.output_value_info().is_some(),
+            "{}: output_value_info should be present",
+            label
+        );
 
         // is_fp16()
         assert!(fmt.is_fp16(), "{}: is_fp16() should be true", label);
-        assert_eq!(fmt.onnx_elem_type(), 10, "{}: onnx_elem_type() should be 10", label);
+        assert_eq!(
+            fmt.onnx_elem_type(),
+            10,
+            "{}: onnx_elem_type() should be 10",
+            label
+        );
 
         // Bytes per pixel
         match fmt {
@@ -311,6 +384,11 @@ fn test_fp16_output_display_block() {
             _ => {}
         }
 
-        println!("{}: {} nodes, {} initializers — OK", label, nodes.len(), inits.len());
+        println!(
+            "{}: {} nodes, {} initializers — OK",
+            label,
+            nodes.len(),
+            inits.len()
+        );
     }
 }

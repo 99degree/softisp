@@ -4,23 +4,23 @@
 //! Optionally converts ONNX to MNN format.
 //! Does not capture real camera frames.
 
-use log::{info, warn, error};
 use clap::Parser;
+use log::{error, info, warn};
 
+use cam_isp::cpu::register_cpu_engine;
+use cam_isp::engine::select_engine_by_name;
 use cam_isp::pipeline::GraphComposer;
 use cam_isp::pipeline::IspBlock;
-use cam_isp::engine::select_engine_by_name;
-use cam_isp::cpu::register_cpu_engine;
 use cam_isp::profile::PipelineProfile;
 
 #[cfg(feature = "mnn")]
+use cam_isp::mnn_converter::{convert_onnx_to_mnn, MnnConvertOptions};
+#[cfg(feature = "mnn")]
 use cam_isp::mnnengine::MnnBackend;
+#[cfg(feature = "ort")]
+use cam_isp::onnx::{register_onnx_engine, OrtBackend};
 #[cfg(feature = "mnn")]
 use cam_isp::register_mnn_engine;
-#[cfg(feature = "mnn")]
-use cam_isp::mnn_converter::{convert_onnx_to_mnn, MnnConvertOptions};
-#[cfg(feature = "ort")]
-use cam_isp::onnx::{OrtBackend, register_onnx_engine};
 
 /// Command-line arguments.
 #[derive(Parser, Debug)]
@@ -72,12 +72,12 @@ fn build_pipeline(profile_name: &str, width: u32) -> Result<Vec<u8>, String> {
     let mut blocks = profile.build_blocks(width, 2);
     GraphComposer::wire_blocks(&mut blocks);
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-    
+
     info!("GraphComposer: Pipeline: {} blocks", blocks.len());
     for b in &blocks {
         info!("  {}", b.id());
     }
-    
+
     GraphComposer::compose_from_vec(&block_refs, &[], 16)
 }
 
@@ -96,7 +96,9 @@ fn register_engines(backend: &str) {
                 register_onnx_engine!(OrtBackend::Cpu);
             }
             #[cfg(not(feature = "ort"))]
-            { warn!("ORT feature not enabled"); }
+            {
+                warn!("ORT feature not enabled");
+            }
         }
         "mnn" => {
             #[cfg(feature = "mnn")]
@@ -106,7 +108,9 @@ fn register_engines(backend: &str) {
                 register_mnn_engine!(MnnBackend::Cpu);
             }
             #[cfg(not(feature = "mnn"))]
-            { warn!("MNN feature not enabled"); }
+            {
+                warn!("MNN feature not enabled");
+            }
         }
         _ => {
             info!("Registering all engines (auto mode)");
@@ -185,7 +189,9 @@ fn main() {
             }
         }
         #[cfg(not(feature = "mnn"))]
-        { warn!("MNN feature not enabled, cannot convert"); }
+        {
+            warn!("MNN feature not enabled, cannot convert");
+        }
     }
 
     info!("Cam App complete");

@@ -1,19 +1,19 @@
-use crate::profile::PipelineProfile;
-use crate::engine::{IspEngine, ProcessParams, OutputFormat as EngineOutputFormat};
+use crate::engine::{IspEngine, OutputFormat as EngineOutputFormat, ProcessParams};
 use crate::pipeline::ProcessPipeline;
+use crate::profile::PipelineProfile;
 
 // Re-export warp types for external consumers
-pub use crate::warp_engine::{GpuWarpParams, GpuWarpEngine};
+pub use crate::warp_engine::{GpuWarpEngine, GpuWarpParams};
 
-use crate::postprocess::{PostProcessPipeline, PostProcessConfig};
-use crate::format_convert::FormatConvertEngine;
-use crate::isp_controller::IspController;
 use crate::controller_api::ControllerApi;
+use crate::format_convert::FormatConvertEngine;
+use crate::hdr::{EnhancedFrame, HdrCaptureQueue};
+use crate::isp_controller::IspController;
 use crate::pipeline::types::IspFrame;
-use crate::hdr::{HdrCaptureQueue, EnhancedFrame};
+use crate::postprocess::{PostProcessConfig, PostProcessPipeline};
+use log::{info, warn};
 use std::sync::Arc;
 use std::time::Instant;
-use log::{info, warn};
 
 /// Configuration for the unified pipeline.
 #[derive(Debug, Clone)]
@@ -63,22 +63,38 @@ impl Default for UnifiedConfig {
 impl UnifiedConfig {
     /// Create a config for HD (1280x720) with LITE profile.
     pub fn hd() -> Self {
-        Self { profile: PipelineProfile::LITE, target_width: 1280, ..Default::default() }
+        Self {
+            profile: PipelineProfile::LITE,
+            target_width: 1280,
+            ..Default::default()
+        }
     }
 
     /// Create a config for FHD (1920x1080) with MED profile.
     pub fn fhd() -> Self {
-        Self { profile: PipelineProfile::MED, target_width: 1920, ..Default::default() }
+        Self {
+            profile: PipelineProfile::MED,
+            target_width: 1920,
+            ..Default::default()
+        }
     }
 
     /// Create a config for 4K (3840x2160) with HEAVY profile.
     pub fn uhd() -> Self {
-        Self { profile: PipelineProfile::HEAVY, target_width: 3840, ..Default::default() }
+        Self {
+            profile: PipelineProfile::HEAVY,
+            target_width: 3840,
+            ..Default::default()
+        }
     }
 
     /// Create a config for 4K with PRO profile.
     pub fn pro() -> Self {
-        Self { profile: PipelineProfile::PRO, target_width: 3840, ..Default::default() }
+        Self {
+            profile: PipelineProfile::PRO,
+            target_width: 3840,
+            ..Default::default()
+        }
     }
 
     /// Enable EIS stabilization.
@@ -157,7 +173,8 @@ impl UnifiedPipeline {
             "mnn_vulkan"
         };
 
-        let mut engine: Box<dyn IspEngine> = match crate::engine::select_engine_by_name(engine_name) {
+        let mut engine: Box<dyn IspEngine> = match crate::engine::select_engine_by_name(engine_name)
+        {
             Some(e) => e,
             None => return Err(crate::error::IspError::Config("No suitable engine".into())),
         };
@@ -230,7 +247,12 @@ impl UnifiedPipeline {
     /// Process a frame, auto-building warp params from lens calibration + controller zoom/VCM.
     ///
     /// Lens GDC coefficients from config, zoom/VCM from controller.
-    pub fn process(&mut self, raw_data: &[u8], width: u32, height: u32) -> crate::error::IspResult<IspFrame> {
+    pub fn process(
+        &mut self,
+        raw_data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> crate::error::IspResult<IspFrame> {
         let isp_params = {
             let frame = IspFrame {
                 params: crate::isp_params::IspParams::default(),
@@ -269,7 +291,9 @@ impl UnifiedPipeline {
         warp_params: &GpuWarpParams,
     ) -> crate::error::IspResult<IspFrame> {
         if !self.initialized {
-            return Err(crate::error::IspError::Config("pipeline not initialized".into()));
+            return Err(crate::error::IspError::Config(
+                "pipeline not initialized".into(),
+            ));
         }
 
         // Check if tiled rendering is enabled for high-resolution output
@@ -346,17 +370,21 @@ impl UnifiedPipeline {
         // 3. Post-processing (CPU for deshake, temporal denoise, etc.)
         let post_output = if let Some(ref float_data) = isp_output.float_data {
             // Float path: use process_float for zero-copy
-            self.post_pipeline.process_float(
-                float_data,
-                isp_output.width,
-                isp_output.height,
-                isp_output.aux.clone(),
-                isp_output.timestamp_ns,
-                Some(isp_output.params.clone()),
-            ).map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
+            self.post_pipeline
+                .process_float(
+                    float_data,
+                    isp_output.width,
+                    isp_output.height,
+                    isp_output.aux.clone(),
+                    isp_output.timestamp_ns,
+                    Some(isp_output.params.clone()),
+                )
+                .map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
         } else {
             // u8 path: use process
-            self.post_pipeline.process(&isp_output).map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
+            self.post_pipeline
+                .process(&isp_output)
+                .map_err(|e| crate::error::IspError::Pipeline(format!("postprocess: {}", e)))?
         };
 
         // GPU format conversion: float→target format via ONNX
@@ -366,13 +394,20 @@ impl UnifiedPipeline {
                 let n = (post_output.width * post_output.height * 3) as usize;
                 if float_data.len() >= n {
                     let t_fmt = Instant::now();
-                    let mut out_buf = vec![0u8; post_output.width as usize * post_output.height as usize * converter.output_format().bytes_per_pixel()];
+                    let mut out_buf = vec![
+                        0u8;
+                        post_output.width as usize
+                            * post_output.height as usize
+                            * converter.output_format().bytes_per_pixel()
+                    ];
                     match converter.convert(&float_data[..n], &mut out_buf) {
                         Ok(bytes_written) => {
                             out_buf.truncate(bytes_written);
-                            info!("GPU format convert: {:?} ({:.2}ms)",
+                            info!(
+                                "GPU format convert: {:?} ({:.2}ms)",
                                 converter.output_format(),
-                                t_fmt.elapsed().as_secs_f64() * 1000.0);
+                                t_fmt.elapsed().as_secs_f64() * 1000.0
+                            );
                             IspFrame {
                                 params: post_output.params.clone(),
                                 data: out_buf,
@@ -416,7 +451,9 @@ impl UnifiedPipeline {
         warp_params: &GpuWarpParams,
     ) -> crate::error::IspResult<IspFrame> {
         if !self.initialized {
-            return Err(crate::error::IspError::Config("pipeline not initialized".into()));
+            return Err(crate::error::IspError::Config(
+                "pipeline not initialized".into(),
+            ));
         }
 
         // Check if tiled rendering is enabled in profile
@@ -432,7 +469,10 @@ impl UnifiedPipeline {
             return self.process_with_warp(raw_data, width, height, warp_params);
         }
 
-        info!("Tiled rendering: {}×{} tiles with {}px overlap", tile_x, tile_y, overlap);
+        info!(
+            "Tiled rendering: {}×{} tiles with {}px overlap",
+            tile_x, tile_y, overlap
+        );
 
         // Calculate tile dimensions with overlap
         let tile_w = (width + tile_x - 1) / tile_x;
@@ -464,27 +504,44 @@ impl UnifiedPipeline {
                 let tile_out_w = out_tile_w;
                 let tile_out_h = out_tile_h;
 
-                info!("Processing tile ({},{}): in={}x{} out={}x{} at ({},{}) input offset=({},{})",
-                    tx, ty, tile_in_w, tile_in_h, tile_out_w, tile_out_h, out_x_start, out_y_start, in_x_start, in_y_start);
+                info!(
+                    "Processing tile ({},{}): in={}x{} out={}x{} at ({},{}) input offset=({},{})",
+                    tx,
+                    ty,
+                    tile_in_w,
+                    tile_in_h,
+                    tile_out_w,
+                    tile_out_h,
+                    out_x_start,
+                    out_y_start,
+                    in_x_start,
+                    in_y_start
+                );
 
                 // Extract tile from raw data
-                let tile_raw = Self::extract_tile(raw_data, width, in_x_start, in_y_start, tile_in_w, tile_in_h);
+                let tile_raw = Self::extract_tile(
+                    raw_data, width, in_x_start, in_y_start, tile_in_w, tile_in_h,
+                );
 
                 // Process tile
                 let mut params = ProcessParams::new(tile_in_w, tile_in_h, &tile_raw);
-                params.isp_params = Some(self.controller.analyze_and_update(&crate::pipeline::types::IspFrame {
-                    params: crate::isp_params::IspParams::default(),
-                    data: tile_raw.clone(),
-                    width: tile_in_w,
-                    height: tile_in_h,
-                    format: cam_types::FrameFormat::RawSensor,
-                    float_data: None,
-                    aux: None,
-                    timestamp_ns: 0,
-                    prep_duration_ns: 0,
-                    inference_duration_ns: 0,
-                    total_duration_ns: 0,
-                }).clone());
+                params.isp_params = Some(
+                    self.controller
+                        .analyze_and_update(&crate::pipeline::types::IspFrame {
+                            params: crate::isp_params::IspParams::default(),
+                            data: tile_raw.clone(),
+                            width: tile_in_w,
+                            height: tile_in_h,
+                            format: cam_types::FrameFormat::RawSensor,
+                            float_data: None,
+                            aux: None,
+                            timestamp_ns: 0,
+                            prep_duration_ns: 0,
+                            inference_duration_ns: 0,
+                            total_duration_ns: 0,
+                        })
+                        .clone(),
+                );
                 params.target_width = tile_out_w;
                 params.target_height = tile_out_h;
                 params.sensor_max = self.config.sensor_max;
@@ -639,9 +696,8 @@ impl UnifiedPipeline {
             for ty in 0..tile_h as usize {
                 let src = tile_base + ty * tile_w as usize;
                 let dst = out_base + ty * out_width as usize;
-                output[dst..dst + tile_w as usize].copy_from_slice(
-                    &tile[src..src + tile_w as usize]
-                );
+                output[dst..dst + tile_w as usize]
+                    .copy_from_slice(&tile[src..src + tile_w as usize]);
             }
         }
     }
@@ -661,7 +717,11 @@ impl UnifiedPipeline {
     ) -> crate::error::IspResult<Option<Arc<EnhancedFrame>>> {
         let queue = match &mut self.hdr_queue {
             Some(q) => q,
-            None => return Err(crate::error::IspError::Config("HDR not enabled in profile".into())),
+            None => {
+                return Err(crate::error::IspError::Config(
+                    "HDR not enabled in profile".into(),
+                ))
+            }
         };
 
         self.hdr_frames.push(crate::hdr::HdrFrame {
@@ -675,7 +735,8 @@ impl UnifiedPipeline {
         let expected = queue.frames_per_capture();
         if self.hdr_frames.len() >= expected {
             // Sort by EV ascending (-2, 0, +2) and drain
-            self.hdr_frames.sort_by(|a, b| a.ev.partial_cmp(&b.ev).unwrap_or(std::cmp::Ordering::Equal));
+            self.hdr_frames
+                .sort_by(|a, b| a.ev.partial_cmp(&b.ev).unwrap_or(std::cmp::Ordering::Equal));
             let frames: Vec<crate::hdr::HdrFrame> = self.hdr_frames.drain(..).collect();
 
             // Submit and wait for result (blocking)
@@ -688,7 +749,9 @@ impl UnifiedPipeline {
                     Ok(enhanced) => Ok(Some(Arc::new(enhanced))),
                     Err(e) => Err(crate::error::IspError::from(e)),
                 },
-                Err(_) => Err(crate::error::IspError::Pipeline("HDR worker channel closed".into())),
+                Err(_) => Err(crate::error::IspError::Pipeline(
+                    "HDR worker channel closed".into(),
+                )),
             }
         } else {
             Ok(None)
@@ -772,15 +835,32 @@ pub struct PipelineInfo {
 
 impl std::fmt::Display for PipelineInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "UnifiedPipeline[{} engine={} {}x{} out={} post=",
-            self.profile, self.engine, self.input_width, self.input_height, self.output_format)?;
+        write!(
+            f,
+            "UnifiedPipeline[{} engine={} {}x{} out={} post=",
+            self.profile, self.engine, self.input_width, self.input_height, self.output_format
+        )?;
         let mut features = Vec::new();
-        if self.gpu_warp { features.push("GPU_Warp"); }
-        if self.post_eis { features.push("EIS"); }
-        if self.post_deshake { features.push("Deshake"); }
-        if self.post_gdc { features.push("GDC"); }
-        if self.post_temporal_denoise { features.push("TemporalDenoise"); }
-        if features.is_empty() { write!(f, "none]") } else { write!(f, "{}]", features.join("+")) }
+        if self.gpu_warp {
+            features.push("GPU_Warp");
+        }
+        if self.post_eis {
+            features.push("EIS");
+        }
+        if self.post_deshake {
+            features.push("Deshake");
+        }
+        if self.post_gdc {
+            features.push("GDC");
+        }
+        if self.post_temporal_denoise {
+            features.push("TemporalDenoise");
+        }
+        if features.is_empty() {
+            write!(f, "none]")
+        } else {
+            write!(f, "{}]", features.join("+"))
+        }
     }
 }
 
@@ -806,8 +886,13 @@ mod tests {
 
     #[test]
     fn test_unified_config_builder() {
-        let cfg = UnifiedConfig::hd().with_eis().with_deshake().with_gdc(0.5)
-            .with_temporal_denoise().with_gpu_warp().with_rgba_output();
+        let cfg = UnifiedConfig::hd()
+            .with_eis()
+            .with_deshake()
+            .with_gdc(0.5)
+            .with_temporal_denoise()
+            .with_gpu_warp()
+            .with_rgba_output();
         assert!(cfg.gpu_warp_enabled);
         assert!(matches!(cfg.output_format, EngineOutputFormat::Rgba));
     }
@@ -842,9 +927,12 @@ mod tests {
         let pipeline = UnifiedPipeline::new(config);
         match &pipeline {
             Ok(p) => {
-                assert!(p.gpu_warp().is_some(), "gpu_warp() was None. Check warn log above for GpuWarpEngine::new error.");
+                assert!(
+                    p.gpu_warp().is_some(),
+                    "gpu_warp() was None. Check warn log above for GpuWarpEngine::new error."
+                );
                 assert!(p.gpu_warp_onnx().is_some());
-            },
+            }
             Err(e) => panic!("Build failed: {:?}", e),
         }
     }
@@ -854,7 +942,11 @@ mod tests {
         assert!(!GpuWarpParams::identity().needs_warp());
         assert!(GpuWarpParams::gdc(-0.3, 0.0, 0.0).needs_warp());
         assert!(GpuWarpParams::eis(0.1, 0.0).needs_warp());
-        assert!(!GpuWarpParams { gdc_k1: 1e-7, ..Default::default() }.needs_warp());
+        assert!(!GpuWarpParams {
+            gdc_k1: 1e-7,
+            ..Default::default()
+        }
+        .needs_warp());
     }
 
     #[test]
