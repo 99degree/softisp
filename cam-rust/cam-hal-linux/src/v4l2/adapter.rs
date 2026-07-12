@@ -224,4 +224,9 @@ impl ICameraAdapter for V4l2CameraAdapter {
     fn device_name(&self) -> &str {
         &self.device_path
     }
+
+    fn send_frame(&self, frame: ByteFrame) -> Result<(), String> {
+        self.base.invoke_frame_callback(frame);
+        Ok(())
+    }
 }
