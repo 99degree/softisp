@@ -21,9 +21,13 @@ jobs:
 
       - name: Git config safe directory
         run: git config --global --add safe.directory '*'
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
       - name: Set cargo job count
         run: |
           echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
@@ -82,8 +86,13 @@ jobs:
       - name: Git config safe directory
         run: git config --global --add safe.directory '*'
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
       - name: Set cargo job count
         run: |
           echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
@@ -139,8 +148,13 @@ jobs:
       - name: Git config safe directory
         run: git config --global --add safe.directory '*'
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
       - name: Set cargo job count
         run: |
           echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
