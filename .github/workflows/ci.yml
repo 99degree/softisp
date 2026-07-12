@@ -49,6 +49,7 @@ jobs:
     name: Python Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    working-directory: ./isp-rectifier
     steps:
       - uses: actions/checkout@v4
 
@@ -71,29 +72,11 @@ jobs:
           pip install -q -e ./isp-rectifier
 
       - name: Run Python tests
-        working-directory: ./isp-rectifier
         run: |
           python -m pytest tests/ -v --tb=short
 
       - name: Model validation (quick)
-        working-directory: ./isp-rectifier
-        run: |
-          python3 << 'PYEOF'
-          import onnxruntime as ort
-          import numpy as np
-
-          # Quick model load test
-          sess = ort.InferenceSession('models/fusedispcontroller_int8.onnx')
-          print(f'Model loaded: {sess.get_inputs()[0].name} -> {sess.get_outputs()[0].name}')
-
-          # Quick inference test
-          hist = np.random.randn(1, 256).astype(np.float32)
-          meta = np.random.randn(1, 52).astype(np.float32)
-          out = ort.InferenceSession('models/fusedispcontroller_int8.onnx').run(None, {
-              'histogram': hist, 'metadata': meta
-          })
-          print(f'Outputs: {[o.shape for o in out]}')
-        working-directory: ./isp-rectifier
+        run: python3 scripts/validate_model_ci.py
 
   # ONNX model validation
   model-validation:
@@ -108,46 +91,7 @@ jobs:
         run: pip install -q onnxruntime numpy
 
       - name: Validate ONNX models
-        run: |
-          python3 << 'PYEOF'
-          import onnx
-          import onnxruntime as ort
-          import numpy as np
-
-          models = [
-              'fusedispcontroller.onnx',
-              'fusedispcontroller_int8.onnx',
-              'fusedispcontroller_fp16.onnx',
-              'fusedispcontroller_light.onnx',
-              'fusedispcontroller_light_int8.onnx',
-              'fusedispcontroller_medium.onnx',
-              'fusedispcontroller_medium_int8.onnx',
-          ]
-
-          for model_name in ['fusedispcontroller_int8.onnx']:
-              path = f'isp-rectifier/models/{model_name}'
-              print(f'\n🔍 Validating {model_name}...')
-
-              # Load and check
-              model = onnx.load(f'isp-rectifier/models/{model_name}')
-              onnx.checker.check_model(model)
-              print(f'  ✅ ONNX checker passed')
-
-              # Quick inference test
-              sess = ort.InferenceSession(f'isp-rectifier/models/{model_name}', providers=['CPUExecutionProvider'])
-              input_names = [i.name for i in ort.InferenceSession(f'isp-rectifier/models/{model_name}').get_inputs()]
-              output_names = [o.name for o in ort.InferenceSession(f'isp-rectifier/models/{model_name}').get_outputs()]
-
-              # Quick inference
-              hist = np.random.randn(1, 256).astype(np.float32)
-              meta = np.random.randn(1, 52).astype(np.float32)
-              sess = ort.InferenceSession(f'isp-rectifier/models/{model_name}', providers=['CPUExecutionProvider'])
-              outputs = sess.run(None, {'histogram': np.random.randn(1, 256).astype(np.float32), 'metadata': np.random.randn(1, 52).astype(np.float32)})
-
-              print(f'  ✅ Inputs: {input_names}')
-              print(f'  ✅ Outputs: {output_names}')
-              print(f'  ✅ Output shapes: {[o.shape for o in outputs]}')
-              print(f'  ✅ Model {model_name} validation passed!')
+        run: python3 scripts/validate_models_ci.py
 
   # Documentation build (placeholder)
   docs:
