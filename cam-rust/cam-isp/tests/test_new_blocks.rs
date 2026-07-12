@@ -314,7 +314,7 @@ fn colorspace_roundtrip_601() {
     use cam_isp::blocks::ColorSpace;
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
     let fwd = ColorSpaceBlock::new(ColorSpace::RgbToYCbCr);
-    let rev = ColorSpaceBlock::new(ColorSpace::YCbCrToRgb);
+    let rev = ColorSpaceBlock::new(ColorSpace::RgbToHsv);
     let display = DisplayBlock::new(640);
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &fwd, &rev, &display];
     let onnx = GraphComposer::compose_from_vec(&blocks, &[], 8).unwrap();
@@ -406,7 +406,7 @@ fn mega_pipeline_all_blocks() {
     let sharpen = SharpenBlock::new(0.4);
     let contrast = AutoContrastBlock::new(1.3).with_shadow_lift(0.02);
     let cs_fwd = ColorSpaceBlock::new(ColorSpace::RgbToYCbCr);
-    let cs_rev = ColorSpaceBlock::new(ColorSpace::YCbCrToRgb);
+    let cs_rev = ColorSpaceBlock::new(ColorSpace::RgbToHsv);
     let warp = WarpGridBlock::new(640, 480).with_gdc(-0.1, 0.0, 0.0);
     let ca = ChromaticAberrationBlock::new().with_radial_correction(480, 640, 1.0);
     let ne = NoiseEstimateBlock::new();
