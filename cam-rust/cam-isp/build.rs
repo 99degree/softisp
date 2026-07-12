@@ -253,6 +253,12 @@ fn link_mnn() {
     let mnn_include = mnn_include_dir();
 
     copy_if_newer(&mnn_lib_src().join("libMNN.so"), &abi_dir.join("libMNN.so"));
+    // Also copy companion shared libraries from their build locations
+    let mnn_root = mnn_dir();
+    copy_if_newer(&mnn_root.join("build_vk/source/backend/vulkan/OFF/libMNN_Vulkan.so"), &abi_dir.join("libMNN_Vulkan.so"));
+    copy_if_newer(&mnn_root.join("build_vk/express/OFF/libMNN_Express.so"), &abi_dir.join("libMNN_Express.so"));
+    copy_if_newer(&mnn_root.join("build_vk/tools/converter/OFF/libMNNConvertDeps.so"), &abi_dir.join("libMNNConvertDeps.so"));
+    copy_if_newer(&mnn_lib_src().join("../source/backend/vulkan/OFF/libMNN_Vulkan.so"), &abi_dir.join("libMNN_Vulkan.so"));
 
     let wrapper_src = Path::new("mnn_sys/mnn_wrapper.cpp");
     let wrapper_hdr = Path::new("mnn_sys/mnn_wrapper.h");
