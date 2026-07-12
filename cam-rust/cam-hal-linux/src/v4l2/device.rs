@@ -6,6 +6,9 @@ use rscam::Camera;
 #[cfg(feature = "v4l2")]
 use std::fs;
 
+#[cfg(feature = "v4l2")]
+use log::info;
+
 /// List available V4L2 camera devices.
 #[cfg(feature = "v4l2")]
 pub fn list_devices() -> Vec<String> {
