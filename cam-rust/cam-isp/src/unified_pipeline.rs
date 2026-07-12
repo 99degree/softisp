@@ -158,6 +158,7 @@ pub struct UnifiedPipeline {
     controller: Box<dyn ControllerApi>,
     post_pipeline: PostProcessPipeline,
     #[cfg(feature = "mnn")]
+    #[allow(dead_code)]
     gpu_warp_engine: Option<GpuWarpEngine>,
     #[cfg(feature = "mnn")]
     #[allow(dead_code)]
@@ -727,6 +728,7 @@ impl UnifiedPipeline {
 
     /// Extract a tile from raw Bayer data (packed INT32 format).
     /// Raw data is INT32 where each pixel is 16-bit, packed 2 pixels per INT32.
+    #[allow(dead_code)]
     fn extract_tile(
         raw_data: &[u8],
         width: u32,
