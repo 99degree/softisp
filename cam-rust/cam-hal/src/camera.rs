@@ -21,6 +21,51 @@
 //! ```
 
 use cam_types::{CameraSourceType, FrameFormat};
+use std::sync::Mutex;
+
+/// A byte frame sent from the camera adapter to the ISP pipeline.
+
+/// Base camera adapter implementation for reuse.
+///
+/// Provides common state management (open/close/streaming state) and
+/// frame callback handling for camera adapter implementations.
+pub struct BaseCameraAdapter {
+    pub source_type: CameraSourceType,
+    state: Mutex<CameraState>,
+    frame_callback: Mutex<Option<FrameCallback>>,
+}
+
+impl BaseCameraAdapter {
+    pub fn new(source_type: CameraSourceType) -> Self {
+        Self {
+            source_type,
+            state: Mutex::new(CameraState::Closed),
+            frame_callback: Mutex::new(None),
+        }
+    }
+
+    pub fn set_state(&self, state: CameraState) {
+        *self.state.lock().unwrap() = state;
+    }
+
+    pub fn get_state(&self) -> CameraState {
+        *self.state.lock().unwrap()
+    }
+
+    pub fn set_frame_callback(&self, callback: FrameCallback) {
+        *self.frame_callback.lock().unwrap() = Some(callback);
+    }
+
+    pub fn has_frame_callback(&self) -> bool {
+        self.frame_callback.lock().unwrap().is_some()
+    }
+
+    pub fn invoke_frame_callback(&self, frame: ByteFrame) {
+        if let Some(callback) = self.frame_callback.lock().unwrap().as_ref() {
+            callback(frame);
+        }
+    }
+}
 
 /// A byte frame sent from the camera adapter to the ISP pipeline.
 ///
