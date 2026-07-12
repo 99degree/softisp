@@ -14,12 +14,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-          
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -31,16 +31,16 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      
+
       - name: Check formatting
         run: cargo fmt --all -- --check
-        
+
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-        
+
       - name: Run tests
         run: cargo test --workspace --all-targets
-        
+
       - name: Build release
         run: cargo build --workspace --release --all-targets
 
@@ -51,12 +51,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Cache pip
         uses: actions/cache@v4
         with:
@@ -64,35 +64,34 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-pip-
-            
+
       - name: Install dependencies
         run: |
           pip install -q pytest pytest-cov onnxruntime numpy
           pip install -q -e ./isp-rectifier
-          
+
       - name: Run Python tests
         working-directory: ./isp-rectifier
         run: |
           python -m pytest tests/ -v --tb=short
-          
+
       - name: Model validation (quick)
         run: |
-          python -c "
+          python3 -c "
           import onnxruntime as ort
           import numpy as np
-          
+
           # Quick model load test
           sess = ort.InferenceSession('models/fusedispcontroller_int8.onnx')
           print(f'Model loaded: {sess.get_inputs()[0].name} -> {sess.get_outputs()[0].name}')
-          
+
           # Quick inference test
           hist = np.random.randn(1, 256).astype(np.float32)
           meta = np.random.randn(1, 52).astype(np.float32)
           out = ort.InferenceSession('models/fusedispcontroller_int8.onnx').run(None, {
               'histogram': hist, 'metadata': meta
           })
-          print(f'Outputs: {[o.shape for o in sess.run(None, {\"histogram\": hist, \"metadata\": meta})]}')
-"
+          print(f'Outputs: {[o.shape for o in out]}')
         working-directory: ./isp-rectifier
 
   # ONNX model validation
@@ -103,17 +102,17 @@ jobs:
     needs: [rust, python]
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install onnxruntime
         run: pip install -q onnxruntime numpy
-        
+
       - name: Validate ONNX models
         run: |
-          python3 << 'EOF'
+          python3 -c "
           import onnx
           import onnxruntime as ort
           import numpy as np
-          
+
           models = [
               'fusedispcontroller.onnx',
               'fusedispcontroller_int8.onnx',
@@ -123,29 +122,43 @@ jobs:
               'fusedispcontroller_medium.onnx',
               'fusedispcontroller_medium_int8.onnx',
           ]
-          
+
           for model_name in ['fusedispcontroller_int8.onnx']:
               path = f'isp-rectifier/models/{model_name}'
-              print(f'\n🔍 Validating {model_name}...')
-              
+              print(f'Validating {model_name}...')
+
               # Load and check
               model = onnx.load(f'isp-rectifier/models/{model_name}')
               onnx.checker.check_model(model)
-              print(f'  ✅ ONNX checker passed')
-              
+              print(f'  ONNX checker passed')
+
               # Quick inference test
               sess = ort.InferenceSession(f'isp-rectifier/models/{model_name}', providers=['CPUExecutionProvider'])
               input_names = [i.name for i in ort.InferenceSession(f'isp-rectifier/models/{model_name}').get_inputs()]
               output_names = [o.name for o in ort.InferenceSession(f'isp-rectifier/models/{model_name}').get_outputs()]
-              
+
               # Quick inference
               hist = np.random.randn(1, 256).astype(np.float32)
               meta = np.random.randn(1, 52).astype(np.float32)
               sess = ort.InferenceSession(f'isp-rectifier/models/{model_name}', providers=['CPUExecutionProvider'])
               outputs = sess.run(None, {'histogram': np.random.randn(1, 256).astype(np.float32), 'metadata': np.random.randn(1, 52).astype(np.float32)})
-              
-              print(f'  ✅ Inputs: {input_names}')
-              print(f'  ✅ Outputs: {output_names}')
-              print(f'  ✅ Output shapes: {[o.shape for o in outputs]}')
-              print(f'  ✅ Model {model_name} validation passed!')
+
+              print(f'  Inputs: {input_names}')
+              print(f'  Outputs: {output_names}')
+              print(f'  Output shapes: {[o.shape for o in outputs]}')
+              print(f'  Model validation passed!')
+"
+
+  # Documentation build (placeholder)
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build docs (placeholder)
+        run: echo "Documentation build placeholder"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 EOF
