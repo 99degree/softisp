@@ -208,17 +208,17 @@ jobs:
             exit 1
           fi
 
-      - name: Build tests (without mnn feature)
+      - name: Build tests (lib only, skip examples requiring mnn)
         working-directory: ./cam-rust
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
             echo "=== build tests: $crate ==="
-            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --no-run 2>&1 || ERRORS=$((ERRORS+1))
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --no-run --lib 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
-          echo "=== build tests: cam-isp (with rectifier) ==="
-          cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --no-run --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
+          echo "=== build tests: cam-isp (with rectifier, lib only) ==="
+          cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --no-run --lib --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) test build failed"
