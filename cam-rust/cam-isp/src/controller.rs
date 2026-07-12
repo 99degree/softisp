@@ -273,12 +273,6 @@ impl IspController {
         &self.stats_slots[self.ready_idx]
     }
 
-    /// Get current CCM matrix (3×3 row-major).
-
-    /// Get tone parameters for the ISP pipeline.
-
-    /// Get effective exposure gain (histogram-constrained × AE gain).
-
     // ── Manual overrides ──
 
     pub fn set_manual_awb(&mut self, gains: &[f32; 3]) {

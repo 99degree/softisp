@@ -185,7 +185,7 @@ impl IspBlock for CcmBlock {
             Proto::tensor_proto_float(
                 &format!("{}/bias", ns),
                 &[self.out_ch],
-                &self.bias[..self.out_ch as usize].to_vec(),
+                &self.bias[..self.out_ch as usize],
             ),
             Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
             Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
