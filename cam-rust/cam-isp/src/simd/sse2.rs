@@ -119,7 +119,7 @@ unsafe fn apply_ae_gain_sse2(rgb: &[f32], gain: f32) -> Vec<f32> {
     let v_gain = _mm_set1_ps(gain);
     let v_max = _mm_set1_ps(1.0);
     let v_zero = _mm_setzero_ps();
-    let mut out = Vec::with_capacity(rgb.len());
+    let mut out: Vec<f32> = Vec::with_capacity(rgb.len());
 
     let chunks = rgb.len() / 4;
     for c in 0..chunks {

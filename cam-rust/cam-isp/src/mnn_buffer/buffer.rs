@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::os::fd::FromRawFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
@@ -225,7 +226,7 @@ impl MNNBufferManager {
         // A proper implementation would use a custom allocator
         let mut data = vec![0u8; size];
         unsafe {
-            std::ptr::copy_nonoverlapping(ptr, data.as_mut_ptr(), size);
+            std::ptr::copy_nonoverlapping(ptr as *mut u8, data.as_mut_ptr(), size);
             libc::munmap(ptr, size);
         }
 

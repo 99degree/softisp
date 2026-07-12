@@ -128,7 +128,7 @@ unsafe fn apply_ae_gain_avx2(rgb: &[f32], gain: f32) -> Vec<f32> {
     let chunks = rgb.len() / 8;
     for c in 0..chunks {
         let base = c * 8;
-        let v = _mm256_loadu_rgb(rgb[base..].as_ptr());
+        let v = _mm256_loadu_ps(rgb[base..].as_ptr());
         let gained = _mm256_mul_ps(v, v_gain);
         let clamped = _mm256_min_ps(_mm256_max_ps(gained, v_zero), v_max);
         _mm256_storeu_ps(out[base..].as_mut_ptr(), clamped);

@@ -236,10 +236,10 @@ mod tests {
             ..Default::default()
         };
         // After multiple frames with same input, correction should converge to steady state
-        let mut last_dx = 0.0;
+        let mut _last_dx = 0.0;
         for _ in 0..20 {
             let corr = stab.compute_correction(&imu, 100.0, 0.02);
-            last_dx = corr.delta_x;
+            _last_dx = corr.delta_x;
         }
         // gyro_x=0.2, focal_length=100, sensitivity=0.02 → dy ≈ 0.2*0.02*100 = 0.4 px
         // With buffer averaging and EMA smoothing, converges to ~0.4

@@ -186,7 +186,7 @@ impl GpuWarpEngine {
         // Uses memfd internally — zero disk writes on Linux.
         let mut result = crate::mnn_sys::MnnConvertBufferResult {
             success: 0,
-            error_msg: [0u8; 1024usize],
+            error_msg: [0i8; 1024usize],
             data: std::ptr::null_mut(),
             size: 0,
         };

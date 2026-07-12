@@ -106,7 +106,8 @@ pub fn init() {
         }
         #[cfg(feature = "ort")]
         {
-            onnx::OnnxEngine::register_factories();
+            // OnnxEngine is available via engine selection
+            // No explicit factory registration needed for ORT
         }
         blocks::register_builtin_blocks();
     });
