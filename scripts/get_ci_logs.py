@@ -115,7 +115,7 @@ def main():
     parser.add_argument("--save-zip", help="Save the zip file to this path")
     args = parser.parse_args()
 
-    token = args.token or getpass.getpass("GitHub PAT: ")
+    token = args.token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or getpass.getpass("GitHub PAT: ")
 
     if args.run:
         run_id = args.run
