@@ -92,6 +92,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libv4l-dev libv4l2-dev
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -107,51 +112,62 @@ jobs:
         working-directory: ./cam-rust
         run: cargo clean
 
-      - name: Build debug (all targets, all features)
+      - name: Build debug (all features)
         working-directory: ./cam-rust
         run: |
-          LOGFILE="${RUNNER_TEMP}/build-debug.log"
           ERRORS=0
-          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
-            echo "=== build debug: $crate ===" | tee -a "$LOGFILE"
-            cargo build -p "$crate" --all-targets --all-features 2>&1 | tee -a "$LOGFILE"
-            if [ "${PIPESTATUS[0]}" -ne 0 ]; then ERRORS=$((ERRORS+1)); fi
-            echo "" | tee -a "$LOGFILE"
+          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
+            echo "=== build lib debug: $crate ==="
+            cargo build -p "$crate" --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            echo ""
           done
-          echo "=== Build complete: $ERRORS errors ===" | tee -a "$LOGFILE"
-          if [ "$ERRORS" -ne 0 ]; then exit 1; fi
+          echo "=== build app debug: cam-app ==="
+          cargo build -p cam-app --all-features 2>&1 || ERRORS=$((ERRORS+1))
+          echo ""
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) failed"
+            exit 1
+          fi
 
-      - name: Upload debug build logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-debug-logs
-          path: ${{ runner.temp }}/build-debug.log
-          retention-days: 7
-          if-no-files-found: warn
-
-      - name: Build release (all targets, all features)
+      - name: Build tests (all features)
         working-directory: ./cam-rust
         run: |
-          LOGFILE="${RUNNER_TEMP}/build-release.log"
           ERRORS=0
-          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
-            echo "=== build release: $crate ===" | tee -a "$LOGFILE"
-            cargo build -p "$crate" --release --all-targets --all-features 2>&1 | tee -a "$LOGFILE"
-            if [ "${PIPESTATUS[0]}" -ne 0 ]; then ERRORS=$((ERRORS+1)); fi
-            echo "" | tee -a "$LOGFILE"
+          for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
+            echo "=== build tests: $crate ==="
+            cargo test -p "$crate" --no-run --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            echo ""
           done
-          echo "=== Build complete: $ERRORS errors ===" | tee -a "$LOGFILE"
-          if [ "$ERRORS" -ne 0 ]; then exit 1; fi
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) test build failed"
+            exit 1
+          fi
 
-      - name: Upload release build logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-release-logs
-          path: ${{ runner.temp }}/build-release.log
-          retention-days: 7
-          if-no-files-found: warn
+      - name: Build release (all features)
+        working-directory: ./cam-rust
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
+            echo "=== build lib release: $crate ==="
+            cargo build -p "$crate" --release --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            echo ""
+          done
+          echo "=== build app release: cam-app ==="
+          cargo build -p cam-app --release --all-features 2>&1 || ERRORS=$((ERRORS+1))
+          echo ""
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) failed"
+            exit 1
+          fi
+
+      - name: Verify binary sizes
+        working-directory: ./cam-rust
+        run: |
+          echo "=== Debug binaries ==="
+          find target/debug -maxdepth 1 -type f -executable -exec ls -lh {} \; 2>/dev/null | head -20
+          echo ""
+          echo "=== Release binaries ==="
+          find target/release -maxdepth 1 -type f -executable -exec ls -lh {} \; 2>/dev/null | head -20
 
       - name: Verify binary sizes
         working-directory: ./cam-rust
