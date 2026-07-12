@@ -1,6 +1,7 @@
 #[cfg(feature = "mnn")]
 #[test]
 #[ignore]
+#[cfg(feature = "mnn")]
 fn test_mnn_per_block_profiling() {
     // This test now validates the full pipeline using session inference memory data
     // instead of running each block individually.
