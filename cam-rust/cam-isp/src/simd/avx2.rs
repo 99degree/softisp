@@ -14,7 +14,9 @@ use super::SimdEngine;
 pub struct Avx2;
 
 impl Avx2 {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 // SAFETY: AVX2 detected at runtime by caller.
@@ -164,9 +166,18 @@ unsafe fn display_output_avx2(rgb: &[f32], src_w: usize, src_h: usize, target_w:
             let v_r = _mm256_loadu_ps(r.as_ptr());
             let v_g = _mm256_loadu_ps(g.as_ptr());
             let v_b = _mm256_loadu_ps(b.as_ptr());
-            let rb = _mm256_cvtps_epi32(_mm256_min_ps(_mm256_max_ps(_mm256_mul_ps(v_r, v_255), v_zero), v_255));
-            let gb = _mm256_cvtps_epi32(_mm256_min_ps(_mm256_max_ps(_mm256_mul_ps(v_g, v_255), v_zero), v_255));
-            let bb = _mm256_cvtps_epi32(_mm256_min_ps(_mm256_max_ps(_mm256_mul_ps(v_b, v_255), v_zero), v_255));
+            let rb = _mm256_cvtps_epi32(_mm256_min_ps(
+                _mm256_max_ps(_mm256_mul_ps(v_r, v_255), v_zero),
+                v_255,
+            ));
+            let gb = _mm256_cvtps_epi32(_mm256_min_ps(
+                _mm256_max_ps(_mm256_mul_ps(v_g, v_255), v_zero),
+                v_255,
+            ));
+            let bb = _mm256_cvtps_epi32(_mm256_min_ps(
+                _mm256_max_ps(_mm256_mul_ps(v_b, v_255), v_zero),
+                v_255,
+            ));
 
             let mut rb_i = [0i32; 8];
             let mut gb_i = [0i32; 8];
@@ -179,7 +190,7 @@ unsafe fn display_output_avx2(rgb: &[f32], src_w: usize, src_h: usize, target_w:
                 out.push(bb_i[p] as u8); // B
                 out.push(gb_i[p] as u8); // G
                 out.push(rb_i[p] as u8); // R
-                out.push(255);           // A
+                out.push(255); // A
             }
         }
     }
@@ -187,7 +198,9 @@ unsafe fn display_output_avx2(rgb: &[f32], src_w: usize, src_h: usize, target_w:
 }
 
 impl SimdEngine for Avx2 {
-    fn name(&self) -> &'static str { "avx2" }
+    fn name(&self) -> &'static str {
+        "avx2"
+    }
 
     fn normalize_u16_to_f32(&self, input: &[u16], output: &mut [f32], max_val: f32) {
         // SAFETY: AVX2 detected at runtime
@@ -206,14 +219,7 @@ impl SimdEngine for Avx2 {
         unsafe { display_output_avx2(rgb, src_w, src_h, target_w) }
     }
 
-    fn bilinear_sample_4ch(
-        &self,
-        src: &[u8],
-        width: u32,
-        height: u32,
-        x: f32,
-        y: f32,
-    ) -> [u8; 4] {
+    fn bilinear_sample_4ch(&self, src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [u8; 4] {
         unsafe { super::sse2::bilinear_sample_4ch_sse2(src, width, height, x, y) }
     }
 }

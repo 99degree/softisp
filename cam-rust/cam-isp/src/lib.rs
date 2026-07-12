@@ -8,83 +8,83 @@
 #![allow(clippy::arc_with_non_send_sync)] // Internal Arc usage for single-threaded buffers
 #![allow(rustdoc::broken_intra_doc_links)] // Tensor shape [1,3,H,W] are not links
 
+pub mod ae;
+pub mod blocks;
+pub mod config;
+pub mod controller;
+pub mod controller_api;
+pub mod controller_awb;
+pub mod controller_exposure;
+pub mod controller_tone;
+pub mod controller_zone;
+pub mod cpu;
 pub mod engine;
 pub mod error;
-pub mod pipeline;
-pub mod blocks;
-pub mod cpu;
-pub mod controller;
-pub mod controller_awb;
-pub mod controller_tone;
-pub mod controller_exposure;
-pub mod controller_zone;
-pub mod isp_params;
+pub mod fused;
 pub mod isp_controller;
+pub mod isp_params;
+pub mod manager;
 pub mod neural_controller;
-pub mod controller_api;
-pub mod rectifier_model;
-pub mod ae;
+pub mod pipeline;
 pub mod profile;
 pub mod profile_builder;
-pub mod config;
-pub mod fused;
+pub mod rectifier_model;
 pub mod unified_pipeline;
-pub mod manager;
 pub mod warp;
 #[cfg(feature = "mnn")]
 pub mod mnn {
     pub use super::engine::IspEngine;
-    pub use super::mnnengine::*;
-    pub use super::mnn_sys;
     pub use super::mnn_converter;
+    pub use super::mnn_sys;
+    pub use super::mnnengine::*;
 }
 pub mod onnx;
 pub mod postprocess;
 // MNN-dependent modules (only compiled when `mnn` feature is enabled)
-#[cfg(feature = "mnn")]
-pub mod mnnengine;
-#[cfg(feature = "mnn")]
-pub mod mnn_session_pool;
-#[cfg(feature = "mnn")]
-pub mod mnn_converter;
+pub mod hdr;
 #[cfg(feature = "mnn")]
 #[cfg(feature = "mnn_buffer")]
 pub mod mnn_buffer;
+#[cfg(feature = "mnn")]
+pub mod mnn_converter;
+#[cfg(feature = "mnn")]
+pub mod mnn_session_pool;
+#[cfg(feature = "mnn")]
+pub mod mnnengine;
 pub mod warp_engine;
-pub mod hdr;
 pub use warp_engine::GpuWarpParams;
 
-pub mod frame_rate;
-pub mod pipeline_builder_smart;
-pub mod pipeline_builder;
-pub mod pipeline_config;
 pub mod auto_profile;
+pub mod frame_rate;
+pub mod pipeline_builder;
+pub mod pipeline_builder_smart;
+pub mod pipeline_config;
 
-pub mod ccm_engine;
-pub mod eis;
-pub mod deshake;
 pub mod af;
 pub mod calibration;
-pub mod scene;
+pub mod ccm_engine;
+pub mod demosaic;
+pub mod deshake;
+pub mod eis;
+pub mod format_convert;
+pub mod genetic;
+pub mod gpu_watchdog;
+pub mod isp_ops;
 pub mod r#match;
+pub mod npu;
+pub mod optimizer;
 pub mod predictor;
 pub mod regression;
 pub mod rolling_stats;
-pub mod store;
-pub mod genetic;
-pub mod demosaic;
-pub mod isp_ops;
-pub mod stats;
-pub mod simd;
+pub mod scene;
 pub mod serializer;
-pub mod optimizer;
+pub mod simd;
+pub mod stats;
+pub mod store;
 pub mod temporal;
-pub mod gpu_watchdog;
-pub mod npu;
-pub mod format_convert;
 
-use std::sync::Once;
 use log::info;
+use std::sync::Once;
 
 /// Initialize the ISP library — registers all built-in engines.
 /// Safe to call multiple times.
@@ -95,7 +95,10 @@ use log::info;
 pub fn init() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        info!("cam_isp::init — SIMD backend: {}", simd::selector::active_backend_name());
+        info!(
+            "cam_isp::init — SIMD backend: {}",
+            simd::selector::active_backend_name()
+        );
         cpu::register_cpu_engine();
         #[cfg(feature = "mnn")]
         {

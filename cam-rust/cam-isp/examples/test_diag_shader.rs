@@ -6,9 +6,9 @@
 //! Usage:
 //!   cargo run --example test_diag_shader --features mnn -- <spirv_path>
 
+use cam_isp::onnx::proto::Proto;
 use std::env;
 use std::fs;
-use cam_isp::onnx::proto::Proto;
 
 fn nchw_dims(dims: &[i64]) -> Vec<Vec<u8>> {
     dims.iter().map(|&d| Proto::tensor_dim_value(d)).collect()
@@ -28,18 +28,27 @@ fn main() {
     let output_dims = nchw_dims(&[1, 4, 1, 1]);
 
     let attrs = vec![
-        Proto::attribute_tensor("spirv",
-            &Proto::tensor_proto_raw_bytes("spirv", &spv, 3, &[spv.len() as i64])),
+        Proto::attribute_tensor(
+            "spirv",
+            &Proto::tensor_proto_raw_bytes("spirv", &spv, 3, &[spv.len() as i64]),
+        ),
         Proto::attribute_ints("output_shape", &[1, 4, 1, 1]),
         // No inputs, just output
-        Proto::attribute_input_ints("input", 0, &[1, 0]),  // tensor 0 = output, binding 0
+        Proto::attribute_input_ints("input", 0, &[1, 0]), // tensor 0 = output, binding 0
     ];
 
     let output_vi = Proto::value_info("output", &output_dims, 1);
 
     let node = Proto::node("DiagConst", &[], &["output"], &attrs);
 
-    let graph = Proto::graph("diag", &[node], &[], std::slice::from_ref(&output_vi), &[], std::slice::from_ref(&output_vi));
+    let graph = Proto::graph(
+        "diag",
+        &[node],
+        &[],
+        std::slice::from_ref(&output_vi),
+        &[],
+        std::slice::from_ref(&output_vi),
+    );
 
     let opset = Proto::opset("", 21);
     let model = Proto::model(9, &opset, "softisp", &graph);
@@ -50,5 +59,8 @@ fn main() {
 
     // Convert to MNN
     println!("\nTo convert:");
-    println!("  cd ~/MNN/build_vk && ./MNNConvert -f ONNX --modelFile {} --MNNModel test_diag.mnn", output_path);
+    println!(
+        "  cd ~/MNN/build_vk && ./MNNConvert -f ONNX --modelFile {} --MNNModel test_diag.mnn",
+        output_path
+    );
 }

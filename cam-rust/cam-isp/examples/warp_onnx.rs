@@ -10,13 +10,11 @@ fn main() {
     println!("=== WarpGrid ONNX Emission Test ===\n");
 
     let unpack = UnpackBlock::new().with_concrete_dims(480, 640);
-    let warp = WarpGridBlock::new(640, 480)
-        .with_grid(Some(identity_grid(480, 640)));
+    let warp = WarpGridBlock::new(640, 480).with_grid(Some(identity_grid(480, 640)));
     let display = DisplayBlock::new(640);
 
     let blocks: Vec<&dyn cam_isp::pipeline::IspBlock> = vec![&unpack, &warp, &display];
-    let onnx_bytes = GraphComposer::compose_from_vec(&blocks, &[], 8)
-        .expect("compose failed");
+    let onnx_bytes = GraphComposer::compose_from_vec(&blocks, &[], 8).expect("compose failed");
 
     std::fs::write("target/warp_grid_test.onnx", &onnx_bytes).unwrap();
     println!("✅ ONNX emitted: {} bytes", onnx_bytes.len());

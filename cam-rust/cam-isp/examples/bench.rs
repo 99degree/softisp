@@ -5,10 +5,10 @@
 //!   cargo run --example bench -p cam-isp -- --frames 100
 //!   cargo run --example bench -p cam-isp -- --frames 50 --width 64 --height 48
 
-use std::time::{Duration, Instant};
-use cam_isp::engine::IspEngine;
-use cam_isp::cpu::CpuEngine;
 use cam_isp::blocks::RawInputBlock;
+use cam_isp::cpu::CpuEngine;
+use cam_isp::engine::IspEngine;
+use std::time::{Duration, Instant};
 
 /// Generate a raw Bayer test pattern.
 fn make_raw(width: u32, height: u32) -> Vec<u8> {
@@ -16,9 +16,17 @@ fn make_raw(width: u32, height: u32) -> Vec<u8> {
     for y in 0..height {
         for x in 0..width {
             let val: u16 = if y % 2 == 0 {
-                if x % 2 == 0 { 2000 } else { 4000 }
+                if x % 2 == 0 {
+                    2000
+                } else {
+                    4000
+                }
             } else {
-                if x % 2 == 0 { 4000 } else { 6000 }
+                if x % 2 == 0 {
+                    4000
+                } else {
+                    6000
+                }
             };
             raw.extend_from_slice(&val.to_le_bytes());
         }
@@ -49,17 +57,27 @@ fn run_bench(frames: u32, width: u32, height: u32) {
         let result = engine.process(&cam_isp::engine::ProcessParams::new(width, height, &raw));
         let elapsed = start.elapsed();
         total += elapsed;
-        if elapsed < min { min = elapsed; }
-        if elapsed > max { max = elapsed; }
+        if elapsed < min {
+            min = elapsed;
+        }
+        if elapsed > max {
+            max = elapsed;
+        }
 
         if let Ok(frame) = result {
             // Show per-frame timing for first 3 and last 2
             if i < 3 || i >= frames - 2 {
-                let mbps = (frame.data.len() as f64 / 1_000_000.0) / elapsed.as_secs_f64().max(1e-9);
-                println!("  Frame {:3}: {:>8.1?}  {:>4}×{:<4}  {:>6.1?}  {:.1} MB/s",
-                    i, elapsed, frame.width, frame.height,
+                let mbps =
+                    (frame.data.len() as f64 / 1_000_000.0) / elapsed.as_secs_f64().max(1e-9);
+                println!(
+                    "  Frame {:3}: {:>8.1?}  {:>4}×{:<4}  {:>6.1?}  {:.1} MB/s",
+                    i,
+                    elapsed,
+                    frame.width,
+                    frame.height,
                     frame.aux.as_ref().and_then(|a| a.cct).unwrap_or(0.0) as u32,
-                    mbps);
+                    mbps
+                );
             }
         }
     }
@@ -76,7 +94,11 @@ fn run_bench(frames: u32, width: u32, height: u32) {
     println!("  Max:    {:>8.1?}", max);
     println!("  Total:  {:>8.1?}", total);
     println!("  FPS:    {:>8.1}", fps);
-    println!("  Throughput: {:.1} MB/s (raw), {:.1} MB/s (output)", throughput, throughput * 2.0);
+    println!(
+        "  Throughput: {:.1} MB/s (raw), {:.1} MB/s (output)",
+        throughput,
+        throughput * 2.0
+    );
 }
 
 fn main() {
@@ -93,7 +115,10 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(32);
 
-    println!("CpuEngine Benchmark: {} frames of {}×{}", frames, width, height);
+    println!(
+        "CpuEngine Benchmark: {} frames of {}×{}",
+        frames, width, height
+    );
     println!("───");
     run_bench(frames, width, height);
 

@@ -249,7 +249,12 @@ impl Proto {
     /// `onnx.TensorProto` for raw bytes with specified data type.
     /// data_type: 3=INT8, 2=UINT8, 1=FLOAT, 6=INT32, etc.
     /// dims: shape of the tensor (must be set for MNNConverter to calculate dataSize)
-    pub fn tensor_proto_raw_bytes(name: &str, data: &[u8], data_type: i32, dims: &[i64]) -> Vec<u8> {
+    pub fn tensor_proto_raw_bytes(
+        name: &str,
+        data: &[u8],
+        data_type: i32,
+        dims: &[i64],
+    ) -> Vec<u8> {
         let mut buf = Self::string(8, name);
         buf.extend_from_slice(&Self::repeated_int64s(1, dims));
         buf.extend_from_slice(&Self::int32(2, data_type));
@@ -350,12 +355,7 @@ impl Proto {
     }
 
     /// `onnx.ModelProto`.
-    pub fn model(
-        ir_version: i64,
-        opset: &[u8],
-        producer: &str,
-        graph: &[u8],
-    ) -> Vec<u8> {
+    pub fn model(ir_version: i64, opset: &[u8], producer: &str, graph: &[u8]) -> Vec<u8> {
         let mut buf = Self::int64(1, ir_version);
         buf.extend_from_slice(&Self::string(2, producer));
         buf.extend_from_slice(&Self::raw_bytes(7, graph));
@@ -457,12 +457,7 @@ mod tests {
 
     #[test]
     fn test_node() {
-        let node = Proto::node(
-            "Sub",
-            &["input", "blc"],
-            &["output"],
-            &[],
-        );
+        let node = Proto::node("Sub", &["input", "blc"], &["output"], &[]);
         assert!(!node.is_empty());
     }
 
@@ -473,15 +468,9 @@ mod tests {
             Proto::tensor_dim_param("H"),
             Proto::tensor_dim_param("W"),
         ];
-        let nodes = vec![
-            Proto::node("Identity", &["input"], &["output"], &[]),
-        ];
-        let inputs = vec![
-            Proto::value_info("input", &dims, 1),
-        ];
-        let outputs = vec![
-            Proto::value_info("output", &dims, 1),
-        ];
+        let nodes = vec![Proto::node("Identity", &["input"], &["output"], &[])];
+        let inputs = vec![Proto::value_info("input", &dims, 1)];
+        let outputs = vec![Proto::value_info("output", &dims, 1)];
         let graph = Proto::graph("test_graph", &nodes, &inputs, &outputs, &[], &[]);
         let opset = Proto::opset("", 16);
         let model = Proto::model(11, &opset, "cam_rust_proto", &graph);

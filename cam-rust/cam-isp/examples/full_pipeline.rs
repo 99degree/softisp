@@ -16,24 +16,21 @@ fn main() {
     let h: u32 = 1080;
 
     // 1. Unpack: INT16 Bayer → float RGB
-    let unpack = UnpackBlock::new()
-        .with_concrete_dims(h as i64, w as i64);
+    let unpack = UnpackBlock::new().with_concrete_dims(h as i64, w as i64);
 
     // 2. Demosaic + CCM in one fused block
     let demosaic = DemosaicCcmBlock::new(0);
 
     // 3. WarpGrid: GDC correction + lens shading in one pass
     let warp = WarpGridBlock::new(w, h)
-        .with_gdc(-0.15, 0.05, 0.0)       // mild barrel correction
-        .with_lens_shading(1.3, 1.0);      // 30% corner boost
+        .with_gdc(-0.15, 0.05, 0.0) // mild barrel correction
+        .with_lens_shading(1.3, 1.0); // 30% corner boost
 
     // 4. Chromatic aberration correction
-    let ca = ChromaticAberrationBlock::new()
-        .with_radial_correction(h, w, 1.5); // 1.5px shift at corners
+    let ca = ChromaticAberrationBlock::new().with_radial_correction(h, w, 1.5); // 1.5px shift at corners
 
     // 5. Auto contrast: S-curve + shadow lift
-    let contrast = AutoContrastBlock::new(1.3)
-        .with_shadow_lift(0.02);
+    let contrast = AutoContrastBlock::new(1.3).with_shadow_lift(0.02);
 
     // 6. Temporal denoise: blend with previous frame
     let denoise = TemporalDenoiseBlock::new()
@@ -48,8 +45,7 @@ fn main() {
         &unpack, &demosaic, &warp, &ca, &contrast, &denoise, &display,
     ];
 
-    let onnx_bytes = GraphComposer::compose_from_vec(&blocks, &[], 8)
-        .expect("compose failed");
+    let onnx_bytes = GraphComposer::compose_from_vec(&blocks, &[], 8).expect("compose failed");
 
     std::fs::write("target/full_pipeline.onnx", &onnx_bytes).unwrap();
 

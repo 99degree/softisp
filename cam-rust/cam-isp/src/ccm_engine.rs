@@ -23,15 +23,33 @@ const SENSOR_GRAY_B: f32 = 0.60;
 /// All off-diagonals are negative across full CCT range — no purple contamination.
 const CCM_QUADRATIC: [f32; 27] = [
     // a2                    a1                      a0
-     4.960_317_5e-9, -1.532_738_1e-4,  2.586_706_4,    // R-R
-    -5.357_142_7e-9,  1.455_357_1e-4, -1.269_642_8,    // R-G
-     3.968_254e-10,  7.738_095_5e-6, -3.170_634_8e-1,    // R-B
-     2.182_539_7e-9, -7.440_476e-6, -3.438_492e-1,    // G-R
-    -6.150_793_7e-9,  3.005_952_4e-5,  1.714_484_1,    // G-G
-     3.968_254e-9, -2.261_904_8e-5, -3.706_349e-1,    // G-B
-    -3.968_254e-10, -7.738_095_5e-6, -3.293_651e-2,    // B-R
-     2.380_952_3e-9, -5.357_142_8e-5, -2.023_809_6e-1,    // B-G
-    -1.984_127e-9,  6.130_952_5e-5,  1.235_317_5,    // B-B
+    4.960_317_5e-9,
+    -1.532_738_1e-4,
+    2.586_706_4, // R-R
+    -5.357_142_7e-9,
+    1.455_357_1e-4,
+    -1.269_642_8, // R-G
+    3.968_254e-10,
+    7.738_095_5e-6,
+    -3.170_634_8e-1, // R-B
+    2.182_539_7e-9,
+    -7.440_476e-6,
+    -3.438_492e-1, // G-R
+    -6.150_793_7e-9,
+    3.005_952_4e-5,
+    1.714_484_1, // G-G
+    3.968_254e-9,
+    -2.261_904_8e-5,
+    -3.706_349e-1, // G-B
+    -3.968_254e-10,
+    -7.738_095_5e-6,
+    -3.293_651e-2, // B-R
+    2.380_952_3e-9,
+    -5.357_142_8e-5,
+    -2.023_809_6e-1, // B-G
+    -1.984_127e-9,
+    6.130_952_5e-5,
+    1.235_317_5, // B-B
 ];
 
 /// Clamp feedback flags.
@@ -43,7 +61,7 @@ pub const CCM_DIAGONAL_EXTREME: i32 = 0x04;
 
 /// Identity 3×3 CCM (row-major).
 pub fn identity_ccm() -> [f32; 9] {
-    [1.0, 0.0, 0.0,  0.0, 1.0, 0.0,  0.0, 0.0, 1.0]
+    [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 }
 
 /// Zero offset 3×3 CCM (row-major).
@@ -54,11 +72,7 @@ pub fn zero_ccm() -> [f32; 9] {
 /// Default sensor→sRGB CCM for typical mobile Bayer sensors.
 /// Each row sums ≈ 1.0 to preserve white point for neutral input.
 pub fn default_sensor_ccm() -> [f32; 9] {
-    [
-        1.40, -0.30, -0.10,
-       -0.25,  1.45, -0.20,
-       -0.05, -0.30,  1.35,
-    ]
+    [1.40, -0.30, -0.10, -0.25, 1.45, -0.20, -0.05, -0.30, 1.35]
 }
 
 // ── CCT-based CCM interpolation ──
@@ -139,8 +153,12 @@ pub fn sanitize_ccm(
     let mut cct_ref_value = 0i32;
     let has_flags = flags.is_some();
     let has_cct_ref = cct_ref.is_some();
-    if let Some(f) = flags.as_ref() { flag_value = **f; }
-    if let Some(c) = cct_ref.as_ref() { cct_ref_value = **c; }
+    if let Some(f) = flags.as_ref() {
+        flag_value = **f;
+    }
+    if let Some(c) = cct_ref.as_ref() {
+        cct_ref_value = **c;
+    }
 
     macro_rules! or_flag {
         ($bit:expr) => {
@@ -149,7 +167,9 @@ pub fn sanitize_ccm(
     }
     macro_rules! set_cct {
         () => {
-            if has_cct_ref { cct_ref_value = cct; }
+            if has_cct_ref {
+                cct_ref_value = cct;
+            }
         };
     }
 
@@ -160,7 +180,8 @@ pub fn sanitize_ccm(
         if (row_sum - 1.0).abs() > 0.0001 {
             if row_sum > 0.001 {
                 let diag_idx = base + r;
-                let off_diag_sum = matrix[base] + matrix[base + 1] + matrix[base + 2] - matrix[diag_idx];
+                let off_diag_sum =
+                    matrix[base] + matrix[base + 1] + matrix[base + 2] - matrix[diag_idx];
                 if off_diag_sum.abs() < 0.001 {
                     // Diagonal-only row — skip normalization to preserve per-channel gain
                     continue;
@@ -230,7 +251,8 @@ pub fn sanitize_ccm(
         let row_sum: f32 = matrix[base..base + 3].iter().sum();
         if (row_sum - 1.0).abs() > 0.0001 && row_sum > 0.001 {
             let diag_idx = base + r;
-            let off_diag_sum = matrix[base] + matrix[base + 1] + matrix[base + 2] - matrix[diag_idx];
+            let off_diag_sum =
+                matrix[base] + matrix[base + 1] + matrix[base + 2] - matrix[diag_idx];
             if off_diag_sum.abs() < 0.001 {
                 continue;
             }
@@ -308,11 +330,22 @@ pub fn sanitize_ccm(
     }
 
     if clamped {
-        let fixed_r_out = matrix[0] * SENSOR_GRAY_R + matrix[1] * SENSOR_GRAY_G + matrix[2] * SENSOR_GRAY_B;
-        let fixed_g_out = matrix[3] * SENSOR_GRAY_R + matrix[4] * SENSOR_GRAY_G + matrix[5] * SENSOR_GRAY_B;
-        let fixed_b_out = matrix[6] * SENSOR_GRAY_R + matrix[7] * SENSOR_GRAY_G + matrix[8] * SENSOR_GRAY_B;
-        let fixed_rg = if fixed_r_out > 0.0 { fixed_g_out / fixed_r_out } else { 0.0 };
-        let fixed_bg = if fixed_b_out > 0.0 { fixed_g_out / fixed_b_out } else { 0.0 };
+        let fixed_r_out =
+            matrix[0] * SENSOR_GRAY_R + matrix[1] * SENSOR_GRAY_G + matrix[2] * SENSOR_GRAY_B;
+        let fixed_g_out =
+            matrix[3] * SENSOR_GRAY_R + matrix[4] * SENSOR_GRAY_G + matrix[5] * SENSOR_GRAY_B;
+        let fixed_b_out =
+            matrix[6] * SENSOR_GRAY_R + matrix[7] * SENSOR_GRAY_G + matrix[8] * SENSOR_GRAY_B;
+        let fixed_rg = if fixed_r_out > 0.0 {
+            fixed_g_out / fixed_r_out
+        } else {
+            0.0
+        };
+        let fixed_bg = if fixed_b_out > 0.0 {
+            fixed_g_out / fixed_b_out
+        } else {
+            0.0
+        };
         let src_rg = if r_out > 0.0 { g_out / r_out } else { 0.0 };
         let src_bg = if b_out > 0.0 { g_out / b_out } else { 0.0 };
         log::warn!(
@@ -372,12 +405,22 @@ mod tests {
         for row in 0..3 {
             let base = row * 3;
             let sum: f32 = ccm[base..base + 3].iter().sum();
-            assert!((sum - 1.0).abs() < 0.01, "Row {} sum = {} at 5500K", row, sum);
+            assert!(
+                (sum - 1.0).abs() < 0.01,
+                "Row {} sum = {} at 5500K",
+                row,
+                sum
+            );
         }
         // Off-diagonals should be negative
         for i in 0..9 {
             if i != 0 && i != 4 && i != 8 {
-                assert!(ccm[i] < 0.0, "Element {} = {} should be negative at 5500K", i, ccm[i]);
+                assert!(
+                    ccm[i] < 0.0,
+                    "Element {} = {} should be negative at 5500K",
+                    i,
+                    ccm[i]
+                );
             }
         }
     }
@@ -387,8 +430,16 @@ mod tests {
         let warm = quadratic_ccm(3000);
         let cool = quadratic_ccm(8000);
         // CCM varies with CCT — warm and cool should differ
-        let diff = warm.iter().zip(cool.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
-        assert!(diff > 0.01, "Warm and cool CCM should differ: diff={}", diff);
+        let diff = warm
+            .iter()
+            .zip(cool.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>();
+        assert!(
+            diff > 0.01,
+            "Warm and cool CCM should differ: diff={}",
+            diff
+        );
     }
 
     #[test]
@@ -401,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_fixes_purple() {
-        let mut ccm = [1.0, 0.0, 0.5,  0.0, 1.0, 0.0,  0.5, 0.0, 1.0];
+        let mut ccm = [1.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.5, 0.0, 1.0];
         sanitize_ccm(&mut ccm, 5500, "test", None, None);
         // R-B (index 2) and B-R (index 6) should be negative
         assert!(ccm[2] < 0.0, "R-B should be negative: {}", ccm[2]);
@@ -410,11 +461,14 @@ mod tests {
 
     #[test]
     fn test_sanitize_sets_clamp_flags() {
-        let mut ccm = [0.1, 0.0, 0.0,  0.0, 0.1, 0.0,  0.0, 0.0, 0.1]; // very weak diagonal
+        let mut ccm = [0.1, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.1]; // very weak diagonal
         let mut flags: i32 = 0;
         let mut cct_ref: i32 = 5500;
         sanitize_ccm(&mut ccm, 6000, "test", Some(&mut flags), Some(&mut cct_ref));
-        assert!(flags & CCM_DIAGONAL_EXTREME != 0, "DIAGONAL_EXTREME flag should be set");
+        assert!(
+            flags & CCM_DIAGONAL_EXTREME != 0,
+            "DIAGONAL_EXTREME flag should be set"
+        );
         assert_eq!(cct_ref, 6000);
     }
 
@@ -426,7 +480,13 @@ mod tests {
             for row in 0..3 {
                 let base = row * 3;
                 let sum: f32 = ccm[base..base + 3].iter().sum();
-                assert!((sum - 1.0).abs() < 0.01, "Row {} sum = {} at {}K", row, sum, cct);
+                assert!(
+                    (sum - 1.0).abs() < 0.01,
+                    "Row {} sum = {} at {}K",
+                    row,
+                    sum,
+                    cct
+                );
             }
             // R-B and B-R should be negative
             assert!(ccm[2] < 0.0, "R-B = {} at {}K", ccm[2], cct);
@@ -444,9 +504,9 @@ mod tests {
         // produce neutral output, making AWB gains unfeasible.
         // Actually, let's use a matrix where r_out is huge and g_out is small.
         let mut ccm = [
-            3.0, -2.0, 0.0,   // R row: off-diag = -2.0, one-diag = 3.0
-            0.0, 1.0, 0.0,    // G row: identity
-            0.0, 0.0, 1.0,    // B row: identity
+            3.0, -2.0, 0.0, // R row: off-diag = -2.0, one-diag = 3.0
+            0.0, 1.0, 0.0, // G row: identity
+            0.0, 0.0, 1.0, // B row: identity
         ];
         let mut flags = 0i32;
         // R row sum = 3.0 - 2.0 + 0 = 1.0. Normalize: (3/1, -2/1, 0/1) = (3.0, -2.0, 0.0)
@@ -454,7 +514,11 @@ mod tests {
         // This should trigger R_OUT_NEGATIVE
         sanitize_ccm(&mut ccm, 4000, "awb_test", Some(&mut flags), None);
         // Should have set AWB_UNFEASIBLE flag (r_gain would be > 3.0)
-        assert!(flags & CCM_AWB_UNFEASIBLE != 0, "AWB_UNFEASIBLE should be set (flags=0x{:x})", flags);
+        assert!(
+            flags & CCM_AWB_UNFEASIBLE != 0,
+            "AWB_UNFEASIBLE should be set (flags=0x{:x})",
+            flags
+        );
         // R row should now give non-negative output for sensor gray
         let r_out = ccm[0] * SENSOR_GRAY_R + ccm[1] * SENSOR_GRAY_G + ccm[2] * SENSOR_GRAY_B;
         assert!(r_out >= 0.0, "R output should be non-negative: {}", r_out);

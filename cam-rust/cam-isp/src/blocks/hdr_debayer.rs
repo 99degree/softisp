@@ -13,8 +13,8 @@
 //! The `exposure_ratio` parameter controls the gain relationship between
 //! short and long exposures (e.g., 4.0 means 2 stops difference).
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// HdrDebayerBlock — multi-exposure HDR Bayer merge.
 ///
@@ -62,31 +62,69 @@ impl HdrDebayerBlock {
 }
 
 impl IspBlock for HdrDebayerBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "HdrDebayer".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "HdrDebayer".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         // Input: interleaved [1, 2, H, W] (short + long stacked in channel dim)
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(2),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -98,33 +136,37 @@ impl IspBlock for HdrDebayerBlock {
         let long = format!("{}/long", ns);
 
         // Use ONNX Split: splits input into N parts along axis=1
-        nodes.push(Proto::node("Split",
+        nodes.push(Proto::node(
+            "Split",
             &[&self.input_source],
             &[&short, &long],
-            &[Proto::attribute_int("axis", 1)]));
+            &[Proto::attribute_int("axis", 1)],
+        ));
 
         // Gain up the short exposure
         let gain = format!("{}/gain", ns);
         let short_gained = format!("{}/short_gained", ns);
-        nodes.push(Proto::node("Mul",
-            &[&short, &gain],
-            &[&short_gained], &[]));
+        nodes.push(Proto::node("Mul", &[&short, &gain], &[&short_gained], &[]));
 
         if self.merge_mode == 0 {
             // Weighted average: (short_gained + long) / 2
             let sum = format!("{}/sum", ns);
             let two = format!("{}/two", ns);
-            nodes.push(Proto::node("Add",
-                &[&short_gained, &long],
-                &[&sum], &[]));
-            nodes.push(Proto::node("Div",
+            nodes.push(Proto::node("Add", &[&short_gained, &long], &[&sum], &[]));
+            nodes.push(Proto::node(
+                "Div",
                 &[&sum, &two],
-                &[&self.frame_tensor], &[]));
+                &[&self.frame_tensor],
+                &[],
+            ));
         } else {
             // Adaptive max: max(short_gained, long)
-            nodes.push(Proto::node("Max",
+            nodes.push(Proto::node(
+                "Max",
                 &[&short_gained, &long],
-                &[&self.frame_tensor], &[]));
+                &[&self.frame_tensor],
+                &[],
+            ));
         }
 
         nodes
@@ -139,9 +181,7 @@ impl IspBlock for HdrDebayerBlock {
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![
-            (format!("{}/gain", self.tensor_ns()), 1, vec![1]),
-        ]
+        vec![(format!("{}/gain", self.tensor_ns()), 1, vec![1])]
     }
 }
 
@@ -179,7 +219,11 @@ mod tests {
         let b = HdrDebayerBlock::new().with_merge_mode(1);
         let nodes = b.nodes();
         // Slice + Slice + Mul + Max = 4 nodes
-        assert!(nodes.len() >= 3, "max mode needs >= 3 nodes, got {}", nodes.len());
+        assert!(
+            nodes.len() >= 3,
+            "max mode needs >= 3 nodes, got {}",
+            nodes.len()
+        );
     }
 
     #[test]

@@ -3,8 +3,8 @@
 #[cfg(feature = "v4l2")]
 use rscam::{Camera, Config};
 
-use log::info;
 use cam_types::FrameFormat;
+use log::info;
 
 /// V4L2 stream configuration info (returned by get_stream_config).
 #[derive(Debug, Clone)]
@@ -39,7 +39,10 @@ pub fn configure_stream(
     cam.configure(&config)
         .map_err(|e| format!("V4L2 configure failed: {:?}", e))?;
 
-    info!("V4L2 stream configured: {}x{} format={:?} fps={}", width, height, format, fps);
+    info!(
+        "V4L2 stream configured: {}x{} format={:?} fps={}",
+        width, height, format, fps
+    );
     Ok(())
 }
 

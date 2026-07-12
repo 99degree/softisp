@@ -1,9 +1,9 @@
 //! Pipeline manager for the ISP.
 //! Ported from com.camcore.isp.IspProcessor
 
-use log::info;
-use cam_isp::pipeline::IspBlock;
 use cam_isp::blocks;
+use cam_isp::pipeline::IspBlock;
+use log::info;
 
 /// Pipeline configuration.
 #[derive(Clone)]
@@ -52,19 +52,14 @@ impl PipelineManager {
         let display = Box::new(blocks::DisplayBlock::new(self.config.target_width));
 
         let blocks: Vec<Box<dyn IspBlock>> = vec![
-            raw_input,
-            normalize,
-            cfa,
-            blc,
-            bayer_wb,
-            demosaic,
-            ccm,
-            tone,
-            display,
+            raw_input, normalize, cfa, blc, bayer_wb, demosaic, ccm, tone, display,
         ];
 
         self.chain = Some(blocks);
-        info!("Built pipeline chain: {} blocks", self.chain.as_ref().map(|c| c.len()).unwrap_or(0));
+        info!(
+            "Built pipeline chain: {} blocks",
+            self.chain.as_ref().map(|c| c.len()).unwrap_or(0)
+        );
         Ok(())
     }
 

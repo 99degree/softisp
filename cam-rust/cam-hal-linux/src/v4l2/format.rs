@@ -11,12 +11,14 @@ pub struct FormatInfo {
 
 /// Convert V4L2 fourcc to FrameFormat
 pub fn fourcc_to_frame_format(fourcc: u32) -> Option<FrameFormat> {
-    match fourcc & 0xFFFFFFFF {
-        0x47503252 | 0x47553241 => Some(FrameFormat::Rgba8888), // "RGBA" or "ARGB"
-        0x32424752 => Some(FrameFormat::Rgb888),   // "RGB24"
-        0x32315559 => Some(FrameFormat::Yuv420888), // "YUYV"
-        0x3131344D => Some(FrameFormat::Yuv420888), // "M411"
-        0x30313052 => Some(FrameFormat::Raw10),    // "R010" RAW10
+    match fourcc & 0xFF {
+        // BAWER formats
+        b'B' if fourcc == 0x47553241 => Some(FrameFormat::Rgba8888), // "ARGB"
+        b'R' if fourcc == 0x32424752 => Some(FrameFormat::Rgba8888), // "RGB24"
+        // YUV formats
+        b'Y' if fourcc == 0x32595559 => Some(FrameFormat::Yuv420), // "YUYV"
+        b'N' if fourcc == 0x32554E4E => Some(FrameFormat::Nv12),   // "NV12"
+        b'U' if fourcc == 0x32315555 => Some(FrameFormat::Nv21),   // "UYVY"
         _ => None,
     }
 }

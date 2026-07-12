@@ -83,9 +83,18 @@ mod tests {
 
     #[test]
     fn test_sunrise_sunset() {
-        assert_eq!(SceneCategory::classify(0.1, 3000), SceneCategory::SunriseSunset);
-        assert_eq!(SceneCategory::classify(0.03, 2000), SceneCategory::SunriseSunset);
-        assert_eq!(SceneCategory::classify(0.25, 3500), SceneCategory::SunriseSunset);
+        assert_eq!(
+            SceneCategory::classify(0.1, 3000),
+            SceneCategory::SunriseSunset
+        );
+        assert_eq!(
+            SceneCategory::classify(0.03, 2000),
+            SceneCategory::SunriseSunset
+        );
+        assert_eq!(
+            SceneCategory::classify(0.25, 3500),
+            SceneCategory::SunriseSunset
+        );
     }
 
     #[test]
@@ -115,7 +124,10 @@ mod tests {
     fn test_lum_only() {
         assert_eq!(SceneCategory::classify_lum_only(0.01), SceneCategory::Dark);
         assert_eq!(SceneCategory::classify_lum_only(0.1), SceneCategory::Indoor);
-        assert_eq!(SceneCategory::classify_lum_only(0.3), SceneCategory::Outdoor);
+        assert_eq!(
+            SceneCategory::classify_lum_only(0.3),
+            SceneCategory::Outdoor
+        );
         assert_eq!(SceneCategory::classify_lum_only(0.6), SceneCategory::Bright);
     }
 

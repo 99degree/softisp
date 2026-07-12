@@ -25,26 +25,28 @@ fn main() {
     let output_path = &args[2];
 
     // Read SPIR-V
-    let spv = fs::read(format!("{}/shader1_unpack_blc.spv", spirv_dir))
-        .expect("Failed to read SPIR-V");
+    let spv =
+        fs::read(format!("{}/shader1_unpack_blc.spv", spirv_dir)).expect("Failed to read SPIR-V");
     println!("Loaded SPIR-V: {} bytes", spv.len());
 
     // Uniform data: [input_width, input_height, output_width, output_height,
     //                 sensor_max, blc_r, blc_gr, blc_gb, blc_b,
     //                 wb_r, wb_gr, wb_gb, wb_b]
     let uniforms: Vec<f32> = vec![
-        3840.0, 2160.0, 1920.0, 1080.0,
-        4095.0,
-        0.0, 0.0, 0.0, 0.0,  // BLC
-        1.0, 1.0, 1.0, 1.0,  // WB
+        3840.0, 2160.0, 1920.0, 1080.0, 4095.0, 0.0, 0.0, 0.0, 0.0, // BLC
+        1.0, 1.0, 1.0, 1.0, // WB
     ];
 
     // Build the Extra op with attributes
     let attrs = vec![
-        Proto::attribute_tensor("spirv",
-            &Proto::tensor_proto_raw_bytes("spirv", &spv, 3, &[spv.len() as i64])), // INT8
-        Proto::attribute_tensor("uniforms",
-            &Proto::tensor_proto_float("uniforms", &[uniforms.len() as i64], &uniforms)),
+        Proto::attribute_tensor(
+            "spirv",
+            &Proto::tensor_proto_raw_bytes("spirv", &spv, 3, &[spv.len() as i64]),
+        ), // INT8
+        Proto::attribute_tensor(
+            "uniforms",
+            &Proto::tensor_proto_float("uniforms", &[uniforms.len() as i64], &uniforms),
+        ),
         Proto::attribute_ints("global_size", &[1920, 1080, 1]),
         Proto::attribute_ints("group_size", &[8, 8, 1]),
         // Output shape: [N, C, H, W]
@@ -56,8 +58,11 @@ fn main() {
         // i=0 = position 0 in op's output list
         Proto::attribute_input_ints("input", 0, &[1, 2]),
         // Const at binding=0 with uniform data as tensor (for VulkanFuse const handler)
-        Proto::attribute_const_tensor("const", 0,
-            &Proto::tensor_proto_float("const_data", &[uniforms.len() as i64], &uniforms)),
+        Proto::attribute_const_tensor(
+            "const",
+            0,
+            &Proto::tensor_proto_float("const_data", &[uniforms.len() as i64], &uniforms),
+        ),
     ];
 
     // Input: INT16[1, 1, 2160, 3840]
@@ -69,12 +74,7 @@ fn main() {
     let output_vi = Proto::value_info("output", &output_dims, 1);
 
     // FusedISP node
-    let node = Proto::node(
-        "FusedISP_UnpackBLC",
-        &["input"],
-        &["output"],
-        &attrs,
-    );
+    let node = Proto::node("FusedISP_UnpackBLC", &["input"], &["output"], &attrs);
 
     // Build graph
     let graph = Proto::graph(
@@ -82,7 +82,7 @@ fn main() {
         &[node],
         std::slice::from_ref(&input_vi),
         std::slice::from_ref(&output_vi),
-        &[],  // no initializers
+        &[], // no initializers
         std::slice::from_ref(&input_vi),
     );
 
@@ -93,7 +93,10 @@ fn main() {
     fs::write(output_path, &model).expect("Failed to write model");
     println!("Model saved: {} ({} bytes)", output_path, model.len());
     println!("\nTo convert to MNN:");
-    println!("  cd ~/MNN/build_vk && ./MNNConvert -f ONNX --modelFile {} --MNNModel fused_isp.mnn", output_path);
+    println!(
+        "  cd ~/MNN/build_vk && ./MNNConvert -f ONNX --modelFile {} --MNNModel fused_isp.mnn",
+        output_path
+    );
     println!("To run:");
     println!("  LD_LIBRARY_PATH=./OFF ./MNNV2Basic.out fused_isp.mnn 0 0 10");
 }

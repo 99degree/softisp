@@ -15,8 +15,10 @@ use std::process::Command;
 /// Generate a GridSampler warp test model using Python.
 fn generate_warp_onnx(output_path: &str, w: u32, h: u32) -> Result<(), String> {
     let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join("vulkan_isp")
         .join("gen_warp_test.py");
 
@@ -26,9 +28,12 @@ fn generate_warp_onnx(output_path: &str, w: u32, h: u32) -> Result<(), String> {
 
     let status = Command::new("python3")
         .arg(script.to_str().unwrap())
-        .arg("--width").arg(w.to_string())
-        .arg("--height").arg(h.to_string())
-        .arg("-o").arg(output_path)
+        .arg("--width")
+        .arg(w.to_string())
+        .arg("--height")
+        .arg(h.to_string())
+        .arg("-o")
+        .arg(output_path)
         .status()
         .map_err(|e| format!("python3 failed: {}", e))?;
 
@@ -46,40 +51,60 @@ fn convert(onnx_path: &str, mnn_path: &str) -> Result<(), String> {
 
 /// Run inference using mnn_run_host_tensors and return output pixel at center.
 fn run_warp(mnn_path: &str) -> Result<(f32, f32, f32), String> {
-    use std::ffi::CString;
     use cam_isp::mnn_sys::*;
+    use std::ffi::CString;
 
     let c_path = CString::new(mnn_path).map_err(|_| "NUL")?;
     let interp = unsafe { mnn_interpreter_create_from_file(c_path.as_ptr()) };
-    if interp.is_null() { return Err("no model".into()); }
+    if interp.is_null() {
+        return Err("no model".into());
+    }
 
     let session = unsafe { mnn_session_create(interp, MnnBackendType::Vulkan, 1) };
     if session.is_null() {
-        unsafe { mnn_interpreter_destroy(interp); }
+        unsafe {
+            mnn_interpreter_destroy(interp);
+        }
         return Err("no session".into());
     }
 
     let input = unsafe { mnn_session_get_input_v2(interp, session, std::ptr::null()) };
     if input.is_null() {
-        unsafe { mnn_session_release(interp, session); mnn_interpreter_destroy(interp); }
+        unsafe {
+            mnn_session_release(interp, session);
+            mnn_interpreter_destroy(interp);
+        }
         return Err("no input".into());
     }
 
     let mut dims = [0i32; 8];
     let ndim = unsafe { mnn_tensor_get_shape(input, dims.as_mut_ptr(), 8) };
     let (c, h, w) = if ndim >= 4 {
-        (dims[1].max(1) as usize, dims[2].max(1) as usize, dims[3].max(1) as usize)
+        (
+            dims[1].max(1) as usize,
+            dims[2].max(1) as usize,
+            dims[3].max(1) as usize,
+        )
     } else {
-        unsafe { mnn_session_release(interp, session); mnn_interpreter_destroy(interp); }
+        unsafe {
+            mnn_session_release(interp, session);
+            mnn_interpreter_destroy(interp);
+        }
         return Err(format!("unexpected ndim={}", ndim));
     };
 
     // Fill input: R=1.0, G=0.5, B=0.25
     let total = h * w;
     let mut input_data = vec![0.0f32; c * total];
-    for i in 0..total { input_data[0 * total + i] = 1.0; }
-    for i in 0..total { input_data[1 * total + i] = 0.5; }
-    for i in 0..total { input_data[2 * total + i] = 0.25; }
+    for i in 0..total {
+        input_data[0 * total + i] = 1.0;
+    }
+    for i in 0..total {
+        input_data[1 * total + i] = 0.5;
+    }
+    for i in 0..total {
+        input_data[2 * total + i] = 0.25;
+    }
 
     let max_out = c * total * 2;
     let mut output_data = vec![0.0f32; max_out];
@@ -87,14 +112,21 @@ fn run_warp(mnn_path: &str) -> Result<(f32, f32, f32), String> {
     let in_shape: [i32; 4] = [1, c as i32, h as i32, w as i32];
     let n_out = unsafe {
         mnn_run_host_tensors(
-            interp, session,
-            input_data.as_ptr(), in_shape.as_ptr(), 4,
-            output_data.as_mut_ptr(), max_out as i32,
+            interp,
+            session,
+            input_data.as_ptr(),
+            in_shape.as_ptr(),
+            4,
+            output_data.as_mut_ptr(),
+            max_out as i32,
         )
     };
 
     if n_out < 0 {
-        unsafe { mnn_session_release(interp, session); mnn_interpreter_destroy(interp); }
+        unsafe {
+            mnn_session_release(interp, session);
+            mnn_interpreter_destroy(interp);
+        }
         return Err(format!("mnn_run_host_tensors failed: {}", n_out));
     }
 
@@ -108,11 +140,26 @@ fn run_warp(mnn_path: &str) -> Result<(f32, f32, f32), String> {
     let plane = w * h;
     let idx = cy * w + cx;
 
-    let r = if out_total > idx { output_data[idx] } else { -1.0 };
-    let g = if out_total + plane > idx { output_data[plane + idx] } else { -1.0 };
-    let b = if out_total + 2 * plane > idx { output_data[2 * plane + idx] } else { -1.0 };
+    let r = if out_total > idx {
+        output_data[idx]
+    } else {
+        -1.0
+    };
+    let g = if out_total + plane > idx {
+        output_data[plane + idx]
+    } else {
+        -1.0
+    };
+    let b = if out_total + 2 * plane > idx {
+        output_data[2 * plane + idx]
+    } else {
+        -1.0
+    };
 
-    unsafe { mnn_session_release(interp, session); mnn_interpreter_destroy(interp); }
+    unsafe {
+        mnn_session_release(interp, session);
+        mnn_interpreter_destroy(interp);
+    }
     Ok((r, g, b))
 }
 

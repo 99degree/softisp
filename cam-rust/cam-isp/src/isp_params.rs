@@ -58,12 +58,28 @@ impl IspParams {
     /// Create identity parameters (no processing).
     pub fn identity() -> Self {
         Self {
-            blc: BlcParams { r: 0.0, gr: 0.0, gb: 0.0, b: 0.0 },
-            wb: WbParams { r: 1.0, g: 1.0, b: 1.0 },
+            blc: BlcParams {
+                r: 0.0,
+                gr: 0.0,
+                gb: 0.0,
+                b: 0.0,
+            },
+            wb: WbParams {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+            },
             ccm: CcmParams::identity(),
             tone: ToneParams::identity(),
-            saturation: SaturationParams { factor: 1.0, vibrance: 0.0 },
-            sharpen: SharpenParams { amount: 0.0, radius: 1.0, threshold: 0.0 },
+            saturation: SaturationParams {
+                factor: 1.0,
+                vibrance: 0.0,
+            },
+            sharpen: SharpenParams {
+                amount: 0.0,
+                radius: 1.0,
+                threshold: 0.0,
+            },
             denoise: DenoiseParams::off(),
             lens: LensParams::default(),
             display: DisplayParams::default(),
@@ -107,7 +123,12 @@ pub struct BlcParams {
 
 impl Default for BlcParams {
     fn default() -> Self {
-        Self { r: 64.0, gr: 64.0, gb: 64.0, b: 64.0 }
+        Self {
+            r: 64.0,
+            gr: 64.0,
+            gb: 64.0,
+            b: 64.0,
+        }
     }
 }
 
@@ -139,7 +160,11 @@ pub struct WbParams {
 
 impl Default for WbParams {
     fn default() -> Self {
-        Self { r: 1.0, g: 1.0, b: 1.0 }
+        Self {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+        }
     }
 }
 
@@ -173,9 +198,7 @@ impl Default for CcmParams {
 impl CcmParams {
     pub fn identity() -> Self {
         Self {
-            matrix: [1.0, 0.0, 0.0,
-                     0.0, 1.0, 0.0,
-                     0.0, 0.0, 1.0],
+            matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
         }
     }
 
@@ -242,7 +265,9 @@ impl ToneParams {
             } else if self.curve_lut.is_empty() {
                 other.curve_lut.clone()
             } else {
-                self.curve_lut.iter().zip(other.curve_lut.iter())
+                self.curve_lut
+                    .iter()
+                    .zip(other.curve_lut.iter())
                     .map(|(a, b)| a + (b - a) * t)
                     .collect()
             },
@@ -261,7 +286,10 @@ pub struct SaturationParams {
 
 impl Default for SaturationParams {
     fn default() -> Self {
-        Self { factor: 1.0, vibrance: 0.0 }
+        Self {
+            factor: 1.0,
+            vibrance: 0.0,
+        }
     }
 }
 
@@ -287,7 +315,11 @@ pub struct SharpenParams {
 
 impl Default for SharpenParams {
     fn default() -> Self {
-        Self { amount: 0.0, radius: 1.0, threshold: 0.0 }
+        Self {
+            amount: 0.0,
+            radius: 1.0,
+            threshold: 0.0,
+        }
     }
 }
 
@@ -326,10 +358,13 @@ impl DenoiseParams {
 
     pub fn lerp(&self, other: &DenoiseParams, t: f32) -> DenoiseParams {
         DenoiseParams {
-            spatial_strength: self.spatial_strength + (other.spatial_strength - self.spatial_strength) * t,
-            temporal_strength: self.temporal_strength + (other.temporal_strength - self.temporal_strength) * t,
+            spatial_strength: self.spatial_strength
+                + (other.spatial_strength - self.spatial_strength) * t,
+            temporal_strength: self.temporal_strength
+                + (other.temporal_strength - self.temporal_strength) * t,
             edge_preserve: self.edge_preserve + (other.edge_preserve - self.edge_preserve) * t,
-            bilateral_sigma: self.bilateral_sigma + (other.bilateral_sigma - self.bilateral_sigma) * t,
+            bilateral_sigma: self.bilateral_sigma
+                + (other.bilateral_sigma - self.bilateral_sigma) * t,
         }
     }
 }
@@ -430,8 +465,7 @@ pub struct FaceInfo {
 }
 
 /// Scene classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SceneType {
     /// General scene.
     #[default]
@@ -445,7 +479,6 @@ pub enum SceneType {
     /// High dynamic range.
     Hdr,
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -470,7 +503,7 @@ mod tests {
         let p1 = IspParams::identity();
         let mut p2 = IspParams::identity();
         p2.wb.r = 2.0;
-        
+
         let interpolated = p1.lerp(&p2, 0.5);
         assert!((interpolated.wb.r - 1.5).abs() < 0.001);
     }

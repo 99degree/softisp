@@ -41,7 +41,7 @@ impl SimdEngine for Scalar {
             let r = rgb[idx];
             let g = rgb[idx + 1];
             let b = rgb[idx + 2];
-            out[idx]     = (matrix[0] * r + matrix[1] * g + matrix[2] * b).clamp(0.0, 1.0);
+            out[idx] = (matrix[0] * r + matrix[1] * g + matrix[2] * b).clamp(0.0, 1.0);
             out[idx + 1] = (matrix[3] * r + matrix[4] * g + matrix[5] * b).clamp(0.0, 1.0);
             out[idx + 2] = (matrix[6] * r + matrix[7] * g + matrix[8] * b).clamp(0.0, 1.0);
         }
@@ -72,7 +72,7 @@ impl SimdEngine for Scalar {
                 let src_idx = (sy * src_w + sx) * 3;
                 let dst_idx = (y * target_w + x) * 4;
                 if src_idx + 2 < rgb.len() {
-                    out[dst_idx]     = (rgb[src_idx + 2].clamp(0.0, 1.0) * 255.0) as u8;
+                    out[dst_idx] = (rgb[src_idx + 2].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 1] = (rgb[src_idx + 1].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 2] = (rgb[src_idx].clamp(0.0, 1.0) * 255.0) as u8;
                     out[dst_idx + 3] = 255;
@@ -82,14 +82,7 @@ impl SimdEngine for Scalar {
         out
     }
 
-    fn bilinear_sample_4ch(
-        &self,
-        src: &[u8],
-        width: u32,
-        height: u32,
-        x: f32,
-        y: f32,
-    ) -> [u8; 4] {
+    fn bilinear_sample_4ch(&self, src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [u8; 4] {
         let x0 = x.floor() as i32;
         let y0 = y.floor() as i32;
         let x1 = x0 + 1;
@@ -145,7 +138,7 @@ mod tests {
     fn test_scalar_ccm_identity() {
         let s = Scalar::new();
         let rgb = vec![0.5f32, 0.3f32, 0.7f32];
-        let m = [1.0,0.0,0.0, 0.0,1.0,0.0, 0.0,0.0,1.0];
+        let m = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let out = s.apply_ccm(&rgb, &m);
         assert_eq!(out.len(), 3);
         assert!((out[0] - 0.5).abs() < 0.001);

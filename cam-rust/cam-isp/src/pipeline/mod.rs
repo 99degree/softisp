@@ -15,9 +15,9 @@ pub mod snapshot;
 pub mod traits;
 pub mod types;
 
-pub use types::*;
-pub use traits::*;
 pub use build::*;
 pub use builder::PipelineBuilder;
 pub use diff::PipelineDiff;
 pub use snapshot::PipelineSnapshot;
+pub use traits::*;
+pub use types::*;

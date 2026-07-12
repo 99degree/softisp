@@ -43,7 +43,12 @@ impl Features {
             -6.9 // ln(0.001)
         };
         let cct_norm = cct as f64 / 10000.0;
-        Self { log_lum, rg_ratio: rg, bg_ratio: bg, cct_norm }
+        Self {
+            log_lum,
+            rg_ratio: rg,
+            bg_ratio: bg,
+            cct_norm,
+        }
     }
 
     /// Return as array for matrix operations.
@@ -136,25 +141,39 @@ impl RegressionModel {
             return; // Need at least 5 observations for 5 weights
         }
 
-        let features: Vec<Features> = observations.iter().map(|obs| {
-            Features::from_rgb_lum_cct(obs.r, obs.g, obs.b, obs.lum, obs.cct)
-        }).collect();
+        let features: Vec<Features> = observations
+            .iter()
+            .map(|obs| Features::from_rgb_lum_cct(obs.r, obs.g, obs.b, obs.lum, obs.cct))
+            .collect();
 
         let targets_awb_rg: Vec<f64> = observations.iter().map(|o| o.hw_awb_rg as f64).collect();
         let targets_awb_bg: Vec<f64> = observations.iter().map(|o| o.hw_awb_bg as f64).collect();
-        let targets_ccm_r: Vec<f64> = observations.iter().map(|o| o.hw_ccm_diag_r as f64).collect();
-        let targets_ccm_g: Vec<f64> = observations.iter().map(|o| o.hw_ccm_diag_g as f64).collect();
-        let targets_ccm_b: Vec<f64> = observations.iter().map(|o| o.hw_ccm_diag_b as f64).collect();
+        let targets_ccm_r: Vec<f64> = observations
+            .iter()
+            .map(|o| o.hw_ccm_diag_r as f64)
+            .collect();
+        let targets_ccm_g: Vec<f64> = observations
+            .iter()
+            .map(|o| o.hw_ccm_diag_g as f64)
+            .collect();
+        let targets_ccm_b: Vec<f64> = observations
+            .iter()
+            .map(|o| o.hw_ccm_diag_b as f64)
+            .collect();
         let targets_gamma: Vec<f64> = observations.iter().map(|o| o.hw_gamma as f64).collect();
         let targets_lsc_k1: Vec<f64> = observations.iter().map(|o| o.lsc_k1 as f64).collect();
         let targets_lsc_k2: Vec<f64> = observations.iter().map(|o| o.lsc_k2 as f64).collect();
-        let targets_target_lum: Vec<f64> = observations.iter().map(|o| {
-            let exp_norm = (o.hw_exp_ms * o.hw_analog_gain) / 33.0;
-            (o.lum as f64 * exp_norm as f64).clamp(0.1, 0.6)
-        }).collect();
-        let targets_max_iso: Vec<f64> = observations.iter().map(|o| {
-            (o.hw_analog_gain as f64 * 100.0).clamp(200.0, 6400.0)
-        }).collect();
+        let targets_target_lum: Vec<f64> = observations
+            .iter()
+            .map(|o| {
+                let exp_norm = (o.hw_exp_ms * o.hw_analog_gain) / 33.0;
+                (o.lum as f64 * exp_norm as f64).clamp(0.1, 0.6)
+            })
+            .collect();
+        let targets_max_iso: Vec<f64> = observations
+            .iter()
+            .map(|o| (o.hw_analog_gain as f64 * 100.0).clamp(200.0, 6400.0))
+            .collect();
 
         self.awb_rg = ordinary_least_squares(&features, &targets_awb_rg);
         self.awb_bg = ordinary_least_squares(&features, &targets_awb_bg);
@@ -343,9 +362,13 @@ mod tests {
             let b = 0.3 - i as f32 * 0.01;
             let features = Features::from_rgb_lum_cct(r, g, b, lum, cct as u32);
             let true_val = 2.0 + 3.0 * features.log_lum + 0.5 * features.rg_ratio
-                - features.bg_ratio + 4.0 * features.cct_norm;
+                - features.bg_ratio
+                + 4.0 * features.cct_norm;
             observations.push(Observation {
-                r, g, b, lum,
+                r,
+                g,
+                b,
+                lum,
                 cct: cct as u32,
                 hw_awb_rg: true_val as f32,
                 hw_awb_bg: 1.0,
@@ -373,7 +396,9 @@ mod tests {
         };
         assert!(
             (pred.awb_rg as f64 - expected).abs() < 0.5,
-            "pred={:.4} expected={:.4}", pred.awb_rg, expected
+            "pred={:.4} expected={:.4}",
+            pred.awb_rg,
+            expected
         );
     }
 
@@ -381,10 +406,21 @@ mod tests {
     fn test_not_enough_observations() {
         let mut model = RegressionModel::new();
         let obs = vec![Observation {
-            r: 0.5, g: 0.3, b: 0.2, lum: 0.3, cct: 5500,
-            hw_awb_rg: 1.5, hw_awb_bg: 1.2, hw_ccm_diag_r: 1.0,
-            hw_ccm_diag_g: 1.0, hw_ccm_diag_b: 1.0, hw_gamma: 2.2,
-            lsc_k1: 0.01, lsc_k2: -0.0001, hw_exp_ms: 10.0, hw_analog_gain: 1.0,
+            r: 0.5,
+            g: 0.3,
+            b: 0.2,
+            lum: 0.3,
+            cct: 5500,
+            hw_awb_rg: 1.5,
+            hw_awb_bg: 1.2,
+            hw_ccm_diag_r: 1.0,
+            hw_ccm_diag_g: 1.0,
+            hw_ccm_diag_b: 1.0,
+            hw_gamma: 2.2,
+            lsc_k1: 0.01,
+            lsc_k2: -0.0001,
+            hw_exp_ms: 10.0,
+            hw_analog_gain: 1.0,
         }];
         model.fit_all(&obs);
         assert!(!model.is_ready, "Need ≥5 observations");
@@ -394,15 +430,41 @@ mod tests {
     fn test_ols_basic() {
         // Simple 1-feature: y = 2 + 3*x
         let features = vec![
-            Features { log_lum: 0.0, rg_ratio: 0.5, bg_ratio: 0.5, cct_norm: 0.5 },
-            Features { log_lum: 0.0, rg_ratio: 0.0, bg_ratio: 0.0, cct_norm: 0.0 },
-            Features { log_lum: 0.0, rg_ratio: 1.0, bg_ratio: 1.0, cct_norm: 1.0 },
-            Features { log_lum: 0.0, rg_ratio: 0.3, bg_ratio: 0.3, cct_norm: 0.3 },
-            Features { log_lum: 0.0, rg_ratio: 0.8, bg_ratio: 0.8, cct_norm: 0.8 },
+            Features {
+                log_lum: 0.0,
+                rg_ratio: 0.5,
+                bg_ratio: 0.5,
+                cct_norm: 0.5,
+            },
+            Features {
+                log_lum: 0.0,
+                rg_ratio: 0.0,
+                bg_ratio: 0.0,
+                cct_norm: 0.0,
+            },
+            Features {
+                log_lum: 0.0,
+                rg_ratio: 1.0,
+                bg_ratio: 1.0,
+                cct_norm: 1.0,
+            },
+            Features {
+                log_lum: 0.0,
+                rg_ratio: 0.3,
+                bg_ratio: 0.3,
+                cct_norm: 0.3,
+            },
+            Features {
+                log_lum: 0.0,
+                rg_ratio: 0.8,
+                bg_ratio: 0.8,
+                cct_norm: 0.8,
+            },
         ];
-        let targets: Vec<f64> = features.iter().map(|f| {
-            1.0 + 0.5 * f.rg_ratio + 0.3 * f.bg_ratio - 0.2 * f.cct_norm
-        }).collect();
+        let targets: Vec<f64> = features
+            .iter()
+            .map(|f| 1.0 + 0.5 * f.rg_ratio + 0.3 * f.bg_ratio - 0.2 * f.cct_norm)
+            .collect();
 
         let w = ordinary_least_squares(&features, &targets);
         // w[0] ≈ 1.0, w[2] ≈ 0.5, w[3] ≈ 0.3, w[4] ≈ -0.2

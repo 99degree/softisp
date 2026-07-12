@@ -10,8 +10,8 @@
 //! Note: This is a simplified version that unpacks to 2 channels.
 //! A full Bayer unpack would produce 4 channels (R, Gr, Gb, B) with proper rearrangement.
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 pub struct UnpackBayerToFp16Block {
     id: String,
@@ -86,13 +86,16 @@ impl IspBlock for UnpackBayerToFp16Block {
     #[allow(clippy::vec_init_then_push)]
     fn nodes(&self) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
-        
+
         // Constants
         out.push(Proto::tensor_proto_int32_scalar("shift_16", 16));
         out.push(Proto::tensor_proto_int32_scalar("mask_10", 0x3FF));
         out.push(Proto::tensor_proto_int32_scalar("mask_ffff", 0xFFFF));
-        out.push(Proto::tensor_proto_float_scalar("scale_1_1023", 1.0 / 1023.0));
-        
+        out.push(Proto::tensor_proto_float_scalar(
+            "scale_1_1023",
+            1.0 / 1023.0,
+        ));
+
         // 1. Extract high 16 bits (A)
         out.push(Proto::node(
             "RightShift",
@@ -100,7 +103,7 @@ impl IspBlock for UnpackBayerToFp16Block {
             &["high_16"],
             &[],
         ));
-        
+
         // 2. Extract low 16 bits (B)
         out.push(Proto::node(
             "BitwiseAnd",
@@ -108,7 +111,7 @@ impl IspBlock for UnpackBayerToFp16Block {
             &["low_16"],
             &[],
         ));
-        
+
         // 3. Mask both to 10 bits
         out.push(Proto::node(
             "BitwiseAnd",
@@ -122,7 +125,7 @@ impl IspBlock for UnpackBayerToFp16Block {
             &["b_10"],
             &[],
         ));
-        
+
         // 4. Cast to FP16
         out.push(Proto::node(
             "Cast",
@@ -136,7 +139,7 @@ impl IspBlock for UnpackBayerToFp16Block {
             &["b_fp16"],
             &[Proto::attribute_int("to", 10)], // FLOAT16
         ));
-        
+
         // 5. Normalise
         out.push(Proto::node(
             "Div",
@@ -150,7 +153,7 @@ impl IspBlock for UnpackBayerToFp16Block {
             &["b_norm"],
             &[],
         ));
-        
+
         // 6. Concat into 2-channel output
         out.push(Proto::node(
             "Concat",
@@ -158,22 +161,32 @@ impl IspBlock for UnpackBayerToFp16Block {
             &[&self.output_name],
             &[Proto::attribute_int("axis", 1)],
         ));
-        
+
         out
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         vec![]
     }
-    
-    fn input_elem_type(&self) -> i32 { 6 } // INT32
-    fn output_elem_type(&self) -> i32 { 10 } // FLOAT16
 
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { None }
+    fn input_elem_type(&self) -> i32 {
+        6
+    } // INT32
+    fn output_elem_type(&self) -> i32 {
+        10
+    } // FLOAT16
+
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        None
+    }
     fn set_prev(&mut self, _: Box<dyn IspBlock>) {}
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { None }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        None
+    }
     fn set_next(&mut self, _: Box<dyn IspBlock>) {}
-    fn graph_input_name(&self) -> Option<&str> { None }
+    fn graph_input_name(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -205,7 +218,10 @@ mod tests {
     fn test_unpack_bayer_fp16_tensors() {
         let mut b = UnpackBayerToFp16Block::new();
         b.set_input_source("in/packed");
-        assert_eq!(b.output_tensors(), vec!["UnpackBayerToFp16Block/frame_fp16".to_string()]);
+        assert_eq!(
+            b.output_tensors(),
+            vec!["UnpackBayerToFp16Block/frame_fp16".to_string()]
+        );
     }
 
     #[test]

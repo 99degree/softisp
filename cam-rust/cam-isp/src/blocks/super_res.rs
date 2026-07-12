@@ -19,8 +19,8 @@
 //!
 //! The `num_frames` parameter controls how many frames are fused (2-8).
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// SuperResBlock — multi-frame super-resolution via contrast-weighted fusion.
 pub struct SuperResBlock {
@@ -67,31 +67,62 @@ impl SuperResBlock {
 }
 
 impl IspBlock for SuperResBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "SuperRes".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.primary_source) }
-    fn set_input_source(&mut self, name: &str) { self.primary_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "SuperRes".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.primary_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.primary_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
     fn input_tensors(&self) -> Vec<String> {
         let mut inputs = vec![self.primary_source.clone()];
         inputs.extend(self.frame_sources.iter().cloned());
         inputs
     }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.primary_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.primary_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
-    fn output_value_info(&self) -> Option<Vec<u8>> { self.input_value_info() }
+    fn output_value_info(&self) -> Option<Vec<u8>> {
+        self.input_value_info()
+    }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
@@ -112,7 +143,12 @@ impl IspBlock for SuperResBlock {
 
         // If only primary_source (no additional frames), return identity
         if self.frame_sources.is_empty() {
-            nodes.push(Proto::node("Identity", &[&current], &[&self.frame_tensor], &[]));
+            nodes.push(Proto::node(
+                "Identity",
+                &[&current],
+                &[&self.frame_tensor],
+                &[],
+            ));
             return nodes;
         }
 
@@ -125,13 +161,22 @@ impl IspBlock for SuperResBlock {
             let diff_a_raw = format!("{}/diff_a_raw", pair_ns);
             let diff_a = format!("{}/diff_a", pair_ns);
 
-            nodes.push(Proto::node("AveragePool",
+            nodes.push(Proto::node(
+                "AveragePool",
                 &[&current],
                 &[&mean_a],
-                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
-                  Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                  Proto::attribute_ints("strides", &[1, 1])]));
-            nodes.push(Proto::node("Sub", &[&current, &mean_a], &[&diff_a_raw], &[]));
+                &[
+                    Proto::attribute_ints("kernel_shape", &[3, 3]),
+                    Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                    Proto::attribute_ints("strides", &[1, 1]),
+                ],
+            ));
+            nodes.push(Proto::node(
+                "Sub",
+                &[&current, &mean_a],
+                &[&diff_a_raw],
+                &[],
+            ));
             nodes.push(Proto::node("Abs", &[&diff_a_raw], &[&diff_a], &[]));
 
             // Contrast of extra: |extra - AvgPool(extra)|
@@ -139,13 +184,22 @@ impl IspBlock for SuperResBlock {
             let diff_b_raw = format!("{}/diff_b_raw", pair_ns);
             let diff_b = format!("{}/diff_b", pair_ns);
 
-            nodes.push(Proto::node("AveragePool",
+            nodes.push(Proto::node(
+                "AveragePool",
                 &[extra_frame],
                 &[&mean_b],
-                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
-                  Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                  Proto::attribute_ints("strides", &[1, 1])]));
-            nodes.push(Proto::node("Sub", &[extra_frame, &mean_b], &[&diff_b_raw], &[]));
+                &[
+                    Proto::attribute_ints("kernel_shape", &[3, 3]),
+                    Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                    Proto::attribute_ints("strides", &[1, 1]),
+                ],
+            ));
+            nodes.push(Proto::node(
+                "Sub",
+                &[extra_frame, &mean_b],
+                &[&diff_b_raw],
+                &[],
+            ));
             nodes.push(Proto::node("Abs", &[&diff_b_raw], &[&diff_b], &[]));
 
             // w_a = diff_a / (diff_a + diff_b + eps)
@@ -154,7 +208,12 @@ impl IspBlock for SuperResBlock {
             let w_a = format!("{}/w_a", pair_ns);
 
             nodes.push(Proto::node("Add", &[&diff_a, &diff_b], &[&sum_diff], &[]));
-            nodes.push(Proto::node("Add", &[&sum_diff, &eps_name], &[&sum_eps], &[]));
+            nodes.push(Proto::node(
+                "Add",
+                &[&sum_diff, &eps_name],
+                &[&sum_eps],
+                &[],
+            ));
             nodes.push(Proto::node("Div", &[&diff_a, &sum_eps], &[&w_a], &[]));
 
             // w_b = 1 - w_a
@@ -176,7 +235,12 @@ impl IspBlock for SuperResBlock {
 
         // Rename final to output
         if current != self.frame_tensor {
-            nodes.push(Proto::node("Identity", &[&current], &[&self.frame_tensor], &[]));
+            nodes.push(Proto::node(
+                "Identity",
+                &[&current],
+                &[&self.frame_tensor],
+                &[],
+            ));
         }
 
         nodes
@@ -184,15 +248,17 @@ impl IspBlock for SuperResBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        vec![
-            Proto::tensor_proto_float_scalar(&format!("{}/eps", ns), 1e-6),
-        ]
+        vec![Proto::tensor_proto_float_scalar(
+            &format!("{}/eps", ns),
+            1e-6,
+        )]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        self.frame_sources.iter().map(|s| {
-            (s.clone(), 1, vec![1, 3, -1, -1])
-        }).collect()
+        self.frame_sources
+            .iter()
+            .map(|s| (s.clone(), 1, vec![1, 3, -1, -1]))
+            .collect()
     }
 }
 
@@ -224,7 +290,11 @@ mod tests {
         b = b.add_frame("frame1");
         let nodes = b.nodes();
         // Per pair: AvgPool + Sub + Abs + AvgPool + Sub + Abs + Add + Add + Div + Sub + Mul + Mul + Add = 13
-        assert!(nodes.len() >= 10, "need >= 10 nodes for 2-frame, got {}", nodes.len());
+        assert!(
+            nodes.len() >= 10,
+            "need >= 10 nodes for 2-frame, got {}",
+            nodes.len()
+        );
     }
 
     #[test]
@@ -235,7 +305,11 @@ mod tests {
         b = b.add_frame("frame2");
         let nodes = b.nodes();
         // 2 pairs × 13 nodes + 1 Identity = 27
-        assert!(nodes.len() >= 20, "need >= 20 nodes for 3-frame, got {}", nodes.len());
+        assert!(
+            nodes.len() >= 20,
+            "need >= 20 nodes for 3-frame, got {}",
+            nodes.len()
+        );
     }
 
     #[test]

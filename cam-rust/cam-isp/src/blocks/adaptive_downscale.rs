@@ -41,8 +41,8 @@
 //! build time from PipelineProfile.  Future: extra inputs from
 //! IspController for scene-adaptive tolerance (edge density feedback).
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 pub struct AdaptiveDownscaleBlock {
     pub id: String,
@@ -76,8 +76,13 @@ impl AdaptiveDownscaleBlock {
     /// - `codec_align`: macroblock alignment (0, 8, or 16)
     /// - `filler_mode`: bar filling ("reflect", "edge", "constant")
     /// - `aspect_mode`: "fit" | "crop" | "pad"
-    pub fn new(target_w: i64, target_h: i64, codec_align: i64,
-               filler_mode: &str, aspect_mode: &str) -> Self {
+    pub fn new(
+        target_w: i64,
+        target_h: i64,
+        codec_align: i64,
+        filler_mode: &str,
+        aspect_mode: &str,
+    ) -> Self {
         Self {
             id: "adaptive_downscale".into(),
             prev: None,
@@ -219,7 +224,9 @@ impl AdaptiveDownscaleBlock {
     pub fn out_dims(&self) -> (i64, i64) {
         // Final output is the nominal target (margin is cropped off after scale)
         let a = self.codec_align;
-        if a <= 0 { return (self.target_h, self.target_w); }
+        if a <= 0 {
+            return (self.target_h, self.target_w);
+        }
         let pb = (a - (self.target_h % a)) % a;
         let pr = (a - (self.target_w % a)) % a;
         (self.target_h + pb, self.target_w + pr)
@@ -228,7 +235,9 @@ impl AdaptiveDownscaleBlock {
     /// Compute padding amounts for the codec-align pad at the end.
     fn align_pad(&self) -> (i64, i64, i64, i64) {
         let a = self.codec_align;
-        if a <= 0 { return (0, 0, 0, 0); }
+        if a <= 0 {
+            return (0, 0, 0, 0);
+        }
         // Align to nominal target dims (margin already cropped)
         let pb = (a - (self.target_h % a)) % a;
         let pr = (a - (self.target_w % a)) % a;
@@ -239,37 +248,78 @@ impl AdaptiveDownscaleBlock {
 // ── IspBlock trait implementation ──
 
 impl IspBlock for AdaptiveDownscaleBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "AdaptiveDownscaleBlock".to_string() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "AdaptiveDownscaleBlock".to_string()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let ns = self.tensor_ns();
         match (self.in_h, self.in_w) {
-            (Some(h), Some(w)) => Some(Proto::value_info(&self.input_source,
-                &[Proto::tensor_dim_value(1),
-                  Proto::tensor_dim_param(&format!("{}_C", ns)),
-                  Proto::tensor_dim_value(h),
-                  Proto::tensor_dim_value(w)], 1)),
-            _ => Some(Proto::value_info(&self.input_source,
-                &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
-                  Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1)),
+            (Some(h), Some(w)) => Some(Proto::value_info(
+                &self.input_source,
+                &[
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_param(&format!("{}_C", ns)),
+                    Proto::tensor_dim_value(h),
+                    Proto::tensor_dim_value(w),
+                ],
+                1,
+            )),
+            _ => Some(Proto::value_info(
+                &self.input_source,
+                &[
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_param("C"),
+                    Proto::tensor_dim_param("H"),
+                    Proto::tensor_dim_param("W"),
+                ],
+                1,
+            )),
         }
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         let (oh, ow) = self.out_dims();
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_param("C"),
-              Proto::tensor_dim_value(oh), Proto::tensor_dim_value(ow)], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_param("C"),
+                Proto::tensor_dim_value(oh),
+                Proto::tensor_dim_value(ow),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -304,20 +354,34 @@ impl IspBlock for AdaptiveDownscaleBlock {
                 let pads_t = format!("{}/aspect_pads", ns);
                 let cval = format!("{}/aspect_cval", ns);
                 let _p_top = if sy < 0 { -sy } else { 0 };
-                let _p_bot = if sah > (self.in_h.unwrap_or(0) + sy) { sah - self.in_h.unwrap_or(0) - sy } else { 0 };
+                let _p_bot = if sah > (self.in_h.unwrap_or(0) + sy) {
+                    sah - self.in_h.unwrap_or(0) - sy
+                } else {
+                    0
+                };
                 let _p_left = if sx < 0 { -sx } else { 0 };
-                let _p_right = if saw > (self.in_w.unwrap_or(0) + sx) { saw - self.in_w.unwrap_or(0) - sx } else { 0 };
-                nodes.push(Proto::node("Pad",
-                    &[prev_tensor, &pads_t, &cval], &[&aspect_out],
-                    &[Proto::attribute_string("mode", &self.filler_mode)]));
+                let _p_right = if saw > (self.in_w.unwrap_or(0) + sx) {
+                    saw - self.in_w.unwrap_or(0) - sx
+                } else {
+                    0
+                };
+                nodes.push(Proto::node(
+                    "Pad",
+                    &[prev_tensor, &pads_t, &cval],
+                    &[&aspect_out],
+                    &[Proto::attribute_string("mode", &self.filler_mode)],
+                ));
             } else {
                 let starts = format!("{}/crop_starts", ns);
                 let ends = format!("{}/crop_ends", ns);
                 let axes = format!("{}/crop_axes", ns);
                 let steps = format!("{}/crop_steps", ns);
-                nodes.push(Proto::node("Slice",
+                nodes.push(Proto::node(
+                    "Slice",
                     &[prev_tensor, &starts, &ends, &axes, &steps],
-                    &[&aspect_out], &[]));
+                    &[&aspect_out],
+                    &[],
+                ));
             }
             tensor_pool.push(aspect_out);
             prev_tensor = tensor_pool.last().unwrap().as_str();
@@ -328,11 +392,20 @@ impl IspBlock for AdaptiveDownscaleBlock {
             let scales = format!("{}/scales", ns);
             // If margin > 0, resize goes to intermediate for crop
             let needs_intermediate = needs_align || needs_margin_crop;
-            let resize_out = if needs_intermediate { &after_resize } else { final_output };
-            nodes.push(Proto::node("Resize",
-                &[prev_tensor, "", "", &scales], &[resize_out],
-                &[Proto::attribute_string("mode", "nearest"),
-                  Proto::attribute_int("coordinate_transformation_mode", 0)]));
+            let resize_out = if needs_intermediate {
+                &after_resize
+            } else {
+                final_output
+            };
+            nodes.push(Proto::node(
+                "Resize",
+                &[prev_tensor, "", "", &scales],
+                &[resize_out],
+                &[
+                    Proto::attribute_string("mode", "nearest"),
+                    Proto::attribute_int("coordinate_transformation_mode", 0),
+                ],
+            ));
             prev_tensor = resize_out;
         }
 
@@ -349,9 +422,12 @@ impl IspBlock for AdaptiveDownscaleBlock {
             let ends = format!("{}/margin_ends", ns);
             let axes = format!("{}/margin_axes", ns);
             let steps = format!("{}/margin_steps", ns);
-            nodes.push(Proto::node("Slice",
+            nodes.push(Proto::node(
+                "Slice",
                 &[prev_tensor, &starts, &ends, &axes, &steps],
-                &[&margin_crop_out], &[]));
+                &[&margin_crop_out],
+                &[],
+            ));
             tensor_pool.push(margin_crop_out);
             prev_tensor = tensor_pool.last().unwrap().as_str();
         }
@@ -360,9 +436,12 @@ impl IspBlock for AdaptiveDownscaleBlock {
         if needs_align {
             let pads = format!("{}/align_pads", ns);
             let cval = format!("{}/align_cval", ns);
-            nodes.push(Proto::node("Pad",
-                &[prev_tensor, &pads, &cval], &[final_output],
-                &[Proto::attribute_string("mode", "edge")]));
+            nodes.push(Proto::node(
+                "Pad",
+                &[prev_tensor, &pads, &cval],
+                &[final_output],
+                &[Proto::attribute_string("mode", "edge")],
+            ));
         }
 
         nodes
@@ -385,22 +464,31 @@ impl IspBlock for AdaptiveDownscaleBlock {
                 let p_right = if saw > sw + sx { saw - sw - sx } else { 0 };
                 let pad_arr: [i64; 8] = [0, 0, p_top, p_left, 0, 0, p_bot, p_right];
                 inits.push(Proto::tensor_proto_int64(
-                    &format!("{}/aspect_pads", ns), &pad_arr));
+                    &format!("{}/aspect_pads", ns),
+                    &pad_arr,
+                ));
                 inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/aspect_cval", ns), 0.0));
+                    &format!("{}/aspect_cval", ns),
+                    0.0,
+                ));
             } else {
                 // Crop
                 inits.push(Proto::tensor_proto_int64(
                     &format!("{}/crop_starts", ns),
-                    &[0, 0, sy.max(0), sx.max(0)]));
+                    &[0, 0, sy.max(0), sx.max(0)],
+                ));
                 inits.push(Proto::tensor_proto_int64(
                     &format!("{}/crop_ends", ns),
-                    &[i64::MAX, i64::MAX,
-                      (sy + sah).min(sh), (sx + saw).min(sw)]));
+                    &[i64::MAX, i64::MAX, (sy + sah).min(sh), (sx + saw).min(sw)],
+                ));
                 inits.push(Proto::tensor_proto_int64(
-                    &format!("{}/crop_axes", ns), &[0, 1, 2, 3]));
+                    &format!("{}/crop_axes", ns),
+                    &[0, 1, 2, 3],
+                ));
                 inits.push(Proto::tensor_proto_int64(
-                    &format!("{}/crop_steps", ns), &[1, 1, 1, 1]));
+                    &format!("{}/crop_steps", ns),
+                    &[1, 1, 1, 1],
+                ));
             }
         }
 
@@ -408,8 +496,10 @@ impl IspBlock for AdaptiveDownscaleBlock {
         let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
         if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
             inits.push(Proto::tensor_proto_float(
-                &format!("{}/scales", ns), &[4],
-                &[1.0f32, 1.0f32, scale_h as f32, scale_w as f32]));
+                &format!("{}/scales", ns),
+                &[4],
+                &[1.0f32, 1.0f32, scale_h as f32, scale_w as f32],
+            ));
         }
 
         // EIS margin center-crop (from enlarged resize output back to target)
@@ -418,16 +508,25 @@ impl IspBlock for AdaptiveDownscaleBlock {
             let crop_w = (_ow - self.target_w) / 2;
             inits.push(Proto::tensor_proto_int64(
                 &format!("{}/margin_starts", ns),
-                &[0, 0, crop_h.max(0), crop_w.max(0)]));
+                &[0, 0, crop_h.max(0), crop_w.max(0)],
+            ));
             inits.push(Proto::tensor_proto_int64(
                 &format!("{}/margin_ends", ns),
-                &[i64::MAX, i64::MAX,
-                  (crop_h + self.target_h).min(_oh),
-                  (crop_w + self.target_w).min(_ow)]));
+                &[
+                    i64::MAX,
+                    i64::MAX,
+                    (crop_h + self.target_h).min(_oh),
+                    (crop_w + self.target_w).min(_ow),
+                ],
+            ));
             inits.push(Proto::tensor_proto_int64(
-                &format!("{}/margin_axes", ns), &[0, 1, 2, 3]));
+                &format!("{}/margin_axes", ns),
+                &[0, 1, 2, 3],
+            ));
             inits.push(Proto::tensor_proto_int64(
-                &format!("{}/margin_steps", ns), &[1, 1, 1, 1]));
+                &format!("{}/margin_steps", ns),
+                &[1, 1, 1, 1],
+            ));
         }
 
         // Codec-align pad
@@ -435,9 +534,13 @@ impl IspBlock for AdaptiveDownscaleBlock {
         if pb > 0 || pr > 0 {
             let pad_arr: [i64; 8] = [0, 0, 0, 0, 0, 0, pb, pr];
             inits.push(Proto::tensor_proto_int64(
-                &format!("{}/align_pads", ns), &pad_arr));
+                &format!("{}/align_pads", ns),
+                &pad_arr,
+            ));
             inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/align_cval", ns), 0.0));
+                &format!("{}/align_cval", ns),
+                0.0,
+            ));
         }
 
         inits
@@ -458,8 +561,8 @@ mod tests {
     #[test]
     fn test_fit_same_aspect() {
         // 1920×1080 (16:9) → 1280×720 (16:9) — already matches
-        let b = AdaptiveDownscaleBlock::new(1280, 720, 0, "edge", "fit")
-            .with_concrete_dims(1080, 1920);
+        let b =
+            AdaptiveDownscaleBlock::new(1280, 720, 0, "edge", "fit").with_concrete_dims(1080, 1920);
         assert!(b.aspect_adjust().is_none(), "Same aspect → no crop/pad");
         let (oh, ow) = b.out_dims();
         assert_eq!(oh, 720);
@@ -470,8 +573,8 @@ mod tests {
     fn test_fit_pillarbox() {
         // 1920×1080 (16:9) → 640×480 (4:3, 1.333)
         // 16:9 wider than 4:3 → fit width, pillarbox top/bottom
-        let b = AdaptiveDownscaleBlock::new(640, 480, 0, "edge", "fit")
-            .with_concrete_dims(1080, 1920);
+        let b =
+            AdaptiveDownscaleBlock::new(640, 480, 0, "edge", "fit").with_concrete_dims(1080, 1920);
         assert!(b.aspect_adjust().is_none(), "Fit mode → no aspect adjust");
         let (_, _, oh, ow) = b.scale_out_dims();
         // After crop (crop to 1440×1080 = 4:3), then scale
@@ -489,8 +592,8 @@ mod tests {
     #[test]
     fn test_fit_letterbox() {
         // 1080×1920 (portrait 9:16) → 640×480 (landscape 4:3)
-        let b = AdaptiveDownscaleBlock::new(640, 480, 0, "edge", "fit")
-            .with_concrete_dims(1920, 1080);
+        let b =
+            AdaptiveDownscaleBlock::new(640, 480, 0, "edge", "fit").with_concrete_dims(1920, 1080);
         let (_, _, oh, ow) = b.scale_out_dims();
         // src_aspect = 1080/1920 = 0.5625 < 1.333 → fit height
         // scale = 480/1920 = 0.25
@@ -502,8 +605,8 @@ mod tests {
     #[test]
     fn test_crop_mode() {
         // 1920×1080 (16:9) → 640×480 (4:3) — crop left/right
-        let b = AdaptiveDownscaleBlock::new(640, 480, 0, "edge", "crop")
-            .with_concrete_dims(1080, 1920);
+        let b =
+            AdaptiveDownscaleBlock::new(640, 480, 0, "edge", "crop").with_concrete_dims(1080, 1920);
         let adj = b.aspect_adjust().unwrap();
         assert_eq!(adj.0, 0, "No top crop");
         assert_eq!(adj.1, 1080, "Full height");
@@ -540,8 +643,8 @@ mod tests {
     fn test_codec_align_pad() {
         // 640×360 → 16-align: 360 % 16 = 8, pad to 368
         // 640 % 16 = 0
-        let b = AdaptiveDownscaleBlock::new(640, 360, 16, "edge", "fit")
-            .with_concrete_dims(1080, 1920);
+        let b =
+            AdaptiveDownscaleBlock::new(640, 360, 16, "edge", "fit").with_concrete_dims(1080, 1920);
         let (_, pb, _, pr) = b.align_pad();
         assert_eq!(pb, 8);
         assert_eq!(pr, 0);
@@ -550,8 +653,8 @@ mod tests {
     #[test]
     fn test_nodes_count() {
         // Fit mode with same aspect → resize only → 1 node
-        let b = AdaptiveDownscaleBlock::new(640, 480, 0, "edge", "fit")
-            .with_concrete_dims(1080, 1920);
+        let b =
+            AdaptiveDownscaleBlock::new(640, 480, 0, "edge", "fit").with_concrete_dims(1080, 1920);
         assert_eq!(b.nodes().len(), 1, "Resize only");
     }
 

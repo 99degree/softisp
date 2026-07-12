@@ -28,7 +28,9 @@ pub trait MappedBuffer: Send + Sync + Debug {
     fn size(&self) -> usize;
 
     /// Optional file descriptor (dma-buf, memfd, etc.).
-    fn fd(&self) -> Option<i32> { None }
+    fn fd(&self) -> Option<i32> {
+        None
+    }
 }
 
 // ── CameraBuffer ───────────────────────────────────────────────────────────
@@ -103,14 +105,17 @@ impl BufferAllocator for HeapAllocator {
         format: i32,
     ) -> Result<Box<dyn CameraBuffer>, String> {
         let bpp = match format {
-            0x20 | 0x25 | 0x26 => 2,  // RAW16/10/12
-            0x11 | 0x12 => 1,          // NV21/NV12
-            0x01 | 0x22 => 4,          // RGBA / IMPLEMENTATION_DEFINED
+            0x20 | 0x25 | 0x26 => 2, // RAW16/10/12
+            0x11 | 0x12 => 1,        // NV21/NV12
+            0x01 | 0x22 => 4,        // RGBA / IMPLEMENTATION_DEFINED
             _ => 4,
         };
         let size = (stride as usize) * (height as usize) * bpp;
         Ok(Box::new(HeapCameraBuffer::new(
-            width, height, stride, format,
+            width,
+            height,
+            stride,
+            format,
             HeapBuffer::new(size),
         )))
     }
@@ -174,7 +179,13 @@ pub struct HeapCameraBuffer {
 
 impl HeapCameraBuffer {
     pub fn new(width: u32, height: u32, stride: u32, format: i32, inner: HeapBuffer) -> Self {
-        Self { width, height, stride, format, inner }
+        Self {
+            width,
+            height,
+            stride,
+            format,
+            inner,
+        }
     }
 }
 
@@ -194,12 +205,24 @@ impl MappedBuffer for HeapCameraBuffer {
 }
 
 impl CameraBuffer for HeapCameraBuffer {
-    fn width(&self) -> u32 { self.width }
-    fn height(&self) -> u32 { self.height }
-    fn stride(&self) -> u32 { self.stride }
-    fn format(&self) -> i32 { self.format }
-    fn timestamp(&self) -> u64 { 0 }
-    fn frame_number(&self) -> u64 { 0 }
+    fn width(&self) -> u32 {
+        self.width
+    }
+    fn height(&self) -> u32 {
+        self.height
+    }
+    fn stride(&self) -> u32 {
+        self.stride
+    }
+    fn format(&self) -> i32 {
+        self.format
+    }
+    fn timestamp(&self) -> u64 {
+        0
+    }
+    fn frame_number(&self) -> u64 {
+        0
+    }
 }
 
 // ── GenericCameraBuffer ─────────────────────────────────────────────────────
@@ -223,25 +246,53 @@ impl GenericCameraBuffer {
         format: i32,
         inner: Box<dyn MappedBuffer>,
     ) -> Self {
-        Self { width, height, stride, format, inner }
+        Self {
+            width,
+            height,
+            stride,
+            format,
+            inner,
+        }
     }
 }
 
 impl MappedBuffer for GenericCameraBuffer {
-    fn map(&self) -> Result<(*mut u8, usize), String> { self.inner.map() }
-    fn unmap(&self) -> Result<(), String> { self.inner.unmap() }
-    fn is_mapped(&self) -> bool { self.inner.is_mapped() }
-    fn size(&self) -> usize { self.inner.size() }
-    fn fd(&self) -> Option<i32> { self.inner.fd() }
+    fn map(&self) -> Result<(*mut u8, usize), String> {
+        self.inner.map()
+    }
+    fn unmap(&self) -> Result<(), String> {
+        self.inner.unmap()
+    }
+    fn is_mapped(&self) -> bool {
+        self.inner.is_mapped()
+    }
+    fn size(&self) -> usize {
+        self.inner.size()
+    }
+    fn fd(&self) -> Option<i32> {
+        self.inner.fd()
+    }
 }
 
 impl CameraBuffer for GenericCameraBuffer {
-    fn width(&self) -> u32 { self.width }
-    fn height(&self) -> u32 { self.height }
-    fn stride(&self) -> u32 { self.stride }
-    fn format(&self) -> i32 { self.format }
-    fn timestamp(&self) -> u64 { 0 }
-    fn frame_number(&self) -> u64 { 0 }
+    fn width(&self) -> u32 {
+        self.width
+    }
+    fn height(&self) -> u32 {
+        self.height
+    }
+    fn stride(&self) -> u32 {
+        self.stride
+    }
+    fn format(&self) -> i32 {
+        self.format
+    }
+    fn timestamp(&self) -> u64 {
+        0
+    }
+    fn frame_number(&self) -> u64 {
+        0
+    }
 }
 
 // ── Allocator registry ─────────────────────────────────────────────────────
@@ -253,12 +304,17 @@ static GLOBAL_ALLOCATOR: OnceLock<Box<dyn BufferAllocator>> = OnceLock::new();
 
 /// Get the global buffer allocator.
 pub fn allocator() -> &'static dyn BufferAllocator {
-    GLOBAL_ALLOCATOR.get().map(|b| b.as_ref()).unwrap_or(&HeapAllocator)
+    GLOBAL_ALLOCATOR
+        .get()
+        .map(|b| b.as_ref())
+        .unwrap_or(&HeapAllocator)
 }
 
 /// Set the global buffer allocator. Panics if already set.
 pub fn set_allocator(alloc: Box<dyn BufferAllocator>) {
-    GLOBAL_ALLOCATOR.set(alloc).unwrap_or_else(|_| panic!("Global allocator already set"));
+    GLOBAL_ALLOCATOR
+        .set(alloc)
+        .unwrap_or_else(|_| panic!("Global allocator already set"));
 }
 
 /// Allocate a buffer from the global allocator.

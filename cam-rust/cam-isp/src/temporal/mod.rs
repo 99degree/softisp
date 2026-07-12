@@ -19,8 +19,16 @@ pub mod plugin;
 pub mod processors;
 
 pub use coefficients::{FrameCoefficients, FrameHistory};
-pub use extractors::{CoeffExtractor, ColorExtractor, GainExtractor, MotionExtractor, NoiseExtractor};
+pub use extractors::{
+    CoeffExtractor, ColorExtractor, GainExtractor, MotionExtractor, NoiseExtractor,
+};
 pub use frame::TemporalFrame;
 pub use pipeline::FramePipeline;
-pub use plugin::{ColorTrackerPlugin, GainTrackerPlugin, MotionAdaptivePlugin, TemporalDenoisePlugin, TemporalPlugin};
-pub use processors::{ColorBalanceProcessor, GainCalibrationProcessor, MotionAdaptiveProcessor, TemporalDenoiseProcessor, TemporalProcessor};
+pub use plugin::{
+    ColorTrackerPlugin, GainTrackerPlugin, MotionAdaptivePlugin, TemporalDenoisePlugin,
+    TemporalPlugin,
+};
+pub use processors::{
+    ColorBalanceProcessor, GainCalibrationProcessor, MotionAdaptiveProcessor,
+    TemporalDenoiseProcessor, TemporalProcessor,
+};

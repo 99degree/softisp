@@ -36,11 +36,18 @@ pub struct FormatConvertEngine {
 #[cfg(feature = "mnn")]
 impl FormatConvertEngine {
     /// Create format converter for given dimensions and output format.
-    pub fn new(width: u32, height: u32, output_format: OutputFormat) -> crate::error::IspResult<Self> {
+    pub fn new(
+        width: u32,
+        height: u32,
+        output_format: OutputFormat,
+    ) -> crate::error::IspResult<Self> {
+        use crate::mnn_converter::{convert_onnx_to_mnn, MnnConvertOptions};
         use crate::mnnengine::{MnnBackendType, MnnInterpreterSafe};
-        use crate::mnn_converter::{MnnConvertOptions, convert_onnx_to_mnn};
 
-        info!("FormatConvertEngine: {}×{} → {:?}", width, height, output_format);
+        info!(
+            "FormatConvertEngine: {}×{} → {:?}",
+            width, height, output_format
+        );
 
         // Build ONNX model using DisplayBlock's pattern
         let onnx = build_format_convert_onnx(width, height, output_format);
@@ -60,12 +67,20 @@ impl FormatConvertEngine {
             .ok_or_else(|| crate::error::IspError::Mnn("fmt conv model load fail".into()))?;
         let _ = std::fs::remove_file(&mn);
 
-        let session = interp.create_session(MnnBackendType::Cpu, 2)
+        let session = interp
+            .create_session(MnnBackendType::Cpu, 2)
             .ok_or_else(|| crate::error::IspError::Mnn("fmt conv session fail".into()))?;
 
         info!("FormatConvertEngine: ready ({} bytes ONNX)", onnx.len());
 
-        Ok(Self { interp, session, width, height, output_format, initialized: true })
+        Ok(Self {
+            interp,
+            session,
+            width,
+            height,
+            output_format,
+            initialized: true,
+        })
     }
 
     /// Convert float RGB planar to target format.
@@ -103,15 +118,20 @@ impl FormatConvertEngine {
         }
 
         // Run
-        self.session.resize()
+        self.session
+            .resize()
             .map_err(|e| crate::error::IspError::Mnn(format!("fmt conv resize: {}", e)))?;
-        self.session.run()
+        self.session
+            .run()
             .map_err(|e| crate::error::IspError::Mnn(format!("fmt conv run: {}", e)))?;
 
         // Read output
-        let out_tensor = self.interp.get_first_output(&self.session)
+        let out_tensor = self
+            .interp
+            .get_first_output(&self.session)
             .ok_or_else(|| crate::error::IspError::Mnn("fmt conv output missing".into()))?;
-        let out_bytes = out_tensor.as_bytes()
+        let out_bytes = out_tensor
+            .as_bytes()
             .ok_or_else(|| crate::error::IspError::Mnn("fmt conv output null".into()))?;
 
         let bpp = self.output_format.bytes_per_pixel();
@@ -123,7 +143,9 @@ impl FormatConvertEngine {
     }
 
     /// Get output format.
-    pub fn output_format(&self) -> OutputFormat { self.output_format }
+    pub fn output_format(&self) -> OutputFormat {
+        self.output_format
+    }
 }
 
 /// Build a standalone ONNX model for format conversion.
@@ -142,10 +164,16 @@ fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
     let prev = input.to_string();
 
     // Input: [1, 3, H, W] f32
-    let vi = Proto::value_info(input, &[
-        Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-        Proto::tensor_dim_value(h as i64), Proto::tensor_dim_value(w as i64),
-    ], 1); // 1 = FLOAT
+    let vi = Proto::value_info(
+        input,
+        &[
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(3),
+            Proto::tensor_dim_value(h as i64),
+            Proto::tensor_dim_value(w as i64),
+        ],
+        1,
+    ); // 1 = FLOAT
 
     match fmt {
         FloatRgb | Float16Rgb => {
@@ -157,8 +185,12 @@ fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
             }
             if fmt == Float16Rgb {
                 // Cast FLOAT→FLOAT16
-                nodes.push(Proto::node("Cast", &[input], &[output_name],
-                    &[Proto::attribute_int("to", 10)]));
+                nodes.push(Proto::node(
+                    "Cast",
+                    &[input],
+                    &[output_name],
+                    &[Proto::attribute_int("to", 10)],
+                ));
             }
         }
         FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr => {
@@ -169,49 +201,63 @@ fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
             let oc = fmt.channel_count();
             let (weights, bias): (Vec<f32>, Vec<f32>) = match fmt {
                 FloatBgra | Float16Bgra | Bgra => (
-                    vec![0.0, 0.0, 255.0,  0.0, 255.0, 0.0,
-                         255.0, 0.0, 0.0,  0.0, 0.0, 0.0],
+                    vec![
+                        0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                    ],
                     vec![0.0, 0.0, 0.0, 255.0],
                 ),
                 Rgba => (
-                    vec![255.0, 0.0, 0.0,  0.0, 255.0, 0.0,
-                         0.0, 0.0, 255.0, 0.0, 0.0, 0.0],
+                    vec![
+                        255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0,
+                    ],
                     vec![0.0, 0.0, 0.0, 255.0],
                 ),
                 Argb => (
-                    vec![0.0, 0.0, 0.0,  255.0, 0.0, 0.0,
-                         0.0, 255.0, 0.0, 0.0, 0.0, 255.0],
+                    vec![
+                        0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0,
+                    ],
                     vec![255.0, 0.0, 0.0, 0.0],
                 ),
                 Abgr => (
-                    vec![0.0, 0.0, 0.0,  0.0, 0.0, 255.0,
-                         0.0, 255.0, 0.0, 255.0, 0.0, 0.0],
+                    vec![
+                        0.0, 0.0, 0.0, 0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0,
+                    ],
                     vec![255.0, 0.0, 0.0, 0.0],
                 ),
                 Rgb => (
-                    vec![255.0, 0.0, 0.0,  0.0, 255.0, 0.0,
-                         0.0, 0.0, 255.0],
+                    vec![255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0],
                     vec![0.0, 0.0, 0.0],
                 ),
                 Bgr => (
-                    vec![0.0, 0.0, 255.0,  0.0, 255.0, 0.0,
-                         255.0, 0.0, 0.0],
+                    vec![0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0],
                     vec![0.0, 0.0, 0.0],
                 ),
                 _ => unreachable!(),
             };
             inits.push(Proto::tensor_proto_float(
-                &conv_w, &[oc as i64, 3, 1, 1], &weights));
-            inits.push(Proto::tensor_proto_float(
-                &conv_b, &[oc as i64], &bias));
-            nodes.push(Proto::node("Conv", &[input, &conv_w, &conv_b], &[&conv_out],
-                &[Proto::attribute_ints("kernel_shape", &[1, 1]),
-                  Proto::attribute_int("group", 1)]));
+                &conv_w,
+                &[oc as i64, 3, 1, 1],
+                &weights,
+            ));
+            inits.push(Proto::tensor_proto_float(&conv_b, &[oc as i64], &bias));
+            nodes.push(Proto::node(
+                "Conv",
+                &[input, &conv_w, &conv_b],
+                &[&conv_out],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[1, 1]),
+                    Proto::attribute_int("group", 1),
+                ],
+            ));
 
             if fmt == Float16Bgra {
                 // Cast FLOAT→FLOAT16
-                nodes.push(Proto::node("Cast", &[&conv_out], &[output_name],
-                    &[Proto::attribute_int("to", 10)]));
+                nodes.push(Proto::node(
+                    "Cast",
+                    &[&conv_out],
+                    &[output_name],
+                    &[Proto::attribute_int("to", 10)],
+                ));
             } else {
                 nodes.push(Proto::node("Identity", &[&conv_out], &[output_name], &[]));
             }
@@ -224,8 +270,12 @@ fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
             inits.push(Proto::tensor_proto_float_scalar(&scale_255, 255.0));
             inits.push(Proto::tensor_proto_float_scalar(&scale, 1.0));
             nodes.push(Proto::node("Mul", &[input, &scale_255], &[&cast_out], &[]));
-            nodes.push(Proto::node("Cast", &[&cast_out], &[output_name],
-                &[Proto::attribute_int("to", 6)])); // 6 = INT32
+            nodes.push(Proto::node(
+                "Cast",
+                &[&cast_out],
+                &[output_name],
+                &[Proto::attribute_int("to", 6)],
+            )); // 6 = INT32
         }
     }
 
@@ -234,10 +284,16 @@ fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
         "FormatConvert",
         &nodes,
         &[vi],
-        &[Proto::value_info(output_name, &[
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(bpp),
-            Proto::tensor_dim_value(h as i64), Proto::tensor_dim_value(w as i64),
-        ], fmt.onnx_elem_type())],
+        &[Proto::value_info(
+            output_name,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(bpp),
+                Proto::tensor_dim_value(h as i64),
+                Proto::tensor_dim_value(w as i64),
+            ],
+            fmt.onnx_elem_type(),
+        )],
         &inits,
         &[],
     );
@@ -245,12 +301,7 @@ fn build_format_convert_onnx(w: u32, h: u32, fmt: OutputFormat) -> Vec<u8> {
     // Opset 13
     let opset = Proto::opset("", 13);
 
-    Proto::model(
-        11,
-        &opset,
-        "cam_rust_fmt_convert",
-        &graph,
-    )
+    Proto::model(11, &opset, "cam_rust_fmt_convert", &graph)
 }
 
 #[cfg(all(test, feature = "mnn"))]
@@ -262,7 +313,11 @@ mod tests {
     fn test_format_convert_onnx_rgba() {
         let onnx = build_format_convert_onnx(1920, 1080, OutputFormat::Rgba);
         // Should produce a valid ONNX model
-        assert!(onnx.len() > 100, "ONNX model too small: {} bytes", onnx.len());
+        assert!(
+            onnx.len() > 100,
+            "ONNX model too small: {} bytes",
+            onnx.len()
+        );
     }
 
     #[test]

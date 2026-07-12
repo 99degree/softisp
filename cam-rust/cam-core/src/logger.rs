@@ -26,7 +26,11 @@ pub fn init_logger(verbose: bool) {
 /// Initialize logger with a custom Android log tag.
 pub fn init_logger_with_tag(verbose: bool, tag: &str) {
     INIT.call_once(|| {
-        let level = if verbose { LevelFilter::Debug } else { LevelFilter::Info };
+        let level = if verbose {
+            LevelFilter::Debug
+        } else {
+            LevelFilter::Info
+        };
 
         #[cfg(feature = "android")]
         {
@@ -35,7 +39,10 @@ pub fn init_logger_with_tag(verbose: bool, tag: &str) {
                     .with_max_level(level)
                     .with_tag(tag),
             );
-            info!("Android logger initialized (verbose={}, tag={})", verbose, tag);
+            info!(
+                "Android logger initialized (verbose={}, tag={})",
+                verbose, tag
+            );
         }
 
         #[cfg(not(feature = "android"))]

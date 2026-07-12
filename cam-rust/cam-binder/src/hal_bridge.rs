@@ -78,7 +78,9 @@ unsafe impl Send for LockedBuffer {}
 /// (Standalone version; cam-hal-android's pool is feature-gated)
 pub struct HardwareBufferBridge {
     /// Free buffers per format
-    free_buffers: std::sync::Mutex<std::collections::HashMap<HalPixelFormat, std::collections::VecDeque<(u64, HalBufferDesc)>>>,
+    free_buffers: std::sync::Mutex<
+        std::collections::HashMap<HalPixelFormat, std::collections::VecDeque<(u64, HalBufferDesc)>>,
+    >,
     /// Total allocated buffers (in_use + free)
     allocated_count: std::sync::Mutex<u64>,
     /// Next buffer ID
@@ -104,7 +106,12 @@ impl HardwareBufferBridge {
     }
 
     /// Acquire buffer from pool and lock for inference
-    pub fn acquire(&self, width: u32, height: u32, format: HalPixelFormat) -> Result<LockedBuffer, String> {
+    pub fn acquire(
+        &self,
+        width: u32,
+        height: u32,
+        format: HalPixelFormat,
+    ) -> Result<LockedBuffer, String> {
         let mut free = self.free_buffers.lock().unwrap();
         let mut next = self.next_id.lock().unwrap();
         let mut allocated = self.allocated_count.lock().unwrap();
@@ -230,7 +237,9 @@ mod tests {
     fn test_bridge_format_separation() {
         let bridge = HardwareBufferBridge::new(8);
         let rgba = bridge.acquire(640, 480, HalPixelFormat::Rgba8888).unwrap();
-        let yuv = bridge.acquire(640, 480, HalPixelFormat::Yuv420SemiPlanar).unwrap();
+        let yuv = bridge
+            .acquire(640, 480, HalPixelFormat::Yuv420SemiPlanar)
+            .unwrap();
         assert_ne!(rgba.id, yuv.id);
         bridge.release(rgba);
         bridge.release(yuv);

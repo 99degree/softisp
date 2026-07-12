@@ -3,12 +3,11 @@
 //! Wraps `isp_rectifier::OptimizedInference` with automatic fallback
 //! to the rule-based `IspController` when the model is unavailable or fails.
 
-
-use crate::isp_params::*;
-use crate::isp_controller::IspController;
-use crate::pipeline::IspFrame;
 #[cfg(feature = "rectifier")]
 use crate::error::IspResult;
+use crate::isp_controller::IspController;
+use crate::isp_params::*;
+use crate::pipeline::IspFrame;
 #[cfg(feature = "rectifier")]
 use log::{info, warn};
 
@@ -17,10 +16,10 @@ pub struct NeuralController {
     /// Primary: distilled neural network controller
     #[cfg(feature = "rectifier")]
     rectifier: Option<isp_rectifier::OptimizedInference>,
-    
+
     /// Fallback: rule-based controller
     fallback: IspController,
-    
+
     /// Last good parameters (for temporal smoothing)
     last_params: Option<IspParams>,
 }
@@ -35,21 +34,27 @@ impl NeuralController {
             last_params: None,
         }
     }
-    
+
     /// Create controller with mock model for testing.
     /// Uses the rectifier_model module to generate a valid ONNX model.
     pub fn with_mock_model() -> Self {
         let model_bytes = crate::rectifier_model::generate_rectifier_model();
-        
+
         #[cfg(feature = "rectifier")]
         {
             match Self::load_from_bytes(&model_bytes) {
                 Ok(ctrl) => {
-                    log::info!("NeuralController: loaded mock model ({} bytes)", model_bytes.len());
+                    log::info!(
+                        "NeuralController: loaded mock model ({} bytes)",
+                        model_bytes.len()
+                    );
                     ctrl
                 }
                 Err(e) => {
-                    log::warn!("NeuralController: failed to load mock model: {}, using fallback", e);
+                    log::warn!(
+                        "NeuralController: failed to load mock model: {}, using fallback",
+                        e
+                    );
                     Self::new()
                 }
             }
@@ -61,7 +66,7 @@ impl NeuralController {
             Self::new()
         }
     }
-    
+
     /// Load model from bytes (for testing or in-memory models).
     #[cfg(feature = "rectifier")]
     pub fn load_from_bytes(model_bytes: &[u8]) -> Result<Self, String> {
@@ -70,20 +75,20 @@ impl NeuralController {
         let temp_path = temp_dir.join("mock_rectifier.onnx");
         std::fs::write(&temp_path, model_bytes)
             .map_err(|e| format!("Failed to write temp model: {}", e))?;
-        
+
         let rectifier = isp_rectifier::OptimizedInference::new(&temp_path, true)
             .map_err(|e| format!("Failed to load model: {}", e))?;
-        
+
         // Cleanup temp file
         let _ = std::fs::remove_file(&temp_path);
-        
+
         Ok(Self {
             rectifier: Some(rectifier),
             fallback: IspController::new(),
             last_params: None,
         })
     }
-    
+
     /// Create controller with ONNX model path.
     #[cfg(feature = "rectifier")]
     pub fn with_model(model_path: &str) -> Self {
@@ -93,61 +98,72 @@ impl NeuralController {
                 Some(r)
             }
             Err(e) => {
-                warn!("NeuralController: failed to load model: {}, using fallback", e);
+                warn!(
+                    "NeuralController: failed to load model: {}, using fallback",
+                    e
+                );
                 None
             }
         };
-        
+
         Self {
             rectifier,
             fallback: IspController::new(),
             last_params: None,
         }
     }
-    
+
     /// Check if neural model is available.
     pub fn has_model(&self) -> bool {
         #[cfg(feature = "rectifier")]
-        { self.rectifier.is_some() }
+        {
+            self.rectifier.is_some()
+        }
         #[cfg(not(feature = "rectifier"))]
-        { false }
+        {
+            false
+        }
     }
-    
+
     /// Analyze frame and produce ISP parameters.
     pub fn analyze_and_update(&mut self, frame: &IspFrame) -> IspParams {
         let params = self.analyze_inner(frame);
-        
+
         let smoothed = if let Some(ref last) = self.last_params {
             Self::smooth_params(last, &params, 0.3)
         } else {
             params.clone()
         };
-        
+
         self.last_params = Some(smoothed.clone());
         smoothed
     }
-    
+
     #[cfg(feature = "rectifier")]
     fn analyze_inner(&mut self, frame: &IspFrame) -> IspParams {
         // Extract metadata first (borrows self immutably)
         let metadata = self.extract_metadata(frame);
-        
+
         if let Some(ref mut rectifier) = self.rectifier {
             match metadata {
-                Ok(meta) => {
-                    match rectifier.optimize(&meta) {
-                        Ok(optimized) => {
-                            info!("NeuralController: neural model succeeded");
-                            self.params_from_optimized(&optimized)
-                        }
-                        Err(e) => {
-                            warn!("NeuralController: model inference failed: {}, using fallback", e);
-                            self.fallback.analyze_and_update(frame).clone()
-                        }
+                Ok(meta) => match rectifier.optimize(&meta) {
+                    Ok(optimized) => {
+                        info!("NeuralController: neural model succeeded");
+                        self.params_from_optimized(&optimized)
                     }
-                }
+                    Err(e) => {
+                        warn!(
+                            "NeuralController: model inference failed: {}, using fallback",
+                            e
+                        );
+                        self.fallback.analyze_and_update(frame).clone()
+                    }
+                },
                 Err(e) => {
-                    warn!("NeuralController: metadata extraction failed: {}, using fallback", e);
+                    warn!(
+                        "NeuralController: metadata extraction failed: {}, using fallback",
+                        e
+                    );
                     self.fallback.analyze_and_update(frame).clone()
                 }
             }
@@ -155,16 +171,16 @@ impl NeuralController {
             self.fallback.analyze_and_update(frame).clone()
         }
     }
-    
+
     #[cfg(not(feature = "rectifier"))]
     fn analyze_inner(&mut self, frame: &IspFrame) -> IspParams {
         self.fallback.analyze_and_update(frame).clone()
     }
-    
+
     #[cfg(feature = "rectifier")]
     fn extract_metadata(&self, frame: &IspFrame) -> IspResult<isp_rectifier::FrameMetadata> {
         let histogram = self.compute_histogram(frame)?;
-        
+
         Ok(isp_rectifier::FrameMetadata {
             histogram,
             cct: 5500.0,
@@ -188,22 +204,22 @@ impl NeuralController {
             timestamp: frame.timestamp_ns,
         })
     }
-    
+
     #[cfg(feature = "rectifier")]
     fn compute_histogram(&self, frame: &IspFrame) -> IspResult<Vec<u32>> {
         let mut histogram = vec![0u32; 256];
-        
+
         if frame.data.is_empty() {
             return Ok(histogram);
         }
-        
+
         let bytes_per_pixel = match frame.format {
             cam_types::FrameFormat::RawSensor => 2,
             cam_types::FrameFormat::Raw10 => 1,
             cam_types::FrameFormat::Raw12 => 1,
             _ => 4,
         };
-        
+
         let step = bytes_per_pixel.max(1);
         for i in (0..frame.data.len()).step_by(step) {
             let val = if bytes_per_pixel == 2 && i + 1 < frame.data.len() {
@@ -214,10 +230,10 @@ impl NeuralController {
             };
             histogram[val as usize] += 1;
         }
-        
+
         Ok(histogram)
     }
-    
+
     #[cfg(feature = "rectifier")]
     fn params_from_optimized(&self, optimized: &isp_rectifier::ISPOptimizedParams) -> IspParams {
         IspParams {
@@ -256,10 +272,10 @@ impl NeuralController {
             custom: std::collections::HashMap::new(),
         }
     }
-    
+
     fn smooth_params(old: &IspParams, new: &IspParams, alpha: f32) -> IspParams {
         let lerp = |a: f32, b: f32| a * (1.0 - alpha) + b * alpha;
-        
+
         IspParams {
             blc: new.blc.clone(),
             wb: WbParams {
@@ -288,7 +304,10 @@ impl NeuralController {
             },
             denoise: DenoiseParams {
                 spatial_strength: lerp(old.denoise.spatial_strength, new.denoise.spatial_strength),
-                temporal_strength: lerp(old.denoise.temporal_strength, new.denoise.temporal_strength),
+                temporal_strength: lerp(
+                    old.denoise.temporal_strength,
+                    new.denoise.temporal_strength,
+                ),
                 edge_preserve: lerp(old.denoise.edge_preserve, new.denoise.edge_preserve),
                 bilateral_sigma: lerp(old.denoise.bilateral_sigma, new.denoise.bilateral_sigma),
             },
@@ -310,7 +329,7 @@ impl Default for NeuralController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn create_test_frame() -> IspFrame {
         IspFrame {
             params: IspParams::default(),
@@ -326,53 +345,53 @@ mod tests {
             total_duration_ns: 0,
         }
     }
-    
+
     #[test]
     fn test_neural_controller_fallback() {
         let mut ctrl = NeuralController::new();
         assert!(!ctrl.has_model());
-        
+
         let frame = create_test_frame();
         let params = ctrl.analyze_and_update(&frame);
         assert!(params.wb.r > 0.0);
     }
-    
+
     #[test]
     fn test_neural_controller_mock_model() {
         // Test that mock model can be generated
         let model_bytes = crate::rectifier_model::generate_rectifier_model();
         assert!(!model_bytes.is_empty());
         assert!(model_bytes.len() > 1000);
-        
+
         // Create controller with mock model
         let mut ctrl = NeuralController::with_mock_model();
-        
+
         let frame = create_test_frame();
         let params = ctrl.analyze_and_update(&frame);
-        
+
         // Should produce valid parameters
         assert!(params.wb.r > 0.0);
         assert!(params.wb.g > 0.0);
         assert!(params.wb.b > 0.0);
     }
-    
+
     #[test]
     fn test_mock_model_load_from_bytes() {
         let model_bytes = crate::rectifier_model::generate_rectifier_model();
-        
+
         #[cfg(feature = "rectifier")]
         {
             let result = NeuralController::load_from_bytes(&model_bytes);
             assert!(result.is_ok());
-            
+
             let mut ctrl = result.unwrap();
             assert!(ctrl.has_model());
-            
+
             let frame = create_test_frame();
             let params = ctrl.analyze_and_update(&frame);
             assert!(params.wb.r > 0.0);
         }
-        
+
         #[cfg(not(feature = "rectifier"))]
         {
             // Without rectifier feature, load_from_bytes is not available
@@ -380,42 +399,42 @@ mod tests {
             assert!(!model_bytes.is_empty());
         }
     }
-    
+
     #[test]
     fn test_temporal_smoothing() {
         let old = IspParams::default();
         let mut new = IspParams::default();
         new.wb.r = 2.0;
         new.wb.b = 0.5;
-        
+
         let smoothed = NeuralController::smooth_params(&old, &new, 0.3);
-        
+
         assert!((smoothed.wb.r - 1.3).abs() < 0.01);
         assert!((smoothed.wb.b - 0.85).abs() < 0.01);
     }
-    
+
     #[test]
     fn test_mock_model_output_shape() {
         // Verify mock model produces correct output dimensions
         let model_bytes = crate::rectifier_model::generate_rectifier_model();
-        
+
         // Model should be valid ONNX (starts with protobuf data)
         assert!(!model_bytes.is_empty());
-        
+
         // Check it's a reasonable size for a small model
         assert!(model_bytes.len() > 1000);
         assert!(model_bytes.len() < 100_000); // Less than 100KB
     }
-    
+
     #[test]
     fn test_neural_controller_multiple_frames() {
         let mut ctrl = NeuralController::new();
         let frame = create_test_frame();
-        
+
         // Process multiple frames
         let params1 = ctrl.analyze_and_update(&frame);
         let params2 = ctrl.analyze_and_update(&frame);
-        
+
         // Should be similar (temporal smoothing)
         assert!((params1.wb.r - params2.wb.r).abs() < 0.2);
     }
@@ -425,13 +444,12 @@ impl crate::controller_api::ControllerApi for NeuralController {
     fn analyze_and_update(&mut self, frame: &IspFrame) -> IspParams {
         self.analyze_and_update(frame)
     }
-    
+
     fn has_model(&self) -> bool {
         self.has_model()
     }
-    
+
     fn last_params(&self) -> Option<&IspParams> {
         self.last_params.as_ref()
     }
 }
-

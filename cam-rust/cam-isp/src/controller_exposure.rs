@@ -15,7 +15,9 @@ impl IspController {
     /// `hist` — 256-bin luminance histogram (normalized, sum = 1.0).
     pub fn update_histogram(&mut self, hist: &[f32]) {
         let n_bins = hist.len();
-        if n_bins < 4 { return; }
+        if n_bins < 4 {
+            return;
+        }
 
         let hl_ratio = (hist[n_bins - 1] + hist[n_bins - 2]).clamp(0.0, 1.0);
         let sh_ratio = (hist[0] + hist[1]).clamp(0.0, 1.0);
@@ -53,8 +55,17 @@ impl IspController {
 
     /// Compute exposure time + ISO from current scene stats.
     pub fn compute_exposure(&mut self, brightness_bias: f32) -> (i64, i32) {
-        let lum = if self.avg_lum_mean > 0.001 { self.avg_lum_mean } else { self.scene_luminance };
-        let (exp_ns, iso) = self.ae_state.compute(lum, self.highlight_ratio, self.shadow_ratio, brightness_bias);
+        let lum = if self.avg_lum_mean > 0.001 {
+            self.avg_lum_mean
+        } else {
+            self.scene_luminance
+        };
+        let (exp_ns, iso) = self.ae_state.compute(
+            lum,
+            self.highlight_ratio,
+            self.shadow_ratio,
+            brightness_bias,
+        );
         self.exposure_time_ns = exp_ns;
         self.analog_gain = iso as f32 / self.ae_state.base_iso as f32;
         (exp_ns, iso)
@@ -81,7 +92,8 @@ impl IspController {
         self.exposure_gain = gain.clamp(0.25, 8.0);
         let tone_brightness_range = 0.3;
         let tone_offset = (v - 0.5) * tone_brightness_range;
-        self.tone_brightness = tone_offset.clamp(-tone_brightness_range / 2.0, tone_brightness_range / 2.0);
+        self.tone_brightness =
+            tone_offset.clamp(-tone_brightness_range / 2.0, tone_brightness_range / 2.0);
     }
 
     pub fn set_manual_exposure_gain(&mut self, gain: f32) {

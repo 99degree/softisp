@@ -17,8 +17,8 @@
 //!   - Level N-1: coarsest detail
 //!   - Level N (residual): low-frequency Gaussian at smallest resolution
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// LaplacianPyramidBlock — multi-scale Laplacian pyramid decomposition.
 ///
@@ -58,33 +58,70 @@ impl LaplacianPyramidBlock {
 }
 
 impl IspBlock for LaplacianPyramidBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "LaplacianPyramid".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "LaplacianPyramid".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
         // Output is concatenated Laplacian levels: [1, 3*(levels+1), H, W]
         // (upsampled to full resolution for concat compatibility)
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1),
-              Proto::tensor_dim_value(3 * (self.levels as i64 + 1)),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3 * (self.levels as i64 + 1)),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -105,11 +142,15 @@ impl IspBlock for LaplacianPyramidBlock {
         // Gaussian pyramid: sequential AvgPool
         for i in 0..self.levels {
             let g_out = format!("{}/g{}", ns, i + 1);
-            nodes.push(Proto::node("AveragePool",
+            nodes.push(Proto::node(
+                "AveragePool",
                 &[&current],
                 &[&g_out],
-                &[Proto::attribute_ints("kernel_shape", &[2, 2]),
-                  Proto::attribute_ints("strides", &[2, 2])]));
+                &[
+                    Proto::attribute_ints("kernel_shape", &[2, 2]),
+                    Proto::attribute_ints("strides", &[2, 2]),
+                ],
+            ));
             gauss_names.push(g_out.clone());
             current = g_out;
         }
@@ -121,15 +162,20 @@ impl IspBlock for LaplacianPyramidBlock {
             let lap_out = format!("{}/lap{}", ns, i);
 
             // Upsample gauss[i+1] to match gauss[i] resolution
-            nodes.push(Proto::node("Resize",
+            nodes.push(Proto::node(
+                "Resize",
                 &[&gauss_names[i + 1]],
                 &[&upsampled],
-                &[Proto::attribute_string("mode", "nearest")]));
+                &[Proto::attribute_string("mode", "nearest")],
+            ));
 
             // laplac[i] = gauss[i] - upsampled(gauss[i+1])
-            nodes.push(Proto::node("Sub",
+            nodes.push(Proto::node(
+                "Sub",
                 &[&gauss_names[i], &upsampled],
-                &[&lap_out], &[]));
+                &[&lap_out],
+                &[],
+            ));
 
             laplac_names.push(lap_out);
         }
@@ -141,19 +187,23 @@ impl IspBlock for LaplacianPyramidBlock {
         for (i, lap) in laplac_names.iter().enumerate() {
             let resized = format!("{}/resized{}", ns, i);
             // Use Resize with nearest neighbor to upscale
-            nodes.push(Proto::node("Resize",
+            nodes.push(Proto::node(
+                "Resize",
                 &[lap],
                 &[&resized],
-                &[Proto::attribute_string("mode", "nearest")]));
+                &[Proto::attribute_string("mode", "nearest")],
+            ));
             resized_names.push(resized);
         }
 
         // Concat all levels along channel dimension
         let input_refs: Vec<&str> = resized_names.iter().map(|s| s.as_str()).collect();
-        nodes.push(Proto::node("Concat",
+        nodes.push(Proto::node(
+            "Concat",
             &input_refs,
             &[&self.frame_tensor],
-            &[Proto::attribute_int("axis", 1)]));
+            &[Proto::attribute_int("axis", 1)],
+        ));
 
         nodes
     }

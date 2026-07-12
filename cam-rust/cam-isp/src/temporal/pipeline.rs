@@ -4,7 +4,6 @@ use super::coefficients::{FrameCoefficients, FrameHistory};
 use super::frame::TemporalFrame;
 use super::plugin::TemporalPlugin;
 
-
 /// Thread-wise temporal processing pipeline.
 pub struct FramePipeline {
     history: std::sync::Arc<std::sync::Mutex<FrameHistory>>,
@@ -20,7 +19,10 @@ impl FramePipeline {
         let history = std::sync::Arc::new(std::sync::Mutex::new(FrameHistory::new(max_history)));
         let coefficients = std::sync::Arc::new(std::sync::Mutex::new(None));
         let running = std::sync::Arc::new(std::sync::Mutex::new(false));
-        let (input_tx, input_rx): (std::sync::mpsc::Sender<TemporalFrame>, std::sync::mpsc::Receiver<TemporalFrame>) = std::sync::mpsc::channel();
+        let (input_tx, input_rx): (
+            std::sync::mpsc::Sender<TemporalFrame>,
+            std::sync::mpsc::Receiver<TemporalFrame>,
+        ) = std::sync::mpsc::channel();
         let (output_tx, output_rx) = std::sync::mpsc::channel();
 
         // We need to own the extractor/processor in the threads
@@ -36,7 +38,8 @@ impl FramePipeline {
             while *run.lock().unwrap() {
                 if let Some(frame) = hist.lock().unwrap().prev_frame().cloned() {
                     let prev = coeffs.lock().unwrap().clone();
-                    *coeffs.lock().unwrap() = Some(plugin_clone.extractor().extract(&frame, prev.as_ref()));
+                    *coeffs.lock().unwrap() =
+                        Some(plugin_clone.extractor().extract(&frame, prev.as_ref()));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
@@ -82,9 +85,7 @@ impl FramePipeline {
 
     /// Send a frame for processing.
     pub fn send(&self, frame: TemporalFrame) -> Result<(), String> {
-        self.input_tx
-            .send(frame)
-            .map_err(|e| e.to_string())
+        self.input_tx.send(frame).map_err(|e| e.to_string())
     }
 
     /// Receive a processed frame.

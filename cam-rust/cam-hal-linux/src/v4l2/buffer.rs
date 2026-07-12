@@ -11,6 +11,16 @@ pub fn buffer_to_byte_frame(
     format: FrameFormat,
     timestamp: u64,
 ) -> ByteFrame {
+    let data = &buf.data[..];
+    let stride = match format {
+        FrameFormat::Rgba8888 => width * 4,
+        FrameFormat::Rgb888 => width * 3,
+        FrameFormat::Yuv420 => width,
+        FrameFormat::Nv12 => width,
+        FrameFormat::Nv21 => width,
+        _ => width,
+    };
+
     ByteFrame {
         data: data.to_vec(),
         width,

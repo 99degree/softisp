@@ -96,12 +96,7 @@ impl TemporalProcessor for MotionAdaptiveProcessor {
 
                 for c in 0..3 {
                     let val = frame.get_pixel(x as u32, y as u32, c);
-                    output.set_pixel(
-                        x as u32,
-                        y as u32,
-                        c,
-                        val * (1.0 + (gain - 1.0) * strength),
-                    );
+                    output.set_pixel(x as u32, y as u32, c, val * (1.0 + (gain - 1.0) * strength));
                 }
             }
         }
@@ -156,7 +151,10 @@ pub struct ColorBalanceProcessor {
 
 impl ColorBalanceProcessor {
     pub fn new(target_rg: f32, target_bg: f32) -> Self {
-        Self { target_rg, target_bg }
+        Self {
+            target_rg,
+            target_bg,
+        }
     }
 }
 
@@ -183,9 +181,24 @@ impl TemporalProcessor for ColorBalanceProcessor {
         let mut output = frame.clone();
         for y in 0..h {
             for x in 0..w {
-                output.set_pixel(x as u32, y as u32, 0, frame.get_pixel(x as u32, y as u32, 0) * r_gain);
-                output.set_pixel(x as u32, y as u32, 1, frame.get_pixel(x as u32, y as u32, 1));
-                output.set_pixel(x as u32, y as u32, 2, frame.get_pixel(x as u32, y as u32, 2) * b_gain);
+                output.set_pixel(
+                    x as u32,
+                    y as u32,
+                    0,
+                    frame.get_pixel(x as u32, y as u32, 0) * r_gain,
+                );
+                output.set_pixel(
+                    x as u32,
+                    y as u32,
+                    1,
+                    frame.get_pixel(x as u32, y as u32, 1),
+                );
+                output.set_pixel(
+                    x as u32,
+                    y as u32,
+                    2,
+                    frame.get_pixel(x as u32, y as u32, 2) * b_gain,
+                );
             }
         }
 

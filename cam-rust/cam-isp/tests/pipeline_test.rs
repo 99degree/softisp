@@ -8,10 +8,10 @@
 //!   (gradient direction, gray balance, non-empty output).
 
 use cam_isp::cpu::CpuEngine;
-use std::time::Instant;
 use cam_isp::engine::IspEngine;
-use cam_isp::profile::PipelineProfile;
 use cam_isp::fused::FusedPipeline;
+use cam_isp::profile::PipelineProfile;
+use std::time::Instant;
 
 // ─── Raw data generators ───────────────────────────────────────────────
 
@@ -46,9 +46,17 @@ fn color_raw(width: u32, height: u32, r: u16, g: u16, b: u16) -> Vec<u8> {
     for y in 0..height {
         for x in 0..width {
             let val = if y % 2 == 0 {
-                if x % 2 == 0 { b } else { g }
+                if x % 2 == 0 {
+                    b
+                } else {
+                    g
+                }
             } else {
-                if x % 2 == 0 { g } else { r }
+                if x % 2 == 0 {
+                    g
+                } else {
+                    r
+                }
             };
             raw.extend_from_slice(&val.to_le_bytes());
         }
@@ -67,10 +75,19 @@ fn test_controller_gray_4x4() {
     let raw = gray_raw(w, h, 0.5);
 
     let mut engine = CpuEngine::new();
-    engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
+    engine
+        .build(
+            Box::new(cam_isp::blocks::RawInputBlock::new()),
+            vec![],
+            None,
+            21,
+        )
+        .unwrap();
 
     let start = Instant::now();
-    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw)).expect("Process failed");
+    let result = engine
+        .process(&cam_isp::engine::ProcessParams::new(w, h, &raw))
+        .expect("Process failed");
     let elapsed = start.elapsed();
     println!("[perf] test_controller_gray_4x4 duration: {:?}", elapsed);
 
@@ -88,18 +105,33 @@ fn test_controller_convergence() {
     let warm_raw = color_raw(w, h, 60000, 2000, 1000);
 
     let mut engine = CpuEngine::new();
-    engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
+    engine
+        .build(
+            Box::new(cam_isp::blocks::RawInputBlock::new()),
+            vec![],
+            None,
+            21,
+        )
+        .unwrap();
 
     for _ in 0..10 {
-        let _result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &warm_raw)).expect("Process failed");
+        let _result = engine
+            .process(&cam_isp::engine::ProcessParams::new(w, h, &warm_raw))
+            .expect("Process failed");
     }
 
     let ctrl = engine.controller.lock().unwrap();
-    assert!(ctrl.frame_count >= 10, "Should have processed 10 frames, got {}", ctrl.frame_count);
-    let changed = (ctrl.awb_gains[0] - 1.0).abs() > 0.01
-        || (ctrl.awb_gains[2] - 1.0).abs() > 0.01;
-    assert!(changed, "AWB should have adapted: gains={:.3} {:.3} {:.3}",
-        ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2]);
+    assert!(
+        ctrl.frame_count >= 10,
+        "Should have processed 10 frames, got {}",
+        ctrl.frame_count
+    );
+    let changed = (ctrl.awb_gains[0] - 1.0).abs() > 0.01 || (ctrl.awb_gains[2] - 1.0).abs() > 0.01;
+    assert!(
+        changed,
+        "AWB should have adapted: gains={:.3} {:.3} {:.3}",
+        ctrl.awb_gains[0], ctrl.awb_gains[1], ctrl.awb_gains[2]
+    );
     assert!(ctrl.estimated_cct.is_some(), "CCT should be estimated");
 }
 
@@ -114,10 +146,19 @@ fn test_pipeline_gray_balance() {
     let raw = gray_raw(w, h, 0.5);
 
     let mut engine = CpuEngine::new();
-    engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
+    engine
+        .build(
+            Box::new(cam_isp::blocks::RawInputBlock::new()),
+            vec![],
+            None,
+            21,
+        )
+        .unwrap();
 
     let start = Instant::now();
-    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw)).expect("Process failed");
+    let result = engine
+        .process(&cam_isp::engine::ProcessParams::new(w, h, &raw))
+        .expect("Process failed");
     let elapsed = start.elapsed();
     println!("[perf] test_pipeline_gray_balance duration: {:?}", elapsed);
 
@@ -141,11 +182,18 @@ fn test_pipeline_gray_balance() {
         (totals[1] / pixel_count) as u8,
         (totals[2] / pixel_count) as u8,
     ];
-    let max_diff = (avgs[0] as i16 - avgs[1] as i16).abs()
+    let max_diff = (avgs[0] as i16 - avgs[1] as i16)
+        .abs()
         .max((avgs[1] as i16 - avgs[2] as i16).abs())
         .max((avgs[0] as i16 - avgs[2] as i16).abs());
-    assert!(max_diff < 80,
-        "Gray balance: R={} G={} B={}, max_diff={}", avgs[0], avgs[1], avgs[2], max_diff);
+    assert!(
+        max_diff < 80,
+        "Gray balance: R={} G={} B={}, max_diff={}",
+        avgs[0],
+        avgs[1],
+        avgs[2],
+        max_diff
+    );
 }
 
 /// Test that a gradient produces brighter right side than left.
@@ -157,9 +205,18 @@ fn test_pipeline_gradient() {
     let raw = gradient_raw(w, h);
 
     let mut engine = CpuEngine::new();
-    engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
+    engine
+        .build(
+            Box::new(cam_isp::blocks::RawInputBlock::new()),
+            vec![],
+            None,
+            21,
+        )
+        .unwrap();
 
-    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &raw)).expect("Process failed");
+    let result = engine
+        .process(&cam_isp::engine::ProcessParams::new(w, h, &raw))
+        .expect("Process failed");
 
     let left_end = (w / 4) as usize;
     let right_start = (w * 3 / 4) as usize;
@@ -170,15 +227,25 @@ fn test_pipeline_gradient() {
     for y in 0..h as usize {
         for x in 0..w as usize {
             let idx = (y * w as usize + x) * 4;
-            let lum = result.data[idx] as u64 + result.data[idx + 1] as u64 + result.data[idx + 2] as u64;
-            if x < left_end { left_sum += lum; left_count += 1; }
-            else if x >= right_start { right_sum += lum; right_count += 1; }
+            let lum =
+                result.data[idx] as u64 + result.data[idx + 1] as u64 + result.data[idx + 2] as u64;
+            if x < left_end {
+                left_sum += lum;
+                left_count += 1;
+            } else if x >= right_start {
+                right_sum += lum;
+                right_count += 1;
+            }
         }
     }
     let left_avg = left_sum / left_count.max(1);
     let right_avg = right_sum / right_count.max(1);
-    assert!(right_avg > left_avg,
-        "Gradient: right {} should be > left {}", right_avg, left_avg);
+    assert!(
+        right_avg > left_avg,
+        "Gradient: right {} should be > left {}",
+        right_avg,
+        left_avg
+    );
 }
 
 /// Test pipeline handles edge cases (black/white frames) on tiny input.
@@ -189,19 +256,40 @@ fn test_pipeline_edge_cases() {
     let h = 4u32;
 
     let mut engine = CpuEngine::new();
-    engine.build(Box::new(cam_isp::blocks::RawInputBlock::new()), vec![], None, 21).unwrap();
+    engine
+        .build(
+            Box::new(cam_isp::blocks::RawInputBlock::new()),
+            vec![],
+            None,
+            21,
+        )
+        .unwrap();
 
     // Black frame
     let black = gray_raw(w, h, 0.0);
-    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &black)).expect("Black frame failed");
+    let result = engine
+        .process(&cam_isp::engine::ProcessParams::new(w, h, &black))
+        .expect("Black frame failed");
     assert!(!result.data.is_empty());
 
     // White frame
     let white = gray_raw(w, h, 0.95);
-    let result = engine.process(&cam_isp::engine::ProcessParams::new(w, h, &white)).expect("White frame failed");
+    let result = engine
+        .process(&cam_isp::engine::ProcessParams::new(w, h, &white))
+        .expect("White frame failed");
     assert!(!result.data.is_empty());
-    let max_val = result.data.iter().take((w * h * 4) as usize).max().copied().unwrap_or(0);
-    assert!(max_val > 100, "White frame max pixel should be bright, got {}", max_val);
+    let max_val = result
+        .data
+        .iter()
+        .take((w * h * 4) as usize)
+        .max()
+        .copied()
+        .unwrap_or(0);
+    assert!(
+        max_val > 100,
+        "White frame max pixel should be bright, got {}",
+        max_val
+    );
 }
 
 // ─── Profile / FusedPipeline build tests (no processing) ──────────────

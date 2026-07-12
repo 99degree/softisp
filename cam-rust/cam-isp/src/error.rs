@@ -1,7 +1,7 @@
 //! Error types for the ISP pipeline.
 
-use std::fmt;
 use crate::pipeline::builder::PipelineError;
+use std::fmt;
 
 /// ISP pipeline error type.
 ///

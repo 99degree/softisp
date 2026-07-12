@@ -29,8 +29,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::Arc;
 
 // Alignment for hardware access
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Alignment {
     /// 4KB - Page size, minimum for mmap
     #[default]
@@ -40,7 +39,6 @@ pub enum Alignment {
     /// 2MB - For large frames
     Page2M = 2 * 1024 * 1024,
 }
-
 
 // memfd buffer for zero-copy MNN inference
 //
@@ -73,13 +71,13 @@ impl MemfdBuffer {
     pub fn new(size: usize, alignment: Alignment, name: &str) -> std::io::Result<Self> {
         // Round up to alignment
         let aligned_size = Self::align_up(size, alignment as usize);
-        
+
         // Create memfd
         let fd = Self::create_memfd(name, aligned_size)?;
-        
+
         // Map into memory
         let ptr = Self::mmap(&fd, aligned_size)?;
-        
+
         Ok(Self {
             fd,
             ptr,
@@ -88,17 +86,17 @@ impl MemfdBuffer {
             original_size: size,
         })
     }
-    
+
     /// Create memfd with default settings
     pub fn with_size(size: usize) -> std::io::Result<Self> {
         Self::new(size, Alignment::default(), "mnn_buffer")
     }
-    
+
     /// Align size up to alignment boundary
     fn align_up(size: usize, alignment: usize) -> usize {
         (size + alignment - 1) & !(alignment - 1)
     }
-    
+
     /// Create memfd using syscall
     ///
     /// # Safety
@@ -106,11 +104,10 @@ impl MemfdBuffer {
     #[cfg(target_os = "linux")]
     fn create_memfd(name: &str, size: usize) -> std::io::Result<File> {
         use std::ffi::CString;
-        
-        let name_c = CString::new(name).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
-        })?;
-        
+
+        let name_c = CString::new(name)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+
         // memfd_create(name, MFD_CLOEXEC | MFD_ALLOW_SEALING)
         let fd = unsafe {
             libc::syscall(
@@ -119,20 +116,20 @@ impl MemfdBuffer {
                 libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
             ) as RawFd
         };
-        
+
         if fd < 0 {
             return Err(std::io::Error::last_os_error());
         }
-        
+
         // Set size
         if unsafe { libc::ftruncate(fd, size as libc::off_t) } != 0 {
             unsafe { libc::close(fd) };
             return Err(std::io::Error::last_os_error());
         }
-        
+
         Ok(unsafe { File::from_raw_fd(fd) })
     }
-    
+
     /// Fallback for non-Linux (uses anonymous mmap)
     #[cfg(not(target_os = "linux"))]
     fn create_memfd(_name: &str, size: usize) -> std::io::Result<File> {
@@ -143,7 +140,7 @@ impl MemfdBuffer {
         file.set_len(size as u64)?;
         Ok(file)
     }
-    
+
     /// Memory map the file
     #[cfg(target_os = "linux")]
     fn mmap(file: &File, size: usize) -> std::io::Result<*mut u8> {
@@ -157,53 +154,51 @@ impl MemfdBuffer {
                 0,
             )
         };
-        
+
         if ptr == libc::MAP_FAILED {
             Err(std::io::Error::last_os_error())
         } else {
             Ok(ptr as *mut u8)
         }
     }
-    
+
     /// Fallback mmap for non-Linux
     #[cfg(not(target_os = "linux"))]
     fn mmap(_file: &File, size: usize) -> std::io::Result<*mut u8> {
         // Use regular malloc
-        let ptr = unsafe {
-            libc::malloc(size) as *mut u8
-        };
+        let ptr = unsafe { libc::malloc(size) as *mut u8 };
         if ptr.is_null() {
             Err(std::io::Error::last_os_error())
         } else {
             Ok(ptr)
         }
     }
-    
+
     /// Get the raw pointer for MNN
     pub fn as_ptr(&self) -> *mut u8 {
         self.ptr
     }
-    
+
     /// Get the size (aligned)
     pub fn size(&self) -> usize {
         self.size
     }
-    
+
     /// Get the original requested size
     pub fn original_size(&self) -> usize {
         self.original_size
     }
-    
+
     /// Get the file descriptor
     pub fn as_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
     }
-    
+
     /// Get the alignment
     pub fn alignment(&self) -> Alignment {
         self.alignment
     }
-    
+
     /// Fill buffer from slice
     pub fn fill_from_slice(&self, data: &[u8]) -> std::io::Result<()> {
         if data.len() > self.original_size {
@@ -212,18 +207,14 @@ impl MemfdBuffer {
                 format!("Data too large: {} > {}", data.len(), self.original_size),
             ));
         }
-        
+
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                self.ptr,
-                data.len(),
-            );
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr, data.len());
         }
-        
+
         Ok(())
     }
-    
+
     /// Copy buffer to slice
     pub fn copy_to_slice(&self, data: &mut [u8]) -> std::io::Result<()> {
         if data.len() > self.original_size {
@@ -232,18 +223,14 @@ impl MemfdBuffer {
                 format!("Buffer too small: {} < {}", self.original_size, data.len()),
             ));
         }
-        
+
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.ptr,
-                data.as_mut_ptr(),
-                data.len(),
-            );
+            std::ptr::copy_nonoverlapping(self.ptr, data.as_mut_ptr(), data.len());
         }
-        
+
         Ok(())
     }
-    
+
     /// Seal the memfd to prevent modifications
     ///
     /// This prevents the buffer from being resized or shrunk
@@ -256,41 +243,36 @@ impl MemfdBuffer {
                 libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL,
             )
         };
-        
+
         if result < 0 {
             Err(std::io::Error::last_os_error())
         } else {
             Ok(())
         }
     }
-    
+
     /// Fallback for non-Linux
     #[cfg(not(target_os = "linux"))]
     pub fn seal(&self) -> std::io::Result<()> {
         Ok(())
     }
-    
+
     /// Sync buffer for device access (flush CPU cache)
     ///
     /// Call this after filling the buffer and before MNN inference
     #[cfg(target_os = "linux")]
     pub fn sync_for_device(&self) -> std::io::Result<()> {
         // Use msync to flush CPU cache
-        let result = unsafe {
-            libc::msync(
-                self.ptr as *mut libc::c_void,
-                self.size,
-                libc::MS_SYNC,
-            )
-        };
-        
+        let result =
+            unsafe { libc::msync(self.ptr as *mut libc::c_void, self.size, libc::MS_SYNC) };
+
         if result != 0 {
             Err(std::io::Error::last_os_error())
         } else {
             Ok(())
         }
     }
-    
+
     /// Sync buffer for CPU access (invalidate CPU cache)
     ///
     /// Call this after MNN inference if you need to read the output
@@ -304,20 +286,20 @@ impl MemfdBuffer {
                 libc::MS_INVALIDATE,
             )
         };
-        
+
         if result != 0 {
             Err(std::io::Error::last_os_error())
         } else {
             Ok(())
         }
     }
-    
+
     /// Fallback for non-Linux
     #[cfg(not(target_os = "linux"))]
     pub fn sync_for_device(&self) -> std::io::Result<()> {
         Ok(())
     }
-    
+
     /// Fallback for non-Linux
     #[cfg(not(target_os = "linux"))]
     pub fn sync_for_cpu(&self) -> std::io::Result<()> {
@@ -336,7 +318,7 @@ impl Drop for MemfdBuffer {
                 }
             }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             if !self.ptr.is_null() {
@@ -345,7 +327,7 @@ impl Drop for MemfdBuffer {
                 }
             }
         }
-        
+
         // The File will be closed automatically when dropped
     }
 }
@@ -357,11 +339,7 @@ impl Clone for MemfdBuffer {
             .inspect(|new_buf| {
                 // Copy data
                 unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        self.ptr,
-                        new_buf.ptr,
-                        self.original_size,
-                    );
+                    std::ptr::copy_nonoverlapping(self.ptr, new_buf.ptr, self.original_size);
                 }
             })
             .unwrap_or_else(|_| {
@@ -395,7 +373,7 @@ impl MemfdBufferManager {
             default_alignment: Alignment::default(),
         }
     }
-    
+
     /// Create with custom alignment
     pub fn with_alignment(alignment: Alignment) -> Self {
         Self {
@@ -403,7 +381,7 @@ impl MemfdBufferManager {
             default_alignment: alignment,
         }
     }
-    
+
     /// Get or create a buffer for a tensor
     pub fn get_buffer(
         &mut self,
@@ -413,32 +391,28 @@ impl MemfdBufferManager {
         if let Some(buffer) = self.buffers.get(tensor_name) {
             return Ok(buffer.clone());
         }
-        
-        let buffer = Arc::new(MemfdBuffer::new(
-            size,
-            self.default_alignment,
-            tensor_name,
-        )?);
-        
+
+        let buffer = Arc::new(MemfdBuffer::new(size, self.default_alignment, tensor_name)?);
+
         self.buffers.insert(tensor_name.to_string(), buffer.clone());
         Ok(buffer)
     }
-    
+
     /// Get existing buffer by name
     pub fn get_existing(&self, tensor_name: &str) -> Option<Arc<MemfdBuffer>> {
         self.buffers.get(tensor_name).cloned()
     }
-    
+
     /// Remove buffer from manager
     pub fn remove(&mut self, tensor_name: &str) -> Option<Arc<MemfdBuffer>> {
         self.buffers.remove(tensor_name)
     }
-    
+
     /// Clear all buffers
     pub fn clear(&mut self) {
         self.buffers.clear();
     }
-    
+
     /// Create buffer for MNN tensor
     pub fn create_for_mnn(
         &mut self,
@@ -452,10 +426,10 @@ impl MemfdBufferManager {
         let elem_size = (elem_bits as usize).div_ceil(8); // Bytes per element
         let total_elements: usize = dims.iter().product::<i32>() as usize;
         let size = total_elements * elem_size;
-        
+
         // Create buffer
         let buffer = self.get_buffer(tensor_name, size)?;
-        
+
         // Set the host pointer on the MNN tensor
         unsafe {
             // halide_buffer_t layout:
@@ -466,16 +440,12 @@ impl MemfdBufferManager {
             let host_ptr_loc = buffer_ptr.add(host_offset) as *mut *mut u8;
             *host_ptr_loc = buffer.as_ptr();
         }
-        
+
         Ok(buffer)
     }
-    
+
     /// Setup MNN tensor with existing buffer
-    pub fn setup_mnn_tensor(
-        &self,
-        tensor: *mut std::ffi::c_void,
-        buffer: Arc<MemfdBuffer>,
-    ) {
+    pub fn setup_mnn_tensor(&self, tensor: *mut std::ffi::c_void, buffer: Arc<MemfdBuffer>) {
         unsafe {
             let buffer_ptr = tensor as *mut u8;
             let host_offset = 8;
@@ -483,19 +453,15 @@ impl MemfdBufferManager {
             *host_ptr_loc = buffer.as_ptr();
         }
     }
-    
+
     /// Sync all buffers for device access
     pub fn sync_all_for_device(&self) -> Vec<std::io::Result<()>> {
-        self.buffers.values()
-            .map(|b| b.sync_for_device())
-            .collect()
+        self.buffers.values().map(|b| b.sync_for_device()).collect()
     }
-    
+
     /// Sync all buffers for CPU access
     pub fn sync_all_for_cpu(&self) -> Vec<std::io::Result<()>> {
-        self.buffers.values()
-            .map(|b| b.sync_for_cpu())
-            .collect()
+        self.buffers.values().map(|b| b.sync_for_cpu()).collect()
     }
 }
 
@@ -524,15 +490,19 @@ pub extern "C" fn memfd_buffer_create(
     if name.is_null() {
         return std::ptr::null_mut();
     }
-    
-    let name_str = unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() };
+
+    let name_str = unsafe {
+        std::ffi::CStr::from_ptr(name)
+            .to_string_lossy()
+            .into_owned()
+    };
     let alignment = match alignment {
         4096 => Alignment::Page4K,
         65536 => Alignment::Page64K,
         2097152 => Alignment::Page2M,
         _ => Alignment::default(),
     };
-    
+
     MemfdBuffer::new(size, alignment, &name_str)
         .map(|b| Box::into_raw(Box::new(b)))
         .unwrap_or(std::ptr::null_mut())
@@ -541,7 +511,9 @@ pub extern "C" fn memfd_buffer_create(
 #[no_mangle]
 pub extern "C" fn memfd_buffer_free(buffer: *mut CMemfdBuffer) {
     if !buffer.is_null() {
-        unsafe { let _ = Box::from_raw(buffer); }
+        unsafe {
+            let _ = Box::from_raw(buffer);
+        }
     }
 }
 
@@ -581,7 +553,7 @@ pub extern "C" fn memfd_buffer_fill(
     if buffer.is_null() || data.is_null() {
         return false;
     }
-    
+
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
     unsafe { (*buffer).fill_from_slice(slice).is_ok() }
 }
@@ -610,7 +582,9 @@ pub extern "C" fn memfd_buffer_manager_new() -> *mut CMemfdBufferManager {
 #[no_mangle]
 pub extern "C" fn memfd_buffer_manager_free(manager: *mut CMemfdBufferManager) {
     if !manager.is_null() {
-        unsafe { let _ = Box::from_raw(manager); }
+        unsafe {
+            let _ = Box::from_raw(manager);
+        }
     }
 }
 
@@ -623,9 +597,13 @@ pub extern "C" fn memfd_buffer_manager_get(
     if manager.is_null() || name.is_null() {
         return std::ptr::null_mut();
     }
-    
-    let name_str = unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() };
-    
+
+    let name_str = unsafe {
+        std::ffi::CStr::from_ptr(name)
+            .to_string_lossy()
+            .into_owned()
+    };
+
     unsafe { (*manager).get_buffer(&name_str, size) }
         .map(|b| Box::into_raw(Box::new(Arc::try_unwrap(b).unwrap())))
         .unwrap_or(std::ptr::null_mut())
@@ -643,16 +621,20 @@ pub extern "C" fn memfd_buffer_manager_setup_mnn(
     if manager.is_null() || name.is_null() || tensor.is_null() || dims.is_null() {
         return std::ptr::null_mut();
     }
-    
-    let name_str = unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() };
-    
+
+    let name_str = unsafe {
+        std::ffi::CStr::from_ptr(name)
+            .to_string_lossy()
+            .into_owned()
+    };
+
     // Convert dims to slice
     let dims_slice = unsafe { std::slice::from_raw_parts(dims, ndims as usize) };
-    
+
     // Assume INT32 (4 bytes) for now - can be parameterized later
     let elem_type_code = 0; // INT32
     let elem_bits = 32;
-    
+
     unsafe { (*manager).create_for_mnn(tensor, &name_str, elem_type_code, elem_bits, dims_slice) }
         .map(|b| Box::into_raw(Box::new(Arc::try_unwrap(b).unwrap())))
         .unwrap_or(std::ptr::null_mut())
@@ -665,7 +647,7 @@ pub extern "C" fn memfd_buffer_manager_setup_mnn(
 // ```cpp
 // #include <MNN/Interpreter.hpp>
 // #include <vector>
-// 
+//
 // // Forward declarations from Rust
 // extern "C" {
 //     // Buffer functions
@@ -677,117 +659,117 @@ pub extern "C" fn memfd_buffer_manager_setup_mnn(
 //     bool memfd_buffer_fill(void* buffer, const uint8_t* data, size_t len);
 //     bool memfd_buffer_sync_for_device(void* buffer);
 //     bool memfd_buffer_sync_for_cpu(void* buffer);
-//     
+//
 //     // Manager functions
 //     void* memfd_buffer_manager_new();
 //     void memfd_buffer_manager_free(void* manager);
 //     void* memfd_buffer_manager_get(void* manager, const char* name, size_t size);
-//     void* memfd_buffer_manager_setup_mnn(void* manager, void* tensor, const char* name, 
+//     void* memfd_buffer_manager_setup_mnn(void* manager, void* tensor, const char* name,
 //                                          uint8_t elem_bits, int ndims, const int* dims);
 // }
-// 
+//
 // // Example 1: Simple buffer usage
 // void example_simple() {
 //     // Create buffer
 //     size_t size = 48 * 64 * sizeof(int32_t);
 //     void* buffer = memfd_buffer_create(size, 4096, "input_buffer");
 //     uint8_t* ptr = memfd_buffer_ptr(buffer);
-//     
+//
 //     // Fill with data
 //     std::vector<int32_t> data(48*64);
 //     for (int i = 0; i < 48*64; i++) data[i] = i % 256;
 //     memfd_buffer_fill(buffer, data.data(), size);
-//     
+//
 //     // Set as MNN input
 //     auto net = MNN::Interpreter::createFromFile("model.mnn");
 //     auto sess = net->createSession(cfg);
 //     auto* in = net->getSessionInput(sess, nullptr);
 //     in->buffer().host = ptr;
-//     
+//
 //     // Sync and run
 //     memfd_buffer_sync_for_device(buffer);
 //     net->runSession(sess);
-//     
+//
 //     // Clean up
 //     memfd_buffer_free(buffer);
 // }
-// 
+//
 // // Example 2: Using buffer manager
 // void example_with_manager() {
 //     // Create manager
 //     void* manager = memfd_buffer_manager_new();
-//     
+//
 //     // Setup MNN
 //     auto net = MNN::Interpreter::createFromFile("model.mnn");
 //     auto sess = net->createSession(cfg);
 //     auto* in = net->getSessionInput(sess, nullptr);
-//     
+//
 //     // Get or create buffer for this tensor
 //     int dims[] = {1, 1, 48, 64};
 //     void* buffer = memfd_buffer_manager_setup_mnn(
 //         manager, in, "input", 32, 4, dims);
-//     
+//
 //     if (!buffer) {
 //         std::cerr << "Failed to setup buffer" << std::endl;
 //         return;
 //     }
-//     
+//
 //     // Fill buffer
 //     uint8_t* ptr = memfd_buffer_ptr(buffer);
 //     std::vector<int32_t> data(48*64);
 //     for (int i = 0; i < 48*64; i++) data[i] = i % 256;
 //     memcpy(ptr, data.data(), 48*64*4);
-//     
+//
 //     // Sync and run
 //     memfd_buffer_sync_for_device(buffer);
 //     net->runSession(sess);
-//     
+//
 //     // Clean up
 //     memfd_buffer_manager_free(manager);
 // }
-// 
+//
 // // Example 3: With MIPI/ISP Hardware
 // void example_with_mipi() {
 //     // Assume we have a MIPI camera that outputs to a memfd
 //     int camera_fd = open_mipi_camera("/dev/video0");
-//     
+//
 //     // Create buffer manager
 //     void* manager = memfd_buffer_manager_new();
-//     
+//
 //     // Create buffer for camera output
 //     size_t size = 1920 * 1080 * 2; // RG10 format
 //     void* buffer = memfd_buffer_manager_get(manager, "camera_buffer", size);
 //     int buffer_fd = memfd_buffer_fd(buffer);
-//     
+//
 //     // Tell camera to use this buffer
 //     configure_camera_output(camera_fd, buffer_fd);
-//     
+//
 //     // Start camera
 //     start_camera(camera_fd);
-//     
+//
 //     // Setup MNN
 //     auto net = MNN::Interpreter::createFromFile("model.mnn");
 //     auto sess = net->createSession(cfg);
 //     auto* in = net->getSessionInput(sess, nullptr);
-//     
+//
 //     // Get buffer and set as MNN input
 //     uint8_t* ptr = memfd_buffer_ptr(buffer);
 //     in->buffer().host = ptr;
-//     
+//
 //     // In frame processing loop:
 //     while (true) {
 //         // Wait for frame
 //         wait_for_frame(camera_fd);
-//         
+//
 //         // Sync buffer for device (camera already wrote)
 //         memfd_buffer_sync_for_device(buffer);
-//         
+//
 //         // Run MNN inference
 //         net->runSession(sess);
-//         
+//
 //         // Process output...
 //     }
-//     
+//
 //     // Clean up
 //     stop_camera(camera_fd);
 //     memfd_buffer_manager_free(manager);
@@ -817,7 +799,7 @@ pub extern "C" fn memfd_buffer_manager_setup_mnn(
 //     for i in 0..48*64 {
 //         data[i] = (i % 256) as u32;
 //     }
-//     buffer.fill_from_slice(&unsafe { 
+//     buffer.fill_from_slice(&unsafe {
 //         std::slice::from_raw_parts(
 //             data.as_ptr() as *const u8,
 //             data.len() * 4

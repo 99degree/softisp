@@ -3,13 +3,13 @@
 //! Analyzes hardware capabilities and builds optimal pipeline
 //! configuration that stays within performance constraints.
 
-use crate::engine::{IspEngine, select_engine};
+use crate::engine::{select_engine, IspEngine};
 use crate::error::IspResult;
-use crate::pipeline::{IspBlock, IspFrame};
+use crate::frame_rate::{FrameRateController, FrameRateStats};
 use crate::pipeline::build::build_engine;
 use crate::pipeline::traits::ProcessPipeline;
+use crate::pipeline::{IspBlock, IspFrame};
 use crate::profile::PipelineProfile;
-use crate::frame_rate::{FrameRateController, FrameRateStats};
 
 /// Hardware capability limits.
 #[derive(Debug, Clone)]
@@ -40,7 +40,7 @@ impl Default for HwLimits {
             max_complexity: 1.0,
             max_blocks: 20,
             max_onnx_size: 50 * 1024 * 1024, // 50MB
-            max_memory: 512 * 1024 * 1024,     // 512MB
+            max_memory: 512 * 1024 * 1024,   // 512MB
             target_fps: 30.0,
             gpu_memory: 0,
             gpu_compute: 0.0,
@@ -73,7 +73,7 @@ impl HwLimits {
             max_complexity: 0.6,
             max_blocks: 12,
             max_onnx_size: 20 * 1024 * 1024, // 20MB
-            max_memory: 256 * 1024 * 1024,     // 256MB
+            max_memory: 256 * 1024 * 1024,   // 256MB
             target_fps: 30.0,
             gpu_memory: 128 * 1024 * 1024,
             gpu_compute: 1.0,
@@ -87,7 +87,7 @@ impl HwLimits {
         Self {
             max_complexity: 1.0,
             max_blocks: 30,
-            max_onnx_size: 100 * 1024 * 1024, // 100MB
+            max_onnx_size: 100 * 1024 * 1024,   // 100MB
             max_memory: 2 * 1024 * 1024 * 1024, // 2GB
             target_fps: 60.0,
             gpu_memory: 1024 * 1024 * 1024,
@@ -103,7 +103,7 @@ impl HwLimits {
             max_complexity: 0.3,
             max_blocks: 6,
             max_onnx_size: 5 * 1024 * 1024, // 5MB
-            max_memory: 64 * 1024 * 1024,     // 64MB
+            max_memory: 64 * 1024 * 1024,   // 64MB
             target_fps: 15.0,
             gpu_memory: 0,
             gpu_compute: 0.0,
@@ -330,7 +330,8 @@ impl SmartPipelineBuilder {
     /// Check if a block is essential (cannot be skipped).
     fn is_essential_block(&self, block_id: &str) -> bool {
         // Essential blocks: unpack, demosaic, display
-        matches!(block_id, 
+        matches!(
+            block_id,
             "unpack" | "unpack_cfa" | "demosaic" | "demosaic_ccm" | "display"
         )
     }

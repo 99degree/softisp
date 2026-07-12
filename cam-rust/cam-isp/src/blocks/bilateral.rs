@@ -54,10 +54,16 @@ impl IspBlock for BilateralBlock {
     }
 
     fn input_source(&self) -> Option<&str> {
-        if self.input_source.is_empty() { Some("bilateral/input") } else { Some(&self.input_source) }
+        if self.input_source.is_empty() {
+            Some("bilateral/input")
+        } else {
+            Some(&self.input_source)
+        }
     }
 
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
 
     fn frame_tensor(&self) -> Option<&str> {
         Some("bilateral/output")
@@ -80,9 +86,13 @@ impl IspBlock for BilateralBlock {
         // 1. Box blur (AveragePool) for spatial smoothing
         // 2. Edge detection via |input - blurred|
         // 3. Weighted blend
-        let input = if self.input_source.is_empty() { "bilateral/input" } else { &self.input_source };
+        let input = if self.input_source.is_empty() {
+            "bilateral/input"
+        } else {
+            &self.input_source
+        };
         let ns = self.tensor_ns();
-        
+
         let nodes = vec![
             // Gaussian blur approximation via AveragePool
             Proto::node(
@@ -90,9 +100,20 @@ impl IspBlock for BilateralBlock {
                 &[input],
                 &[&format!("{}/blurred", ns)],
                 &[
-                    Proto::attribute_ints("kernel_shape", &[self.kernel_size as i64, self.kernel_size as i64]),
+                    Proto::attribute_ints(
+                        "kernel_shape",
+                        &[self.kernel_size as i64, self.kernel_size as i64],
+                    ),
                     Proto::attribute_ints("strides", &[1, 1]),
-                    Proto::attribute_ints("pads", &[self.kernel_size as i64 / 2, self.kernel_size as i64 / 2, self.kernel_size as i64 / 2, self.kernel_size as i64 / 2]),
+                    Proto::attribute_ints(
+                        "pads",
+                        &[
+                            self.kernel_size as i64 / 2,
+                            self.kernel_size as i64 / 2,
+                            self.kernel_size as i64 / 2,
+                            self.kernel_size as i64 / 2,
+                        ],
+                    ),
                 ],
             ),
             // Edge detection: |input - blurred|

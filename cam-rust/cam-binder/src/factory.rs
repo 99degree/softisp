@@ -57,8 +57,8 @@
 //! </hal>
 //! ```
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use log::info;
 
@@ -223,12 +223,18 @@ impl VintfManifestEntry {
 
     /// Get the full service name.
     pub fn service_name(&self) -> String {
-        format!("android.hardware.camera.provider.ICameraProvider/{}", self.instance_name)
+        format!(
+            "android.hardware.camera.provider.ICameraProvider/{}",
+            self.instance_name
+        )
     }
 
     /// Get the interface descriptor.
     pub fn interface_descriptor(&self) -> String {
-        format!("android.hardware.camera.provider.ICameraProvider/{}", self.version)
+        format!(
+            "android.hardware.camera.provider.ICameraProvider/{}",
+            self.version
+        )
     }
 
     /// Generate VINTF manifest XML fragment.
@@ -314,18 +320,19 @@ impl VndkCompatLayer {
     /// Check if a library is available in the VNDK.
     pub fn is_library_available(&self, name: &str) -> bool {
         // Camera HAL typically uses these VNDK libraries
-        matches!(name,
-            "libcamera_metadata" |
-            "libbinder" |
-            "libutils" |
-            "libcutils" |
-            "liblog" |
-            "libhidlbase" |
-            "libhidltransport" |
-            "libhwbinder" |
-            "libbase" |
-            "libsync" |
-            "libgralloc"
+        matches!(
+            name,
+            "libcamera_metadata"
+                | "libbinder"
+                | "libutils"
+                | "libcutils"
+                | "liblog"
+                | "libhidlbase"
+                | "libhidltransport"
+                | "libhwbinder"
+                | "libbase"
+                | "libsync"
+                | "libgralloc"
         )
     }
 
@@ -375,8 +382,13 @@ mod tests {
     #[test]
     fn test_vintf_manifest() {
         let entry = VintfManifestEntry::new();
-        assert_eq!(entry.service_name(), "android.hardware.camera.provider.ICameraProvider/internal/0");
-        assert!(entry.to_vintf_xml().contains("android.hardware.camera.provider"));
+        assert_eq!(
+            entry.service_name(),
+            "android.hardware.camera.provider.ICameraProvider/internal/0"
+        );
+        assert!(entry
+            .to_vintf_xml()
+            .contains("android.hardware.camera.provider"));
     }
 
     #[test]
