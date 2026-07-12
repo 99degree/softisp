@@ -2,7 +2,6 @@
 
 use cam_isp::neural_controller::NeuralController;
 use cam_isp::controller_api::ControllerApi;
-use cam_isp::rectifier_model;
 use cam_isp::pipeline::IspFrame;
 use cam_isp::isp_params::IspParams;
 use cam_types::FrameFormat;
