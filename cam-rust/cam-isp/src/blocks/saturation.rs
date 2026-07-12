@@ -60,10 +60,16 @@ impl IspBlock for SaturationBlock {
     }
 
     fn input_source(&self) -> Option<&str> {
-        if self.input_source.is_empty() { Some("saturation/input") } else { Some(&self.input_source) }
+        if self.input_source.is_empty() {
+            Some("saturation/input")
+        } else {
+            Some(&self.input_source)
+        }
     }
 
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
 
     fn frame_tensor(&self) -> Option<&str> {
         Some("saturation/output")
@@ -82,22 +88,22 @@ impl IspBlock for SaturationBlock {
     fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        let input = if self.input_source.is_empty() { "saturation/input" } else { &self.input_source };
-        vec![
-            Proto::node(
-                "Mul",
-                &[input, "saturation/scale"],
-                &["saturation/output"],
-                &[],
-            ),
-        ]
+        let input = if self.input_source.is_empty() {
+            "saturation/input"
+        } else {
+            &self.input_source
+        };
+        vec![Proto::node(
+            "Mul",
+            &[input, "saturation/scale"],
+            &["saturation/output"],
+            &[],
+        )]
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let scale = vec![self.saturation; 3];
-        vec![
-            Proto::tensor_proto_float("saturation/scale", &[3], &scale),
-        ]
+        vec![Proto::tensor_proto_float("saturation/scale", &[3], &scale)]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {

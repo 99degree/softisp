@@ -9,9 +9,9 @@
 #![allow(dead_code)]
 
 pub mod adapter;
-pub mod util;
-pub mod gralloc;
 pub mod buffer_pool;
+pub mod gralloc;
+pub mod util;
 
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
@@ -28,7 +28,7 @@ use cam_hal::ICameraAdapter;
 pub struct hw_module_t {
     pub tag: u32,
     pub module_api_version: u16, // marks version_major
-    pub hal_api_version: u16,   // marks version_minor
+    pub hal_api_version: u16,    // marks version_minor
     pub id: *const c_char,
     pub name: *const c_char,
     pub author: *const c_char,
@@ -75,12 +75,10 @@ pub struct camera_info {
 
 #[repr(C)]
 pub struct camera_module_callbacks_t {
-    pub camera_device_status_change: Option<
-        unsafe extern "C" fn(*const camera_module_callbacks_t, i32, i32),
-    >,
-    pub torch_mode_status_change: Option<
-        unsafe extern "C" fn(*const camera_module_callbacks_t, *const c_char, i32),
-    >,
+    pub camera_device_status_change:
+        Option<unsafe extern "C" fn(*const camera_module_callbacks_t, i32, i32)>,
+    pub torch_mode_status_change:
+        Option<unsafe extern "C" fn(*const camera_module_callbacks_t, *const c_char, i32)>,
 }
 
 unsafe impl Send for camera_module_callbacks_t {}
@@ -94,12 +92,7 @@ pub struct camera_module_t {
     pub set_callbacks: unsafe extern "C" fn(*const camera_module_callbacks_t) -> i32,
     pub get_vendor_tag_ops: Option<unsafe extern "C" fn(*mut c_void)>,
     pub open_legacy: Option<
-        unsafe extern "C" fn(
-            *const hw_module_t,
-            *const c_char,
-            u32,
-            *mut *mut hw_device_t,
-        ) -> i32,
+        unsafe extern "C" fn(*const hw_module_t, *const c_char, u32, *mut *mut hw_device_t) -> i32,
     >,
     pub set_torch_mode: Option<
         unsafe extern "C" fn(*const c_char, i32) -> i32, // bool → i32 in FFI
@@ -164,22 +157,19 @@ pub struct camera3_callback_ops_t {
     pub notify: Option<
         unsafe extern "C" fn(
             *const camera3_callback_ops_t,
-            u64,   // frame number
-            u32,   // msg type
+            u64, // frame number
+            u32, // msg type
             *mut c_void,
         ),
     >,
     pub process_capture_result: Option<
-        unsafe extern "C" fn(
-            *const camera3_callback_ops_t,
-            *const camera3_capture_result_t,
-        ),
+        unsafe extern "C" fn(*const camera3_callback_ops_t, *const camera3_capture_result_t),
     >,
     pub notify2: Option<
         unsafe extern "C" fn(
             *const camera3_callback_ops_t,
-            u64,   // frame number
-            u32,   // msg type
+            u64, // frame number
+            u32, // msg type
             *const camera3_error_msg_t,
         ),
     >,
@@ -194,7 +184,7 @@ pub struct camera3_capture_result_t {
     pub stream_buffer: *mut camera3_stream_buffer_t,
     pub num_output_buffers: usize,
     pub num_input_buffers: usize,
-    pub result: *mut c_void,       // camera_metadata_t*
+    pub result: *mut c_void, // camera_metadata_t*
     pub partial_result: u32,
     pub input_buffer: *mut camera3_stream_buffer_t,
 }
@@ -208,35 +198,19 @@ pub struct camera3_error_msg_t {
 
 #[repr(C)]
 pub struct camera3_device_ops_t {
-    pub initialize: Option<
-        unsafe extern "C" fn(
-            *const camera3_device_t,
-            *const camera3_callback_ops_t,
-        ) -> i32,
-    >,
+    pub initialize:
+        Option<unsafe extern "C" fn(*const camera3_device_t, *const camera3_callback_ops_t) -> i32>,
     pub configure_streams: Option<
-        unsafe extern "C" fn(
-            *const camera3_device_t,
-            *mut camera3_stream_configuration_t,
-        ) -> i32,
+        unsafe extern "C" fn(*const camera3_device_t, *mut camera3_stream_configuration_t) -> i32,
     >,
     pub register_stream_buffers: Option<
-        unsafe extern "C" fn(
-            *const camera3_device_t,
-            *mut camera3_stream_buffer_t,
-            usize,
-        ) -> i32,
+        unsafe extern "C" fn(*const camera3_device_t, *mut camera3_stream_buffer_t, usize) -> i32,
     >,
     pub process_capture_request: Option<
-        unsafe extern "C" fn(
-            *const camera3_device_t,
-            *const camera3_capture_request_t,
-        ) -> i32,
+        unsafe extern "C" fn(*const camera3_device_t, *const camera3_capture_request_t) -> i32,
     >,
     pub flush: Option<unsafe extern "C" fn(*const camera3_device_t) -> i32>,
-    pub dump: Option<
-        unsafe extern "C" fn(*const camera3_device_t, i32, *const c_char) -> i32,
-    >,
+    pub dump: Option<unsafe extern "C" fn(*const camera3_device_t, i32, *const c_char) -> i32>,
     pub construct_default_request_settings: Option<
         unsafe extern "C" fn(
             *const camera3_device_t,
@@ -447,7 +421,7 @@ unsafe extern "C" fn device_process_capture_request(
                         let len = frame.data.len();
                         processed_data = Some(frame.data);
                         log::debug!("  processed input -> {}x{} bytes={}", w, h, len);
-                    },
+                    }
                     Err(e) => {
                         log::error!("Input processing failed: {}", e);
                     }
@@ -477,11 +451,7 @@ unsafe extern "C" fn device_process_capture_request(
                     Ok((dst_ptr, dst_size)) => {
                         let copy_len = data.len().min(dst_size);
                         unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                data.as_ptr(),
-                                dst_ptr,
-                                copy_len,
-                            );
+                            std::ptr::copy_nonoverlapping(data.as_ptr(), dst_ptr, copy_len);
                         }
                         log::debug!("  copied {} bytes to output buffer", copy_len);
 
@@ -490,7 +460,7 @@ unsafe extern "C" fn device_process_capture_request(
                         ) {
                             log::warn!("Output unlock failed: {}", e);
                         }
-                    },
+                    }
                     Err(e) => {
                         log::error!("Output lock failed: {}", e);
                     }

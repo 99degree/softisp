@@ -57,16 +57,21 @@ pub fn convert_onnx_to_mnn(
     let mnn_convert = find_mnn_convert_binary()?;
 
     let mut cmd = Command::new(&mnn_convert);
-    cmd.arg("--framework").arg("ONNX")
-        .arg("--modelFile").arg(onnx_path)
-        .arg("--MNNModel").arg(mnn_path)
-        .arg("--bizCode").arg(&opts.biz_code);
+    cmd.arg("--framework")
+        .arg("ONNX")
+        .arg("--modelFile")
+        .arg(onnx_path)
+        .arg("--MNNModel")
+        .arg(mnn_path)
+        .arg("--bizCode")
+        .arg(&opts.biz_code);
 
     if opts.fp16 {
         cmd.arg("--fp16");
     }
     if opts.weight_quant_bits > 0 {
-        cmd.arg("--weightQuantBits").arg(opts.weight_quant_bits.to_string());
+        cmd.arg("--weightQuantBits")
+            .arg(opts.weight_quant_bits.to_string());
     }
     if opts.preserve_input_type {
         cmd.arg("--preserveInputType");
@@ -81,21 +86,34 @@ pub fn convert_onnx_to_mnn(
         cmd.arg("--transformerFuse");
     }
 
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .map_err(|e| format!("Failed to run MNNConvert: {}", e))?;
 
     if output.status.success() {
         if std::path::Path::new(mnn_path).exists() {
             Ok(format!("OK: {} -> {}", onnx_path, mnn_path))
         } else {
-            let combined = if output.stdout.is_empty() { &output.stderr } else { &output.stdout };
-            Err(format!("MNNConvert succeeded but no output file: {}",
-                String::from_utf8_lossy(combined)))
+            let combined = if output.stdout.is_empty() {
+                &output.stderr
+            } else {
+                &output.stdout
+            };
+            Err(format!(
+                "MNNConvert succeeded but no output file: {}",
+                String::from_utf8_lossy(combined)
+            ))
         }
     } else {
-        let combined = if output.stderr.is_empty() { &output.stdout } else { &output.stderr };
-        Err(format!("MNN conversion failed: {}",
-            String::from_utf8_lossy(combined).trim()))
+        let combined = if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        };
+        Err(format!(
+            "MNN conversion failed: {}",
+            String::from_utf8_lossy(combined).trim()
+        ))
     }
 }
 
@@ -133,8 +151,17 @@ fn find_mnn_convert_binary() -> Result<String, String> {
                 exe_dir.join("MNNConvert"),
                 exe_dir.join("tools").join("MNNConvert"),
                 exe_dir.join("..").join("tools").join("MNNConvert"),
-                exe_dir.join("..").join("..").join("tools").join("MNNConvert"),
-                exe_dir.join("..").join("..").join("..").join("tools").join("MNNConvert"),
+                exe_dir
+                    .join("..")
+                    .join("..")
+                    .join("tools")
+                    .join("MNNConvert"),
+                exe_dir
+                    .join("..")
+                    .join("..")
+                    .join("..")
+                    .join("tools")
+                    .join("MNNConvert"),
             ];
             for p in &rel_candidates {
                 if p.exists() {

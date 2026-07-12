@@ -1,11 +1,11 @@
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::pipeline::IspBlock;
-use cam_isp::engine::{ProcessParams, OutputFormat};
 use cam_isp::profile::PipelineProfile;
 
 fn main() {
     cam_isp::cpu::register_cpu_engine();
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-    
+
     // Test with Argb output format
     let mut profile = PipelineProfile::HEAVY;
     profile.output_format = OutputFormat::Argb;
@@ -21,7 +21,12 @@ fn main() {
     let raw: Vec<u8> = vec![128u8; (1920 * 1080 * 2) as usize];
     let params = ProcessParams::new(1920, 1080, &raw);
     match engine.process(&params) {
-        Ok(f) => println!("HEAVY Argb: OK {}×{} data={}", f.width, f.height, f.data.len()),
+        Ok(f) => println!(
+            "HEAVY Argb: OK {}×{} data={}",
+            f.width,
+            f.height,
+            f.data.len()
+        ),
         Err(e) => println!("HEAVY Argb: ERR {:?}", e),
     }
 }

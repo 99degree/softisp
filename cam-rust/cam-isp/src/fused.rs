@@ -6,9 +6,9 @@
 
 use crate::engine::{IspEngine, ProcessParams};
 use crate::error::IspResult;
-use crate::pipeline::{IspBlock, IspFrame};
 use crate::pipeline::build::{build_engine, build_engine_with};
-use crate::pipeline::traits::{ProcessPipeline, BuildablePipeline};
+use crate::pipeline::traits::{BuildablePipeline, ProcessPipeline};
+use crate::pipeline::{IspBlock, IspFrame};
 
 /// A fused ISP pipeline wrapping a backend engine.
 ///
@@ -78,15 +78,9 @@ mod tests {
         crate::init();
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(32, 0);
-        let pipeline = FusedPipeline::build_with_engine(
-            blocks,
-            Box::new(crate::cpu::CpuEngine::new()),
-        );
-        assert!(
-            pipeline.is_ok(),
-            "Build failed: {:?}",
-            pipeline.err()
-        );
+        let pipeline =
+            FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()));
+        assert!(pipeline.is_ok(), "Build failed: {:?}", pipeline.err());
         let pipe = pipeline.unwrap();
         assert!(pipe.is_loaded());
         assert_eq!(pipe.backend_name(), "CPU");
@@ -105,11 +99,8 @@ mod tests {
         crate::init();
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(32, 0);
-        let pipe = FusedPipeline::build_with_engine(
-            blocks,
-            Box::new(crate::cpu::CpuEngine::new()),
-        )
-        .unwrap();
+        let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()))
+            .unwrap();
         let _engine = pipe.into_engine();
     }
 
@@ -119,11 +110,7 @@ mod tests {
         let profile = PipelineProfile::MED;
         let blocks = profile.build_blocks(32, 0);
         let pipe = FusedPipeline::build(blocks);
-        assert!(
-            pipe.is_ok(),
-            "MED profile build failed: {:?}",
-            pipe.err()
-        );
+        assert!(pipe.is_ok(), "MED profile build failed: {:?}", pipe.err());
         let p = pipe.unwrap();
         assert!(p.is_loaded());
         assert!(!p.engine().backend_name().is_empty());
@@ -134,19 +121,12 @@ mod tests {
         crate::init();
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(32, 0);
-        let pipe = FusedPipeline::build_with_engine(
-            blocks,
-            Box::new(crate::cpu::CpuEngine::new()),
-        )
-        .unwrap();
+        let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()))
+            .unwrap();
         let raw = vec![0u8; 32 * 32 * 2];
         let params = ProcessParams::new(32, 32, &raw);
         let result = pipe.process(&params);
-        assert!(
-            result.is_ok(),
-            "process failed: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "process failed: {:?}", result.err());
     }
 
     #[test]
@@ -160,10 +140,8 @@ mod tests {
         ];
         for (profile, name) in profiles {
             let blocks = profile.build_blocks(64, 0);
-            let pipe = FusedPipeline::build_with_engine(
-                blocks,
-                Box::new(crate::cpu::CpuEngine::new()),
-            );
+            let pipe =
+                FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()));
             assert!(
                 pipe.is_ok(),
                 "{} profile build failed: {:?}",
@@ -184,11 +162,7 @@ mod tests {
             let frame = result.unwrap();
             assert_eq!(frame.width, 64, "{} profile width mismatch", name);
             assert_eq!(frame.height, 64, "{} profile height mismatch", name);
-            println!(
-                "{}: OK - {} bytes output",
-                name,
-                frame.data.len()
-            );
+            println!("{}: OK - {} bytes output", name, frame.data.len());
         }
     }
 
@@ -197,18 +171,12 @@ mod tests {
         crate::init();
         let profile = PipelineProfile::LITE;
         let blocks = profile.build_blocks(64, 0);
-        let mut pipe = FusedPipeline::build_with_engine(
-            blocks,
-            Box::new(crate::cpu::CpuEngine::new()),
-        )
-        .unwrap();
+        let mut pipe =
+            FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()))
+                .unwrap();
         let raw = vec![128u8; 64 * 64 * 2];
         let result = pipe.process_bayer(&raw, 64, 64);
-        assert!(
-            result.is_ok(),
-            "process_bayer failed: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "process_bayer failed: {:?}", result.err());
         let frame = result.unwrap();
         assert_eq!(frame.width, 64);
         assert_eq!(frame.height, 64);

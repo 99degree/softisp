@@ -59,16 +59,20 @@
 //! The pipeline is stored in `IspPipelineState` and executed
 //! on each `process_capture_request()`.
 
-use std::sync::{Arc, Mutex};
 use log::info;
+use std::sync::{Arc, Mutex};
 
-use crate::types::*;
 use crate::callback::ICameraDeviceCallback;
+use crate::types::*;
 
 /// Attempt to capture a single frame from V4L2 device.
 /// Returns raw RGBA pixel data.
 #[cfg(feature = "v4l2")]
-fn capture_v4l2_frame(device_path: &str, width: u32, height: u32) -> crate::error::BinderResult<Vec<u8>> {
+fn capture_v4l2_frame(
+    device_path: &str,
+    width: u32,
+    height: u32,
+) -> crate::error::BinderResult<Vec<u8>> {
     let (_w, _h, data) = cam_hal_linux::capture_single_v4l2_frame(device_path, width, height)
         .map_err(|e| crate::error::BinderError::V4L2(e))?;
     Ok(data)
@@ -76,8 +80,14 @@ fn capture_v4l2_frame(device_path: &str, width: u32, height: u32) -> crate::erro
 
 /// Non-V4L2 stub.
 #[cfg(not(feature = "v4l2"))]
-fn capture_v4l2_frame(_device_path: &str, _width: u32, _height: u32) -> crate::error::BinderResult<Vec<u8>> {
-    Err(crate::error::BinderError::NotImplemented("V4L2 feature not enabled".into()))
+fn capture_v4l2_frame(
+    _device_path: &str,
+    _width: u32,
+    _height: u32,
+) -> crate::error::BinderResult<Vec<u8>> {
+    Err(crate::error::BinderError::NotImplemented(
+        "V4L2 feature not enabled".into(),
+    ))
 }
 
 /// List available V4L2 cameras.
@@ -182,7 +192,10 @@ impl CameraDeviceSession {
             return Err("No V4L2 cameras found".into());
         }
         let device_path = &cameras[0];
-        info!("CameraDeviceSession({}): auto-configured V4L2: {}", self.camera_id, device_path);
+        info!(
+            "CameraDeviceSession({}): auto-configured V4L2: {}",
+            self.camera_id, device_path
+        );
         *self.v4l2_device.lock().unwrap() = Some(device_path.to_string());
         Ok(())
     }
@@ -193,7 +206,10 @@ impl CameraDeviceSession {
         if !std::path::Path::new(device_path).exists() {
             return Err(format!("V4L2 device not found: {}", device_path));
         }
-        info!("CameraDeviceSession({}): V4L2 configured: {}", self.camera_id, device_path);
+        info!(
+            "CameraDeviceSession({}): V4L2 configured: {}",
+            self.camera_id, device_path
+        );
         *self.v4l2_device.lock().unwrap() = Some(device_path.to_string());
         Ok(())
     }
@@ -239,21 +255,30 @@ impl CameraDeviceSession {
                 primary_height = cfg.height as u32;
             }
 
-            info!("CameraDeviceSession({}): configured stream {} ({}x{})",
-                self.camera_id, stream_id, cfg.width, cfg.height);
+            info!(
+                "CameraDeviceSession({}): configured stream {} ({}x{})",
+                self.camera_id, stream_id, cfg.width, cfg.height
+            );
         }
 
         // Build ISP pipeline for the primary stream
         if primary_width > 0 && primary_height > 0 {
             match self.build_isp_pipeline(primary_width, primary_height) {
                 Ok(isp_state) => {
-                    info!("CameraDeviceSession({}): ISP pipeline ready ({} blocks, {} bytes ONNX)",
-                        self.camera_id, isp_state.block_ids.len(), isp_state.onnx_bytes.len());
+                    info!(
+                        "CameraDeviceSession({}): ISP pipeline ready ({} blocks, {} bytes ONNX)",
+                        self.camera_id,
+                        isp_state.block_ids.len(),
+                        isp_state.onnx_bytes.len()
+                    );
                     *self.isp_pipeline.lock().unwrap() = Some(isp_state);
                 }
                 Err(e) => {
-                    log::warn!("CameraDeviceSession({}): ISP pipeline build failed: {}",
-                        self.camera_id, e);
+                    log::warn!(
+                        "CameraDeviceSession({}): ISP pipeline build failed: {}",
+                        self.camera_id,
+                        e
+                    );
                 }
             }
         }
@@ -288,7 +313,9 @@ impl CameraDeviceSession {
     pub fn process_capture_request(&self, request: &CaptureRequest) -> Vec<StreamBuffer> {
         let state = *self.state.lock().unwrap();
         if state == SessionState::Closed {
-            return request.buffer_requests.iter()
+            return request
+                .buffer_requests
+                .iter()
                 .map(|br| StreamBuffer::error(br.stream_id, -1))
                 .collect();
         }
@@ -361,8 +388,14 @@ impl CameraDeviceSession {
             if let Some(ref isp_state) = *isp_guard {
                 match self.process_through_isp(&raw_data, isp_state) {
                     Ok(processed) => {
-                        info!("ISP: {}x{} → {}x{} ({} bytes)",
-                            width, height, width, height, processed.len());
+                        info!(
+                            "ISP: {}x{} → {}x{} ({} bytes)",
+                            width,
+                            height,
+                            width,
+                            height,
+                            processed.len()
+                        );
                         processed
                     }
                     Err(e) => {
@@ -379,19 +412,23 @@ impl CameraDeviceSession {
     }
 
     /// Process raw camera data through the ISP pipeline.
-    fn process_through_isp(&self, raw_data: &[u8], isp_state: &IspPipelineState) -> Result<Vec<u8>, cam_isp::error::IspError> {
-        use cam_isp::engine::{IspEngine, ProcessParams, select_engine_by_name};
+    fn process_through_isp(
+        &self,
+        raw_data: &[u8],
+        isp_state: &IspPipelineState,
+    ) -> Result<Vec<u8>, cam_isp::error::IspError> {
+        use cam_isp::engine::{select_engine_by_name, IspEngine, ProcessParams};
 
         // Select engine based on pipeline config
-        let engine = select_engine_by_name(&isp_state.engine_type)
-            .ok_or_else(|| cam_isp::error::IspError::Config(format!("ISP engine '{}' not available", isp_state.engine_type)))?;
+        let engine = select_engine_by_name(&isp_state.engine_type).ok_or_else(|| {
+            cam_isp::error::IspError::Config(format!(
+                "ISP engine '{}' not available",
+                isp_state.engine_type
+            ))
+        })?;
 
         // Create processing params
-        let mut params = ProcessParams::new(
-            isp_state.width,
-            isp_state.height,
-            raw_data,
-        );
+        let mut params = ProcessParams::new(isp_state.width, isp_state.height, raw_data);
         params.sensor_max = 1023.0; // 10-bit sensor
 
         // Process through ISP
@@ -402,7 +439,10 @@ impl CameraDeviceSession {
     /// Set a V4L2 device path for real frame capture.
     pub fn set_v4l2_device(&self, device_path: &str) {
         *self.v4l2_device.lock().unwrap() = Some(device_path.to_string());
-        info!("CameraDeviceSession({}): V4L2 device set to {}", self.camera_id, device_path);
+        info!(
+            "CameraDeviceSession({}): V4L2 device set to {}",
+            self.camera_id, device_path
+        );
     }
 
     /// Clear the V4L2 device (use test patterns).
@@ -436,7 +476,11 @@ impl CameraDeviceSession {
 
                 // Moving scan line for animation
                 let scan_line = ((y + tick * 2) % height) as usize;
-                let alpha = if scan_line < height as usize / 2 { 255 } else { 200 };
+                let alpha = if scan_line < height as usize / 2 {
+                    255
+                } else {
+                    200
+                };
 
                 let offset = ((y * width + x) * 4) as usize;
                 if offset + 3 < data.len() {
@@ -466,7 +510,10 @@ impl CameraDeviceSession {
         self._buffer_pool.lock().unwrap().clear();
         // Release ISP pipeline
         *self.isp_pipeline.lock().unwrap() = None;
-        info!("CameraDeviceSession({}): closed, ISP pipeline released", self.camera_id);
+        info!(
+            "CameraDeviceSession({}): closed, ISP pipeline released",
+            self.camera_id
+        );
     }
 
     /// Pause frame production.
@@ -491,7 +538,10 @@ impl CameraDeviceSession {
 
     /// AIDL: setRepeatingRequest — set a repeating capture request.
     pub fn set_repeating_request(&self, request: &CaptureRequest) -> Result<(), String> {
-        info!("CameraDeviceSession({}): setRepeatingRequest frame={}", self.camera_id, request.frame_number);
+        info!(
+            "CameraDeviceSession({}): setRepeatingRequest frame={}",
+            self.camera_id, request.frame_number
+        );
         Ok(())
     }
 
@@ -502,12 +552,19 @@ impl CameraDeviceSession {
 
     /// AIDL: getActiveStreamConfigurations — get currently active streams.
     pub fn get_active_stream_configurations(&self) -> Vec<StreamConfig> {
-        self.streams.lock().unwrap().iter().map(|s| s.config.clone()).collect()
+        self.streams
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|s| s.config.clone())
+            .collect()
     }
 
     /// AIDL: getActiveStreamBufferCount — get buffer count for a stream.
     pub fn get_active_stream_buffer_count(&self, stream_id: i32) -> i32 {
-        self.streams.lock().unwrap()
+        self.streams
+            .lock()
+            .unwrap()
             .iter()
             .find(|s| s.config.stream_id == stream_id)
             .map(|s| s.config.buffer_count)

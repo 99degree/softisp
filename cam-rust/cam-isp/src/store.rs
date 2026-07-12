@@ -50,7 +50,6 @@ pub struct CameraCharacteristics {
     pub hardware_level: u8,
 
     // ── ISP calibration targets (learned per sensor) ──
-
     /// Black level per Bayer channel `[R, Gr, Gb, B]`.
     pub black_level: [f32; 4],
     /// White level (sensor saturation).
@@ -103,7 +102,9 @@ impl Default for CameraCharacteristicsStore {
 
 impl CameraCharacteristicsStore {
     pub fn new() -> Self {
-        Self { cameras: HashMap::new() }
+        Self {
+            cameras: HashMap::new(),
+        }
     }
 
     /// Register a camera's characteristics.
@@ -308,7 +309,8 @@ impl LearnerStore {
     pub fn get_by_cct_bin(&self, cct: u32) -> Vec<&LearnerObservation> {
         let bin = Self::cct_bin_key(cct);
         match self.cct_bins.get(&bin) {
-            Some(indices) => indices.iter()
+            Some(indices) => indices
+                .iter()
                 .filter_map(|&i| self.observations.get(i))
                 .collect(),
             None => Vec::new(),
@@ -339,7 +341,10 @@ impl LearnerStore {
 
     /// Convert all observations to RegressionModel observations.
     pub fn to_regression_observations(&self) -> Vec<crate::regression::Observation> {
-        self.observations.iter().map(|o| o.to_regression_obs()).collect()
+        self.observations
+            .iter()
+            .map(|o| o.to_regression_obs())
+            .collect()
     }
 
     /// Number of distinct CCT bins populated.
@@ -504,7 +509,11 @@ impl LearnerStore {
         let lsc_k2: f32 = parts[16].parse().ok()?;
 
         Some(LearnerObservation {
-            r, g, b, lum, cct,
+            r,
+            g,
+            b,
+            lum,
+            cct,
             hw_awb_rg: hw_rg,
             hw_awb_bg: hw_bg,
             hw_ccm_diag_r: hw_ccm_r,
@@ -513,7 +522,8 @@ impl LearnerStore {
             hw_gamma,
             hw_exp_ms: exp_ms,
             hw_analog_gain: analog,
-            lsc_k1, lsc_k2,
+            lsc_k1,
+            lsc_k2,
             bayer_pattern: 0,
             frame_idx: idx,
             timestamp_ms: ts,
@@ -562,7 +572,8 @@ impl LearnerStore {
         if self.observations.is_empty() {
             return 0.5;
         }
-        self.observations.iter().map(|o| o.lum as f64).sum::<f64>() as f32 / self.observations.len() as f32
+        self.observations.iter().map(|o| o.lum as f64).sum::<f64>() as f32
+            / self.observations.len() as f32
     }
 }
 
@@ -572,12 +583,24 @@ mod tests {
 
     fn make_obs(cct: u32, lum: f32) -> LearnerObservation {
         LearnerObservation {
-            r: 0.5, g: 0.5, b: 0.5, lum, cct,
-            hw_awb_rg: 1.5, hw_awb_bg: 1.2,
-            hw_ccm_diag_r: 1.0, hw_ccm_diag_g: 1.0, hw_ccm_diag_b: 1.0,
-            hw_gamma: 2.2, hw_exp_ms: 10.0, hw_analog_gain: 1.0,
-            lsc_k1: 0.01, lsc_k2: -0.0001,
-            bayer_pattern: 0, frame_idx: 0, timestamp_ms: 0,
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+            lum,
+            cct,
+            hw_awb_rg: 1.5,
+            hw_awb_bg: 1.2,
+            hw_ccm_diag_r: 1.0,
+            hw_ccm_diag_g: 1.0,
+            hw_ccm_diag_b: 1.0,
+            hw_gamma: 2.2,
+            hw_exp_ms: 10.0,
+            hw_analog_gain: 1.0,
+            lsc_k1: 0.01,
+            lsc_k2: -0.0001,
+            bayer_pattern: 0,
+            frame_idx: 0,
+            timestamp_ms: 0,
         }
     }
 
@@ -794,7 +817,8 @@ mod tests {
         assert!(
             metadata.len() <= MAX_PERSISTENCE_FILE_BYTES + 512,
             "File size {} exceeds limit {}",
-            metadata.len(), MAX_PERSISTENCE_FILE_BYTES
+            metadata.len(),
+            MAX_PERSISTENCE_FILE_BYTES
         );
 
         let _ = std::fs::remove_file(&path);
@@ -807,7 +831,9 @@ mod tests {
         let path = tmp.to_str().unwrap().to_string();
 
         // Set persistence path (file doesn't exist yet)
-        let loaded = store.set_persistence_path(&path).expect("set_persistence_path");
+        let loaded = store
+            .set_persistence_path(&path)
+            .expect("set_persistence_path");
         assert_eq!(loaded, 0); // nothing to load
 
         // Add observations — auto-saves after each

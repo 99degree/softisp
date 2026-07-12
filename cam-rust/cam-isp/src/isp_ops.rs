@@ -10,14 +10,34 @@ pub(crate) fn generate_simulated_raw(width: u32, height: u32, rgba: &[u8]) -> Ve
     for y in 0..height {
         for x in 0..width {
             let idx = (y * width + x) as usize * 4;
-            let r = if idx + 3 < rgba.len() { rgba[idx] as u32 } else { 128 };
-            let g = if idx + 2 < rgba.len() { rgba[idx + 1] as u32 } else { 128 };
-            let b = if idx + 3 < rgba.len() { rgba[idx + 2] as u32 } else { 128 };
+            let r = if idx + 3 < rgba.len() {
+                rgba[idx] as u32
+            } else {
+                128
+            };
+            let g = if idx + 2 < rgba.len() {
+                rgba[idx + 1] as u32
+            } else {
+                128
+            };
+            let b = if idx + 3 < rgba.len() {
+                rgba[idx + 2] as u32
+            } else {
+                128
+            };
             // BGGR pattern
             let raw_val = if y % 2 == 0 {
-                if x % 2 == 0 { b } else { g }
+                if x % 2 == 0 {
+                    b
+                } else {
+                    g
+                }
             } else {
-                if x % 2 == 0 { g } else { r }
+                if x % 2 == 0 {
+                    g
+                } else {
+                    r
+                }
             };
             raw.push((raw_val * 257) as u16);
         }
@@ -172,7 +192,11 @@ pub(crate) fn apply_ccm(rgb: &[f32], matrix: &[f32; 9]) -> Vec<f32> {
 /// Apply tone curve: gamma (via 4096-entry LUT), contrast, brightness, saturation, unsharp mask.
 pub(crate) fn apply_tone(rgb: &[f32], params: &ToneParams, w: usize, h: usize) -> Vec<f32> {
     let gamma_recip = params.gamma_recip;
-    let gamma = if gamma_recip > 0.0 { 1.0 / gamma_recip } else { 1.0 };
+    let gamma = if gamma_recip > 0.0 {
+        1.0 / gamma_recip
+    } else {
+        1.0
+    };
     let contrast = params.contrast;
     let brightness = params.brightness;
     let saturation = params.saturation;
@@ -264,7 +288,8 @@ pub(crate) fn calculate_ae_gain(rgb: &[f32]) -> f32 {
     let mut sum_luma = 0.0f64;
     for i in 0..count {
         let idx = i * 3;
-        let luma = 0.299 * rgb[idx] as f64 + 0.587 * rgb[idx + 1] as f64 + 0.114 * rgb[idx + 2] as f64;
+        let luma =
+            0.299 * rgb[idx] as f64 + 0.587 * rgb[idx + 1] as f64 + 0.114 * rgb[idx + 2] as f64;
         sum_luma += luma;
     }
     let mean_luma = sum_luma / count as f64;
@@ -291,11 +316,21 @@ pub(crate) fn calculate_awb_gains(cfa: &[f32], width: usize, height: usize) -> [
         for x in 0..width {
             let v = cfa[y * width + x];
             if y % 2 == 0 {
-                if x % 2 == 0 { sum_b += v; count_b += 1; }
-                else { sum_gb += v; count_gb += 1; }
+                if x % 2 == 0 {
+                    sum_b += v;
+                    count_b += 1;
+                } else {
+                    sum_gb += v;
+                    count_gb += 1;
+                }
             } else {
-                if x % 2 == 0 { sum_gr += v; count_gr += 1; }
-                else { sum_r += v; count_r += 1; }
+                if x % 2 == 0 {
+                    sum_gr += v;
+                    count_gr += 1;
+                } else {
+                    sum_r += v;
+                    count_r += 1;
+                }
             }
         }
     }
@@ -306,10 +341,26 @@ pub(crate) fn calculate_awb_gains(cfa: &[f32], width: usize, height: usize) -> [
     let avg_b = sum_b / count_b.max(1) as f32;
     let avg_g = (avg_gr + avg_gb) / 2.0;
 
-    let r_gain = if avg_r > 0.0 { (avg_g / avg_r).clamp(0.25, 4.0) } else { 1.0 };
-    let gr_gain = if avg_gr > 0.0 { (avg_g / avg_gr).clamp(0.25, 4.0) } else { 1.0 };
-    let gb_gain = if avg_gb > 0.0 { (avg_g / avg_gb).clamp(0.25, 4.0) } else { 1.0 };
-    let b_gain = if avg_b > 0.0 { (avg_g / avg_b).clamp(0.25, 4.0) } else { 1.0 };
+    let r_gain = if avg_r > 0.0 {
+        (avg_g / avg_r).clamp(0.25, 4.0)
+    } else {
+        1.0
+    };
+    let gr_gain = if avg_gr > 0.0 {
+        (avg_g / avg_gr).clamp(0.25, 4.0)
+    } else {
+        1.0
+    };
+    let gb_gain = if avg_gb > 0.0 {
+        (avg_g / avg_gb).clamp(0.25, 4.0)
+    } else {
+        1.0
+    };
+    let b_gain = if avg_b > 0.0 {
+        (avg_g / avg_b).clamp(0.25, 4.0)
+    } else {
+        1.0
+    };
 
     [r_gain, gr_gain, gb_gain, b_gain]
 }
@@ -350,23 +401,28 @@ pub(crate) fn apply_fcs(rgb: &mut [f32], w: usize, h: usize, strength: f32) {
     }
     // 3x5 edge detection kernel (openISP style)
     let kernel: [f32; 15] = [
-        -0.125, 0.0, -0.125, 0.0, -0.125,
-        -0.125, 0.0, 1.0,   0.0, -0.125,
-        -0.125, 0.0, -0.125, 0.0, -0.125,
+        -0.125, 0.0, -0.125, 0.0, -0.125, -0.125, 0.0, 1.0, 0.0, -0.125, -0.125, 0.0, -0.125, 0.0,
+        -0.125,
     ];
     let gain = strength * 0.125;
     for y in 0..h {
         for x in 0..w {
             let idx = (y * w + x) * 3;
-            if idx + 2 >= rgb.len() { continue; }
+            if idx + 2 >= rgb.len() {
+                continue;
+            }
             let mut edge_y = 0.0f32;
             for ky in 0..3 {
                 for kx in 0..5 {
                     let py = y as isize + ky as isize - 1;
                     let px = x as isize + kx as isize - 2;
-                    if py < 0 || py >= h as isize || px < 0 || px >= w as isize { continue; }
+                    if py < 0 || py >= h as isize || px < 0 || px >= w as isize {
+                        continue;
+                    }
                     let p_idx = (py as usize * w + px as usize) * 3;
-                    if p_idx + 2 >= rgb.len() { continue; }
+                    if p_idx + 2 >= rgb.len() {
+                        continue;
+                    }
                     let lum = 0.299 * rgb[p_idx] + 0.587 * rgb[p_idx + 1] + 0.114 * rgb[p_idx + 2];
                     edge_y += lum * kernel[ky * 5 + kx];
                 }
@@ -377,7 +433,7 @@ pub(crate) fn apply_fcs(rgb: &mut [f32], w: usize, h: usize, strength: f32) {
             let g = rgb[idx + 1];
             let b = rgb[idx + 2];
             let luma = 0.299 * r + 0.587 * g + 0.114 * b;
-            rgb[idx]     = luma + (r - luma) * atten;
+            rgb[idx] = luma + (r - luma) * atten;
             rgb[idx + 1] = luma + (g - luma) * atten;
             rgb[idx + 2] = luma + (b - luma) * atten;
         }
@@ -413,7 +469,9 @@ pub(crate) fn apply_ldci(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<
     for y in 0..h {
         for x in 0..w {
             let idx = (y * w + x) * 3;
-            if idx + 2 >= rgb.len() { continue; }
+            if idx + 2 >= rgb.len() {
+                continue;
+            }
             let r_val = rgb[idx];
             let g = rgb[idx + 1];
             let b = rgb[idx + 2];
@@ -425,17 +483,19 @@ pub(crate) fn apply_ldci(rgb: &[f32], w: usize, h: usize, strength: f32) -> Vec<
             let x0 = x.saturating_sub(r);
             let x1 = (x + r + 1).min(w);
             let area = ((y1 - y0) * (x1 - x0)) as f32;
-            let sum = ii[y1 * (w + 1) + x1]
-                - ii[y0 * (w + 1) + x1]
-                - ii[y1 * (w + 1) + x0]
+            let sum = ii[y1 * (w + 1) + x1] - ii[y0 * (w + 1) + x1] - ii[y1 * (w + 1) + x0]
                 + ii[y0 * (w + 1) + x0];
             let local_mean = sum / area.max(1.0);
 
             let local_contrast = luma - local_mean;
             let boost = local_contrast * strength.clamp(0.0, 1.0);
             let enhanced_luma = (luma + boost).clamp(0.0, 1.0);
-            let scale = if luma > 0.001 { enhanced_luma / luma } else { 1.0 };
-            out[idx]     = (r_val * scale).clamp(0.0, 1.0);
+            let scale = if luma > 0.001 {
+                enhanced_luma / luma
+            } else {
+                1.0
+            };
+            out[idx] = (r_val * scale).clamp(0.0, 1.0);
             out[idx + 1] = (g * scale).clamp(0.0, 1.0);
             out[idx + 2] = (b * scale).clamp(0.0, 1.0);
         }
@@ -462,9 +522,7 @@ mod tests {
 
     #[test]
     fn test_apply_ccm_identity() {
-        let identity = [1.0, 0.0, 0.0,
-                        0.0, 1.0, 0.0,
-                        0.0, 0.0, 1.0];
+        let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let rgb = vec![0.5, 0.3, 0.8, 0.1, 0.9, 0.2];
         let result = apply_ccm(&rgb, &identity);
         assert!((result[0] - 0.5).abs() < 0.001);

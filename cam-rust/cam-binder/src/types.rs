@@ -120,7 +120,7 @@ pub struct StreamConfig {
     pub stream_id: i32,
     pub width: i32,
     pub height: i32,
-    pub format: i32,       // HAL pixel format
+    pub format: i32, // HAL pixel format
     pub buffer_count: i32,
     pub usage: i64,
     pub data_space: i32,
@@ -162,9 +162,9 @@ pub struct StreamBuffer {
     pub height: i32,
     pub format: i32,
     pub stride: i32,
-    pub data: Vec<u8>,        // pixel data (or empty if using dmabuf)
+    pub data: Vec<u8>, // pixel data (or empty if using dmabuf)
     pub timestamp_ns: i64,
-    pub status: i32,          // 0 = ok
+    pub status: i32, // 0 = ok
     pub frame_number: i64,
 }
 
@@ -285,11 +285,11 @@ pub struct CaptureResult {
 #[derive(Debug, Clone, Default)]
 pub struct CameraInfo {
     pub camera_id: String,
-    pub facing: i32,           // LENS_FACING_BACK=1, LENS_FACING_FRONT=2
-    pub orientation: i32,      // sensor orientation (0, 90, 180, 270)
+    pub facing: i32,      // LENS_FACING_BACK=1, LENS_FACING_FRONT=2
+    pub orientation: i32, // sensor orientation (0, 90, 180, 270)
     pub supported_formats: Vec<i32>,
     pub max_resolution: (i32, i32),
-    pub hardware_level: i32,   // INFO_SUPPORTED_HARDWARE_LEVEL_*
+    pub hardware_level: i32, // INFO_SUPPORTED_HARDWARE_LEVEL_*
 }
 
 // ── Concurrent camera ──
@@ -372,12 +372,16 @@ impl DataSpace {
     pub const TRANSFER_SRGB: i32 = 0x00002000;
     pub const TRANSFER_ST2084: i32 = 0x00003000;
     pub const TRANSFER_HLG: i32 = 0x00004000;
-    pub const DPY_P3: i32 = DataSpace::STANDARD_DCI_P3 | DataSpace::RANGE_FULL | DataSpace::TRANSFER_SRGB;
+    pub const DPY_P3: i32 =
+        DataSpace::STANDARD_DCI_P3 | DataSpace::RANGE_FULL | DataSpace::TRANSFER_SRGB;
     pub const STANDARD_DCI_P3: i32 = 0x00000009;
     pub const STANDARD_ADOBE_RGB: i32 = 0x0000000b;
-    pub const V0_SRGB: i32 = DataSpace::STANDARD_BT709 | DataSpace::RANGE_FULL | DataSpace::TRANSFER_SRGB;
-    pub const V0_JFIF: i32 = DataSpace::STANDARD_BT601_625 | DataSpace::RANGE_FULL | DataSpace::TRANSFER_UNSPECIFIED;
-    pub const BT2020_PQ: i32 = DataSpace::STANDARD_BT2020 | DataSpace::RANGE_FULL | DataSpace::TRANSFER_ST2084;
+    pub const V0_SRGB: i32 =
+        DataSpace::STANDARD_BT709 | DataSpace::RANGE_FULL | DataSpace::TRANSFER_SRGB;
+    pub const V0_JFIF: i32 =
+        DataSpace::STANDARD_BT601_625 | DataSpace::RANGE_FULL | DataSpace::TRANSFER_UNSPECIFIED;
+    pub const BT2020_PQ: i32 =
+        DataSpace::STANDARD_BT2020 | DataSpace::RANGE_FULL | DataSpace::TRANSFER_ST2084;
 }
 
 // ── Stream Combination ──
@@ -394,11 +398,23 @@ pub struct StreamCombination {
 
 impl StreamCombination {
     pub fn output(stream_id: i32, format: i32, width: i32, height: i32) -> Self {
-        Self { stream_id, format, width, height, is_input: false }
+        Self {
+            stream_id,
+            format,
+            width,
+            height,
+            is_input: false,
+        }
     }
 
     pub fn input(stream_id: i32, format: i32, width: i32, height: i32) -> Self {
-        Self { stream_id, format, width, height, is_input: true }
+        Self {
+            stream_id,
+            format,
+            width,
+            height,
+            is_input: true,
+        }
     }
 }
 
@@ -538,6 +554,6 @@ impl CaptureNotification {
 /// Camera resource cost.
 #[derive(Debug, Clone)]
 pub struct CameraResourceCost {
-    pub cost: i32,          // 0-100
+    pub cost: i32, // 0-100
     pub conflict_devices: Vec<String>,
 }

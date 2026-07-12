@@ -3,8 +3,8 @@
 //! Verifies that pipeline builders produce valid ONNX models
 //! for arbitrary inputs and configurations.
 
-use cam_isp::pipeline_builder::PipelineBuilder;
 use cam_isp::blocks::ToneOperator;
+use cam_isp::pipeline_builder::PipelineBuilder;
 use proptest::prelude::*;
 
 proptest! {

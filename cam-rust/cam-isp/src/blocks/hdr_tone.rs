@@ -19,8 +19,8 @@
 //!   4. Apply ACES output transform matrix (3×3 Conv)
 //!   5. Mul(intensity) + Clip
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// Tone mapping operator variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,30 +88,68 @@ impl HdrToneBlock {
 }
 
 impl IspBlock for HdrToneBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "HdrTone".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "HdrTone".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
-    fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+    fn graph_output_name(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.input_source,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        Some(Proto::value_info(&self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -139,14 +177,15 @@ impl IspBlock for HdrToneBlock {
                 let denom = format!("{}/denom", ns);
 
                 // scaled = x / white2
-                nodes.push(Proto::node("Mul",
+                nodes.push(Proto::node(
+                    "Mul",
                     &[&self.input_source, &white2_name],
-                    &[&scaled], &[]));
+                    &[&scaled],
+                    &[],
+                ));
 
                 // denom = 1 + x/white2 = 1 + scaled
-                nodes.push(Proto::node("Add",
-                    &[&scaled, &one],
-                    &[&denom], &[]));
+                nodes.push(Proto::node("Add", &[&scaled, &one], &[&denom], &[]));
 
                 // output = x * (1 + x/white2) / (1 + x/white2)
                 // But simpler: output = x / denom * (1 + x)
@@ -157,43 +196,55 @@ impl IspBlock for HdrToneBlock {
                 let inv_w2 = format!("{}/inv_w2", ns);
 
                 // one_plus_x = 1 + x
-                nodes.push(Proto::node("Add",
+                nodes.push(Proto::node(
+                    "Add",
                     &[&self.input_source, &one],
-                    &[&one_plus_x], &[]));
+                    &[&one_plus_x],
+                    &[],
+                ));
 
                 // x * inv_w2 = x / W²
-                nodes.push(Proto::node("Mul",
+                nodes.push(Proto::node(
+                    "Mul",
                     &[&self.input_source, &inv_w2],
-                    &[&scaled], &[]));
+                    &[&scaled],
+                    &[],
+                ));
 
                 // num = 1 + x/W²
-                nodes.push(Proto::node("Add",
-                    &[&scaled, &one],
-                    &[&numerator], &[]));
+                nodes.push(Proto::node("Add", &[&scaled, &one], &[&numerator], &[]));
 
                 // x * num / (1 + x)
                 let mut product = format!("{}/product", ns);
-                nodes.push(Proto::node("Mul",
+                nodes.push(Proto::node(
+                    "Mul",
                     &[&self.input_source, &numerator],
-                    &[&product], &[]));
+                    &[&product],
+                    &[],
+                ));
 
-                nodes.push(Proto::node("Div",
+                nodes.push(Proto::node(
+                    "Div",
                     &[&product, &one_plus_x],
-                    &[&product], &[]));
+                    &[&product],
+                    &[],
+                ));
 
                 // intensity
                 if (self.intensity - 1.0).abs() > 1e-6 {
                     let int_name = format!("{}/intensity", ns);
                     let scaled = format!("{}/final_scaled", ns);
-                    nodes.push(Proto::node("Mul",
-                        &[&product, &int_name],
-                        &[&scaled], &[]));
+                    nodes.push(Proto::node("Mul", &[&product, &int_name], &[&scaled], &[]));
                     product = scaled;
                 }
 
                 // rename to output
-                nodes.push(Proto::node("Identity",
-                    &[&product], &[&self.frame_tensor], &[]));
+                nodes.push(Proto::node(
+                    "Identity",
+                    &[&product],
+                    &[&self.frame_tensor],
+                    &[],
+                ));
             }
             ToneOperator::Aces => {
                 // ACES filmic approximation (Stephen Hill fit)
@@ -203,9 +254,12 @@ impl IspBlock for HdrToneBlock {
 
                 // Step 1: ACES input transform (3×3 Conv)
                 let aces_in = format!("{}/aces_in", ns);
-                nodes.push(Proto::node("Conv",
+                nodes.push(Proto::node(
+                    "Conv",
                     &[&self.input_source, &format!("{}/input_matrix", ns)],
-                    &[&aces_in], &[]));
+                    &[&aces_in],
+                    &[],
+                ));
 
                 // Step 2: ACES curve
                 //   a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14
@@ -241,24 +295,28 @@ impl IspBlock for HdrToneBlock {
 
                 // curve_out = numerator / denominator
                 let curve_out = format!("{}/curved", ns);
-                nodes.push(Proto::node("Div",
+                nodes.push(Proto::node(
+                    "Div",
                     &[&numerator, &denominator],
-                    &[&curve_out], &[]));
+                    &[&curve_out],
+                    &[],
+                ));
 
                 // Step 3: ACES output transform (3×3 Conv)
                 let aces_out = format!("{}/aces_out", ns);
-                nodes.push(Proto::node("Conv",
+                nodes.push(Proto::node(
+                    "Conv",
                     &[&curve_out, &format!("{}/output_matrix", ns)],
-                    &[&aces_out], &[]));
+                    &[&aces_out],
+                    &[],
+                ));
 
                 // Step 4: Intensity + clip
                 let mut result = aces_out;
                 if (self.intensity - 1.0).abs() > 1e-6 {
                     let int_name = format!("{}/intensity", ns);
                     let scaled = format!("{}/scaled", ns);
-                    nodes.push(Proto::node("Mul",
-                        &[&result, &int_name],
-                        &[&scaled], &[]));
+                    nodes.push(Proto::node("Mul", &[&result, &int_name], &[&scaled], &[]));
                     result = scaled;
                 }
 
@@ -267,7 +325,12 @@ impl IspBlock for HdrToneBlock {
                 let max_name = format!("{}/max", ns);
                 let clamped = format!("{}/clamped", ns);
                 nodes.push(Proto::node("Max", &[&result, &min_name], &[&clamped], &[]));
-                nodes.push(Proto::node("Min", &[&clamped, &max_name], &[&self.frame_tensor], &[]));
+                nodes.push(Proto::node(
+                    "Min",
+                    &[&clamped, &max_name],
+                    &[&self.frame_tensor],
+                    &[],
+                ));
             }
             ToneOperator::Uncharted2 => {
                 // Uncharted2 / John Hable's filmic curve
@@ -280,9 +343,12 @@ impl IspBlock for HdrToneBlock {
 
                 // exposed = x * exposure
                 let exposed = format!("{}/exposed", ns);
-                nodes.push(Proto::node("Mul",
+                nodes.push(Proto::node(
+                    "Mul",
                     &[&self.input_source, &exp_name],
-                    &[&exposed], &[]));
+                    &[&exposed],
+                    &[],
+                ));
 
                 let a = format!("{}/a", ns);
                 let b = format!("{}/b", ns);
@@ -343,7 +409,12 @@ impl IspBlock for HdrToneBlock {
                 let max_name = format!("{}/max", ns);
                 let clamped = format!("{}/clamped", ns);
                 nodes.push(Proto::node("Max", &[&result, &min_name], &[&clamped], &[]));
-                nodes.push(Proto::node("Min", &[&clamped, &max_name], &[&self.frame_tensor], &[]));
+                nodes.push(Proto::node(
+                    "Min",
+                    &[&clamped, &max_name],
+                    &[&self.frame_tensor],
+                    &[],
+                ));
             }
         }
 
@@ -356,21 +427,35 @@ impl IspBlock for HdrToneBlock {
 
         match self.operator {
             ToneOperator::Reinhard => {
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/white2", ns), 1.0 / (self.white_point * self.white_point)));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/inv_w2", ns), 1.0 / (self.white_point * self.white_point)));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/white2", ns),
+                    1.0 / (self.white_point * self.white_point),
+                ));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/inv_w2", ns),
+                    1.0 / (self.white_point * self.white_point),
+                ));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/one", ns),
+                    1.0,
+                ));
                 if (self.intensity - 1.0).abs() > 1e-6 {
-                    inits.push(Proto::tensor_proto_float_scalar(&format!("{}/intensity", ns), self.intensity));
+                    inits.push(Proto::tensor_proto_float_scalar(
+                        &format!("{}/intensity", ns),
+                        self.intensity,
+                    ));
                 }
             }
             ToneOperator::Aces => {
                 // ACES input transform matrix (sRGB → ACES) — 3×3 flattened
                 let input_matrix: [f32; 9] = [
-                    0.59719, 0.35458, 0.04823,
-                    0.07600, 0.90834, 0.01566,
-                    0.02840, 0.13383, 0.83777,
+                    0.59719, 0.35458, 0.04823, 0.07600, 0.90834, 0.01566, 0.02840, 0.13383, 0.83777,
                 ];
-                inits.push(Proto::tensor_proto_float(&format!("{}/input_matrix", ns), &[3, 3], &input_matrix));
+                inits.push(Proto::tensor_proto_float(
+                    &format!("{}/input_matrix", ns),
+                    &[3, 3],
+                    &input_matrix,
+                ));
 
                 // ACES curve constants
                 inits.push(Proto::tensor_proto_float_scalar(&format!("{}/a", ns), 2.51));
@@ -381,16 +466,28 @@ impl IspBlock for HdrToneBlock {
 
                 // ACES output transform matrix (ACES → sRGB) — 3×3 flattened
                 let output_matrix: [f32; 9] = [
-                    1.60475, -0.53108, -0.07367,
-                    -0.10208, 1.10813, -0.00605,
-                    -0.00327, -0.07276, 1.07602,
+                    1.60475, -0.53108, -0.07367, -0.10208, 1.10813, -0.00605, -0.00327, -0.07276,
+                    1.07602,
                 ];
-                inits.push(Proto::tensor_proto_float(&format!("{}/output_matrix", ns), &[3, 3], &output_matrix));
+                inits.push(Proto::tensor_proto_float(
+                    &format!("{}/output_matrix", ns),
+                    &[3, 3],
+                    &output_matrix,
+                ));
 
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/min", ns), 0.0));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/max", ns), 1.0));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/min", ns),
+                    0.0,
+                ));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/max", ns),
+                    1.0,
+                ));
                 if (self.intensity - 1.0).abs() > 1e-6 {
-                    inits.push(Proto::tensor_proto_float_scalar(&format!("{}/intensity", ns), self.intensity));
+                    inits.push(Proto::tensor_proto_float_scalar(
+                        &format!("{}/intensity", ns),
+                        self.intensity,
+                    ));
                 }
             }
             ToneOperator::Uncharted2 => {
@@ -401,11 +498,23 @@ impl IspBlock for HdrToneBlock {
                 inits.push(Proto::tensor_proto_float_scalar(&format!("{}/d", ns), 0.20));
                 inits.push(Proto::tensor_proto_float_scalar(&format!("{}/e", ns), 0.02));
                 inits.push(Proto::tensor_proto_float_scalar(&format!("{}/f", ns), 0.30));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/exposure", ns), 1.0));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/min", ns), 0.0));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/max", ns), 1.0));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/exposure", ns),
+                    1.0,
+                ));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/min", ns),
+                    0.0,
+                ));
+                inits.push(Proto::tensor_proto_float_scalar(
+                    &format!("{}/max", ns),
+                    1.0,
+                ));
                 if (self.intensity - 1.0).abs() > 1e-6 {
-                    inits.push(Proto::tensor_proto_float_scalar(&format!("{}/intensity", ns), self.intensity));
+                    inits.push(Proto::tensor_proto_float_scalar(
+                        &format!("{}/intensity", ns),
+                        self.intensity,
+                    ));
                 }
             }
         }
@@ -453,7 +562,11 @@ mod tests {
         assert_eq!(b.operator, ToneOperator::Reinhard);
         let nodes = b.nodes();
         // Reinhard: Mul + Add + Mul + Add + Mul + Div + Identity = 7
-        assert!(nodes.len() >= 5, "Reinhard needs >= 5 nodes, got {}", nodes.len());
+        assert!(
+            nodes.len() >= 5,
+            "Reinhard needs >= 5 nodes, got {}",
+            nodes.len()
+        );
     }
 
     #[test]
@@ -461,10 +574,18 @@ mod tests {
         let b = HdrToneBlock::new().with_operator(ToneOperator::Aces);
         let nodes = b.nodes();
         // ACES: Conv + 7 curve nodes + Conv + Max + Min = 11
-        assert!(nodes.len() >= 9, "ACES needs >= 9 nodes, got {}", nodes.len());
+        assert!(
+            nodes.len() >= 9,
+            "ACES needs >= 9 nodes, got {}",
+            nodes.len()
+        );
         let inits = b.initializers();
         // input_matrix + 5 constants + output_matrix + min + max = 9
-        assert!(inits.len() >= 8, "ACES needs >= 8 initializers, got {}", inits.len());
+        assert!(
+            inits.len() >= 8,
+            "ACES needs >= 8 initializers, got {}",
+            inits.len()
+        );
     }
 
     #[test]
@@ -472,7 +593,11 @@ mod tests {
         let b = HdrToneBlock::new().with_operator(ToneOperator::Uncharted2);
         let nodes = b.nodes();
         // Uncharted2: Mul + many ops + Max + Min
-        assert!(nodes.len() >= 10, "Uncharted2 needs >= 10 nodes, got {}", nodes.len());
+        assert!(
+            nodes.len() >= 10,
+            "Uncharted2 needs >= 10 nodes, got {}",
+            nodes.len()
+        );
     }
 
     #[test]
@@ -496,7 +621,10 @@ mod tests {
     fn test_hdr_tone_extra_inputs() {
         let b = HdrToneBlock::new().with_operator(ToneOperator::Reinhard);
         let extras = b.extra_inputs();
-        assert!(!extras.is_empty(), "Reinhard should have white2 extra input");
+        assert!(
+            !extras.is_empty(),
+            "Reinhard should have white2 extra input"
+        );
     }
 
     #[test]

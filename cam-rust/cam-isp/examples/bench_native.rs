@@ -1,17 +1,28 @@
 fn main() {
-    let _ = env_logger::builder().is_test(false).filter_level(log::LevelFilter::Info).try_init();
+    let _ = env_logger::builder()
+        .is_test(false)
+        .filter_level(log::LevelFilter::Info)
+        .try_init();
     cam_isp::init();
 
-    let sensor_w = 3840u32; let sensor_h = 2160u32; let post_w = 960u32; let post_h = 540u32;
+    let sensor_w = 3840u32;
+    let sensor_h = 2160u32;
+    let post_w = 960u32;
+    let post_h = 540u32;
     let packed_w = (sensor_w / 2) as i64;
-    let full_w = sensor_w as i64; let full_h = sensor_h as i64;
-    let ds_w = 1920i64; let ds_h = 1080i64;
-    let post_w_i = post_w as i64; let post_h_i = post_h as i64;
+    let full_w = sensor_w as i64;
+    let full_h = sensor_h as i64;
+    let ds_w = 1920i64;
+    let ds_h = 1080i64;
+    let post_w_i = post_w as i64;
+    let post_h_i = post_h as i64;
 
     let mut raw_buf = Vec::with_capacity((sensor_w * sensor_h * 2) as usize);
     let mut rng_state = 42u64;
     for _ in 0..sensor_w * sensor_h {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let val = (rng_state >> 22) as u16 & 0x3FF;
         raw_buf.extend_from_slice(&val.to_le_bytes());
     }
@@ -21,19 +32,25 @@ fn main() {
     let engine_name = std::env::var("ENGINE").unwrap_or_else(|_| "auto".to_string());
     let mut engine = match cam_isp::engine::select_engine_by_name(&engine_name) {
         Some(e) => e,
-        None => match cam_isp::engine::select_engine() { Some(e) => e, None => Box::new(cam_isp::cpu::CpuEngine::new()) },
+        None => match cam_isp::engine::select_engine() {
+            Some(e) => e,
+            None => Box::new(cam_isp::cpu::CpuEngine::new()),
+        },
     };
     let backend_name = engine.backend_name();
 
     // ── Probe backend capabilities, auto-select optimal mode ─────────
     let caps = cam_isp::engine::BackendCapabilities::probe(backend_name);
     let use_native = match std::env::var("MODE").as_deref() {
-        Ok("native") => { true },
-        Ok("packed") => { false },
+        Ok("native") => true,
+        Ok("packed") => false,
         _ => {
             // Auto-detect: prefer NativeInt16 if backend supports it
             let auto = caps.recommend_native_int16();
-            println!("  auto mode: NativeInt16={} (backend={})", auto, backend_name);
+            println!(
+                "  auto mode: NativeInt16={} (backend={})",
+                auto, backend_name
+            );
             auto
         }
     };
@@ -42,32 +59,64 @@ fn main() {
     let elem_type = if use_native { 5 } else { 6 };
 
     let mut blocks: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = vec![
-        Box::new(cam_isp::blocks::RawInputBlock::new().with_elem_type(elem_type).with_concrete_dims(full_h, pw)),
-        Box::new(cam_isp::blocks::UnpackCfaBlock::new()
-            .with_concrete_width(full_w).with_concrete_dims(full_h, full_w)
-            .with_downscale(1).with_sensor_max(1023.0).with_blc(true)
-            .with_mode(if use_native { cam_isp::blocks::UnpackMode::NativeInt16 } else { cam_isp::blocks::UnpackMode::PackedInt32 })),
+        Box::new(
+            cam_isp::blocks::RawInputBlock::new()
+                .with_elem_type(elem_type)
+                .with_concrete_dims(full_h, pw),
+        ),
+        Box::new(
+            cam_isp::blocks::UnpackCfaBlock::new()
+                .with_concrete_width(full_w)
+                .with_concrete_dims(full_h, full_w)
+                .with_downscale(1)
+                .with_sensor_max(1023.0)
+                .with_blc(true)
+                .with_mode(if use_native {
+                    cam_isp::blocks::UnpackMode::NativeInt16
+                } else {
+                    cam_isp::blocks::UnpackMode::PackedInt32
+                }),
+        ),
         Box::new(cam_isp::blocks::DemosaicCcmBlock::new(0).with_concrete_dims(ds_h, ds_w)),
-        Box::new(cam_isp::blocks::AdaptiveDownscaleBlock::new(post_w_i, post_h_i, 0, "edge", "fit").with_concrete_dims(ds_h, ds_w)),
+        Box::new(
+            cam_isp::blocks::AdaptiveDownscaleBlock::new(post_w_i, post_h_i, 0, "edge", "fit")
+                .with_concrete_dims(ds_h, ds_w),
+        ),
         Box::new(cam_isp::blocks::FcsBlock::new()),
         Box::new(cam_isp::blocks::LdciBlock::new()),
         Box::new(cam_isp::blocks::EeBlock::new()),
-        Box::new(cam_isp::blocks::DisplayBlock::new(post_w).with_pack_rgba(false).with_bg4a(true).with_concrete_dims(post_h_i, post_w_i)),
+        Box::new(
+            cam_isp::blocks::DisplayBlock::new(post_w)
+                .with_pack_rgba(false)
+                .with_bg4a(true)
+                .with_concrete_dims(post_h_i, post_w_i),
+        ),
     ];
 
     cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
 
-    let mut all = blocks; let head = all.remove(0);
+    let mut all = blocks;
+    let head = all.remove(0);
 
     println!("=== BackendCapabilities ===");
     println!("  engine:     {}", backend_name);
     println!("  native_int16: {}", caps.supports_native_int16);
     println!("  fp16_storage: {}", caps.supports_fp16_storage);
     println!("  gpu_accel:    {}", caps.has_gpu_acceleration);
-    println!("  using:      {}", if use_native { "NativeInt16" } else { "PackedInt32" });
+    println!(
+        "  using:      {}",
+        if use_native {
+            "NativeInt16"
+        } else {
+            "PackedInt32"
+        }
+    );
 
     if use_native {
-        if let Some(mnn) = engine.as_any_mut().downcast_mut::<cam_isp::mnnengine::MnnEngine>() {
+        if let Some(mnn) = engine
+            .as_any_mut()
+            .downcast_mut::<cam_isp::mnnengine::MnnEngine>()
+        {
             mnn.set_preserve_input_type(true);
             println!("  preserve_input_type=TRUE");
         } else {
@@ -76,13 +125,20 @@ fn main() {
     }
 
     let result = engine.build(head, all, None, 21);
-    if let Err(ref e) = result { eprintln!("BUILD FAILED: {}", e); return; }
+    if let Err(ref e) = result {
+        eprintln!("BUILD FAILED: {}", e);
+        return;
+    }
 
     let mut params = cam_isp::engine::ProcessParams::new(sensor_w, sensor_h, &raw);
-    params.target_width = post_w; params.target_height = post_h;
-    params.sensor_max = 1023.0; params.output_format = cam_isp::engine::OutputFormat::FloatBgra;
+    params.target_width = post_w;
+    params.target_height = post_h;
+    params.sensor_max = 1023.0;
+    params.output_format = cam_isp::engine::OutputFormat::FloatBgra;
 
-    for _ in 0..2 { let _ = engine.process(&params); }
+    for _ in 0..2 {
+        let _ = engine.process(&params);
+    }
     let mut sum_ms = 0.0f64;
     let n_frames = 10;
     for i in 0..n_frames {
@@ -91,10 +147,17 @@ fn main() {
         let result = engine.process(&params);
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         match result {
-            Ok(frame) => println!("  [{:2}] {:4}×{:<4}  {:7.1}ms", i, frame.width, frame.height, ms),
+            Ok(frame) => println!(
+                "  [{:2}] {:4}×{:<4}  {:7.1}ms",
+                i, frame.width, frame.height, ms
+            ),
             Err(e) => println!("  [{:2}] ERROR: {}", i, e),
         }
         sum_ms += ms;
     }
-    println!("Average: {:.1}ms ({:.1} FPS)", sum_ms / n_frames as f64, 1000.0 / (sum_ms / n_frames as f64));
+    println!(
+        "Average: {:.1}ms ({:.1} FPS)",
+        sum_ms / n_frames as f64,
+        1000.0 / (sum_ms / n_frames as f64)
+    );
 }

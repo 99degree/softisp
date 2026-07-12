@@ -1,14 +1,14 @@
 //! Backend-agnostic inference engine for the ISP pipeline.
 //! Ported from com.camcore.isp.engine.IspEngine
 
-use std::collections::BTreeMap;
-use std::sync::Mutex;
-use std::fmt;
-use log::info;
 use cam_types::ToneParams;
+use log::info;
+use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Mutex;
 
-use crate::pipeline::{IspBlock, IspFrame};
 use crate::controller::IspController;
+use crate::pipeline::{IspBlock, IspFrame};
 
 /// Output pixel format selector.
 ///
@@ -77,11 +77,11 @@ impl OutputFormat {
     /// Bytes per pixel in the final output.
     pub fn bytes_per_pixel(self) -> usize {
         match self {
-            Self::FloatRgb => 12,       // f32×3
-            Self::FloatBgra => 16,      // f32×4
-            Self::Float16Rgb => 6,      // f16×3
-            Self::Float16Bgra => 8,     // f16×4
-            Self::PackedRgb => 2,       // INT32 per two pixels
+            Self::FloatRgb => 12,   // f32×3
+            Self::FloatBgra => 16,  // f32×4
+            Self::Float16Rgb => 6,  // f16×3
+            Self::Float16Bgra => 8, // f16×4
+            Self::PackedRgb => 2,   // INT32 per two pixels
             Self::Rgb | Self::Bgr => 3,
             _ => 4,
         }
@@ -92,7 +92,11 @@ impl OutputFormat {
     }
     /// ONNX elem_type for the output tensor: 10=FLOAT16, 1=FLOAT.
     pub fn onnx_elem_type(self) -> i32 {
-        if self.is_fp16() { 10 } else { 1 }
+        if self.is_fp16() {
+            10
+        } else {
+            1
+        }
     }
 }
 
@@ -263,17 +267,21 @@ impl fmt::Debug for EngineFactory {
 pub trait IspEngine: Send + Sync {
     /// Backend identifier (e.g., "CPU", "MNN/Vulkan", "ONNX")
     fn backend_name(&self) -> &'static str;
-    
+
     /// Engine priority (higher = preferred). Used by select_engine().
     fn priority(&self) -> i32;
-    
+
     /// Whether the engine has been built and is ready for inference.
     fn is_loaded(&self) -> bool;
-    
+
     /// Downcast to dyn Any for engine-specific configuration before build().
-    fn as_any(&self) -> &dyn std::any::Any { unimplemented!() }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { unimplemented!() }
-    
+    fn as_any(&self) -> &dyn std::any::Any {
+        unimplemented!()
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        unimplemented!()
+    }
+
     /// Build the engine from a pipeline of blocks.
     ///
     /// Compiles the block chain into an executable model (ONNX/MNN/etc.)
@@ -356,7 +364,12 @@ pub fn register_engine(factory: EngineFactory) {
     let name = factory.name;
     let priority = factory.priority;
     registry.insert(factory);
-    info!("Registered engine: {} (priority={}, total={})", name, priority, registry.len());
+    info!(
+        "Registered engine: {} (priority={}, total={})",
+        name,
+        priority,
+        registry.len()
+    );
 }
 
 /// Unregister an engine factory by name.
@@ -380,7 +393,10 @@ pub fn select_engine() -> Option<Box<dyn IspEngine>> {
     let registry = REGISTRY.lock().unwrap();
     for factory in registry.all() {
         let engine = (factory.create_fn)();
-        info!("Trying engine: {} (priority={})", factory.name, factory.priority);
+        info!(
+            "Trying engine: {} (priority={})",
+            factory.name, factory.priority
+        );
         if engine.priority() > 0 {
             return Some(engine);
         }
@@ -400,7 +416,10 @@ pub fn select_engine_by_name(name: &str) -> Option<Box<dyn IspEngine>> {
     for factory in registry.all() {
         if factory.name.to_lowercase().contains(&lower) {
             let engine = (factory.create_fn)();
-            info!("Selected engine: {} (priority={})", factory.name, factory.priority);
+            info!(
+                "Selected engine: {} (priority={})",
+                factory.name, factory.priority
+            );
             if engine.priority() > 0 {
                 return Some(engine);
             }

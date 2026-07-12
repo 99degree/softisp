@@ -22,12 +22,20 @@ impl IspController {
                 let i = r * cols + c;
                 let cc = c >= cols / 2 - 1 && c <= cols / 2;
                 let cr = r >= rows / 2 - 1 && r <= rows / 2;
-                w[i] = if cr && cc { 4.0 } else if cr || cc { 2.0 } else { 1.0 };
+                w[i] = if cr && cc {
+                    4.0
+                } else if cr || cc {
+                    2.0
+                } else {
+                    1.0
+                };
             }
         }
         let sum: f32 = w.iter().sum();
         if sum > 0.0 {
-            for v in w.iter_mut() { *v /= sum; }
+            for v in w.iter_mut() {
+                *v /= sum;
+            }
         }
         self.zone_weight = w;
 
@@ -44,9 +52,13 @@ impl IspController {
     /// `zone_stats` should have length zone_rows * zone_cols * 3,
     /// with RGB values in `[0, 1]` interleaved per zone (row-major).
     pub fn update_zone_stats(&mut self, zone_stats: &[f32]) {
-        if !self.zone_stats_enabled { return; }
+        if !self.zone_stats_enabled {
+            return;
+        }
         let expected = self.zone_rows * self.zone_cols * 3;
-        if zone_stats.len() < expected { return; }
+        if zone_stats.len() < expected {
+            return;
+        }
 
         let min_rgb = 0.001;
         let mut idx = 0;
@@ -147,7 +159,8 @@ impl IspController {
 
             let mut sorted = [warm_c, mid_c, cool_c];
             sorted.sort_by(|a, b| b.cmp(a));
-            if sorted.len() >= 2 && (sorted[1] as f32 / total) > 0.20
+            if sorted.len() >= 2
+                && (sorted[1] as f32 / total) > 0.20
                 && (sorted[0] as f32) < 0.80 * total
             {
                 self.dominant_cct_cluster = Some(-1);
@@ -157,7 +170,9 @@ impl IspController {
 
         log::debug!(
             "ZoneStats: w={} m={} c={} cluster={:?} frac={:.2}",
-            warm_c, mid_c, cool_c,
+            warm_c,
+            mid_c,
+            cool_c,
             self.dominant_cct_cluster,
             self.dominant_cluster_fraction
         );

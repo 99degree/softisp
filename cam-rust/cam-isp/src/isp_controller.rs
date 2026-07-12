@@ -73,7 +73,7 @@ impl IspController {
     /// Compute statistics from frame.
     fn compute_stats(&self, frame: &IspFrame) -> FrameStats {
         let mut stats = FrameStats::default();
-        
+
         if frame.data.is_empty() {
             return stats;
         }
@@ -81,7 +81,7 @@ impl IspController {
         // Compute average luminance
         let mut sum = 0.0f32;
         let mut count = 0u32;
-        
+
         // Sample every 4th pixel for speed
         for (i, &val) in frame.data.iter().enumerate() {
             if i % 4 == 0 {
@@ -89,7 +89,7 @@ impl IspController {
                 count += 1;
             }
         }
-        
+
         if count > 0 {
             stats.avg_luminance = sum / count as f32 / 255.0;
         }
@@ -114,22 +114,19 @@ impl IspController {
         }
 
         // Sample some pixels
-        let sample: Vec<f32> = data.iter().step_by(16)
-            .map(|&v| v as f32)
-            .collect();
-        
+        let sample: Vec<f32> = data.iter().step_by(16).map(|&v| v as f32).collect();
+
         let mean = sample.iter().sum::<f32>() / sample.len() as f32;
-        let variance = sample.iter()
-            .map(|&v| (v - mean).powi(2))
-            .sum::<f32>() / sample.len() as f32;
-        
+        let variance =
+            sample.iter().map(|&v| (v - mean).powi(2)).sum::<f32>() / sample.len() as f32;
+
         variance.sqrt() / 255.0
     }
 
     /// Update exposure based on brightness.
     fn update_exposure(&mut self, stats: &FrameStats) {
         let diff = self.target_brightness - stats.avg_luminance;
-        
+
         // Adjust brightness
         self.params.tone.brightness += diff * self.smoothing;
         self.params.tone.brightness = self.params.tone.brightness.clamp(-0.5, 0.5);
@@ -139,12 +136,12 @@ impl IspController {
     fn update_white_balance(&mut self, stats: &FrameStats) {
         // Simple color temperature to WB gains mapping
         let temp_ratio = stats.color_temp / self.target_color_temp;
-        
+
         // Warm light (low temp) needs more blue, cool light (high temp) needs more red
         self.params.wb.r = 1.0 / temp_ratio;
         self.params.wb.b = temp_ratio;
         self.params.wb.g = 1.0;
-        
+
         // Clamp to reasonable range
         self.params.wb.r = self.params.wb.r.clamp(0.5, 2.0);
         self.params.wb.b = self.params.wb.b.clamp(0.5, 2.0);
@@ -183,14 +180,14 @@ impl IspController {
         let highlights = stats.histogram[240..256].iter().sum::<u32>();
         let shadows = stats.histogram[0..16].iter().sum::<u32>();
         let total = stats.histogram.iter().sum::<u32>();
-        
+
         if total == 0 {
             return;
         }
 
         let highlight_ratio = highlights as f32 / total as f32;
         let shadow_ratio = shadows as f32 / total as f32;
-        
+
         // Adjust contrast based on dynamic range
         if highlight_ratio > 0.1 || shadow_ratio > 0.1 {
             // High dynamic range - reduce contrast
@@ -316,7 +313,7 @@ impl crate::controller_api::ControllerApi for IspController {
     fn analyze_and_update(&mut self, frame: &IspFrame) -> IspParams {
         self.analyze_and_update(frame).clone()
     }
-    
+
     fn last_params(&self) -> Option<&IspParams> {
         Some(self.params())
     }

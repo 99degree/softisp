@@ -39,6 +39,44 @@ You are an advanced, fully autonomous software engineering agent executing via t
 
 ---
 
+## 3.5. GIT WORKFLOW: COMMIT → PULL/REBASE → PUSH
+
+**MANDATORY WORKFLOW FOR EVERY COMMIT**
+
+```bash
+# 1. Stage and commit your changes
+# git add <files>
+# git commit -m "descriptive message"
+
+# 2. Pull latest changes with rebase (NOT merge)
+# git pull --rebase origin main
+
+# 3. Resolve any conflicts if they arise
+# git status
+# # fix conflicts if any
+# git add <resolved-files>
+# git rebase --continue
+
+# 4. Push to remote
+# git push origin main
+```
+
+**RULES**:
+
+* **ALWAYS rebase, never merge** - keeps history linear and clean
+* **Commit before pulling** - ensures your changes are on top of the latest upstream
+* **Resolve conflicts immediately** - don't let them accumulate
+* **Push immediately after successful rebase** - don't let local commits pile up
+- **Never force push to shared branches** (`main`, `master`) without explicit coordination
+
+**ANTI-PATTERNS TO AVOID**:
+* ❌ `git pull` (creates merge commits)
+* ❌ `git push --force` on shared branches
+* ❌ Accumulating multiple commits before pushing
+* ❌ Committing broken code with "will fix later"
+
+---
+
 ## 4. MANDATORY COGNITIVE & VERIFICATION LOOP
 
 You must process every single engineering task through this strict, non-negotiable loop. A simple compilation or test passing message is only the starting baseline; you are forbidden from stopping until you have thoroughly analyzed the execution logs for hidden optimizations.

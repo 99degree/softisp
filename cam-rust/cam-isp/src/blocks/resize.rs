@@ -1,5 +1,5 @@
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// Resize block — spatial scaling via ONNX Resize (nearest).
 ///
@@ -36,7 +36,11 @@ impl ResizeBlock {
     /// - `2.0` for full-resolution upscale
     pub fn new(scale: f32) -> Self {
         let idx = RESIZE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let name = if scale < 1.0 { format!("resize_down_{}", idx) } else { format!("resize_up_{}", idx) };
+        let name = if scale < 1.0 {
+            format!("resize_down_{}", idx)
+        } else {
+            format!("resize_up_{}", idx)
+        };
         Self {
             id: name.clone(),
             prev: None,
@@ -72,28 +76,50 @@ impl ResizeBlock {
     }
 
     fn out_h(&self) -> Option<i64> {
-        self.concrete_h.map(|h| (h as f64 * self.scale as f64).round() as i64)
+        self.concrete_h
+            .map(|h| (h as f64 * self.scale as f64).round() as i64)
     }
 
     fn out_w(&self) -> Option<i64> {
-        self.concrete_w.map(|w| (w as f64 * self.scale as f64).round() as i64)
+        self.concrete_w
+            .map(|w| (w as f64 * self.scale as f64).round() as i64)
     }
 }
 
 impl IspBlock for ResizeBlock {
-    fn id(&self) -> &str { &self.id }
+    fn id(&self) -> &str {
+        &self.id
+    }
     fn tensor_ns(&self) -> String {
         self.id.clone()
     }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
-    fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-    fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let ns = self.tensor_ns();
@@ -155,21 +181,22 @@ impl IspBlock for ResizeBlock {
 
         if skip {
             // Identity: pass input through unchanged
-            vec![
-                Proto::node("Identity", &[&self.input_source], &[&self.frame_tensor], &[]),
-            ]
+            vec![Proto::node(
+                "Identity",
+                &[&self.input_source],
+                &[&self.frame_tensor],
+                &[],
+            )]
         } else {
-            vec![
-                Proto::node(
-                    "Resize",
-                    &[&self.input_source, "", "", &format!("{}/scales", ns)],
-                    &[&self.frame_tensor],
-                    &[
-                        Proto::attribute_string("mode", "nearest"),
-                        Proto::attribute_int("coordinate_transformation_mode", 0),  // half_pixel
-                    ],
-                ),
-            ]
+            vec![Proto::node(
+                "Resize",
+                &[&self.input_source, "", "", &format!("{}/scales", ns)],
+                &[&self.frame_tensor],
+                &[
+                    Proto::attribute_string("mode", "nearest"),
+                    Proto::attribute_int("coordinate_transformation_mode", 0), // half_pixel
+                ],
+            )]
         }
     }
 
@@ -199,7 +226,11 @@ mod tests {
     fn test_resize_block_nodes() {
         let down = ResizeBlock::new(0.5);
         assert_eq!(down.nodes().len(), 1, "Resize should produce 1 node");
-        assert_eq!(down.initializers().len(), 1, "Should have 1 initializer (scales)");
+        assert_eq!(
+            down.initializers().len(),
+            1,
+            "Should have 1 initializer (scales)"
+        );
     }
 
     #[test]
@@ -226,11 +257,16 @@ mod tests {
 
     #[test]
     fn test_resize_pipeline_integration() {
-        let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
-            .with_elem_type(1).with_concrete_dims(48, 64));
+        let b1: Box<dyn IspBlock> = Box::new(
+            crate::blocks::RawInputBlock::new()
+                .with_elem_type(1)
+                .with_concrete_dims(48, 64),
+        );
         let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
-        let b3: Box<dyn IspBlock> = Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
-        let b4: Box<dyn IspBlock> = Box::new(crate::blocks::DemosaicCcmBlock::new(2).with_concrete_dims(24, 32));
+        let b3: Box<dyn IspBlock> =
+            Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
+        let b4: Box<dyn IspBlock> =
+            Box::new(crate::blocks::DemosaicCcmBlock::new(2).with_concrete_dims(24, 32));
         let b5: Box<dyn IspBlock> = Box::new(ResizeBlock::new(0.5).with_concrete_dims(24, 32));
         let b6: Box<dyn IspBlock> = Box::new(ResizeBlock::new(2.0).with_concrete_dims(12, 16));
 
@@ -238,7 +274,11 @@ mod tests {
         GraphComposer::wire_blocks(&mut blocks);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let result = GraphComposer::compose_from_vec(&refs, &[], 16);
-        assert!(result.is_ok(), "Pipeline through ResizeBlock: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Pipeline through ResizeBlock: {:?}",
+            result.err()
+        );
     }
 
     #[test]

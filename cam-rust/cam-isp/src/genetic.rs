@@ -34,17 +34,26 @@ pub struct Chromosome {
 
 impl Chromosome {
     /// AWB R gain: 1 + offset.
-    pub fn awb_rg(&self) -> f32 { 1.0 + self.awb_rg_offset }
+    pub fn awb_rg(&self) -> f32 {
+        1.0 + self.awb_rg_offset
+    }
     /// AWB B gain: 1 + offset.
-    pub fn awb_bg(&self) -> f32 { 1.0 + self.awb_bg_offset }
+    pub fn awb_bg(&self) -> f32 {
+        1.0 + self.awb_bg_offset
+    }
 
     /// Human-readable parameter string.
     pub fn to_param_string(&self) -> String {
         format!(
             "awbRg={:.3} awbBg={:.3} ccm=[{:.3},{:.3},{:.3}] γ={:.2} c={:.2} b={:.3}",
-            self.awb_rg(), self.awb_bg(),
-            self.ccm_diag_r, self.ccm_diag_g, self.ccm_diag_b,
-            self.gamma, self.contrast, self.brightness,
+            self.awb_rg(),
+            self.awb_bg(),
+            self.ccm_diag_r,
+            self.ccm_diag_g,
+            self.ccm_diag_b,
+            self.gamma,
+            self.contrast,
+            self.brightness,
         )
     }
 }
@@ -105,9 +114,14 @@ impl GeneticOptimizer {
         if observations.len() < 15 {
             return GeneticResult {
                 best: Chromosome {
-                    awb_rg_offset: 0.0, awb_bg_offset: 0.0,
-                    ccm_diag_r: 1.0, ccm_diag_g: 1.0, ccm_diag_b: 1.0,
-                    gamma: 2.2, contrast: 1.0, brightness: 0.0,
+                    awb_rg_offset: 0.0,
+                    awb_bg_offset: 0.0,
+                    ccm_diag_r: 1.0,
+                    ccm_diag_g: 1.0,
+                    ccm_diag_b: 1.0,
+                    gamma: 2.2,
+                    contrast: 1.0,
+                    brightness: 0.0,
                 },
                 fitness: f32::MAX,
                 generations: 0,
@@ -128,11 +142,13 @@ impl GeneticOptimizer {
         let mut best_fitness = f32::MAX;
 
         for _gen in 0..self.generations {
-            let fitnesses: Vec<f32> = population.iter()
+            let fitnesses: Vec<f32> = population
+                .iter()
                 .map(|c| fitness(c, observations))
                 .collect();
 
-            let gen_best_idx = fitnesses.iter()
+            let gen_best_idx = fitnesses
+                .iter()
                 .enumerate()
                 .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
                 .map(|(i, _)| i)
@@ -146,7 +162,8 @@ impl GeneticOptimizer {
             }
 
             // Build next population
-            let mut sorted: Vec<(usize, &Chromosome, f32)> = population.iter()
+            let mut sorted: Vec<(usize, &Chromosome, f32)> = population
+                .iter()
                 .enumerate()
                 .zip(fitnesses.iter())
                 .map(|((i, c), f)| (i, c, *f))
@@ -198,11 +215,19 @@ impl GeneticOptimizer {
 }}}}
 "#,
             observations.len(),
-            c.awb_rg_offset, c.awb_bg_offset,
-            c.ccm_diag_r, c.ccm_diag_g, c.ccm_diag_b,
-            c.gamma, c.contrast, c.brightness, result.fitness,
-            mean(&hw_gamma), std_dev(&hw_gamma),
-            mean(&hw_rg), mean(&hw_bg),
+            c.awb_rg_offset,
+            c.awb_bg_offset,
+            c.ccm_diag_r,
+            c.ccm_diag_g,
+            c.ccm_diag_b,
+            c.gamma,
+            c.contrast,
+            c.brightness,
+            result.fitness,
+            mean(&hw_gamma),
+            std_dev(&hw_gamma),
+            mean(&hw_rg),
+            mean(&hw_bg),
         )
     }
 }
@@ -306,12 +331,16 @@ fn mutate<R: Rng>(chr: &Chromosome, rate: f32, rng: &mut R) -> Chromosome {
 }
 
 fn mean(data: &[f32]) -> f32 {
-    if data.is_empty() { return 0.0; }
+    if data.is_empty() {
+        return 0.0;
+    }
     data.iter().sum::<f32>() / data.len() as f32
 }
 
 fn std_dev(data: &[f32]) -> f32 {
-    if data.len() < 2 { return 0.0; }
+    if data.len() < 2 {
+        return 0.0;
+    }
     let m = mean(data);
     let variance = data.iter().map(|v| (v - m).powi(2)).sum::<f32>() / (data.len() - 1) as f32;
     variance.sqrt()
@@ -321,9 +350,20 @@ fn std_dev(data: &[f32]) -> f32 {
 mod tests {
     use super::*;
 
-    fn make_obs(awb_rg: f32, awb_bg: f32, ccm_r: f32, ccm_g: f32, ccm_b: f32, gamma: f32) -> LearnerObservation {
+    fn make_obs(
+        awb_rg: f32,
+        awb_bg: f32,
+        ccm_r: f32,
+        ccm_g: f32,
+        ccm_b: f32,
+        gamma: f32,
+    ) -> LearnerObservation {
         LearnerObservation {
-            r: 0.5, g: 0.5, b: 0.5, lum: 0.5, cct: 5500,
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+            lum: 0.5,
+            cct: 5500,
             hw_awb_rg: awb_rg,
             hw_awb_bg: awb_bg,
             hw_ccm_diag_r: ccm_r,
@@ -343,9 +383,14 @@ mod tests {
     #[test]
     fn test_chromosome_convenience() {
         let c = Chromosome {
-            awb_rg_offset: 0.2, awb_bg_offset: -0.1,
-            ccm_diag_r: 1.0, ccm_diag_g: 1.0, ccm_diag_b: 1.0,
-            gamma: 2.2, contrast: 1.0, brightness: 0.0,
+            awb_rg_offset: 0.2,
+            awb_bg_offset: -0.1,
+            ccm_diag_r: 1.0,
+            ccm_diag_g: 1.0,
+            ccm_diag_b: 1.0,
+            gamma: 2.2,
+            contrast: 1.0,
+            brightness: 0.0,
         };
         assert!((c.awb_rg() - 1.2).abs() < 0.01);
         assert!((c.awb_bg() - 0.9).abs() < 0.01);
@@ -356,26 +401,44 @@ mod tests {
     #[test]
     fn test_fitness_perfect_match() {
         let chr = Chromosome {
-            awb_rg_offset: 0.2, awb_bg_offset: -0.1,
-            ccm_diag_r: 1.1, ccm_diag_g: 1.0, ccm_diag_b: 0.9,
-            gamma: 2.2, contrast: 1.0, brightness: 0.0,
+            awb_rg_offset: 0.2,
+            awb_bg_offset: -0.1,
+            ccm_diag_r: 1.1,
+            ccm_diag_g: 1.0,
+            ccm_diag_b: 0.9,
+            gamma: 2.2,
+            contrast: 1.0,
+            brightness: 0.0,
         };
         let obs = vec![make_obs(1.2, 0.9, 1.1, 1.0, 0.9, 2.2)];
         let f = fitness(&chr, &obs);
         // Perfect match → only regularization terms remain
-        assert!(f < 0.02, "Perfect match fitness should be near 0, got {}", f);
+        assert!(
+            f < 0.02,
+            "Perfect match fitness should be near 0, got {}",
+            f
+        );
     }
 
     #[test]
     fn test_fitness_poor_match() {
         let chr = Chromosome {
-            awb_rg_offset: 0.0, awb_bg_offset: 0.0,
-            ccm_diag_r: 1.0, ccm_diag_g: 1.0, ccm_diag_b: 1.0,
-            gamma: 2.2, contrast: 1.0, brightness: 0.0,
+            awb_rg_offset: 0.0,
+            awb_bg_offset: 0.0,
+            ccm_diag_r: 1.0,
+            ccm_diag_g: 1.0,
+            ccm_diag_b: 1.0,
+            gamma: 2.2,
+            contrast: 1.0,
+            brightness: 0.0,
         };
         let obs = vec![make_obs(2.0, 0.5, 1.5, 1.2, 0.6, 3.5)];
         let f = fitness(&chr, &obs);
-        assert!(f > 0.5, "Poor match fitness should be significant, got {}", f);
+        assert!(
+            f > 0.5,
+            "Poor match fitness should be significant, got {}",
+            f
+        );
     }
 
     #[test]
@@ -399,9 +462,9 @@ mod tests {
         };
 
         // Perfectly consistent observations: all have same HW params
-        let obs: Vec<LearnerObservation> = (0..20).map(|_| {
-            make_obs(1.3, 1.1, 1.05, 0.98, 1.02, 2.4)
-        }).collect();
+        let obs: Vec<LearnerObservation> = (0..20)
+            .map(|_| make_obs(1.3, 1.1, 1.05, 0.98, 1.02, 2.4))
+            .collect();
 
         let result = opt.optimize(&obs);
         assert!(result.generations > 0);
@@ -411,13 +474,15 @@ mod tests {
         // Allow some slack since GA might not find exact global optimum
         assert!(
             result.fitness < 0.15,
-            "Should converge close to target, got fitness={}", result.fitness
+            "Should converge close to target, got fitness={}",
+            result.fitness
         );
 
         // AWB R should be near 1.3
         assert!(
             (result.best.awb_rg() - 1.3).abs() < 0.15,
-            "awb_rg={:.3} should be near 1.3", result.best.awb_rg()
+            "awb_rg={:.3} should be near 1.3",
+            result.best.awb_rg()
         );
     }
 
@@ -429,9 +494,9 @@ mod tests {
             seed: Some(12345),
             ..Default::default()
         };
-        let obs: Vec<LearnerObservation> = (0..20).map(|_| {
-            make_obs(1.3, 1.1, 1.05, 0.98, 1.02, 2.4)
-        }).collect();
+        let obs: Vec<LearnerObservation> = (0..20)
+            .map(|_| make_obs(1.3, 1.1, 1.05, 0.98, 1.02, 2.4))
+            .collect();
 
         let result1 = opt.optimize(&obs);
         let result2 = opt.optimize(&obs);
@@ -446,9 +511,9 @@ mod tests {
             seed: Some(99),
             ..Default::default()
         };
-        let obs: Vec<LearnerObservation> = (0..15).map(|_| {
-            make_obs(1.3, 1.1, 1.05, 0.98, 1.02, 2.4)
-        }).collect();
+        let obs: Vec<LearnerObservation> = (0..15)
+            .map(|_| make_obs(1.3, 1.1, 1.05, 0.98, 1.02, 2.4))
+            .collect();
 
         let json = opt.export_json(&obs);
         assert!(json.contains("awbRgOffset"));
@@ -460,8 +525,26 @@ mod tests {
     fn test_tournament_selection() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(42);
         let pop = vec![
-            Chromosome { awb_rg_offset: 0.0, awb_bg_offset: 0.0, ccm_diag_r: 1.0, ccm_diag_g: 1.0, ccm_diag_b: 1.0, gamma: 2.2, contrast: 1.0, brightness: 0.0 },
-            Chromosome { awb_rg_offset: 0.5, awb_bg_offset: 0.5, ccm_diag_r: 1.5, ccm_diag_g: 1.5, ccm_diag_b: 1.5, gamma: 3.0, contrast: 1.5, brightness: 0.2 },
+            Chromosome {
+                awb_rg_offset: 0.0,
+                awb_bg_offset: 0.0,
+                ccm_diag_r: 1.0,
+                ccm_diag_g: 1.0,
+                ccm_diag_b: 1.0,
+                gamma: 2.2,
+                contrast: 1.0,
+                brightness: 0.0,
+            },
+            Chromosome {
+                awb_rg_offset: 0.5,
+                awb_bg_offset: 0.5,
+                ccm_diag_r: 1.5,
+                ccm_diag_g: 1.5,
+                ccm_diag_b: 1.5,
+                gamma: 3.0,
+                contrast: 1.5,
+                brightness: 0.2,
+            },
         ];
         let fitnesses = vec![0.1, 2.0];
         // The best (fitness 0.1) should be selected more often

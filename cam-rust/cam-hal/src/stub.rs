@@ -3,7 +3,6 @@
 //! Useful for testing the ISP pipeline without physical hardware.
 //! Supports RGB (RGBA), YUV (NV21), RAW (Bayer), RAW10, and RAW12 output.
 
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cam_types::{CameraSourceType, FrameFormat};
@@ -101,7 +100,7 @@ impl StubAdapter {
                     rgb[i * 3..i * 3 + 3].copy_from_slice(&rgba[i * 4..i * 4 + 3]);
                 }
                 rgb
-            },
+            }
             FrameFormat::RawSensor => self.render_raw16(w, h),
             FrameFormat::Raw10 | FrameFormat::Raw12 => self.render_raw16(w, h),
             FrameFormat::Yuv420888 => self.render_nv21(w, h),
@@ -129,7 +128,7 @@ impl StubAdapter {
                             4 => (255, 0, 255),   // magenta
                             5 => (255, 0, 0),     // red
                             6 => (0, 0, 255),     // blue
-                            _ => (0, 0, 0),        // black
+                            _ => (0, 0, 0),       // black
                         };
                         buf[idx..idx + 4].copy_from_slice(&[r, g, b, 255]);
                     }
@@ -157,10 +156,10 @@ impl StubAdapter {
                 let idx = (y * w + x) * 2;
                 // BGGR bayer pattern
                 let bayer_val = match ((y & 1), (x & 1)) {
-                    (0, 0) => self.bayer_color(x, y, w, h, 0.8),  // B
-                    (0, 1) => self.bayer_color(x, y, w, h, 0.3),  // Gb
-                    (1, 0) => self.bayer_color(x, y, w, h, 0.3),  // Gr
-                    (1, 1) => self.bayer_color(x, y, w, h, 0.0),  // R
+                    (0, 0) => self.bayer_color(x, y, w, h, 0.8), // B
+                    (0, 1) => self.bayer_color(x, y, w, h, 0.3), // Gb
+                    (1, 0) => self.bayer_color(x, y, w, h, 0.3), // Gr
+                    (1, 1) => self.bayer_color(x, y, w, h, 0.0), // R
                     _ => unreachable!(),
                 };
                 let val = (bayer_val.clamp(0.0, 1.0) * 65535.0) as u16;
@@ -199,9 +198,14 @@ impl StubAdapter {
                     StubPattern::ColorBars => {
                         let bar = (x * 8 / w) as u8;
                         buf[idx] = match bar {
-                            0 => 235, 1 => 210, 2 => 170,
-                            3 => 145, 4 => 106, 5 => 81,
-                            6 => 41, _ => 16,
+                            0 => 235,
+                            1 => 210,
+                            2 => 170,
+                            3 => 145,
+                            4 => 106,
+                            5 => 81,
+                            6 => 41,
+                            _ => 16,
                         };
                     }
                     _ => {
@@ -252,7 +256,13 @@ impl ICameraAdapter for StubAdapter {
     fn open(&mut self, config: &StreamConfig) -> Result<(), String> {
         self.config = Some(config.clone());
         self.state = CameraState::Open;
-        log::info!("Stub '{}' opened: {}x{} {:?}", self.name, config.width, config.height, config.format);
+        log::info!(
+            "Stub '{}' opened: {}x{} {:?}",
+            self.name,
+            config.width,
+            config.height,
+            config.format
+        );
         Ok(())
     }
 

@@ -5,7 +5,11 @@
 
 /// Sample average RGB from a center crop of an ARGB pixel array.
 pub fn sample_center_rgb(pixels: &[u32], count: usize) -> [f32; 3] {
-    let n = if count > 0 { count.min(pixels.len()) } else { pixels.len() };
+    let n = if count > 0 {
+        count.min(pixels.len())
+    } else {
+        pixels.len()
+    };
     if n == 0 {
         return [0.0; 3];
     }
@@ -38,11 +42,7 @@ pub fn correction_ratios(ref_rg: f32, ref_bg: f32, our_rg: f32, our_bg: f32) -> 
 
 /// Build a diagonal 3×3 CCM from R-correction and B-correction (G remains 1).
 pub fn diagonal_ccm(corr_r: f32, corr_b: f32) -> [f32; 9] {
-    [
-        corr_r, 0.0, 0.0,
-        0.0, 1.0, 0.0,
-        0.0, 0.0, corr_b,
-    ]
+    [corr_r, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, corr_b]
 }
 
 /// Estimate gamma from luminance ratio.

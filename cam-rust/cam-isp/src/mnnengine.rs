@@ -13,17 +13,17 @@
 
 use std::sync::Mutex;
 
-use std::time::Instant;
+use log::{debug, error, info, warn};
 use std::ffi::CStr;
-use log::{info, debug, warn, error};
+use std::time::Instant;
 
 /// Zone data: (rows, cols, zone_rgb`[r]``[c]` = `[f32; 3]`)
 type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 
-use cam_types::{FrameFormat, ToneParams};
-use crate::engine::{IspEngine, ProcessParams};
 use crate::controller::IspController;
-use crate::pipeline::{IspBlock, IspFrame, IspAuxOutput};
+use crate::engine::{IspEngine, ProcessParams};
+use crate::pipeline::{IspAuxOutput, IspBlock, IspFrame};
+use cam_types::{FrameFormat, ToneParams};
 
 #[cfg(feature = "mnn")]
 pub use crate::mnn_sys::*;
@@ -41,14 +41,31 @@ pub enum MnnBackend {
 
 impl MnnBackend {
     pub fn id(&self) -> &'static str {
-        match self { Self::Vulkan => "mnn_vulkan", Self::Opencl => "mnn_opencl", Self::OpenGl => "mnn_opengl", Self::CpuNeon => "mnn_neon", Self::Cpu => "mnn_cpu" }
+        match self {
+            Self::Vulkan => "mnn_vulkan",
+            Self::Opencl => "mnn_opencl",
+            Self::OpenGl => "mnn_opengl",
+            Self::CpuNeon => "mnn_neon",
+            Self::Cpu => "mnn_cpu",
+        }
     }
     pub fn priority(&self) -> i32 {
-        match self { Self::Vulkan => 99, Self::Opencl => 55, Self::OpenGl => 50, Self::CpuNeon => 75, Self::Cpu => 65 }
+        match self {
+            Self::Vulkan => 99,
+            Self::Opencl => 55,
+            Self::OpenGl => 50,
+            Self::CpuNeon => 75,
+            Self::Cpu => 65,
+        }
     }
     #[cfg(feature = "mnn")]
     fn to_sys(self) -> MnnBackendType {
-        match self { Self::Vulkan => MnnBackendType::Vulkan, Self::Opencl => MnnBackendType::Opencl, Self::OpenGl => MnnBackendType::Opengl, _ => MnnBackendType::Cpu }
+        match self {
+            Self::Vulkan => MnnBackendType::Vulkan,
+            Self::Opencl => MnnBackendType::Opencl,
+            Self::OpenGl => MnnBackendType::Opengl,
+            _ => MnnBackendType::Cpu,
+        }
     }
 }
 
@@ -130,13 +147,15 @@ impl MnnEngine {
             #[cfg(feature = "mnn")]
             buf_pool: Mutex::new(crate::mnn_buffer::OutputBufferPool::new(3, 1)),
             watchdog: crate::gpu_watchdog::GpuWatchdog::new(
-                crate::gpu_watchdog::WatchdogConfig::default()
+                crate::gpu_watchdog::WatchdogConfig::default(),
             ),
         }
     }
 
     /// Point to pre-converted .mnn file (skips on-the-fly conversion).
-    pub fn set_model_path(&mut self, path: impl Into<String>) { self.model_path = Some(path.into()); }
+    pub fn set_model_path(&mut self, path: impl Into<String>) {
+        self.model_path = Some(path.into());
+    }
 
     /// Set preferred workgroup size for Vulkan dispatch.
     /// Call after creating session and before inference.
@@ -152,7 +171,9 @@ impl MnnEngine {
         use crate::mnn_sys::MNNVulkanQueryOptimalWorkgroup;
         let mut wx: i32 = 16;
         let mut wy: i32 = 16;
-        unsafe { MNNVulkanQueryOptimalWorkgroup(&mut wx, &mut wy); }
+        unsafe {
+            MNNVulkanQueryOptimalWorkgroup(&mut wx, &mut wy);
+        }
         (wx as u32, wy as u32)
     }
 
@@ -168,7 +189,12 @@ impl MnnEngine {
 
     /// Hot-swap a const buffer at runtime for live 3A adjustments.
     /// Updates GPU const buffer with new float32 data without rebuilding the model.
-    pub fn hot_swap_const_buffer(&self, session: *mut std::ffi::c_void, binding: i32, data: &[f32]) {
+    pub fn hot_swap_const_buffer(
+        &self,
+        session: *mut std::ffi::c_void,
+        binding: i32,
+        data: &[f32],
+    ) {
         use crate::mnn_sys::MNNVulkanHotSwapConstBuffer;
         unsafe {
             MNNVulkanHotSwapConstBuffer(
@@ -229,15 +255,28 @@ impl MnnEngine {
     fn register_with_defaults() {
         use crate::engine::register_engine;
         use crate::engine::EngineFactory;
-        let backends = [MnnBackend::CpuNeon, MnnBackend::Cpu, MnnBackend::Vulkan, MnnBackend::Opencl, MnnBackend::OpenGl];
+        let backends = [
+            MnnBackend::CpuNeon,
+            MnnBackend::Cpu,
+            MnnBackend::Vulkan,
+            MnnBackend::Opencl,
+            MnnBackend::OpenGl,
+        ];
         for be in &backends {
             let name = be.id();
             let pri = be.priority();
             let b = *be;
             let create_fn = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
-            register_engine(EngineFactory { name, priority: pri, create_fn });
+            register_engine(EngineFactory {
+                name,
+                priority: pri,
+                create_fn,
+            });
         }
-        info!("Registered {} MNN engine factories (default priorities)", backends.len());
+        info!(
+            "Registered {} MNN engine factories (default priorities)",
+            backends.len()
+        );
     }
 
     /// Build a comprehensive benchmark .mnn model exercising all pipeline ops:
@@ -258,8 +297,8 @@ impl MnnEngine {
     /// ~2K weights (all Conv), compute scales with H×W.
     #[cfg(feature = "mnn")]
     pub fn build_bench_model(bench_w: u32, bench_h: u32) -> Result<String, String> {
-        use crate::onnx::proto::Proto;
         use crate::mnn_converter::convert_onnx_to_mnn;
+        use crate::onnx::proto::Proto;
 
         let pid = std::process::id();
         let onnx_path = format!(".mnn_bench_{}.onnx", pid);
@@ -270,46 +309,64 @@ impl MnnEngine {
         let packed_w = (bench_w / 2).max(1) as i64;
 
         // ── Dimension helpers ──
-        let dim_1packed = || vec![
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
-            Proto::tensor_dim_value(h), Proto::tensor_dim_value(packed_w),
-        ];
-        let _dim_1hw = || vec![
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
-            Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
-        ];
-        let dim_3hw = || vec![
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-            Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
-        ];
-        let dim_8hw = || vec![
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(8),
-            Proto::tensor_dim_value(h), Proto::tensor_dim_value(w),
-        ];
-        let dim_8packed = || vec![
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(8),
-            Proto::tensor_dim_value(h), Proto::tensor_dim_value(packed_w),
-        ];
-        let dim_8111 = || vec![
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(8),
-            Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
-        ];
-        let dim_8 = || vec![
-            Proto::tensor_dim_value(1),
-            Proto::tensor_dim_value(8),
-        ];
-        let dim_64 = || vec![
-            Proto::tensor_dim_value(1),
-            Proto::tensor_dim_value(64),
-        ];
+        let dim_1packed = || {
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(packed_w),
+            ]
+        };
+        let _dim_1hw = || {
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ]
+        };
+        let dim_3hw = || {
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ]
+        };
+        let dim_8hw = || {
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(8),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ]
+        };
+        let dim_8packed = || {
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(8),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(packed_w),
+            ]
+        };
+        let dim_8111 = || {
+            vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(8),
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(1),
+            ]
+        };
+        let dim_8 = || vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(8)];
+        let dim_64 = || vec![Proto::tensor_dim_value(1), Proto::tensor_dim_value(64)];
 
         // ── Weights (all resolution-independent, ~2K params total) ──
-        let conv1_w = Self::rand_weight(8 * 3 * 3);   // [8,1,3,3]  = 72
-        let conv2_w = Self::rand_weight(8 * 8 * 3 * 3);   // [8,8,3,3]  = 576
-        let conv3_w = Self::rand_weight(3 * 8 * 3 * 3);   // [3,8,3,3]  = 216
-        let mm1_w = Self::rand_weight(8 * 64);             // [8,64]     = 512
-        let mm2_w = Self::rand_weight(64 * 8);             // [64,8]     = 512
-        // total: 72+576+216+512+512 = 1,888 (constant at any resolution!)
+        let conv1_w = Self::rand_weight(8 * 3 * 3); // [8,1,3,3]  = 72
+        let conv2_w = Self::rand_weight(8 * 8 * 3 * 3); // [8,8,3,3]  = 576
+        let conv3_w = Self::rand_weight(3 * 8 * 3 * 3); // [3,8,3,3]  = 216
+        let mm1_w = Self::rand_weight(8 * 64); // [8,64]     = 512
+        let mm2_w = Self::rand_weight(64 * 8); // [64,8]     = 512
+                                               // total: 72+576+216+512+512 = 1,888 (constant at any resolution!)
 
         // Identity grid for GridSampler: [1, H, W, 2] in [-1, 1]
         let mut grid = Vec::with_capacity(h as usize * w as usize * 2);
@@ -328,18 +385,30 @@ impl MnnEngine {
         // ── Nodes ──
         let nodes = vec![
             // Conv1 1→8, 3×3
-            Proto::node("Conv", &["input", "conv1_w", "conv1_b"], &["conv1_out"],
-                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
-                  Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                  Proto::attribute_ints("strides", &[1, 1]),
-                  Proto::attribute_int("group", 1)]),
+            Proto::node(
+                "Conv",
+                &["input", "conv1_w", "conv1_b"],
+                &["conv1_out"],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[3, 3]),
+                    Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                    Proto::attribute_ints("strides", &[1, 1]),
+                    Proto::attribute_int("group", 1),
+                ],
+            ),
             Proto::node("Relu", &["conv1_out"], &["relu1_out"], &[]),
             // Conv2 8→8, 3×3
-            Proto::node("Conv", &["relu1_out", "conv2_w", "conv2_b"], &["conv2_out"],
-                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
-                  Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                  Proto::attribute_ints("strides", &[1, 1]),
-                  Proto::attribute_int("group", 1)]),
+            Proto::node(
+                "Conv",
+                &["relu1_out", "conv2_w", "conv2_b"],
+                &["conv2_out"],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[3, 3]),
+                    Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                    Proto::attribute_ints("strides", &[1, 1]),
+                    Proto::attribute_int("group", 1),
+                ],
+            ),
             Proto::node("Relu", &["conv2_out"], &["relu2_out"], &[]),
             // GlobalAveragePool — reduces ANY spatial size to 1×1
             Proto::node("GlobalAveragePool", &["relu2_out"], &["gap_out"], &[]),
@@ -352,25 +421,46 @@ impl MnnEngine {
             Proto::node("MatMul", &["mm1_relu", "mm2_w"], &["mm2_out"], &[]),
             Proto::node("Relu", &["mm2_out"], &["mm2_relu"], &[]),
             // Reshape back to [1,8,1,1]
-            Proto::node("Reshape", &["mm2_relu", "shape_8111"], &["reshape8_out"], &[]),
+            Proto::node(
+                "Reshape",
+                &["mm2_relu", "shape_8111"],
+                &["reshape8_out"],
+                &[],
+            ),
             // Resize from 1×1 → H×W (nearest, fast)
-            Proto::node("Resize", &["reshape8_out", "", "resize_scales", ""], &["resize_out"],
-                &[Proto::attribute_string("mode", "nearest")]),
+            Proto::node(
+                "Resize",
+                &["reshape8_out", "", "resize_scales", ""],
+                &["resize_out"],
+                &[Proto::attribute_string("mode", "nearest")],
+            ),
             // Conv3 8→3, 3×3
-            Proto::node("Conv", &["resize_out", "conv3_w", "conv3_b"], &["conv3_out"],
-                &[Proto::attribute_ints("kernel_shape", &[3, 3]),
-                  Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                  Proto::attribute_ints("strides", &[1, 1]),
-                  Proto::attribute_int("group", 1)]),
+            Proto::node(
+                "Conv",
+                &["resize_out", "conv3_w", "conv3_b"],
+                &["conv3_out"],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[3, 3]),
+                    Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                    Proto::attribute_ints("strides", &[1, 1]),
+                    Proto::attribute_int("group", 1),
+                ],
+            ),
             // GridSampler with identity grid
-            Proto::node("GridSampler", &["conv3_out", "identity_grid"], &["output"],
-                &[Proto::attribute_string("mode", "bilinear"),
-                  Proto::attribute_string("padding_mode", "zeros"),
-                  Proto::attribute_int("align_corners", 0)]),
+            Proto::node(
+                "GridSampler",
+                &["conv3_out", "identity_grid"],
+                &["output"],
+                &[
+                    Proto::attribute_string("mode", "bilinear"),
+                    Proto::attribute_string("padding_mode", "zeros"),
+                    Proto::attribute_int("align_corners", 0),
+                ],
+            ),
         ];
 
         // ── Value info ──
-        let inputs = vec![Proto::value_info("input", &dim_1packed(), 6)];  // 6 = INT32 packed: [1,1,H,W/2]
+        let inputs = vec![Proto::value_info("input", &dim_1packed(), 6)]; // 6 = INT32 packed: [1,1,H,W/2]
         let outputs = vec![Proto::value_info("output", &dim_3hw(), 1)];
         let vi = vec![
             Proto::value_info("conv1_out", &dim_8packed(), 1),
@@ -412,8 +502,7 @@ impl MnnEngine {
         // Note: Graph optimization (optimizeLevel=2) and INT8 quantization (weightQuantBits=8)
         // were tested but hurt performance on this synthetic benchmark (3.5 fps → 2.0 fps).
         // For production ISP pipelines, retest with optimization enabled.
-        convert_onnx_to_mnn(&onnx_path, &mnn_path, None)
-            .map_err(|e| format!("convert: {}", e))?;
+        convert_onnx_to_mnn(&onnx_path, &mnn_path, None).map_err(|e| format!("convert: {}", e))?;
         let _ = std::fs::remove_file(&onnx_path);
         Ok(mnn_path)
     }
@@ -423,7 +512,10 @@ impl MnnEngine {
     fn rand_weight(n: usize) -> Vec<f32> {
         use std::time::{SystemTime, UNIX_EPOCH};
         // Simple xorshift to avoid std::rand dependency
-        let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64;
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos() as u64;
         let mut state = seed ^ 123456789;
         let mut out = Vec::with_capacity(n);
         for _ in 0..n {
@@ -446,7 +538,8 @@ impl MnnEngine {
         let mut engine = MnnEngine::new(*backend);
         engine.set_model_path(mnn_path);
         let head: Box<dyn IspBlock> = Box::new(RawInputBlock::new());
-        engine.build(head, vec![], None, 16)
+        engine
+            .build(head, vec![], None, 16)
             .map_err(|e| format!("build: {}", e))?;
 
         let frame_size = (w * h * 2) as usize;
@@ -498,7 +591,9 @@ impl MnnEngine {
 
     #[allow(dead_code)]
     fn norm(buf: &[u8], max: f32) -> Vec<f32> {
-        buf.chunks_exact(2).map(|c| (u16::from_ne_bytes([c[0], c[1]]) as f32 / max).clamp(0.0, 1.0)).collect()
+        buf.chunks_exact(2)
+            .map(|c| (u16::from_ne_bytes([c[0], c[1]]) as f32 / max).clamp(0.0, 1.0))
+            .collect()
     }
 
     /// Write extra input tensors (CCM, tone, gains) into the MNN session
@@ -526,7 +621,10 @@ impl MnnEngine {
         isp_params: Option<&crate::isp_params::IspParams>,
     ) {
         /// Look up a cached tensor handle by name prefix (fast — no CString alloc).
-        fn find<'a>(pool: &'a [(String, crate::mnn_sys::MnnTensorSafe)], name: &str) -> Option<&'a crate::mnn_sys::MnnTensorSafe> {
+        fn find<'a>(
+            pool: &'a [(String, crate::mnn_sys::MnnTensorSafe)],
+            name: &str,
+        ) -> Option<&'a crate::mnn_sys::MnnTensorSafe> {
             pool.iter().find(|(n, _)| n == name).map(|(_, t)| t)
         }
 
@@ -541,26 +639,10 @@ impl MnnEngine {
         //   Pattern 3 (GBRG):  R=[0,0,1,0]  G=[½,0,0,½]  B=[0,1,0,0]
         //
         // fused[i,j] = Σₖ ccm[i,k] * demo[k,j]   (i=RGB, j=quadrant)
-        const DEMO_RGGB: [f32; 12] = [
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 0.5, 0.5, 0.0,
-            0.0, 0.0, 0.0, 1.0,
-        ];
-        const DEMO_BGGR: [f32; 12] = [
-            0.0, 0.0, 0.0, 1.0,
-            0.0, 0.5, 0.5, 0.0,
-            1.0, 0.0, 0.0, 0.0,
-        ];
-        const DEMO_GRBG: [f32; 12] = [
-            0.0, 1.0, 0.0, 0.0,
-            0.5, 0.0, 0.0, 0.5,
-            0.0, 0.0, 1.0, 0.0,
-        ];
-        const DEMO_GBRG: [f32; 12] = [
-            0.0, 0.0, 1.0, 0.0,
-            0.5, 0.0, 0.0, 0.5,
-            0.0, 1.0, 0.0, 0.0,
-        ];
+        const DEMO_RGGB: [f32; 12] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0];
+        const DEMO_BGGR: [f32; 12] = [0.0, 0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 0.0];
+        const DEMO_GRBG: [f32; 12] = [0.0, 1.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.5, 0.0, 0.0, 1.0, 0.0];
+        const DEMO_GBRG: [f32; 12] = [0.0, 0.0, 1.0, 0.0, 0.5, 0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0];
 
         // Select demosaic weights by pattern
         let demo: &[f32; 12] = match bayer_pattern & 3 {
@@ -585,10 +667,11 @@ impl MnnEngine {
             }
             if let Some(t) = find(pool, "DemosaicCcmBlock/w") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(fused.as_ptr() as *const u8, 48)
-                    };
-                    if bytes.len() >= 48 { bytes[..48].copy_from_slice(src); }
+                    let src =
+                        unsafe { std::slice::from_raw_parts(fused.as_ptr() as *const u8, 48) };
+                    if bytes.len() >= 48 {
+                        bytes[..48].copy_from_slice(src);
+                    }
                 }
             }
         }
@@ -598,82 +681,118 @@ impl MnnEngine {
                 // When tone is fused in, absorb brightness into bias
                 let bias = [tone.brightness; 3];
                 let src = unsafe { std::slice::from_raw_parts(bias.as_ptr() as *const u8, 12) };
-                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+                if bytes.len() >= 12 {
+                    bytes[..12].copy_from_slice(src);
+                }
             }
         }
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains
         if let Some(gains) = bayer {
             if let Some(t) = find(pool, "BayerWbBlock/gains") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts(gains.as_ptr() as *const u8, 16) };
-                    if bytes.len() >= 16 { bytes[..16].copy_from_slice(src); }
+                    let src =
+                        unsafe { std::slice::from_raw_parts(gains.as_ptr() as *const u8, 16) };
+                    if bytes.len() >= 16 {
+                        bytes[..16].copy_from_slice(src);
+                    }
                 }
             }
         }
         // ToneBlock/contrast [1]
         if let Some(t) = find(pool, "ToneBlock/contrast") {
             if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe { std::slice::from_raw_parts((&tone.contrast as *const f32) as *const u8, 4) };
-                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                let src = unsafe {
+                    std::slice::from_raw_parts((&tone.contrast as *const f32) as *const u8, 4)
+                };
+                if bytes.len() >= 4 {
+                    bytes[..4].copy_from_slice(src);
+                }
             }
         }
         // ToneBlock/brightness [1]
         if let Some(t) = find(pool, "ToneBlock/brightness") {
             if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe { std::slice::from_raw_parts((&tone.brightness as *const f32) as *const u8, 4) };
-                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                let src = unsafe {
+                    std::slice::from_raw_parts((&tone.brightness as *const f32) as *const u8, 4)
+                };
+                if bytes.len() >= 4 {
+                    bytes[..4].copy_from_slice(src);
+                }
             }
         }
         // ToneBlock/gamma_recip [1]
         if let Some(t) = find(pool, "ToneBlock/gamma_recip") {
             if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe { std::slice::from_raw_parts((&tone.gamma_recip as *const f32) as *const u8, 4) };
-                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                let src = unsafe {
+                    std::slice::from_raw_parts((&tone.gamma_recip as *const f32) as *const u8, 4)
+                };
+                if bytes.len() >= 4 {
+                    bytes[..4].copy_from_slice(src);
+                }
             }
         }
         // SaturationBlock/scale [3] — color saturation strength
         if let Some(t) = find(pool, "saturation/scale") {
             if let Some(bytes) = t.as_bytes_mut() {
                 let scale_default = [1.0f32, 1.0, 1.0];
-                let src = unsafe { std::slice::from_raw_parts(scale_default.as_ptr() as *const u8, 12) };
-                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+                let src =
+                    unsafe { std::slice::from_raw_parts(scale_default.as_ptr() as *const u8, 12) };
+                if bytes.len() >= 12 {
+                    bytes[..12].copy_from_slice(src);
+                }
             }
         }
         // Sharpen/strength [1] — sharpening strength
         if let Some(t) = find(pool, "Sharpen/strength") {
             if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
-                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                let src =
+                    unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 {
+                    bytes[..4].copy_from_slice(src);
+                }
             }
         }
         // LdciBlock/strength [1] — local contrast strength
         if let Some(t) = find(pool, "LdciBlock/strength") {
             if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
-                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                let src =
+                    unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
+                if bytes.len() >= 4 {
+                    bytes[..4].copy_from_slice(src);
+                }
             }
         }
         // FcsBlock/gain [3] — per-channel gain (default: identity)
         if let Some(t) = find(pool, "FcsBlock/gain") {
             if let Some(bytes) = t.as_bytes_mut() {
                 let gain_default = [1.0f32, 1.0, 1.0];
-                let src = unsafe { std::slice::from_raw_parts(gain_default.as_ptr() as *const u8, 12) };
-                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+                let src =
+                    unsafe { std::slice::from_raw_parts(gain_default.as_ptr() as *const u8, 12) };
+                if bytes.len() >= 12 {
+                    bytes[..12].copy_from_slice(src);
+                }
             }
         }
         // FcsBlock/bias [3] — per-channel bias (default: zero)
         if let Some(t) = find(pool, "FcsBlock/bias") {
             if let Some(bytes) = t.as_bytes_mut() {
                 let bias_default = [0.0f32, 0.0, 0.0];
-                let src = unsafe { std::slice::from_raw_parts(bias_default.as_ptr() as *const u8, 12) };
-                if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+                let src =
+                    unsafe { std::slice::from_raw_parts(bias_default.as_ptr() as *const u8, 12) };
+                if bytes.len() >= 12 {
+                    bytes[..12].copy_from_slice(src);
+                }
             }
         }
         // NormalizeBlock/max_val [1] — max value for division (default: 65535)
         if let Some(t) = find(pool, "NormalizeBlock/max_val") {
             if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe { std::slice::from_raw_parts((&65535.0f32 as *const f32) as *const u8, 4) };
-                if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                let src = unsafe {
+                    std::slice::from_raw_parts((&65535.0f32 as *const f32) as *const u8, 4)
+                };
+                if bytes.len() >= 4 {
+                    bytes[..4].copy_from_slice(src);
+                }
             }
         }
         // GammaBlock — inv_gamma, min, max, lift, norm
@@ -681,126 +800,219 @@ impl MnnEngine {
             // inv_gamma [1] — 1/gamma from tone.gamma
             if let Some(t) = find(pool, "Gamma/inv_gamma") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let inv_gamma = if isp.tone.gamma > 0.0 { 1.0 / isp.tone.gamma } else { 1.0 };
-                    let src = unsafe { std::slice::from_raw_parts((&inv_gamma as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let inv_gamma = if isp.tone.gamma > 0.0 {
+                        1.0 / isp.tone.gamma
+                    } else {
+                        1.0
+                    };
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&inv_gamma as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // min [1] — black crush from tone.black_crush
             if let Some(t) = find(pool, "Gamma/min") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&isp.tone.black_crush as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            (&isp.tone.black_crush as *const f32) as *const u8,
+                            4,
+                        )
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // max [1] — white clip from tone.white_clip
             if let Some(t) = find(pool, "Gamma/max") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&isp.tone.white_clip as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            (&isp.tone.white_clip as *const f32) as *const u8,
+                            4,
+                        )
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // lift [1] — shadow lift from tone.black_crush (conditional)
             if let Some(t) = find(pool, "Gamma/lift") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&isp.tone.black_crush as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            (&isp.tone.black_crush as *const f32) as *const u8,
+                            4,
+                        )
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // norm [1] — normalization factor
             if let Some(t) = find(pool, "Gamma/norm") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // AutoContrastBlock — lift, half, contrast_w, zero, one
             // lift [1] — shadow lift
             if let Some(t) = find(pool, "AutoContrast/lift") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&isp.tone.black_crush as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            (&isp.tone.black_crush as *const f32) as *const u8,
+                            4,
+                        )
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // half [1] — 0.5 constant
             if let Some(t) = find(pool, "AutoContrast/half") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&0.5f32 as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&0.5f32 as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // contrast_w [1] — contrast factor
             if let Some(t) = find(pool, "AutoContrast/contrast_w") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&isp.tone.contrast as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            (&isp.tone.contrast as *const f32) as *const u8,
+                            4,
+                        )
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // zero [1] — clip lower bound
             if let Some(t) = find(pool, "AutoContrast/zero") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&0.0f32 as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&0.0f32 as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // one [1] — clip upper bound
             if let Some(t) = find(pool, "AutoContrast/one") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // DisplayBlock — scale, gamma_exp, zero, one (FloatRgb path)
             // scale [1] — scale factor
             if let Some(t) = find(pool, "DisplayBlock/scale") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // gamma_exp [1] — 1/2.4 for sRGB
             if let Some(t) = find(pool, "DisplayBlock/gamma_exp") {
                 if let Some(bytes) = t.as_bytes_mut() {
                     let gamma_exp = 1.0f32 / 2.4;
-                    let src = unsafe { std::slice::from_raw_parts((&gamma_exp as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&gamma_exp as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // zero [1] — clip lower bound
             if let Some(t) = find(pool, "DisplayBlock/zero") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&0.0f32 as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&0.0f32 as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // one [1] — clip upper bound
             if let Some(t) = find(pool, "DisplayBlock/one") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // SaturationBlock/scale [3] — from saturation.factor
             if let Some(t) = find(pool, "saturation/scale") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let scale = [isp.saturation.factor, isp.saturation.factor, isp.saturation.factor];
-                    let src = unsafe { std::slice::from_raw_parts(scale.as_ptr() as *const u8, 12) };
-                    if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+                    let scale = [
+                        isp.saturation.factor,
+                        isp.saturation.factor,
+                        isp.saturation.factor,
+                    ];
+                    let src =
+                        unsafe { std::slice::from_raw_parts(scale.as_ptr() as *const u8, 12) };
+                    if bytes.len() >= 12 {
+                        bytes[..12].copy_from_slice(src);
+                    }
                 }
             }
             // Sharpen/strength [1] — from sharpen.amount
             if let Some(t) = find(pool, "Sharpen/strength") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe { std::slice::from_raw_parts((&isp.sharpen.amount as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            (&isp.sharpen.amount as *const f32) as *const u8,
+                            4,
+                        )
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // LdciBlock/strength [1] — from denoise params (use sharpen radius as proxy)
             if let Some(t) = find(pool, "LdciBlock/strength") {
                 if let Some(bytes) = t.as_bytes_mut() {
                     let strength = isp.sharpen.radius.max(0.1);
-                    let src = unsafe { std::slice::from_raw_parts((&strength as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&strength as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
             // FcsBlock/gain [3] — per-channel gain from CCM diagonal
@@ -808,28 +1020,51 @@ impl MnnEngine {
                 if let Some(bytes) = t.as_bytes_mut() {
                     if let Some(ccm) = ccm {
                         let gain = [ccm[0], ccm[4], ccm[8]]; // diagonal of CCM
-                        let src = unsafe { std::slice::from_raw_parts(gain.as_ptr() as *const u8, 12) };
-                        if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+                        let src =
+                            unsafe { std::slice::from_raw_parts(gain.as_ptr() as *const u8, 12) };
+                        if bytes.len() >= 12 {
+                            bytes[..12].copy_from_slice(src);
+                        }
                     } else {
-                        let src = unsafe { std::slice::from_raw_parts((&[1.0f32, 1.0, 1.0] as *const f32) as *const u8, 12) };
-                        if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+                        let src = unsafe {
+                            std::slice::from_raw_parts(
+                                (&[1.0f32, 1.0, 1.0] as *const f32) as *const u8,
+                                12,
+                            )
+                        };
+                        if bytes.len() >= 12 {
+                            bytes[..12].copy_from_slice(src);
+                        }
                     }
                 }
             }
             // FcsBlock/bias [3] — per-channel bias
             if let Some(t) = find(pool, "FcsBlock/bias") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let bias = [isp.tone.brightness, isp.tone.brightness, isp.tone.brightness];
+                    let bias = [
+                        isp.tone.brightness,
+                        isp.tone.brightness,
+                        isp.tone.brightness,
+                    ];
                     let src = unsafe { std::slice::from_raw_parts(bias.as_ptr() as *const u8, 12) };
-                    if bytes.len() >= 12 { bytes[..12].copy_from_slice(src); }
+                    if bytes.len() >= 12 {
+                        bytes[..12].copy_from_slice(src);
+                    }
                 }
             }
             // NormalizeBlock/max_val [1] — from sensor_max or blc
             if let Some(t) = find(pool, "NormalizeBlock/max_val") {
                 if let Some(bytes) = t.as_bytes_mut() {
-                    let max_val = isp_params.as_ref().map(|p| p.blc.r * 2.0).unwrap_or(65535.0);
-                    let src = unsafe { std::slice::from_raw_parts((&max_val as *const f32) as *const u8, 4) };
-                    if bytes.len() >= 4 { bytes[..4].copy_from_slice(src); }
+                    let max_val = isp_params
+                        .as_ref()
+                        .map(|p| p.blc.r * 2.0)
+                        .unwrap_or(65535.0);
+                    let src = unsafe {
+                        std::slice::from_raw_parts((&max_val as *const f32) as *const u8, 4)
+                    };
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(src);
+                    }
                 }
             }
         }
@@ -837,37 +1072,70 @@ impl MnnEngine {
 }
 
 impl IspEngine for MnnEngine {
-    fn backend_name(&self) -> &'static str { self.backend.id() }
-    fn priority(&self) -> i32 { self.backend.priority() }
-    fn is_loaded(&self) -> bool { self.initialized }
-    fn as_any(&self) -> &dyn std::any::Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
-    fn controller(&self) -> &Mutex<IspController> { &self.controller }
+    fn backend_name(&self) -> &'static str {
+        self.backend.id()
+    }
+    fn priority(&self) -> i32 {
+        self.backend.priority()
+    }
+    fn is_loaded(&self) -> bool {
+        self.initialized
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn controller(&self) -> &Mutex<IspController> {
+        &self.controller
+    }
 
-    fn build(&mut self, head: Box<dyn IspBlock>, aux: Vec<Box<dyn IspBlock>>, _warp: Option<Box<dyn IspBlock>>, opset: i64) -> crate::error::IspResult<()> {
+    fn build(
+        &mut self,
+        head: Box<dyn IspBlock>,
+        aux: Vec<Box<dyn IspBlock>>,
+        _warp: Option<Box<dyn IspBlock>>,
+        opset: i64,
+    ) -> crate::error::IspResult<()> {
         info!("MNN build backend={}", self.backend.id());
 
         #[cfg(feature = "mnn")]
         {
-            use std::path::Path;
             use crate::mnn_converter::MnnConvertOptions;
-
+            use std::path::Path;
 
             let mnn = match &self.model_path {
-                Some(p) => { info!("build [tid={:?}]: using model_path={}", std::thread::current().id(), p); p.clone() },
+                Some(p) => {
+                    info!(
+                        "build [tid={:?}]: using model_path={}",
+                        std::thread::current().id(),
+                        p
+                    );
+                    p.clone()
+                }
                 None => {
                     // Build ONNX graph: head + aux as pipeline, stats as aux_blocks
                     // But we don't know which aux are stats — pass all as pipeline for now
                     let mut all: Vec<Box<dyn IspBlock>> = vec![head];
                     all.extend(aux);
                     let refs: Vec<&dyn IspBlock> = all.iter().map(|b| b.as_ref()).collect();
-                    info!("build [tid={:?}]: composing ONNX from {} blocks", std::thread::current().id(), refs.len());
+                    info!(
+                        "build [tid={:?}]: composing ONNX from {} blocks",
+                        std::thread::current().id(),
+                        refs.len()
+                    );
                     let onnx = crate::pipeline::GraphComposer::compose_from_vec(&refs, &[], opset)?;
-                    info!("ONNX [tid={:?}]: {} bytes for MNN conversion", std::thread::current().id(), onnx.len());
+                    info!(
+                        "ONNX [tid={:?}]: {} bytes for MNN conversion",
+                        std::thread::current().id(),
+                        onnx.len()
+                    );
 
                     let on = format!(".mnn_temp_{}.onnx", std::process::id());
                     let mn = on.replace(".onnx", ".mnn");
-                    std::fs::write(&on, &onnx).map_err(|e| crate::error::IspError::Io(format!("write: {}", e)))?;
+                    std::fs::write(&on, &onnx)
+                        .map_err(|e| crate::error::IspError::Io(format!("write: {}", e)))?;
                     // Save a copy for inspection
                     let _ = std::fs::copy(&on, ".mnn_last_pipeline.onnx");
                     let opts = MnnConvertOptions {
@@ -875,9 +1143,13 @@ impl IspEngine for MnnEngine {
                         allow_custom_op: true,
                         ..Default::default()
                     };
-                    info!("preserve_input_type: {}, optimize_level: {}", self.preserve_input_type, opts.optimize_level);
-                    crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, Some(&opts))
-                        .map_err(|e| crate::error::IspError::Conversion(format!("convert: {}", e)))?;
+                    info!(
+                        "preserve_input_type: {}, optimize_level: {}",
+                        self.preserve_input_type, opts.optimize_level
+                    );
+                    crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, Some(&opts)).map_err(
+                        |e| crate::error::IspError::Conversion(format!("convert: {}", e)),
+                    )?;
                     let _ = std::fs::remove_file(&on);
                     mn
                 }
@@ -890,16 +1162,25 @@ impl IspEngine for MnnEngine {
             // length_error("vector") due to Android linker namespace isolation.
             unsafe {
                 let vk = libloading::os::unix::Library::new("libMNN_Vulkan.so");
-                if let Ok(lib) = vk { std::mem::forget(lib); }
+                if let Ok(lib) = vk {
+                    std::mem::forget(lib);
+                }
                 let cl = libloading::os::unix::Library::new("libMNN_CL.so");
-                if let Ok(lib) = cl { std::mem::forget(lib); }
+                if let Ok(lib) = cl {
+                    std::mem::forget(lib);
+                }
                 let gl = libloading::os::unix::Library::new("libMNN_GL.so");
-                if let Ok(lib) = gl { std::mem::forget(lib); }
+                if let Ok(lib) = gl {
+                    std::mem::forget(lib);
+                }
             }
 
             if !Path::new(&mnn).exists() {
                 error!("MNN model not found: {}", mnn);
-                return Err(crate::error::IspError::Mnn(format!("missing .mnn: {}", mnn)));
+                return Err(crate::error::IspError::Mnn(format!(
+                    "missing .mnn: {}",
+                    mnn
+                )));
             }
             let interp = MnnInterpreterSafe::from_file(&mnn).ok_or_else(|| {
                 error!("Failed to load MNN model: {}", mnn);
@@ -907,18 +1188,24 @@ impl IspEngine for MnnEngine {
             })?;
 
             // Use first session to probe model input type (before building pool)
-            let probe_sess = interp.create_session(self.backend.to_sys(), 4)
+            let probe_sess = interp
+                .create_session(self.backend.to_sys(), 4)
                 .or_else(|| {
                     // Fallback: try CPU if requested backend fails
                     if self.backend != MnnBackend::Cpu {
-                        warn!("Backend {:?} unavailable, falling back to CPU", self.backend);
+                        warn!(
+                            "Backend {:?} unavailable, falling back to CPU",
+                            self.backend
+                        );
                         self.backend = MnnBackend::Cpu;
                         interp.create_session(MnnBackendType::Cpu, 4)
                     } else {
                         None
                     }
                 })
-                .ok_or(crate::error::IspError::Mnn("probe session create fail (all backends exhausted)".into()))?;
+                .ok_or(crate::error::IspError::Mnn(
+                    "probe session create fail (all backends exhausted)".into(),
+                ))?;
             let mut input_code = 0i32;
             let mut input_bits = 0i32;
             unsafe {
@@ -933,27 +1220,33 @@ impl IspEngine for MnnEngine {
             let expected_elems = unsafe {
                 crate::mnn_sys::mnn_get_model_input_elements(interp.as_ptr(), probe_sess.as_ptr())
             };
-            self.expected_input_elements = if expected_elems > 0 { Some(expected_elems as u32) } else { None };
+            self.expected_input_elements = if expected_elems > 0 {
+                Some(expected_elems as u32)
+            } else {
+                None
+            };
             self.packed_input = input_code == 0 && input_bits == 32;
-            info!("MNN model input type: code={}, bits={} packed={} expected_elems={}",
-                input_code, input_bits, self.packed_input, expected_elems);
+            info!(
+                "MNN model input type: code={}, bits={} packed={} expected_elems={}",
+                input_code, input_bits, self.packed_input, expected_elems
+            );
             // Don't need probe session any more — pool will create its own.
             drop(probe_sess);
 
             // Build session pool (N sessions for parallel inference)
             // Backend was already validated by probe session above.
-            let pool = SessionPool::new(
-                interp,
-                self.backend.to_sys(),
-                self.pool_size.max(1),
-                4,
-            )?;
-            info!("MNN engine loaded from {} (backend={:?}) with {} sessions",
-                mnn, self.backend, self.pool_size);
+            let pool = SessionPool::new(interp, self.backend.to_sys(), self.pool_size.max(1), 4)?;
+            info!(
+                "MNN engine loaded from {} (backend={:?}) with {} sessions",
+                mnn, self.backend, self.pool_size
+            );
             self.pool = Some(pool);
         }
 
-        #[cfg(not(feature = "mnn"))] { let _ = (head, aux, opset); }
+        #[cfg(not(feature = "mnn"))]
+        {
+            let _ = (head, aux, opset);
+        }
         self.initialized = true;
         Ok(())
     }
@@ -969,7 +1262,7 @@ impl IspEngine for MnnEngine {
         let bayer = p.bayer_gains.as_ref();
         let awb = p.awb_gains.as_ref();
         let bayer_pattern = p.bayer_pattern;
-        
+
         // If isp_params is available, override individual fields
         // This allows per-frame controller params to flow through
         let (override_ccm, override_tone, override_bayer) = if let Some(ref params) = p.isp_params {
@@ -979,7 +1272,11 @@ impl IspEngine for MnnEngine {
                 gamma_recip: params.tone.gamma,
                 ..Default::default()
             };
-            (Some(&params.ccm.matrix), Some(tone), Some(&[params.wb.r, params.wb.g, params.wb.g, params.wb.b]))
+            (
+                Some(&params.ccm.matrix),
+                Some(tone),
+                Some(&[params.wb.r, params.wb.g, params.wb.g, params.wb.b]),
+            )
         } else {
             (None, None, None)
         };
@@ -987,19 +1284,29 @@ impl IspEngine for MnnEngine {
         let tone = override_tone.as_ref().unwrap_or(tone);
         let bayer = override_bayer.or(bayer);
 
-        if !self.initialized { return Err(crate::error::IspError::Config("not init".into())); }
+        if !self.initialized {
+            return Err(crate::error::IspError::Config("not init".into()));
+        }
 
         #[cfg(feature = "mnn")]
         {
-            let pool = self.pool.as_ref().ok_or(crate::error::IspError::Config("no pool".into()))?;
+            let pool = self
+                .pool
+                .as_ref()
+                .ok_or(crate::error::IspError::Config("no pool".into()))?;
             let slot = pool.acquire();
             let sess = &slot.sess;
             let interp = &pool.interp;
 
             let t_start = Instant::now();
 
-            info!("pipeline stage=arrive raw={}×{} bayer={}B sensor_max={}",
-                w, h, buf.len(), smax);
+            info!(
+                "pipeline stage=arrive raw={}×{} bayer={}B sensor_max={}",
+                w,
+                h,
+                buf.len(),
+                smax
+            );
 
             // ── Pre-allocate output buffer (zero-copy target) ──
             // MNN writes directly into this Vec via host pointer.
@@ -1009,12 +1316,8 @@ impl IspEngine for MnnEngine {
             let out_ptr = out_bytes.as_mut_ptr() as *mut f32;
 
             // Determine inference path based on model input type
-            
+
             let n: i32;
-            
-            
-            
-            
 
             // Determine if packed: model expects INT32 packed input
             let is_packed = if self.packed_input {
@@ -1039,41 +1342,59 @@ impl IspEngine for MnnEngine {
                     let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
                 }
                 let _ = sess.resize();
-                Self::set_extra_inputs(&slot.tensor_pool, ccm, tone, bayer, awb, bayer_pattern, p.isp_params.as_ref());
+                Self::set_extra_inputs(
+                    &slot.tensor_pool,
+                    ccm,
+                    tone,
+                    bayer,
+                    awb,
+                    bayer_pattern,
+                    p.isp_params.as_ref(),
+                );
             }
             let t_tensor_after: std::time::Instant = Instant::now();
-            info!("pipeline stage=tensor_assign elapsed={:?}",
-                t_tensor_after.duration_since(t_tensor_before));
+            info!(
+                "pipeline stage=tensor_assign elapsed={:?}",
+                t_tensor_after.duration_since(t_tensor_before)
+            );
 
-            debug!("MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
-                w, h, (w / 2).max(1), is_packed, self.expected_input_elements);
+            debug!(
+                "MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
+                w,
+                h,
+                (w / 2).max(1),
+                is_packed,
+                self.expected_input_elements
+            );
 
-            let (buffer_ptr, buffer_type_code, buffer_type_bits, input_shape, path_str) = if is_packed {
-                let packed_w = (w / 2).max(1) as i32;
-                let packed_shape = [1, 1, h as i32, packed_w];
-                let packed_buf: &[i32] = unsafe {
-                    std::slice::from_raw_parts(buf.as_ptr() as *const i32, buf.len() / 4)
+            let (buffer_ptr, buffer_type_code, buffer_type_bits, input_shape, path_str) =
+                if is_packed {
+                    let packed_w = (w / 2).max(1) as i32;
+                    let packed_shape = [1, 1, h as i32, packed_w];
+                    let packed_buf: &[i32] = unsafe {
+                        std::slice::from_raw_parts(buf.as_ptr() as *const i32, buf.len() / 4)
+                    };
+                    (
+                        packed_buf.as_ptr() as *const c_void,
+                        0, // INT32
+                        32,
+                        packed_shape.to_vec(),
+                        "packed_zero_copy",
+                    )
+                } else {
+                    let raw_shape = [1, 1, h as i32, w as i32];
+                    let (code, bits) = self.model_input_type.unwrap_or((0, 16));
+                    (
+                        buf.as_ptr() as *const c_void,
+                        code,
+                        bits,
+                        raw_shape.to_vec(),
+                        "raw_zero_copy",
+                    )
                 };
-                (
-                    packed_buf.as_ptr() as *const c_void,
-                    0,   // INT32
-                    32,
-                    packed_shape.to_vec(),
-                    "packed_zero_copy"
-                )
-            } else {
-                let raw_shape = [1, 1, h as i32, w as i32];
-                let (code, bits) = self.model_input_type.unwrap_or((0, 16));
-                (
-                    buf.as_ptr() as *const c_void,
-                    code,
-                    bits,
-                    raw_shape.to_vec(),
-                    "raw_zero_copy"
-                )
-            };
 
-            info!("pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
+            info!(
+                "pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
                 buf.len(),
                 if is_packed {
                     buf.len() / 4
@@ -1090,7 +1411,8 @@ impl IspEngine for MnnEngine {
             let t_infer_start: std::time::Instant = Instant::now();
             unsafe {
                 n = crate::mnn_sys::mnn_run_with_output(
-                    interp.as_ptr(), sess.as_ptr(),
+                    interp.as_ptr(),
+                    sess.as_ptr(),
                     buffer_ptr,
                     buffer_type_code,
                     buffer_type_bits,
@@ -1120,7 +1442,10 @@ impl IspEngine for MnnEngine {
                 error!("MNN inference failed: n={} (input={}x{}, output_name='DisplayBlock/frame', path={})", n, w, h, path);
                 error!("  This usually means the MNN IspChainFusion pass computed wrong output dimensions.");
                 error!("  Check that RawInputBlock has concrete_h and concrete_w set (not -1).");
-                return Err(crate::error::IspError::Mnn(format!("MNN inference failed: n={} (input={}x{})", n, w, h)));
+                return Err(crate::error::IspError::Mnn(format!(
+                    "MNN inference failed: n={} (input={}x{})",
+                    n, w, h
+                )));
             }
 
             info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts) prep={:?} infer={:?}",
@@ -1135,7 +1460,9 @@ impl IspEngine for MnnEngine {
             let n_bytes = oh * ow * bpp;
             // Trim Vec to actual data written by MNN
             let n_bytes_actual = n_valid.min(n_bytes / bpp) * bpp;
-            unsafe { out_bytes.set_len(n_bytes_actual); }
+            unsafe {
+                out_bytes.set_len(n_bytes_actual);
+            }
 
             // All conversion is done by the ONNX graph — just return raw bytes.
             let data_out = out_bytes;
@@ -1147,8 +1474,6 @@ impl IspEngine for MnnEngine {
             // in the graph (block not enabled in this profile), get_output returns None.
             #[cfg(feature = "mnn")]
             {
-                
-
                 // ── Phase 1: Read raw stats tensors into local variables ──
                 // (Avoid borrow conflicts with ctrl write_stats() above)
                 let mut cm_vals: Option<[f32; 3]> = None;
@@ -1160,7 +1485,10 @@ impl IspEngine for MnnEngine {
                 if let Some(t) = interp.get_output(sess, "ChannelMeansBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            std::slice::from_raw_parts(
+                                bytes.as_ptr() as *const f32,
+                                bytes.len() / 4,
+                            )
                         };
                         if floats.len() >= 3 {
                             cm_vals = Some([floats[0], floats[1], floats[2]]);
@@ -1171,7 +1499,10 @@ impl IspEngine for MnnEngine {
                 if let Some(t) = interp.get_output(sess, "ToneStatsBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            std::slice::from_raw_parts(
+                                bytes.as_ptr() as *const f32,
+                                bytes.len() / 4,
+                            )
                         };
                         let mut ts = [0.0f32; 6];
                         let n = floats.len().min(6);
@@ -1183,7 +1514,10 @@ impl IspEngine for MnnEngine {
                 if let Some(t) = interp.get_output(sess, "CoarseHistogramBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            std::slice::from_raw_parts(
+                                bytes.as_ptr() as *const f32,
+                                bytes.len() / 4,
+                            )
                         };
                         let mut hist = [0.0f32; 16];
                         let n = floats.len().min(16);
@@ -1196,7 +1530,10 @@ impl IspEngine for MnnEngine {
                 if let Some(t) = interp.get_output(sess, "CalibrationBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            std::slice::from_raw_parts(
+                                bytes.as_ptr() as *const f32,
+                                bytes.len() / 4,
+                            )
                         };
                         let mut cal = [0.0f32; 24];
                         let n = floats.len().min(24);
@@ -1209,7 +1546,10 @@ impl IspEngine for MnnEngine {
                 if let Some(t) = interp.get_output(sess, "ZoneStatsBlock/frame") {
                     if let Some(bytes) = t.as_bytes() {
                         let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                            std::slice::from_raw_parts(
+                                bytes.as_ptr() as *const f32,
+                                bytes.len() / 4,
+                            )
                         };
                         let shape = t.shape();
                         if shape.len() >= 4 {
@@ -1236,7 +1576,10 @@ impl IspEngine for MnnEngine {
                     // Check zone state before taking stats borrow
                     let zone_init_needed = zone_data.is_some()
                         && !ctrl.zone_stats_enabled
-                        && zone_data.as_ref().map(|(r, c, _)| *r > 0 && *c > 0).unwrap_or(false);
+                        && zone_data
+                            .as_ref()
+                            .map(|(r, c, _)| *r > 0 && *c > 0)
+                            .unwrap_or(false);
 
                     if zone_init_needed {
                         if let Some((rows, cols, _)) = zone_data.as_ref() {
@@ -1338,13 +1681,11 @@ impl IspEngine for MnnEngine {
 #[macro_export]
 macro_rules! register_mnn_engine {
     ($backend:expr) => {
-        cam_isp::engine::register_engine(
-            cam_isp::engine::EngineFactory {
-                name: $backend.id(),
-                priority: $backend.priority(),
-                create_fn: Box::new(|| Box::new(cam_isp::mnnengine::MnnEngine::new($backend))),
-            }
-        );
+        cam_isp::engine::register_engine(cam_isp::engine::EngineFactory {
+            name: $backend.id(),
+            priority: $backend.priority(),
+            create_fn: Box::new(|| Box::new(cam_isp::mnnengine::MnnEngine::new($backend))),
+        });
     };
 }
 

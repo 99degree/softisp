@@ -276,7 +276,11 @@ impl CoeffExtractor for ColorExtractor {
             }
         }
 
-        let (r_m, g_m, b_m) = (r_sum / count as f32, g_sum / count as f32, b_sum / count as f32);
+        let (r_m, g_m, b_m) = (
+            r_sum / count as f32,
+            g_sum / count as f32,
+            b_sum / count as f32,
+        );
 
         let mut coeffs = FrameCoefficients::empty(frame.width, frame.height);
         coeffs.color_stats = [r_m, g_m, b_m, 0.0, 0.0, 0.0];

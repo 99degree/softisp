@@ -13,8 +13,8 @@
 //! Grid generation: radial model where R and B channels are shifted outward/inward
 //! relative to G (reference channel).
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// ChromaticAberrationBlock — corrects lateral chromatic aberration.
 ///
@@ -75,9 +75,9 @@ impl ChromaticAberrationBlock {
 
         for _ch in 0..3 {
             let sign = match _ch {
-                0 => 1.0,   // R: shift outward
-                1 => 0.0,   // G: no shift (reference)
-                2 => -1.0,  // B: shift inward
+                0 => 1.0,  // R: shift outward
+                1 => 0.0,  // G: no shift (reference)
+                2 => -1.0, // B: shift inward
                 _ => 0.0,
             };
             for y in 0..h {
@@ -108,15 +108,33 @@ impl ChromaticAberrationBlock {
 }
 
 impl IspBlock for ChromaticAberrationBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "ChromaticAberration".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "ChromaticAberration".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next = Some(block);
+    }
 
     fn input_tensors(&self) -> Vec<String> {
         vec![self.input_source.clone()]
@@ -133,8 +151,14 @@ impl IspBlock for ChromaticAberrationBlock {
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
@@ -144,8 +168,14 @@ impl IspBlock for ChromaticAberrationBlock {
         };
         Some(Proto::value_info(
             &self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_value(h), Proto::tensor_dim_value(w)], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -156,7 +186,9 @@ impl IspBlock for ChromaticAberrationBlock {
         let split_outputs: Vec<String> = (0..3).map(|ch| self.channel_name(ch)).collect();
         let split_refs: Vec<&str> = split_outputs.iter().map(|s| s.as_str()).collect();
         nodes.push(Proto::node(
-            "Split", &[&self.input_source], &split_refs,
+            "Split",
+            &[&self.input_source],
+            &split_refs,
             &[Proto::attribute_int("axis", 1)],
         ));
 
@@ -180,7 +212,9 @@ impl IspBlock for ChromaticAberrationBlock {
         // Concat back to [1,3,H,W]
         let sampled_refs: Vec<&str> = sampled.iter().map(|s| s.as_str()).collect();
         nodes.push(Proto::node(
-            "Concat", &sampled_refs, &[&self.frame_tensor],
+            "Concat",
+            &sampled_refs,
+            &[&self.frame_tensor],
             &[Proto::attribute_int("axis", 1)],
         ));
 
@@ -243,11 +277,14 @@ mod tests {
 
     #[test]
     fn test_ca_onnx_emission() {
-        let block = ChromaticAberrationBlock::new()
-            .with_radial_correction(32, 32, 1.5);
+        let block = ChromaticAberrationBlock::new().with_radial_correction(32, 32, 1.5);
         let nodes = block.nodes();
         // Split + 3 GridSample + Concat = 5 nodes
-        assert_eq!(nodes.len(), 5, "should emit 5 nodes (Split + 3 GridSample + Concat)");
+        assert_eq!(
+            nodes.len(),
+            5,
+            "should emit 5 nodes (Split + 3 GridSample + Concat)"
+        );
         let inits = block.initializers();
         assert_eq!(inits.len(), 3, "should have 3 grid initializers (R, G, B)");
     }

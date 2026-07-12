@@ -5,8 +5,8 @@
 //! Usage:
 //!   cargo run --example bench_unified_argb -p cam-isp --features mnn
 
-use cam_isp::unified_pipeline::UnifiedConfig;
 use cam_isp::engine::OutputFormat;
+use cam_isp::unified_pipeline::UnifiedConfig;
 use std::time::Instant;
 
 fn main() {
@@ -36,8 +36,10 @@ fn main() {
         ..Default::default()
     };
 
-    println!("Config: {}×{} input → {}×{} output, format={:?}",
-        input_w, input_h, target_w, target_h, config.output_format);
+    println!(
+        "Config: {}×{} input → {}×{} output, format={:?}",
+        input_w, input_h, target_w, target_h, config.output_format
+    );
 
     // Build pipeline
     let t0 = Instant::now();

@@ -1,5 +1,5 @@
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// Demosaic block — Conv 1×1 converts 4 Bayer channels → 3 RGB channels.
 ///
@@ -51,25 +51,29 @@ impl DemosaicBlock {
     /// Compute Conv 1×1 weights `[3,4,1,1]` based on bayer pattern.
     fn conv_weights(&self) -> Vec<f32> {
         match self.bayer_pattern {
-            0 => vec![ // RGGB: [R, G, G, B] → [R, G_avg, B]
-                1f32, 0f32, 0f32, 0f32,    // out0=R: take ch0 (TL)
+            0 => vec![
+                // RGGB: [R, G, G, B] → [R, G_avg, B]
+                1f32, 0f32, 0f32, 0f32, // out0=R: take ch0 (TL)
                 0f32, 0.5f32, 0.5f32, 0f32, // out1=G: avg ch1,ch2 (TR,BL)
-                0f32, 0f32, 0f32, 1f32,     // out2=B: take ch3 (BR)
+                0f32, 0f32, 0f32, 1f32, // out2=B: take ch3 (BR)
             ],
-            1 => vec![ // GRBG: [G, R, B, G] → [R, G_avg, B]
-                0f32, 1f32, 0f32, 0f32,     // out0=R: take ch1
+            1 => vec![
+                // GRBG: [G, R, B, G] → [R, G_avg, B]
+                0f32, 1f32, 0f32, 0f32, // out0=R: take ch1
                 0.5f32, 0f32, 0f32, 0.5f32, // out1=G: avg ch0,ch3
-                0f32, 0f32, 1f32, 0f32,     // out2=B: take ch2
+                0f32, 0f32, 1f32, 0f32, // out2=B: take ch2
             ],
-            2 => vec![ // GBRG: [G, B, R, G] → [R, G_avg, B]
-                0f32, 0f32, 1f32, 0f32,     // out0=R: take ch2
+            2 => vec![
+                // GBRG: [G, B, R, G] → [R, G_avg, B]
+                0f32, 0f32, 1f32, 0f32, // out0=R: take ch2
                 0.5f32, 0f32, 0f32, 0.5f32, // out1=G: avg ch0,ch3
-                0f32, 1f32, 0f32, 0f32,     // out2=B: take ch1
+                0f32, 1f32, 0f32, 0f32, // out2=B: take ch1
             ],
-            _ => vec![ // BGGR: [B, G, G, R] → [R, G_avg, B]
-                0f32, 0f32, 0f32, 1f32,     // out0=R: take ch3
+            _ => vec![
+                // BGGR: [B, G, G, R] → [R, G_avg, B]
+                0f32, 0f32, 0f32, 1f32, // out0=R: take ch3
                 0f32, 0.5f32, 0.5f32, 0f32, // out1=G: avg ch1,ch2
-                1f32, 0f32, 0f32, 0f32,     // out2=B: take ch0
+                1f32, 0f32, 0f32, 0f32, // out2=B: take ch0
             ],
         }
     }
@@ -160,18 +164,20 @@ impl IspBlock for DemosaicBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        vec![
-            Proto::node(
-                "Conv",
-                &[&self.input_source, &format!("{}/w", ns), &format!("{}/b", ns)],
-                &[&self.frame_tensor],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[1, 1]),
-                    Proto::attribute_ints("strides", &[1, 1]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                ],
-            ),
-        ]
+        vec![Proto::node(
+            "Conv",
+            &[
+                &self.input_source,
+                &format!("{}/w", ns),
+                &format!("{}/b", ns),
+            ],
+            &[&self.frame_tensor],
+            &[
+                Proto::attribute_ints("kernel_shape", &[1, 1]),
+                Proto::attribute_ints("strides", &[1, 1]),
+                Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+            ],
+        )]
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
@@ -196,7 +202,11 @@ mod tests {
     fn test_demosaic_block_generates_conv_op() {
         let block = DemosaicBlock::new(2); // GBRG
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 1, "DemosaicBlock should produce 1 node (Conv 1x1)");
+        assert_eq!(
+            nodes.len(),
+            1,
+            "DemosaicBlock should produce 1 node (Conv 1x1)"
+        );
     }
 
     #[test]
@@ -212,10 +222,20 @@ mod tests {
         for pattern in 0..=3 {
             let block = DemosaicBlock::new(pattern);
             let weights = block.conv_weights();
-            assert_eq!(weights.len(), 12, "Pattern {} should produce 12 weights", pattern);
+            assert_eq!(
+                weights.len(),
+                12,
+                "Pattern {} should produce 12 weights",
+                pattern
+            );
             // Sum should be correct: R+G+B channels with appropriate weights
             let sum: f32 = weights.iter().sum();
-            assert!((sum - 3.0).abs() < 0.01, "Pattern {} weight sum should be 3.0, got {}", pattern, sum);
+            assert!(
+                (sum - 3.0).abs() < 0.01,
+                "Pattern {} weight sum should be 3.0, got {}",
+                pattern,
+                sum
+            );
         }
     }
 
@@ -224,12 +244,18 @@ mod tests {
         // RGGB: R=TL (ch0), weight[0] = 1.0
         let rggb = DemosaicBlock::new(0);
         let w = rggb.conv_weights();
-        assert!((w[0] - 1.0).abs() < 0.01, "RGGB R channel should take ch0 with weight 1");
-        
+        assert!(
+            (w[0] - 1.0).abs() < 0.01,
+            "RGGB R channel should take ch0 with weight 1"
+        );
+
         // BGGR: R=BR (ch3), weight[3] = 1.0
         let bggr = DemosaicBlock::new(3);
         let w = bggr.conv_weights();
-        assert!((w[3] - 1.0).abs() < 0.01, "BGGR R channel should take ch3 with weight 1");
+        assert!(
+            (w[3] - 1.0).abs() < 0.01,
+            "BGGR R channel should take ch3 with weight 1"
+        );
     }
 
     #[test]
@@ -244,18 +270,27 @@ mod tests {
     #[test]
     fn test_demosaic_pipeline_integration() {
         // Build pipeline through DemosaicBlock
-        let b1: Box<dyn IspBlock> = Box::new(crate::blocks::RawInputBlock::new()
-            .with_elem_type(1).with_concrete_dims(48, 64));
+        let b1: Box<dyn IspBlock> = Box::new(
+            crate::blocks::RawInputBlock::new()
+                .with_elem_type(1)
+                .with_concrete_dims(48, 64),
+        );
         let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
-        let b3: Box<dyn IspBlock> = Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
+        let b3: Box<dyn IspBlock> =
+            Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
         let b4: Box<dyn IspBlock> = Box::new(crate::blocks::BlcBlock::new());
         let b5: Box<dyn IspBlock> = Box::new(crate::blocks::BayerWbBlock::new());
-        let b6: Box<dyn IspBlock> = Box::new(crate::blocks::DemosaicBlock::new(2).with_concrete_dims(24, 32));
-        
+        let b6: Box<dyn IspBlock> =
+            Box::new(crate::blocks::DemosaicBlock::new(2).with_concrete_dims(24, 32));
+
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![b1, b2, b3, b4, b5, b6];
         GraphComposer::wire_blocks(&mut blocks);
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let result = GraphComposer::compose_from_vec(&refs, &[], 16);
-        assert!(result.is_ok(), "Pipeline through DemosaicBlock should compose: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Pipeline through DemosaicBlock should compose: {:?}",
+            result.err()
+        );
     }
 }

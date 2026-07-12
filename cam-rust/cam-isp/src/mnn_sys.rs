@@ -84,7 +84,13 @@ extern "C" {
     pub fn mnn_tensor_get_host_data(tensor: *mut c_void) -> *mut f32;
     pub fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
     pub fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
-    pub fn mnn_tensor_set_shape(interpreter: *mut c_void, session: *mut c_void, tensor: *mut c_void, dims: *const c_int, ndim: c_int) -> c_int;
+    pub fn mnn_tensor_set_shape(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        tensor: *mut c_void,
+        dims: *const c_int,
+        ndim: c_int,
+    ) -> c_int;
     // Standard MNN C++ API for session info (always available)
     pub fn mnn_get_model_info(
         interpreter: *mut c_void,
@@ -93,36 +99,36 @@ extern "C" {
         out: *mut c_void,
     ) -> c_int;
     pub fn mnn_get_model_input_type(
-    interpreter: *mut c_void,
-    session: *mut c_void,
-    out_code: *mut c_int,
-    out_bits: *mut c_int,
-) -> c_int;
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        out_code: *mut c_int,
+        out_bits: *mut c_int,
+    ) -> c_int;
 
-pub fn mnn_run_true_zero_copy(
-    interpreter: *mut c_void,
-    session: *mut c_void,
-    buffer: *const c_void,
-    buffer_type_code: c_int,
-    buffer_type_bits: c_int,
-    in_shape: *const c_int,
-    in_ndim: c_int,
-    out_data: *mut c_float,
-    max_out: c_int,
-) -> c_int;
+    pub fn mnn_run_true_zero_copy(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        buffer: *const c_void,
+        buffer_type_code: c_int,
+        buffer_type_bits: c_int,
+        in_shape: *const c_int,
+        in_ndim: c_int,
+        out_data: *mut c_float,
+        max_out: c_int,
+    ) -> c_int;
 
-pub fn mnn_run_with_output(
-    interpreter: *mut c_void,
-    session: *mut c_void,
-    buffer: *const c_void,
-    buffer_type_code: c_int,
-    buffer_type_bits: c_int,
-    in_shape: *const c_int,
-    in_ndim: c_int,
-    output_name: *const c_char,
-    out_data: *mut c_float,
-    max_out: c_int,
-) -> c_int;
+    pub fn mnn_run_with_output(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        buffer: *const c_void,
+        buffer_type_code: c_int,
+        buffer_type_bits: c_int,
+        in_shape: *const c_int,
+        in_ndim: c_int,
+        output_name: *const c_char,
+        out_data: *mut c_float,
+        max_out: c_int,
+    ) -> c_int;
 
     /// Host-tensor inference: creates host tensors, copies data in,
     /// runs inference, copies data out. Handles GPU→host transfers.
@@ -164,7 +170,11 @@ pub fn mnn_run_with_output(
 ///
 /// `session`, `info_code`, and `out` must be valid pointers.
 #[no_mangle]
-pub unsafe extern "C" fn MNN_GetSessionInfo(session: *mut c_void, info_code: c_int, out: *mut c_void) -> c_int {
+pub unsafe extern "C" fn MNN_GetSessionInfo(
+    session: *mut c_void,
+    info_code: c_int,
+    out: *mut c_void,
+) -> c_int {
     // The real implementation is provided by libMNN.so; this stub simply
     // returns -1 to indicate that the function is not linked. It will be
     // overridden by the actual library at runtime.
@@ -210,7 +220,9 @@ impl MnnInterpreterSafe {
 
     /// Create an Interpreter from a model buffer.
     pub fn from_buffer(buffer: &[u8]) -> Option<Self> {
-        let ptr = unsafe { mnn_interpreter_create_from_buffer(buffer.as_ptr() as *const c_void, buffer.len()) };
+        let ptr = unsafe {
+            mnn_interpreter_create_from_buffer(buffer.as_ptr() as *const c_void, buffer.len())
+        };
         if ptr.is_null() {
             None
         } else {
@@ -224,7 +236,11 @@ impl MnnInterpreterSafe {
     }
 
     /// Create a session with the given backend.
-    pub fn create_session(&self, backend: MnnBackendType, num_threads: i32) -> Option<MnnSessionSafe> {
+    pub fn create_session(
+        &self,
+        backend: MnnBackendType,
+        num_threads: i32,
+    ) -> Option<MnnSessionSafe> {
         let ptr = unsafe { mnn_session_create(self.inner, backend, num_threads) };
         if ptr.is_null() {
             None
@@ -250,7 +266,11 @@ impl MnnInterpreterSafe {
     /// Get first input tensor (passes NULL name to MNN).
     pub fn get_first_input(&self, session: &MnnSessionSafe) -> Option<MnnTensorSafe> {
         let ptr = unsafe { mnn_session_get_input_v2(self.inner, session.inner, std::ptr::null()) };
-        if ptr.is_null() { None } else { Some(MnnTensorSafe { inner: ptr }) }
+        if ptr.is_null() {
+            None
+        } else {
+            Some(MnnTensorSafe { inner: ptr })
+        }
     }
 
     /// Get an output tensor by name.
@@ -267,7 +287,11 @@ impl MnnInterpreterSafe {
     /// Get first output tensor (passes NULL name to MNN).
     pub fn get_first_output(&self, session: &MnnSessionSafe) -> Option<MnnTensorSafe> {
         let ptr = unsafe { mnn_session_get_output_v2(self.inner, session.inner, std::ptr::null()) };
-        if ptr.is_null() { None } else { Some(MnnTensorSafe { inner: ptr }) }
+        if ptr.is_null() {
+            None
+        } else {
+            Some(MnnTensorSafe { inner: ptr })
+        }
     }
 }
 
@@ -295,13 +319,21 @@ impl MnnSessionSafe {
     /// Resize the session for current input shapes.
     pub fn resize(&self) -> Result<(), String> {
         let ret = unsafe { mnn_session_resize(self.interpreter, self.inner) };
-        if ret == 0 { Ok(()) } else { Err("Session resize failed".to_string()) }
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err("Session resize failed".to_string())
+        }
     }
 
     /// Run inference.
     pub fn run(&self) -> Result<(), String> {
         let ret = unsafe { mnn_session_run(self.interpreter, self.inner) };
-        if ret == 0 { Ok(()) } else { Err("Session run failed".to_string()) }
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err("Session run failed".to_string())
+        }
     }
 
     /// Query model info (memory, FLOPS, etc.) via `MnnModelInfo`.
@@ -549,23 +581,14 @@ extern "C" {
 extern "C" {
     /// Set preferred workgroup size for a Vulkan session.
     /// Called from Rust to tune dispatch groups per-device.
-    pub fn MNNVulkanSetSessionWorkgroup(
-        session: *mut c_void,
-        size_x: i32,
-        size_y: i32,
-    );
+    pub fn MNNVulkanSetSessionWorkgroup(session: *mut c_void, size_x: i32, size_y: i32);
 
     /// Query optimal workgroup size for current GPU.
-    pub fn MNNVulkanQueryOptimalWorkgroup(
-        out_x: *mut i32,
-        out_y: *mut i32,
-    );
+    pub fn MNNVulkanQueryOptimalWorkgroup(out_x: *mut i32, out_y: *mut i32);
 
     /// Set workgroup by preset name.
     /// Presets: "fast_4k" (32×8), "low_power" (8×32), "portrait" (4×64), "universal" (16×16).
-    pub fn MNNVulkanSetWorkgroupPreset(
-        preset_name: *const c_char,
-    );
+    pub fn MNNVulkanSetWorkgroupPreset(preset_name: *const c_char);
 
     /// Hot-swap a const buffer at runtime for live 3A adjustments.
     pub fn MNNVulkanHotSwapConstBuffer(

@@ -11,24 +11,27 @@ use cam_isp::pipeline::IspBlock;
 
 fn build_pipeline(w: u32, h: u32, blocks: &mut Vec<Box<dyn IspBlock>>) {
     // Unpack: INT16 Bayer → float RGB
-    blocks.push(Box::new(UnpackBlock::new()
-        .with_concrete_dims(h as i64, w as i64)));
+    blocks.push(Box::new(
+        UnpackBlock::new().with_concrete_dims(h as i64, w as i64),
+    ));
 
     // Demosaic + CCM
     blocks.push(Box::new(DemosaicCcmBlock::new(0)));
 
     // Warp: GDC + lens shading
-    blocks.push(Box::new(WarpGridBlock::new(w, h)
-        .with_gdc(-0.15, 0.05, 0.0)
-        .with_lens_shading(1.3, 1.0)));
+    blocks.push(Box::new(
+        WarpGridBlock::new(w, h)
+            .with_gdc(-0.15, 0.05, 0.0)
+            .with_lens_shading(1.3, 1.0),
+    ));
 
     // Chromatic aberration
-    blocks.push(Box::new(ChromaticAberrationBlock::new()
-        .with_radial_correction(h, w, 1.5)));
+    blocks.push(Box::new(
+        ChromaticAberrationBlock::new().with_radial_correction(h, w, 1.5),
+    ));
 
     // Auto contrast
-    blocks.push(Box::new(AutoContrastBlock::new(1.3)
-        .with_shadow_lift(0.02)));
+    blocks.push(Box::new(AutoContrastBlock::new(1.3).with_shadow_lift(0.02)));
 
     // Display output
     blocks.push(Box::new(DisplayBlock::new(w)));
@@ -42,8 +45,7 @@ fn bench_resolution(name: &str, w: u32, h: u32) {
     let stages = block_refs.len();
 
     let t0 = std::time::Instant::now();
-    let onnx = cam_isp::pipeline::GraphComposer::compose_from_vec(
-        &block_refs, &[], 16).unwrap();
+    let onnx = cam_isp::pipeline::GraphComposer::compose_from_vec(&block_refs, &[], 16).unwrap();
     let emit_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let path = format!("target/bench_{}.onnx", name);
@@ -57,8 +59,8 @@ fn bench_resolution(name: &str, w: u32, h: u32) {
 
 fn main() {
     println!("=== Full Pipeline Benchmark ===\n");
-    bench_resolution("HD",  1280, 720);
+    bench_resolution("HD", 1280, 720);
     bench_resolution("FHD", 1920, 1080);
-    bench_resolution("4K",  3840, 2160);
+    bench_resolution("4K", 3840, 2160);
     println!("\nONNX files saved to target/");
 }

@@ -15,8 +15,8 @@
 //!   - Low (0.5): high noise → high output
 //!   - High (2.0): only strong edges → low output
 
-use crate::pipeline::IspBlock;
 use crate::onnx::proto::Proto;
+use crate::pipeline::IspBlock;
 
 /// NoiseEstimateBlock — Laplacian-based per-pixel noise level estimation.
 ///
@@ -64,15 +64,33 @@ impl NoiseEstimateBlock {
 }
 
 impl IspBlock for NoiseEstimateBlock {
-    fn id(&self) -> &str { &self.id }
-    fn tensor_ns(&self) -> String { "NoiseEstimate".into() }
-    fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-    fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-    fn set_input_source(&mut self, name: &str) { self.input_source = name.into(); }
-    fn prev(&self) -> Option<&Box<dyn IspBlock>> { self.prev_block.as_ref() }
-    fn set_prev(&mut self, block: Box<dyn IspBlock>) { self.prev_block = Some(block); }
-    fn next(&self) -> Option<&Box<dyn IspBlock>> { self.next_block.as_ref() }
-    fn set_next(&mut self, block: Box<dyn IspBlock>) { self.next_block = Some(block); }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "NoiseEstimate".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        Some(&self.input_source)
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.into();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev_block.as_ref()
+    }
+    fn set_prev(&mut self, block: Box<dyn IspBlock>) {
+        self.prev_block = Some(block);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next_block.as_ref()
+    }
+    fn set_next(&mut self, block: Box<dyn IspBlock>) {
+        self.next_block = Some(block);
+    }
 
     fn input_tensors(&self) -> Vec<String> {
         vec![self.input_source.clone()]
@@ -89,15 +107,27 @@ impl IspBlock for NoiseEstimateBlock {
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.input_source,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.frame_tensor,
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(1),
-              Proto::tensor_dim_param("H"), Proto::tensor_dim_param("W")], 1))
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -108,19 +138,27 @@ impl IspBlock for NoiseEstimateBlock {
         let gray = format!("{}/gray", ns);
         let lum_kernel = format!("{}/lum_k", ns);
         nodes.push(Proto::node(
-            "Conv", &[&self.input_source, &lum_kernel], &[&gray],
-            &[Proto::attribute_ints("kernel_shape", &[3, 3]),
-              Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-              Proto::attribute_int("group", 3)],
+            "Conv",
+            &[&self.input_source, &lum_kernel],
+            &[&gray],
+            &[
+                Proto::attribute_ints("kernel_shape", &[3, 3]),
+                Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                Proto::attribute_int("group", 3),
+            ],
         ));
 
         // 2. Laplacian: Conv(gray, lap_kernel) → [1,1,H,W]
         let lap = format!("{}/lap", ns);
         let lap_kernel = format!("{}/lap_k", ns);
         nodes.push(Proto::node(
-            "Conv", &[&gray, &lap_kernel], &[&lap],
-            &[Proto::attribute_ints("kernel_shape", &[3, 3]),
-              Proto::attribute_ints("pads", &[1, 1, 1, 1])],
+            "Conv",
+            &[&gray, &lap_kernel],
+            &[&lap],
+            &[
+                Proto::attribute_ints("kernel_shape", &[3, 3]),
+                Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+            ],
         ));
 
         // 3. Abs(laplacian)
@@ -130,15 +168,22 @@ impl IspBlock for NoiseEstimateBlock {
         // 4. Local mean: AvgPool(abs_lap)
         let local_mean = format!("{}/local_mean", ns);
         nodes.push(Proto::node(
-            "AveragePool", &[&abs_lap], &[&local_mean],
-            &[Proto::attribute_ints("kernel_shape", &[self.pool_size, self.pool_size]),
-              Proto::attribute_ints("pads", &[1, 1, 1, 1])],
+            "AveragePool",
+            &[&abs_lap],
+            &[&local_mean],
+            &[
+                Proto::attribute_ints("kernel_shape", &[self.pool_size, self.pool_size]),
+                Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+            ],
         ));
 
         // 5. Scale: Mul(local_mean, scale)
         let scale_name = format!("{}/scale", ns);
         nodes.push(Proto::node(
-            "Mul", &[&local_mean, &scale_name], &[&self.frame_tensor], &[],
+            "Mul",
+            &[&local_mean, &scale_name],
+            &[&self.frame_tensor],
+            &[],
         ));
 
         nodes
@@ -161,20 +206,24 @@ impl IspBlock for NoiseEstimateBlock {
             0.0, 0.0, 0.0, 0.0, 0.114, 0.0, 0.0, 0.0, 0.0,
         ];
         inits.push(Proto::tensor_proto_float(
-            &format!("{}/lum_k", ns), &[3, 1, 3, 3], &lum_w));
+            &format!("{}/lum_k", ns),
+            &[3, 1, 3, 3],
+            &lum_w,
+        ));
 
         // Laplacian kernel: [1, 1, 3, 3]
-        let lap_w: Vec<f32> = vec![
-            0.0, 1.0, 0.0,
-            1.0, -4.0, 1.0,
-            0.0, 1.0, 0.0,
-        ];
+        let lap_w: Vec<f32> = vec![0.0, 1.0, 0.0, 1.0, -4.0, 1.0, 0.0, 1.0, 0.0];
         inits.push(Proto::tensor_proto_float(
-            &format!("{}/lap_k", ns), &[1, 1, 3, 3], &lap_w));
+            &format!("{}/lap_k", ns),
+            &[1, 1, 3, 3],
+            &lap_w,
+        ));
 
         // Scale constant
         inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/scale", ns), self.scale));
+            &format!("{}/scale", ns),
+            self.scale,
+        ));
 
         inits
     }
@@ -188,11 +237,18 @@ mod tests {
     fn test_noise_estimate_emits_conv_and_laplacian() {
         let block = NoiseEstimateBlock::new().with_scale(1.2);
         let nodes = block.nodes();
-        let conv_count = nodes.iter().filter(|n| {
-            let s = String::from_utf8_lossy(n);
-            s.contains("Conv")
-        }).count();
-        assert!(conv_count >= 2, "need Conv for luminance + Laplacian, got {}", conv_count);
+        let conv_count = nodes
+            .iter()
+            .filter(|n| {
+                let s = String::from_utf8_lossy(n);
+                s.contains("Conv")
+            })
+            .count();
+        assert!(
+            conv_count >= 2,
+            "need Conv for luminance + Laplacian, got {}",
+            conv_count
+        );
     }
 
     #[test]
@@ -224,7 +280,10 @@ mod tests {
         let block2 = NoiseEstimateBlock::new().with_scale(2.0);
         let inits1 = block1.initializers();
         let inits2 = block2.initializers();
-        assert_ne!(inits1, inits2, "different scales should produce different initializers");
+        assert_ne!(
+            inits1, inits2,
+            "different scales should produce different initializers"
+        );
     }
 
     #[test]

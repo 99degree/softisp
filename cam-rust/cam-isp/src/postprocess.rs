@@ -44,12 +44,12 @@
 //! Each stage is optional and can be enabled/disabled via `PostProcessConfig`.
 //! The pipeline runs on CPU (for now) using bilinear interpolation for warps.
 
-use log::debug;
 use cam_types::FrameFormat;
+use log::debug;
 
-use crate::eis::{EisEngine, GyroSample};
 use crate::deshake::DeshakeEngine;
-use crate::pipeline::{IspFrame, IspAuxOutput};
+use crate::eis::{EisEngine, GyroSample};
+use crate::pipeline::{IspAuxOutput, IspFrame};
 
 /// Configuration for the post-processing pipeline.
 #[derive(Debug, Clone)]
@@ -206,7 +206,13 @@ impl PostProcessPipeline {
     }
 
     /// Enable software deshake with specified parameters.
-    pub fn with_deshake(mut self, block_size: u32, search_radius: i32, crop_fraction: f32, smoothing_alpha: f32) -> Self {
+    pub fn with_deshake(
+        mut self,
+        block_size: u32,
+        search_radius: i32,
+        crop_fraction: f32,
+        smoothing_alpha: f32,
+    ) -> Self {
         self.config.deshake_enabled = true;
         self.config.deshake_block_size = block_size;
         self.config.deshake_search_radius = search_radius;
@@ -245,7 +251,10 @@ impl PostProcessPipeline {
         if float_data.len() < n * 3 {
             return Err(format!(
                 "process_float: expected {} float values (3×{}×{}), got {}",
-                n * 3, height, width, float_data.len()
+                n * 3,
+                height,
+                width,
+                float_data.len()
             ));
         }
 
@@ -279,10 +288,7 @@ impl PostProcessPipeline {
 
         // EIS warp (float)
         if self.config.eis_enabled {
-            if let Some(comp) = self.eis.update(
-                timestamp_ns as i64,
-                500.0, w, h,
-            ) {
+            if let Some(comp) = self.eis.update(timestamp_ns as i64, 500.0, w, h) {
                 match apply_eis_warp_f32(&float_out, w, h, &comp, self.config.eis_crop_fraction) {
                     Ok((new_data, new_w, new_h)) => {
                         float_out = new_data;
@@ -297,7 +303,9 @@ impl PostProcessPipeline {
         // GDC (float)
         if self.config.gdc_enabled {
             match apply_gdc_f32(
-                &float_out, w, h,
+                &float_out,
+                w,
+                h,
                 &self.gdc_coefficients,
                 self.gdc_center,
                 self.config.gdc_strength,
@@ -316,7 +324,11 @@ impl PostProcessPipeline {
             if let Some(ref prev) = self.prev_frame_float {
                 if prev.len() == float_out.len() {
                     float_out = apply_temporal_denoise_f32(
-                        &float_out, prev, w, h, self.config.temporal_denoise_blend,
+                        &float_out,
+                        prev,
+                        w,
+                        h,
+                        self.config.temporal_denoise_blend,
                     );
                 }
             }
@@ -337,7 +349,7 @@ impl PostProcessPipeline {
         }
 
         let frame = IspFrame {
-                params: params.unwrap_or_default(),
+            params: params.unwrap_or_default(),
             data: u8_rgba,
             width: w,
             height: h,
@@ -390,20 +402,19 @@ impl PostProcessPipeline {
                 eis_compensation = Some(comp);
 
                 // Apply EIS warp
-                let (new_data, new_w, new_h) = apply_eis_warp(
-                    &data,
-                    width,
-                    height,
-                    &comp,
-                    self.config.eis_crop_fraction,
-                )?;
+                let (new_data, new_w, new_h) =
+                    apply_eis_warp(&data, width, height, &comp, self.config.eis_crop_fraction)?;
                 data = new_data;
                 width = new_w;
                 height = new_h;
 
-                debug!("EIS warp: dx={:.1} dy={:.1} roll={:.2}° ({:.2}ms)",
-                    comp[0], comp[1], comp[2],
-                    t_eis.elapsed().as_secs_f64() * 1000.0);
+                debug!(
+                    "EIS warp: dx={:.1} dy={:.1} roll={:.2}° ({:.2}ms)",
+                    comp[0],
+                    comp[1],
+                    comp[2],
+                    t_eis.elapsed().as_secs_f64() * 1000.0
+                );
             }
         }
 
@@ -417,9 +428,12 @@ impl PostProcessPipeline {
                 height = new_h;
 
                 let motion = self.deshake.smooth_motion();
-                debug!("Deshake: dx={:.1} dy={:.1} ({:.2}ms)",
-                    motion[0], motion[1],
-                    t_deshake.elapsed().as_secs_f64() * 1000.0);
+                debug!(
+                    "Deshake: dx={:.1} dy={:.1} ({:.2}ms)",
+                    motion[0],
+                    motion[1],
+                    t_deshake.elapsed().as_secs_f64() * 1000.0
+                );
             }
         }
 
@@ -439,9 +453,11 @@ impl PostProcessPipeline {
             width = new_w;
             height = new_h;
 
-            debug!("GDC: strength={:.2} ({:.2}ms)",
+            debug!(
+                "GDC: strength={:.2} ({:.2}ms)",
                 self.config.gdc_strength,
-                t_gdc.elapsed().as_secs_f64() * 1000.0);
+                t_gdc.elapsed().as_secs_f64() * 1000.0
+            );
         }
 
         // ── Stage 4: Temporal Denoise ──
@@ -459,9 +475,11 @@ impl PostProcessPipeline {
                             self.config.temporal_denoise_blend,
                         );
 
-                        debug!("Temporal denoise: blend={:.2} ({:.2}ms)",
+                        debug!(
+                            "Temporal denoise: blend={:.2} ({:.2}ms)",
                             self.config.temporal_denoise_blend,
-                            t_td.elapsed().as_secs_f64() * 1000.0);
+                            t_td.elapsed().as_secs_f64() * 1000.0
+                        );
                     }
                 }
             }
@@ -476,8 +494,10 @@ impl PostProcessPipeline {
         self.frame_count += 1;
 
         let total_ms = t_start.elapsed().as_secs_f64() * 1000.0;
-        debug!("PostProcess frame {}: {}x{} → {}x{} ({:.2}ms)",
-            self.frame_count, frame.width, frame.height, width, height, total_ms);
+        debug!(
+            "PostProcess frame {}: {}x{} → {}x{} ({:.2}ms)",
+            self.frame_count, frame.width, frame.height, width, height, total_ms
+        );
 
         let mut result = IspFrame::new(width, height, self.config.output_format);
         result.data = data;
@@ -731,7 +751,14 @@ fn bilinear_sample(data: &[u8], width: u32, height: u32, bpp: usize, x: f32, y: 
 // ============================================================================
 
 /// Bilinear sample from float RGB planar data [R,G,B] per pixel.
-fn bilinear_sample_f32(data: &[f32], width: u32, height: u32, channels: usize, x: f32, y: f32) -> Vec<f32> {
+fn bilinear_sample_f32(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    channels: usize,
+    x: f32,
+    y: f32,
+) -> Vec<f32> {
     let x0 = x.floor() as i32;
     let y0 = y.floor() as i32;
     let x1 = x0 + 1;
@@ -754,12 +781,14 @@ fn bilinear_sample_f32(data: &[f32], width: u32, height: u32, channels: usize, x
     let p01 = sample(x0, y1);
     let p11 = sample(x1, y1);
 
-    (0..channels).map(|c| {
-        p00[c] * (1.0 - fx) * (1.0 - fy)
-            + p10[c] * fx * (1.0 - fy)
-            + p01[c] * (1.0 - fx) * fy
-            + p11[c] * fx * fy
-    }).collect()
+    (0..channels)
+        .map(|c| {
+            p00[c] * (1.0 - fx) * (1.0 - fy)
+                + p10[c] * fx * (1.0 - fy)
+                + p01[c] * (1.0 - fx) * fy
+                + p11[c] * fx * fy
+        })
+        .collect()
 }
 
 /// Apply EIS warp to float RGB planar data.
@@ -875,9 +904,11 @@ fn apply_temporal_denoise_f32(
     if current.len() != n || previous.len() != n {
         return current.to_vec();
     }
-    current.iter().zip(previous.iter()).map(|(c, p)| {
-        c * (1.0 - blend) + p * blend
-    }).collect()
+    current
+        .iter()
+        .zip(previous.iter())
+        .map(|(c, p)| c * (1.0 - blend) + p * blend)
+        .collect()
 }
 
 // ============================================================================

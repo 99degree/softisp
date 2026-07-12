@@ -60,7 +60,7 @@ impl BlockConfig {
     /// Get default priority for a block.
     fn default_priority(id: &str) -> u32 {
         match id {
-            "unpack" | "unpack_cfa" => 100,  // Essential
+            "unpack" | "unpack_cfa" => 100,    // Essential
             "demosaic" | "demosaic_ccm" => 95, // Essential
             "display" => 90,                   // Essential
             "blc" => 80,                       // Important
@@ -102,12 +102,12 @@ impl BlockConfig {
     /// Get default memory for a block.
     fn default_memory(id: &str) -> usize {
         match id {
-            "unpack" | "unpack_cfa" => 4 * 1024 * 1024,    // 4MB
+            "unpack" | "unpack_cfa" => 4 * 1024 * 1024,     // 4MB
             "demosaic" | "demosaic_ccm" => 8 * 1024 * 1024, // 8MB
             "ee" => 6 * 1024 * 1024,                        // 6MB
             "ldci" => 4 * 1024 * 1024,                      // 4MB
             "warp" => 8 * 1024 * 1024,                      // 8MB
-            _ => 2 * 1024 * 1024,                            // 2MB default
+            _ => 2 * 1024 * 1024,                           // 2MB default
         }
     }
 }
@@ -233,18 +233,12 @@ impl PipelineConfig {
 
     /// Calculate total complexity.
     pub fn total_complexity(&self) -> f64 {
-        self.enabled_blocks()
-            .iter()
-            .map(|b| b.complexity)
-            .sum()
+        self.enabled_blocks().iter().map(|b| b.complexity).sum()
     }
 
     /// Calculate total memory.
     pub fn total_memory(&self) -> usize {
-        self.enabled_blocks()
-            .iter()
-            .map(|b| b.memory_bytes)
-            .sum()
+        self.enabled_blocks().iter().map(|b| b.memory_bytes).sum()
     }
 
     /// Optimize config to fit within limits.
@@ -371,7 +365,8 @@ impl PipelineProfiler {
 
     /// Record a block's processing time.
     pub fn record(&mut self, block_id: &str, time: Duration) {
-        let profile = self.profiles
+        let profile = self
+            .profiles
             .entry(block_id.to_string())
             .or_insert_with(|| BlockProfile::new(block_id));
         profile.record(time);
@@ -389,7 +384,8 @@ impl PipelineProfiler {
 
     /// Check if we have enough samples for a block.
     pub fn has_enough_samples(&self, block_id: &str) -> bool {
-        self.profiles.get(block_id)
+        self.profiles
+            .get(block_id)
             .map(|p| p.samples >= self.samples_per_block)
             .unwrap_or(false)
     }
@@ -403,9 +399,7 @@ impl PipelineProfiler {
 
     /// Get total pipeline time.
     pub fn total_time(&self) -> Duration {
-        self.profiles.values()
-            .map(|p| p.avg_time)
-            .sum()
+        self.profiles.values().map(|p| p.avg_time).sum()
     }
 
     /// Get estimated FPS.
@@ -422,7 +416,10 @@ impl PipelineProfiler {
     pub fn report(&self) -> String {
         let mut lines = Vec::new();
         lines.push("=== Block Performance Profile ===".to_string());
-        lines.push(format!("Total pipeline time: {:.2}ms", self.total_time().as_secs_f64() * 1000.0));
+        lines.push(format!(
+            "Total pipeline time: {:.2}ms",
+            self.total_time().as_secs_f64() * 1000.0
+        ));
         lines.push(format!("Estimated FPS: {:.1}", self.estimated_fps()));
         lines.push("".to_string());
 
@@ -460,10 +457,13 @@ mod tests {
             .enabled(false)
             .priority(10)
             .param("gamma", ParamValue::Float(2.2));
-        
+
         assert!(!block.enabled);
         assert_eq!(block.priority, 10);
-        assert!(matches!(block.params.get("gamma"), Some(ParamValue::Float(2.2))));
+        assert!(matches!(
+            block.params.get("gamma"),
+            Some(ParamValue::Float(2.2))
+        ));
     }
 
     #[test]
@@ -494,11 +494,12 @@ mod tests {
         config.optimize();
 
         // Should keep essential blocks
-        let enabled: Vec<String> = config.enabled_blocks()
+        let enabled: Vec<String> = config
+            .enabled_blocks()
             .iter()
             .map(|b| b.id.clone())
             .collect();
-        
+
         assert!(enabled.contains(&"unpack".to_string()));
         assert!(enabled.contains(&"demosaic".to_string()));
         assert!(enabled.contains(&"display".to_string()));
@@ -507,12 +508,12 @@ mod tests {
     #[test]
     fn test_profiler() {
         let mut profiler = PipelineProfiler::new(3);
-        
+
         // Record some measurements
         profiler.record("unpack", Duration::from_millis(5));
         profiler.record("unpack", Duration::from_millis(6));
         profiler.record("unpack", Duration::from_millis(4));
-        
+
         let profile = profiler.get_profile("unpack").unwrap();
         assert_eq!(profile.samples, 3);
         assert!(profile.avg_time > Duration::ZERO);

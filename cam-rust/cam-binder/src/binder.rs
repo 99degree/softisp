@@ -340,7 +340,12 @@ impl Parcel {
     }
 
     /// Write the parcel data with header (for AIDL transactions).
-    pub fn write_to_binder(&self, target: &dyn IBinder, code: TransactionCode, _flags: i32) -> Result<Parcel, BinderStatus> {
+    pub fn write_to_binder(
+        &self,
+        target: &dyn IBinder,
+        code: TransactionCode,
+        _flags: i32,
+    ) -> Result<Parcel, BinderStatus> {
         target.transact(code, self.clone())
     }
 
@@ -366,7 +371,9 @@ pub trait IBinder: Send + Sync {
     fn interface_descriptor(&self) -> &str;
 
     /// Check if this is a local (same process) binder.
-    fn is_local(&self) -> bool { true }
+    fn is_local(&self) -> bool {
+        true
+    }
 }
 
 /// BpXxx — binder proxy (client side).
@@ -385,7 +392,11 @@ impl BpCameraProvider {
         let mut data = Parcel::new();
         data.write_interface_token("android.hardware.camera.provider.ICameraProvider");
         let reply = self.remote.transact(3, data)?; // GET_CAMERA_ID_LIST = 3
-        let mut reply = Parcel { data: reply.data().to_vec(), pos: 0, owner: None };
+        let mut reply = Parcel {
+            data: reply.data().to_vec(),
+            pos: 0,
+            owner: None,
+        };
         let count = reply.read_i32()? as usize;
         let mut ids = Vec::new();
         for _ in 0..count {
@@ -458,7 +469,11 @@ impl BpCameraDeviceSession {
             data.write_i32(config.format);
         }
         let reply = self.remote.transact(1, data)?; // CONFIGURE_STREAMS = 1
-        let mut reply = Parcel { data: reply.data().to_vec(), pos: 0, owner: None };
+        let mut reply = Parcel {
+            data: reply.data().to_vec(),
+            pos: 0,
+            owner: None,
+        };
         let count = reply.read_i32()? as usize;
         let mut ids = Vec::new();
         for _ in 0..count {
@@ -467,14 +482,25 @@ impl BpCameraDeviceSession {
         Ok(ids)
     }
 
-    pub fn process_capture_request(&self, request: &CaptureRequest) -> Result<Vec<StreamBuffer>, BinderStatus> {
+    pub fn process_capture_request(
+        &self,
+        request: &CaptureRequest,
+    ) -> Result<Vec<StreamBuffer>, BinderStatus> {
         let mut data = Parcel::new();
         data.write_interface_token("android.hardware.camera.device.ICameraDeviceSession");
         data.write_i64(request.frame_number);
-        let stream_id = request.buffer_requests.first().map(|r| r.stream_id).unwrap_or(0);
+        let stream_id = request
+            .buffer_requests
+            .first()
+            .map(|r| r.stream_id)
+            .unwrap_or(0);
         data.write_i32(stream_id);
         let reply = self.remote.transact(2, data)?; // PROCESS_CAPTURE_REQUEST = 2
-        let mut reader = Parcel { data: reply.data().to_vec(), pos: 0, owner: None };
+        let mut reader = Parcel {
+            data: reply.data().to_vec(),
+            pos: 0,
+            owner: None,
+        };
         let count = reader.read_i32()? as usize;
         let mut buffers = Vec::new();
         for _ in 0..count {
@@ -501,7 +527,7 @@ impl BpCameraDeviceSession {
 }
 
 // ── StreamConfig and CaptureRequest types (from types.rs) ──
-use crate::types::{StreamConfig, StreamBuffer, CaptureRequest};
+use crate::types::{CaptureRequest, StreamBuffer, StreamConfig};
 
 /// Binder thread pool.
 pub struct BinderThreadPool {
@@ -553,7 +579,10 @@ impl ServiceManager {
 
     /// Add a service to the ServiceManager.
     pub fn add_service(&self, name: &str, service: Arc<dyn IBinder>) -> Result<(), BinderStatus> {
-        info!("ServiceManager: adding service '{}' (binary compatible)", name);
+        info!(
+            "ServiceManager: adding service '{}' (binary compatible)",
+            name
+        );
         *self.sm_remote.lock().unwrap() = Some(service);
         Ok(())
     }
@@ -592,7 +621,10 @@ impl<T: Send + Sync> LocalBinder<T> {
 
 impl<T: Send + Sync> IBinder for LocalBinder<T> {
     fn transact(&self, code: TransactionCode, data: Parcel) -> Result<Parcel, BinderStatus> {
-        info!("LocalBinder: transact code={} descriptor={}", code, self.interface_descriptor);
+        info!(
+            "LocalBinder: transact code={} descriptor={}",
+            code, self.interface_descriptor
+        );
         // In a real implementation, this would dispatch to the handler
         Ok(data) // echo back the data as reply
     }
@@ -620,7 +652,11 @@ mod tests {
         let mut parcel = Parcel::new();
         parcel.write_i32(42);
         parcel.write_i32(-100);
-        let mut read = Parcel { data: parcel.data().to_vec(), pos: 0, owner: None };
+        let mut read = Parcel {
+            data: parcel.data().to_vec(),
+            pos: 0,
+            owner: None,
+        };
         assert_eq!(read.read_i32().unwrap(), 42);
         assert_eq!(read.read_i32().unwrap(), -100);
     }
@@ -629,7 +665,11 @@ mod tests {
     fn test_parcel_write_read_string() {
         let mut parcel = Parcel::new();
         parcel.write_string16("hello");
-        let mut read = Parcel { data: parcel.data().to_vec(), pos: 0, owner: None };
+        let mut read = Parcel {
+            data: parcel.data().to_vec(),
+            pos: 0,
+            owner: None,
+        };
         assert_eq!(read.read_string16().unwrap(), "hello");
     }
 
@@ -637,7 +677,11 @@ mod tests {
     fn test_parcel_write_read_bytes() {
         let mut parcel = Parcel::new();
         parcel.write_bytes(&[1, 2, 3, 4]);
-        let mut read = Parcel { data: parcel.data().to_vec(), pos: 0, owner: None };
+        let mut read = Parcel {
+            data: parcel.data().to_vec(),
+            pos: 0,
+            owner: None,
+        };
         assert_eq!(read.read_bytes().unwrap(), vec![1, 2, 3, 4]);
     }
 

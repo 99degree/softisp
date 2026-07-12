@@ -7,8 +7,8 @@
 
 use crate::ae::AutoExposureState;
 use crate::ccm_engine::{self, select_ccm};
-use crate::scene::SceneCategory;
 use crate::rolling_stats::RollingStats;
+use crate::scene::SceneCategory;
 
 /// Smoothing mode for temporal filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,7 +234,11 @@ impl IspController {
             zone_stats_enabled: false,
             scene_category: SceneCategory::Unknown,
             last_cct_for_scene: 5500,
-            stats_slots: [RollingStats::new(), RollingStats::new(), RollingStats::new()],
+            stats_slots: [
+                RollingStats::new(),
+                RollingStats::new(),
+                RollingStats::new(),
+            ],
             write_idx: 0,
             process_idx: 1,
             ready_idx: 2,
@@ -242,7 +246,6 @@ impl IspController {
     }
 
     // ── Smoothing mode ──
-
 
     // ── Rolling stats ──
 
@@ -269,7 +272,6 @@ impl IspController {
     pub fn ready_stats(&self) -> &RollingStats {
         &self.stats_slots[self.ready_idx]
     }
-
 
     /// Get current CCM matrix (3×3 row-major).
 
@@ -307,7 +309,12 @@ impl IspController {
         let warm_slope = if diff_to_center < 0.0 { 0.0006 } else { 0.0003 };
         let max_b = (1.4 + diff_to_center.abs() * warm_slope).clamp(1.4, 2.8);
         if raw_b > max_b {
-            log::debug!("AWB: B capped from {:.2} to {:.2} (CCT={:.0})", raw_b, max_b, cct);
+            log::debug!(
+                "AWB: B capped from {:.2} to {:.2} (CCT={:.0})",
+                raw_b,
+                max_b,
+                cct
+            );
             raw_b = max_b;
         }
         // Use the same smoothed fields (avg_r/avg_b serve as smoothed state)
@@ -423,7 +430,6 @@ impl IspController {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,10 +453,12 @@ mod tests {
 
         let gains = ctrl.get_awb_gains();
         // AWB should have moved from initial [1,1,1] — at least one gain should differ
-        let changed = (gains[0] - 1.0).abs() > 0.01
-            || (gains[2] - 1.0).abs() > 0.01;
-        assert!(changed, "AWB should have adapted: gains={:.3} {:.3} {:.3}",
-            gains[0], gains[1], gains[2]);
+        let changed = (gains[0] - 1.0).abs() > 0.01 || (gains[2] - 1.0).abs() > 0.01;
+        assert!(
+            changed,
+            "AWB should have adapted: gains={:.3} {:.3} {:.3}",
+            gains[0], gains[1], gains[2]
+        );
         assert!(ctrl.frame_count >= 10);
         assert!(ctrl.estimated_cct.is_some());
     }
@@ -564,7 +572,12 @@ mod tests {
         // Center zones should have higher weight
         let corner = ctrl.zone_weight[0];
         let center = ctrl.zone_weight[3 * 8 + 3]; // row 3, col 3
-        assert!(center > corner, "Center weight {} should > corner {}", center, corner);
+        assert!(
+            center > corner,
+            "Center weight {} should > corner {}",
+            center,
+            corner
+        );
     }
 
     #[test]
@@ -577,7 +590,7 @@ mod tests {
         // For R=0.5, G=0.3, B=0.1: 4400 - 1300*0.33 + 2100*1.67 = 7478 → cool cluster
         let mut zone_stats = vec![0.0f32; 6 * 8 * 3];
         for i in 0..(6 * 8) {
-            zone_stats[i * 3] = 0.5;     // R
+            zone_stats[i * 3] = 0.5; // R
             zone_stats[i * 3 + 1] = 0.3; // G
             zone_stats[i * 3 + 2] = 0.1; // B
         }
@@ -585,7 +598,12 @@ mod tests {
         ctrl.update_zone_stats(&zone_stats);
         assert!(ctrl.dominant_cct_cluster.is_some());
         // R-dominant → CCT formula gives high CCT → cool cluster (2)
-        assert_eq!(ctrl.dominant_cct_cluster, Some(2), "R-dominant should be cool cluster: {:?}", ctrl.dominant_cct_cluster);
+        assert_eq!(
+            ctrl.dominant_cct_cluster,
+            Some(2),
+            "R-dominant should be cool cluster: {:?}",
+            ctrl.dominant_cct_cluster
+        );
     }
 
     #[test]
@@ -613,7 +631,12 @@ mod tests {
         // Should detect mixed illumination
         // Warm cluster (B high): CCT < 4000 → cluster 0
         // Cool cluster (R high): CCT > 5500 → cluster 2
-        assert_eq!(ctrl.dominant_cct_cluster, Some(-1), "Mixed scene should be -1: {:?}", ctrl.dominant_cct_cluster);
+        assert_eq!(
+            ctrl.dominant_cct_cluster,
+            Some(-1),
+            "Mixed scene should be -1: {:?}",
+            ctrl.dominant_cct_cluster
+        );
     }
 
     #[test]
@@ -647,8 +670,12 @@ mod tests {
         ctrl.update_channel_stats(&[0.10, 0.10, 0.10]);
         let cct = ctrl.estimated_cct.unwrap_or(5500);
         if cct > 4000 || cct == 0 {
-            assert_eq!(ctrl.scene_category, SceneCategory::Indoor,
-                "CCT={} should be Indoor", cct);
+            assert_eq!(
+                ctrl.scene_category,
+                SceneCategory::Indoor,
+                "CCT={} should be Indoor",
+                cct
+            );
         }
     }
 }
