@@ -180,9 +180,11 @@ fn main() {
         #[cfg(feature = "mnn")]
         {
             info!("Converting ONNX to MNN...");
-            let mut opts = MnnConvertOptions::default();
-            opts.fp16 = args.mnn_fp16;
-            opts.optimize_level = args.mnn_optimize;
+            let opts = MnnConvertOptions {
+                fp16: args.mnn_fp16,
+                optimize_level: args.mnn_optimize,
+                ..Default::default()
+            };
 
             match convert_onnx_to_mnn(onnx_path, &args.mnn_output, Some(&opts)) {
                 Ok(msg) => info!("MNN conversion succeeded: {}", msg),
