@@ -1,7 +1,11 @@
 //! V4L2 pixel format handling and conversions.
 
+#[cfg(feature = "v4l2")]
+use rscam::Camera;
+
+/// V4L2 format description.
 #[derive(Debug, Clone)]
-pub struct FormatInfo {
+pub struct V4L2FormatInfo {
     pub fourcc: u32,
     pub description: String,
     pub width: u32,
@@ -11,14 +15,13 @@ pub struct FormatInfo {
 
 /// Convert V4L2 fourcc to FrameFormat
 pub fn fourcc_to_frame_format(fourcc: u32) -> Option<FrameFormat> {
-    match fourcc & 0xFF {
-        // BAWER formats
-        b'B' if fourcc == 0x47553241 => Some(FrameFormat::Rgba8888), // "ARGB"
-        b'R' if fourcc == 0x32424752 => Some(FrameFormat::Rgba8888), // "RGB24"
-        // YUV formats
-        b'Y' if fourcc == 0x32595559 => Some(FrameFormat::Yuv420), // "YUYV"
-        b'N' if fourcc == 0x32554E4E => Some(FrameFormat::Nv12),   // "NV12"
-        b'U' if fourcc == 0x32315555 => Some(FrameFormat::Nv21),   // "UYVY"
+    let fmt_bytes = fourcc.to_le_bytes();
+    match &fmt_bytes {
+        b"ARGB" | b"RGBA" | b"RGB4" => Some(FrameFormat::Rgba8888),
+        b"RGB3" | b"RGB\0" => Some(FrameFormat::Rgb888),
+        b"YUYV" => Some(FrameFormat::Yuv420),
+        b"NV12" => Some(FrameFormat::Nv12),
+        b"NV21" => Some(FrameFormat::Nv21),
         _ => None,
     }
 }
@@ -26,27 +29,55 @@ pub fn fourcc_to_frame_format(fourcc: u32) -> Option<FrameFormat> {
 /// Convert FrameFormat to V4L2 fourcc
 pub fn frame_format_to_fourcc(format: FrameFormat) -> u32 {
     match format {
-        FrameFormat::Rgba8888 => 0x47503252, // "RGBA"
-        FrameFormat::Rgb888 => 0x32424752,   // "RGB24"
-        FrameFormat::Yuv420888 => 0x32315559, // "YUYV"
-        FrameFormat::RawSensor => 0x30313052, // "R010" RAW10
-        FrameFormat::Raw10 => 0x30313052,    // "R010"
-        FrameFormat::Raw12 => 0x32313052,    // "R012"
-        _ => 0x47503252, // Default to RGBA
+        FrameFormat::Rgba8888 => u32::from_le_bytes(*b"RGBA"),
+        FrameFormat::Rgb888 => u32::from_le_bytes(*b"RGB3"),
+        FrameFormat::Yuv420 => u32::from_le_bytes(*b"YUYV"),
+        FrameFormat::Nv12 => u32::from_le_bytes(*b"NV12"),
+        FrameFormat::Nv21 => u32::from_le_bytes(*b"NV21"),
+        _ => 0,
     }
 }
 
 /// Get available formats from a V4L2 device
+/// Note: rscam formats() returns FormatInfo with [u8; 4] fourcc and description only.
+/// Width/height are obtained via resolutions().
 #[cfg(feature = "v4l2")]
-pub fn get_supported_formats(cam: &rscam::Camera) -> Vec<FormatInfo> {
-    let fmts = cam.query_formats().unwrap_or_default();
-    fmts.into_iter()
-        .map(|fmt| FormatInfo {
-            fourcc: fmt.pixelformat,
-            description: String::new(),
-            width: fmt.width,
-            height: fmt.height,
-            bytes_per_line: fmt.bytesperline,
-        })
-        .collect()
+pub fn get_supported_formats(cam: &Camera) -> Vec<V4L2FormatInfo> {
+    let mut result = Vec::new();
+    for fmt in cam.formats() {
+        let fourcc = u32::from_le_bytes(fmt.format);
+        // Try to get first resolution for this format
+        if let Ok(res) = cam.resolutions(&fmt.format) {
+            let (w, h) = match res {
+                rscam::ResolutionInfo::Discretes(list) => list.first().copied().unwrap_or((0, 0)),
+                rscam::ResolutionInfo::Stepwise { min, .. } => min,
+            };
+            result.push(V4L2FormatInfo {
+                fourcc,
+                description: fmt.description,
+                width: w,
+                height: h,
+                bytes_per_line: 0,
+            });
+        }
+    }
+    result
+}
+
+/// Stub for when V4L2 is not available.
+#[cfg(not(feature = "v4l2"))]
+pub fn fourcc_to_frame_format(_fourcc: u32) -> Option<FrameFormat> {
+    None
+}
+
+/// Stub for when V4L2 is not available.
+#[cfg(not(feature = "v4l2"))]
+pub fn frame_format_to_fourcc(_format: FrameFormat) -> u32 {
+    0
+}
+
+/// Stub for when V4L2 is not available.
+#[cfg(not(feature = "v4l2"))]
+pub fn get_supported_formats<T>(_cam: &T) -> Vec<V4L2FormatInfo> {
+    vec![]
 }
