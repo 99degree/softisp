@@ -24,6 +24,7 @@ pub mod v4l2_compliance;
 use crate::v4l2::V4l2CameraAdapter;
 
 use cam_hal::camera::ICameraAdapter;
+#[cfg(not(feature = "v4l2"))]
 use log::warn;
 
 /// Create a Linux V4L2 camera adapter.
