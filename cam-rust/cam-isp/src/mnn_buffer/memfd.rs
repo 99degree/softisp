@@ -25,6 +25,8 @@
 // ```
 
 use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::os::fd::FromRawFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::Arc;
 
