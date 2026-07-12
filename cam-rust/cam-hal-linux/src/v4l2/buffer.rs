@@ -21,19 +21,11 @@ pub fn buffer_to_byte_frame(
     format: FrameFormat,
     timestamp: u64,
 ) -> ByteFrame {
-    let stride = match format {
-        FrameFormat::Rgba8888 => width * 4,
-        FrameFormat::Rgb888 => width * 3,
-        FrameFormat::Yuv420888 => width,
-        _ => width,
-    };
-
     ByteFrame {
         data: frame.to_vec(),
         width,
         height,
-        stride,
-        format: format.to_string(),
+        format: format!("{:?}", format),
         timestamp: frame.get_timestamp(),
     }
 }
@@ -51,8 +43,7 @@ pub fn buffer_to_byte_frame<T>(
         data: Vec::new(),
         width: 0,
         height: 0,
-        stride: 0,
-        format: String::new(),
+        format: _format,
         timestamp: 0,
     }
 }
