@@ -8,11 +8,13 @@
 # These are found via PATH when the NDK toolchain bin/ is exported:
 #   export PATH=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
 #
-# Alternatively, set full paths here:
-#   [target.aarch64-linux-android]
-#   linker = "/path/to/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
-
 # NOTE: Do NOT set default linker here — it interferes with native builds.
 # Set linker via command line or environment:
 #   cargo build --target aarch64-linux-android \
 #     --config 'target.aarch64-linux-android.linker="aarch64-linux-android24-clang"'
+
+# Termux native build: preload MNN_Express for Android linker namespace compat.
+# libMNNConvertDeps.so transitively depends on libMNN_Express.so,
+# but Android's linker isolation prevents RUNPATH resolution.
+[target.aarch64-linux-android]
+runner = "env LD_PRELOAD=/data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a/libMNN_Express.so LD_LIBRARY_PATH=/data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a:/system/lib64:/vendor/lib64"
