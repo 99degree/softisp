@@ -68,6 +68,9 @@ mnn_buffer = []
 ort = ["dep:ort"]
 mnn = ["mnn_buffer"]
 rectifier = ["isp-rectifier"]
+cuda = []
+tensorrt = []
+openvino = []
 
 [dependencies.ort]
 version = "2.0.0-rc.12"
