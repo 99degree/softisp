@@ -9,7 +9,7 @@
 //!     cargo test --test test_mnn_engine -p cam-isp --features mnn -- --nocapture --ignored
 //!
 //! Requires:
-//!   - libMNN.so in $PWD/lib/arm64-v8a/  (prebuilt)
+//!   - libMNN.so in $PWD/lib/aarch64-v8a/  (prebuilt)
 //!   - MNNConvert binary at ~/MNN/build/MNNConvert
 
 use cam_isp::pipeline::IspBlock;
