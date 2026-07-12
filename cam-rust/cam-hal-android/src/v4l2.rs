@@ -35,16 +35,7 @@ pub fn list_devices() -> Vec<String> {
 #[cfg(feature = "v4l2")]
 pub fn get_device_info(device_path: &str) -> Option<DeviceInfo> {
     let cam = Camera::new(device_path).ok()?;
-
-    Some(DeviceInfo {
-        path: device_path.to_string(),
-        driver: String::new(),
-        card: String::new(),
-        bus_info: String::new(),
-        version: 0,
-        capabilities: 0,
-        device_caps: 0,
-    })
+    let caps = cam.capability()?;
 
     Some(DeviceInfo {
         path: device_path.to_string(),
