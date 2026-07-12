@@ -23,14 +23,7 @@ impl V4l2CameraAdapter {
         {
             let cam = rscam::Camera::new(device_path)
                 .map_err(|e| format!("Failed to open V4L2 device {}: {}", device_path, e))?;
-            let info = cam
-                .query_capability()
-                .map_err(|e| format!("Failed to query capabilities: {}", e))?;
-            info!(
-                "V4L2 device: driver={}, card={}",
-                String::from_utf8_lossy(&info.driver),
-                String::from_utf8_lossy(&info.card)
-            );
+            info!("Opened V4L2 device: {}", device_path);
             drop(cam); // close — we'll reopen on start_streaming
 
             Ok(Self {
@@ -162,18 +155,21 @@ impl ICameraAdapter for V4l2CameraAdapter {
                     return;
                 }
 
-                let mut cfg = rscam::Config::new();
-                cfg.resolution(width, height)
-                    .format(fourcc)
-                    .frame_rate(fps, 1);
+                let cfg = rscam::Config {
+                    interval: (fps, 1),
+                    resolution: (width, height),
+                    format: &[
+                        (fourcc >> 0) as u8,
+                        (fourcc >> 8) as u8,
+                        (fourcc >> 16) as u8,
+                        (fourcc >> 24) as u8,
+                    ],
+                    field: 0,
+                    nbuffers: 2,
+                };
 
-                if let Err(e) = cam.configure(&cfg) {
-                    error!("V4L2 thread: configure failed: {:?}", e);
-                    return;
-                }
-
-                if let Err(e) = cam.start_streaming(4) {
-                    error!("V4L2 thread: start_streaming failed: {:?}", e);
+                if let Err(e) = cam.start(&cfg) {
+                    error!("V4L2 thread: start failed: {:?}", e);
                     return;
                 }
 
@@ -183,26 +179,26 @@ impl ICameraAdapter for V4l2CameraAdapter {
                 );
 
                 while *running_clone.lock().unwrap() {
-                    match cam.read_frame() {
-                        Ok(buf) => {
-                            let frame = crate::v4l2::buffer::buffer_to_byte_frame(
-                                &buf, width, height, format,
+                    match cam.capture() {
+                        Ok(frame) => {
+                            let byte_frame = crate::v4l2::buffer::buffer_to_byte_frame(
+                                &frame, width, height, format,
                             );
                             // SAFETY: base_ptr is valid as long as self is alive,
                             // and the thread stops (running=false) before self is dropped.
                             unsafe {
                                 let base = &*base_ptr;
-                                base.invoke_frame_callback(frame);
+                                base.invoke_frame_callback(byte_frame);
                             }
                         }
                         Err(e) => {
-                            error!("V4L2 read frame error: {:?}", e);
+                            error!("V4L2 capture frame error: {:?}", e);
                             break;
                         }
                     }
                 }
 
-                let _ = cam.stop_streaming();
+                let _ = cam.stop();
                 info!("V4L2 streaming thread stopped");
             }
             #[cfg(not(feature = "v4l2"))]
