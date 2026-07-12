@@ -149,10 +149,9 @@ impl PipelineBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
-    /// use cam_isp::blocks::*;
-    /// let b = PipelineBuilder::new(640, 480);
-    /// let _b = b.push(Box::new(UnpackBlock::new()));
+    /// ```rust,ignore
+    /// let b = cam_isp::pipeline_builder::PipelineBuilder::new(640, 480);
+    /// let _b = b.push(Box::new(cam_isp::blocks::UnpackBlock::new()));
     /// ```
     pub fn push(mut self, block: Box<dyn IspBlock>) -> Self {
         self.blocks.push(block);
