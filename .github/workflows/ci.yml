@@ -113,29 +113,48 @@ jobs:
 
       - name: Build debug (all targets, all features)
         run: |
+          LOGFILE="${RUNNER_TEMP}/build-debug.log"
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
-            echo "=== build debug: $crate ==="
-            cargo build -p "$crate" --all-targets --all-features || ERRORS=$((ERRORS+1))
-            echo ""
+            echo "=== build debug: $crate ===" | tee -a "$LOGFILE"
+            cargo build -p "$crate" --all-targets --all-features 2>&1 | tee -a "$LOGFILE"
+            if [ "${PIPESTATUS[0]}" -ne 0 ]; then ERRORS=$((ERRORS+1)); fi
+            echo "" | tee -a "$LOGFILE"
           done
-          if [ "$ERRORS" -ne 0 ]; then
-            echo "❌ $ERRORS crate(s) failed debug build"
-            exit 1
-          fi
+          echo "=== Build complete: $ERRORS errors ===" | tee -a "$LOGFILE"
+          echo "logfile=$LOGFILE" >> "$GITHUB_ENV"
+          if [ "$ERRORS" -ne 0 ]; then exit 1; fi
+
+      - name: Upload debug build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-debug-logs
+          path: ${{ runner.temp }}/build-debug.log
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Build release (all targets, all features)
         run: |
+          LOGFILE="${RUNNER_TEMP}/build-release.log"
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
-            echo "=== build release: $crate ==="
-            cargo build -p "$crate" --release --all-targets --all-features || ERRORS=$((ERRORS+1))
-            echo ""
+            echo "=== build release: $crate ===" | tee -a "$LOGFILE"
+            cargo build -p "$crate" --release --all-targets --all-features 2>&1 | tee -a "$LOGFILE"
+            if [ "${PIPESTATUS[0]}" -ne 0 ]; then ERRORS=$((ERRORS+1)); fi
+            echo "" | tee -a "$LOGFILE"
           done
-          if [ "$ERRORS" -ne 0 ]; then
-            echo "❌ $ERRORS crate(s) failed release build"
-            exit 1
-          fi
+          echo "=== Build complete: $ERRORS errors ===" | tee -a "$LOGFILE"
+          if [ "$ERRORS" -ne 0 ]; then exit 1; fi
+
+      - name: Upload release build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-release-logs
+          path: ${{ runner.temp }}/build-release.log
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Verify binary sizes
         run: |
