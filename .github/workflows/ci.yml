@@ -76,9 +76,8 @@ jobs:
           python -m pytest tests/ -v --tb=short
 
       - name: Model validation (quick)
-        working-directory: ./isp-rectifier
         run: |
-          python3 << 'EOF'
+          python3 -c "
           import onnxruntime as ort
           import numpy as np
 
@@ -93,7 +92,6 @@ jobs:
               'histogram': hist, 'metadata': meta
           })
           print(f'Outputs: {[o.shape for o in out]}')
-EOF
         working-directory: ./isp-rectifier
 
   # ONNX model validation
@@ -127,12 +125,12 @@ EOF
 
           for model_name in ['fusedispcontroller_int8.onnx']:
               path = f'isp-rectifier/models/{model_name}'
-              print(f'Validating {model_name}...')
+              print(f'\n🔍 Validating {model_name}...')
 
               # Load and check
               model = onnx.load(f'isp-rectifier/models/{model_name}')
               onnx.checker.check_model(model)
-              print(f'  ONNX checker passed')
+              print(f'  ✅ ONNX checker passed')
 
               # Quick inference test
               sess = ort.InferenceSession(f'isp-rectifier/models/{model_name}', providers=['CPUExecutionProvider'])
@@ -145,11 +143,10 @@ EOF
               sess = ort.InferenceSession(f'isp-rectifier/models/{model_name}', providers=['CPUExecutionProvider'])
               outputs = sess.run(None, {'histogram': np.random.randn(1, 256).astype(np.float32), 'metadata': np.random.randn(1, 52).astype(np.float32)})
 
-              print(f'  Inputs: {input_names}')
-              print(f'  Outputs: {output_names}')
-              print(f'  Output shapes: {[o.shape for o in outputs]}')
-              print(f'  Model {model_name} validation passed!')
-EOF
+              print(f'  ✅ Inputs: {input_names}')
+              print(f'  ✅ Outputs: {output_names}')
+              print(f'  ✅ Output shapes: {[o.shape for o in outputs]}')
+              print(f'  ✅ Model {model_name} validation passed!')
 
   # Documentation build (placeholder)
   docs:
