@@ -20,11 +20,15 @@ jobs:
           submodules: false
 
       - name: Git config safe directory
-        run: git config --global --add safe.directory '*\n
+        run: git config --global --add safe.directory '*'
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Set cargo job count
+        run: |
+          echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
+          echo "CARGO_TEST_JOBS=4" >> $GITHUB_ENV
 
       - name: Install system dependencies
         run: |
@@ -53,11 +57,11 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== clippy lib: $crate ==="
-            cargo clippy -p "$crate" --lib --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+            cargo clippy -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           echo "=== clippy: cam-app ==="
-          cargo clippy -p cam-app --all-features -- -d warnings 2>&1 || ERRORS=$((ERRORS+1))
+          cargo clippy -p cam-app --jobs $CARGO_BUILD_JOBS --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed clippy"
@@ -81,6 +85,10 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Set cargo job count
+        run: |
+          echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
+          echo "CARGO_TEST_JOBS=4" >> $GITHUB_ENV
 
       - name: Install system dependencies
         run: |
@@ -105,7 +113,7 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
             echo "=== test: $crate ==="
-            cargo test -p "$crate" --lib --all-features --no-fail-fast 2>&1 || ERRORS=$((ERRORS+1))
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --lib --all-features --no-fail-fast 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           if [ "$ERRORS" -ne 0 ]; then
@@ -115,7 +123,7 @@ jobs:
 
       - name: Run doc tests
         working-directory: ./cam-rust
-        run: cargo test --workspace --doc --all-features --no-fail-fast
+        run: cargo test --jobs $CARGO_TEST_JOBS --workspace --doc --all-features --no-fail-fast
 
   # Rust clean rebuild test
   rust-clean-rebuild:
@@ -134,6 +142,10 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Set cargo job count
+        run: |
+          echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
+          echo "CARGO_TEST_JOBS=4" >> $GITHUB_ENV
 
       - name: Install system dependencies
         run: |
@@ -161,11 +173,11 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== build lib debug: $crate ==="
-            cargo build -p "$crate" --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           echo "=== build app debug: cam-app ==="
-          cargo build -p cam-app --all-features 2>&1 || ERRORS=$((ERRORS+1))
+          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --all-features 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed"
@@ -178,7 +190,7 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
             echo "=== build tests: $crate ==="
-            cargo test -p "$crate" --no-run --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --no-run --all-features 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           if [ "$ERRORS" -ne 0 ]; then
@@ -192,11 +204,11 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== build lib release: $crate ==="
-            cargo build -p "$crate" --release --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           echo "=== build app release: cam-app ==="
-          cargo build -p cam-app --release --all-features 2>&1 || ERRORS=$((ERRORS+1))
+          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --release --all-features 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed"
