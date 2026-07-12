@@ -189,8 +189,8 @@ jobs:
             cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
-          echo "=== build app debug: cam-app ==="
-          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --all-features 2>&1 || ERRORS=$((ERRORS+1))
+          echo "=== build app debug: cam-app (default features only, mnn requires external libs) ==="
+          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed"
@@ -220,8 +220,8 @@ jobs:
             cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
-          echo "=== build app release: cam-app ==="
-          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --release --all-features 2>&1 || ERRORS=$((ERRORS+1))
+          echo "=== build app release: cam-app (default features only, mnn requires external libs) ==="
+          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --release 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed"
