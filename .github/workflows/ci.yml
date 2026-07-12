@@ -60,11 +60,12 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== clippy lib: $crate ==="
-            cargo clippy -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+            # Exclude 'mnn' feature (requires external libs not on CI)
+            cargo clippy -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --features "rectifier" -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           echo "=== clippy: cam-app ==="
-          cargo clippy -p cam-app --jobs $CARGO_BUILD_JOBS --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+          cargo clippy -p cam-app --jobs $CARGO_BUILD_JOBS -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed clippy"
@@ -121,7 +122,7 @@ jobs:
           ERRORS=0
           for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
             echo "=== test: $crate ==="
-            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --lib --all-features --no-fail-fast 2>&1 || ERRORS=$((ERRORS+1))
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --lib --features "rectifier" --no-fail-fast 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           if [ "$ERRORS" -ne 0 ]; then
@@ -131,7 +132,7 @@ jobs:
 
       - name: Run doc tests
         working-directory: ./cam-rust
-        run: cargo test --jobs $CARGO_TEST_JOBS --workspace --doc --all-features --no-fail-fast
+        run: cargo test --jobs $CARGO_TEST_JOBS --workspace --doc --features "rectifier" --no-fail-fast
 
   # Rust clean rebuild test
   rust-clean-rebuild:
@@ -180,13 +181,14 @@ jobs:
         working-directory: ./cam-rust
         run: cargo clean
 
-      - name: Build debug (all features)
+      - name: Build debug (without mnn feature - requires external libs)
         working-directory: ./cam-rust
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== build lib debug: $crate ==="
-            cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            # Exclude 'mnn' feature (requires external MNN libs not on CI)
+            cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           echo "=== build app debug: cam-app (default features only, mnn requires external libs) ==="
@@ -197,13 +199,13 @@ jobs:
             exit 1
           fi
 
-      - name: Build tests (all features)
+      - name: Build tests (without mnn feature)
         working-directory: ./cam-rust
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
             echo "=== build tests: $crate ==="
-            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --no-run --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --no-run --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           if [ "$ERRORS" -ne 0 ]; then
@@ -211,13 +213,13 @@ jobs:
             exit 1
           fi
 
-      - name: Build release (all features)
+      - name: Build release (without mnn feature)
         working-directory: ./cam-rust
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
             echo "=== build lib release: $crate ==="
-            cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib --all-features 2>&1 || ERRORS=$((ERRORS+1))
+            cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib --features "rectifier" 2>&1 || ERRORS=$((ERRORS+1))
             echo ""
           done
           echo "=== build app release: cam-app (default features only, mnn requires external libs) ==="
@@ -248,71 +250,9 @@ jobs:
 
   # Python tests (DISABLED - no Python package in this repo)
   # python:
-  #   name: Python Tests
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 25
-  #   defaults:
-  #     run:
-  #       working-directory: ./isp-rectifier
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #       with:
-  #         persist-credentials: false
-  #         fetch-depth: 0
-  #         submodules: false
-
-  #     - name: Git config safe directory
-  #       run: git config --global --add safe.directory '*'
-
-  #     - name: Set up Python
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: '3.11'
-
-  #     - name: Cache pip
-  #       uses: actions/cache@v4
-  #       with:
-  #         path: ~/.cache/pip
-  #         key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
-  #         restore-keys: |
-  #           ${{ runner.os }}-pip-
-
-  #     - name: Install dependencies
-  #       run: |
-  #         pip install -q pytest pytest-cov onnxruntime numpy
-  #         pip install -q -r requirements.txt
-
-  #     - name: Run Python tests
-  #       run: |
-  #         python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing
-
-  #     - name: Model validation (quick)
-  #       run: python3 scripts/validate_model_ci.py
 
   # ONNX model validation (DISABLED - depends on Python package)
   # model-validation:
-  #   name: Model Validation
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 20
-  #   needs: [rust-test]
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #       with:
-  #         persist-credentials: false
-  #         fetch-depth: 0
-  #         submodules: false
-
-  #     - name: Git config safe directory
-  #       run: git config --global --add safe.directory '*'
-
-  #     - name: Install onnxruntime
-  #       run: pip install -q onnxruntime numpy
-
-  #     - name: Validate ONNX models
-  #       run: python3 isp-rectifier/scripts/validate_models_ci.py
-
-  #     - name: Validate model I/O shapes
-  #       run: python3 isp-rectifier/scripts/validate_model_io.py
 
   # Documentation build (placeholder)
   docs:
