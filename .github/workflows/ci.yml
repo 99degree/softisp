@@ -75,9 +75,145 @@ jobs:
             exit 1
           fi
 
-  # Rust tests
+  # Build MNN libraries for testing
+  build-mnn:
+    name: Build MNN Libraries
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      mnn-lib-path: ${{ steps.set-output.outputs.mnn-lib-path }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q \
+            cmake ninja-build \
+            libvulkan-dev vulkan-tools \
+            libprotobuf-dev protobuf-compiler \
+            libflatbuffers-dev \
+            libopencv-dev \
+            python3-pip \
+            wget unzip
+          pip3 install --quiet flatbuffers
+
+      - name: Build MNN from source
+        run: |
+          # Build MNN from source (takes ~10-15 min)
+          cd /tmp
+          git clone --depth 1 --branch 2.9.7 https://github.com/alibaba/MNN.git
+          cd MNN
+          
+          # Build with Vulkan support
+          mkdir build && cd build
+          cmake .. -G Ninja \
+            -DMNN_BUILD_CONVERTER=ON \
+            -DMNN_BUILD_QUANTOOLS=OFF \
+            -DMNN_BUILD_TRAIN=OFF \
+            -DMNN_VULKAN=ON \
+            -DMNN_OPENCL=OFF \
+            -DMNN_OPENGL=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local
+          ninja -j4
+          sudo ninja install
+          
+          # Verify libraries
+          ls -la /usr/local/lib/libMNN*.so
+          ls -la /usr/local/bin/MNNConvert
+
+      - name: Set MNN library path output
+        id: set-output
+        run: echo "mnn-lib-path=/usr/local/lib" >> $GITHUB_OUTPUT
+
+      - name: Cache MNN libraries
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/libMNN*.so
+          key: ${{ runner.os }}-mnn-libs-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-mnn-libs-
+
+  # Rust linting (fmt + clippy) - depends on MNN for cam-isp --all-features
+  rust-lint-full:
+    name: Rust Lint (fmt + clippy, with MNN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-mnn
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      - name: Set cargo job count
+        run: |
+          echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
+          echo "CARGO_TEST_JOBS=4" >> $GITHUB_ENV
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libv4l-dev
+
+      - name: Set LD_LIBRARY_PATH for MNN
+        run: echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            cam-rust/target
+          key: ${{ runner.os }}-cargo-lint-full-${{ hashFiles('cam-rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lint-
+
+      - name: Check formatting
+        working-directory: ./cam-rust
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy (with MNN feature)
+        working-directory: ./cam-rust
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
+            echo "=== clippy lib: $crate ==="
+            if [ "$crate" = "cam-isp" ]; then
+              cargo clippy -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --features "rectifier mnn" -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+            else
+              cargo clippy -p "$crate" --jobs $CARGO_BUILD_JOBS --lib -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+            fi
+            echo ""
+          done
+          echo "=== clippy: cam-app ==="
+          cargo clippy -p cam-app --jobs $CARGO_BUILD_JOBS --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
+          echo ""
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) failed clippy"
+            exit 1
+          fi
+
+  # Rust tests (without MNN by default)
   rust-test:
-    name: Rust Tests
+    name: Rust Tests (no MNN)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -140,9 +276,84 @@ jobs:
         working-directory: ./cam-rust
         run: cargo test --jobs $CARGO_TEST_JOBS --workspace --doc --all-features --no-fail-fast
 
+  # Rust tests with MNN (full integration)
+  rust-test-mnn:
+    name: Rust Tests (with MNN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: build-mnn
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Set cargo job count
+        run: |
+          echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
+          echo "CARGO_TEST_JOBS=4" >> $GITHUB_ENV
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libv4l-dev
+
+      - name: Set LD_LIBRARY_PATH for MNN
+        run: echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            cam-rust/target
+          key: ${{ runner.os }}-cargo-test-mnn-${{ hashFiles('cam-rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Run library tests (no external deps)
+        working-directory: ./cam-rust
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
+            echo "=== test: $crate ==="
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --lib --no-fail-fast 2>&1 || ERRORS=$((ERRORS+1))
+            echo ""
+          done
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) test failed"
+            exit 1
+          fi
+
+      - name: Run cam-isp tests with MNN feature
+        working-directory: ./cam-rust
+        run: cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --lib --features "rectifier mnn" --no-fail-fast
+
+      - name: Run MNN integration tests
+        working-directory: ./cam-rust
+        run: |
+          # Run MNN-specific tests (require MNN libs)
+          cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --test test_mnn_engine --features "mnn" -- --ignored --nocapture 2>&1 || true
+
+      - name: Run doc tests
+        working-directory: ./cam-rust
+        run: cargo test --jobs $CARGO_TEST_JOBS --workspace --doc --all-features --no-fail-fast
+
   # Rust clean rebuild test
   rust-clean-rebuild:
-    name: Rust Clean Rebuild
+    name: Rust Clean Rebuild (no MNN)
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -218,7 +429,6 @@ jobs:
             echo ""
           done
           echo "=== build tests: cam-isp (rectifier only, skip mnn-dependent tests) ==="
-          # Only build lib tests, skip tests that require mnn feature
           cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --no-run --lib 2>&1 || ERRORS=$((ERRORS+1))
           echo ""
           if [ "$ERRORS" -ne 0 ]; then
@@ -265,6 +475,193 @@ jobs:
           echo "=== Release binaries ==="
           find target/release -maxdepth 1 -type f -executable -exec ls -lh {} \; 2>/dev/null | head -20
 
+  # Rust clean rebuild with MNN
+  rust-clean-rebuild-mnn:
+    name: Rust Clean Rebuild (with MNN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: build-mnn
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      - name: Set cargo job count
+        run: |
+          echo "CARGO_BUILD_JOBS=4" >> $GITHUB_ENV
+          echo "CARGO_TEST_JOBS=4" >> $GITHUB_ENV
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libv4l-dev
+
+      - name: Set LD_LIBRARY_PATH for MNN
+        run: echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+          key: ${{ runner.os }}-cargo-clean-mnn-${{ hashFiles('cam-rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Clean build
+        working-directory: ./cam-rust
+        run: cargo clean
+
+      - name: Build debug (with MNN feature)
+        working-directory: ./cam-rust
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
+            echo "=== build lib debug: $crate ==="
+            if [ "$crate" = "cam-isp" ]; then
+              cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib --features "rectifier mnn" 2>&1 || ERRORS=$((ERRORS+1))
+            else
+              cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --lib 2>&1 || ERRORS=$((ERRORS+1))
+            fi
+            echo ""
+          done
+          echo "=== build app debug: cam-app (with MNN) ==="
+          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --features "mnn" 2>&1 || ERRORS=$((ERRORS+1))
+          echo ""
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) failed"
+            exit 1
+          fi
+
+      - name: Build tests (with MNN feature)
+        working-directory: ./cam-rust
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
+            echo "=== build tests: $crate ==="
+            cargo test -p "$crate" --jobs $CARGO_TEST_JOBS --no-run --lib --tests 2>&1 || ERRORS=$((ERRORS+1))
+            echo ""
+          done
+          echo "=== build tests: cam-isp (with MNN feature) ==="
+          cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --no-run --lib --tests --features "mnn" 2>&1 || ERRORS=$((ERRORS+1))
+          echo ""
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) test build failed"
+            exit 1
+          fi
+
+      - name: Build release (with MNN feature)
+        working-directory: ./cam-rust
+        run: |
+          ERRORS=0
+          for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
+            echo "=== build lib release: $crate ==="
+            if [ "$crate" = "cam-isp" ]; then
+              cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib --features "rectifier mnn" 2>&1 || ERRORS=$((ERRORS+1))
+            else
+              cargo build -p "$crate" --jobs $CARGO_BUILD_JOBS --release --lib 2>&1 || ERRORS=$((ERRORS+1))
+            fi
+            echo ""
+          done
+          echo "=== build app release: cam-app (with MNN) ==="
+          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --release --features "mnn" 2>&1 || ERRORS=$((ERRORS+1))
+          echo ""
+          if [ "$ERRORS" -ne 0 ]; then
+            echo "❌ $ERRORS crate(s) failed"
+            exit 1
+          fi
+
+      - name: Verify binary sizes
+        working-directory: ./cam-rust
+        run: |
+          echo "=== Debug binaries ==="
+          find target/debug -maxdepth 1 -type f -executable -exec ls -lh {} \; 2>/dev/null | head -20
+          echo ""
+          echo "=== Release binaries ==="
+          find target/release -maxdepth 1 -type f -executable -exec ls -lh {} \; 2>/dev/null | head -20
+
+  # Python tests
+  python:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ./isp-rectifier
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -q pytest pytest-cov onnxruntime numpy
+          pip install -q -r requirements.txt
+
+      - name: Run Python tests
+        run: |
+          python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing
+
+      - name: Model validation (quick)
+        run: python3 scripts/validate_model_ci.py
+
+  # ONNX model validation
+  model-validation:
+    name: Model Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [rust-test, python]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+
+      - name: Git config safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Install onnxruntime
+        run: pip install -q onnxruntime numpy
+
+      - name: Validate ONNX models
+        run: python3 isp-rectifier/scripts/validate_models_ci.py
+
+      - name: Validate model I/O shapes
+        run: python3 isp-rectifier/scripts/validate_model_io.py
+
   # Documentation build (placeholder)
   docs:
     name: Documentation
@@ -286,15 +683,20 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [rust-lint, rust-test, rust-clean-rebuild, docs]
+    needs: [rust-lint, rust-lint-full, rust-test, rust-test-mnn, rust-clean-rebuild, rust-clean-rebuild-mnn, python, model-validation, docs]
     if: always()
     steps:
       - name: Check job statuses
         run: |
           echo "All CI jobs completed"
           if [[ "${{ needs.rust-lint.result }}" != "success" ]]; then echo "❌ rust-lint failed"; exit 1; fi
+          if [[ "${{ needs.rust-lint-full.result }}" != "success" ]]; then echo "❌ rust-lint-full failed"; exit 1; fi
           if [[ "${{ needs.rust-test.result }}" != "success" ]]; then echo "❌ rust-test failed"; exit 1; fi
+          if [[ "${{ needs.rust-test-mnn.result }}" != "success" ]]; then echo "❌ rust-test-mnn failed"; exit 1; fi
           if [[ "${{ needs.rust-clean-rebuild.result }}" != "success" ]]; then echo "❌ rust-clean-rebuild failed"; exit 1; fi
+          if [[ "${{ needs.rust-clean-rebuild-mnn.result }}" != "success" ]]; then echo "❌ rust-clean-rebuild-mnn failed"; exit 1; fi
+          if [[ "${{ needs.python.result }}" != "success" ]]; then echo "❌ python failed"; exit 1; fi
+          if [[ "${{ needs.model-validation.result }}" != "success" ]]; then echo "❌ model-validation failed"; exit 1; fi
           if [[ "${{ needs.docs.result }}" != "success" ]]; then echo "❌ docs failed"; exit 1; fi
           echo "✅ All jobs passed!"
 
