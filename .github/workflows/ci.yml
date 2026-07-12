@@ -76,8 +76,9 @@ jobs:
           python -m pytest tests/ -v --tb=short
 
       - name: Model validation (quick)
+        working-directory: ./isp-rectifier
         run: |
-          python3 -c "
+          python3 << 'EOF'
           import onnxruntime as ort
           import numpy as np
 
@@ -92,6 +93,7 @@ jobs:
               'histogram': hist, 'metadata': meta
           })
           print(f'Outputs: {[o.shape for o in out]}')
+EOF
         working-directory: ./isp-rectifier
 
   # ONNX model validation
@@ -108,7 +110,7 @@ jobs:
 
       - name: Validate ONNX models
         run: |
-          python3 -c "
+          python3 << 'EOF'
           import onnx
           import onnxruntime as ort
           import numpy as np
@@ -146,8 +148,8 @@ jobs:
               print(f'  Inputs: {input_names}')
               print(f'  Outputs: {output_names}')
               print(f'  Output shapes: {[o.shape for o in outputs]}')
-              print(f'  Model validation passed!')
-"
+              print(f'  Model {model_name} validation passed!')
+EOF
 
   # Documentation build (placeholder)
   docs:
