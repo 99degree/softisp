@@ -24,7 +24,7 @@ pub fn configure_stream(
         interval: (fps, 1),
         resolution: (width, height),
         format: &[
-            (fourcc >> 0) as u8,
+            fourcc as u8,
             (fourcc >> 8) as u8,
             (fourcc >> 16) as u8,
             (fourcc >> 24) as u8,
