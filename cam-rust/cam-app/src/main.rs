@@ -18,9 +18,10 @@ use cam_isp::mnn_converter::{convert_onnx_to_mnn, MnnConvertOptions};
 #[cfg(feature = "mnn")]
 use cam_isp::mnnengine::MnnBackend;
 #[cfg(feature = "ort")]
-use cam_isp::onnx::{register_onnx_engine, OrtBackend};
+use cam_isp::onnx::OrtBackend;
 #[cfg(feature = "mnn")]
 use cam_isp::register_mnn_engine;
+use cam_isp::register_onnx_engine;
 
 /// Command-line arguments.
 #[derive(Parser, Debug)]

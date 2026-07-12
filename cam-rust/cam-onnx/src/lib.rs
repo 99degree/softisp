@@ -75,7 +75,12 @@ impl OnnxSession {
     /// - `shape`: Input shape (e.g., &[1, 3, 1080, 1920])
     ///
     /// Returns output data as `Vec<f32>`.
-    pub fn run(&self, input_name: &str, data: &[f32], shape: &[i64]) -> Result<Vec<f32>, String> {
+    pub fn run(
+        &mut self,
+        input_name: &str,
+        data: &[f32],
+        shape: &[i64],
+    ) -> Result<Vec<f32>, String> {
         #[cfg(feature = "ort")]
         {
             use ort::inputs;
@@ -116,7 +121,7 @@ impl OnnxSession {
 
     /// Run inference with i16 input (common for raw sensor data).
     pub fn run_i16(
-        &self,
+        &mut self,
         input_name: &str,
         data: &[i16],
         shape: &[i64],
@@ -159,7 +164,12 @@ impl OnnxSession {
     }
 
     /// Run inference with u8 input (common for image data).
-    pub fn run_u8(&self, input_name: &str, data: &[u8], shape: &[i64]) -> Result<Vec<f32>, String> {
+    pub fn run_u8(
+        &mut self,
+        input_name: &str,
+        data: &[u8],
+        shape: &[i64],
+    ) -> Result<Vec<f32>, String> {
         #[cfg(feature = "ort")]
         {
             use ort::inputs;
@@ -206,7 +216,11 @@ impl OnnxSession {
     pub fn input_names(&self) -> Vec<String> {
         #[cfg(feature = "ort")]
         {
-            self.session.inputs.iter().map(|i| i.name.clone()).collect()
+            self.session
+                .inputs()
+                .iter()
+                .map(|i| i.name.clone())
+                .collect()
         }
         #[cfg(not(feature = "ort"))]
         vec![]
@@ -217,7 +231,7 @@ impl OnnxSession {
         #[cfg(feature = "ort")]
         {
             self.session
-                .outputs
+                .outputs()
                 .iter()
                 .map(|o| o.name.clone())
                 .collect()
