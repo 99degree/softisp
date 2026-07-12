@@ -5,7 +5,6 @@
 //! from frame metadata.
 
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 /// Input metadata extracted from a camera frame
 #[derive(Debug, Clone, Serialize, Deserialize)]

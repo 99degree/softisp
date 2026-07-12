@@ -2,10 +2,10 @@
 //! Maps model outputs (20 params) to runtime params (see RUNTIME_PARAMS.md) then to registers
 
 use crate::types::{ISPOptimizedParams, ISPRegisters, RegisterLimits};
-use std::fmt;
 
 /// Inject optimized parameters into ISP register structure
 /// Mapping: model outputs (20) → runtime params (RUNTIME_PARAMS.md) → hardware registers
+#[allow(dead_code)]
 pub fn inject_registers(params: &ISPOptimizedParams, limits: &RegisterLimits) -> ISPRegisters {
     // First clamp parameters
     let mut clamped = params.clone();
@@ -15,11 +15,13 @@ pub fn inject_registers(params: &ISPOptimizedParams, limits: &RegisterLimits) ->
 }
 
 /// Register injector with configurable pipeline
+#[allow(dead_code)]
 pub struct RegisterInjector {
     limits: RegisterLimits,
     hooks: Vec<Box<dyn RegisterHook>>,
 }
 
+#[allow(dead_code)]
 impl RegisterInjector {
     pub fn new(limits: RegisterLimits) -> Self {
         Self {
@@ -45,11 +47,13 @@ impl RegisterInjector {
 }
 
 /// Trait for register injection hooks
+#[allow(dead_code)]
 pub trait RegisterHook: Send + Sync {
     fn pre_write(&self, registers: &mut ISPRegisters);
 }
 
 /// Example: Logging hook (uses std::fmt::Debug)
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct LoggingHook;
 
@@ -63,6 +67,7 @@ impl RegisterHook for LoggingHook {
 }
 
 /// Example: Safety clamp hook (additional safety)
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SafetyHook;
 
