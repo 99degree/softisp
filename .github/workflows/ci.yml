@@ -129,6 +129,9 @@ jobs:
           find /tmp/MNN/build_vk -name "MNNConvert" -type f -exec sudo cp {} /usr/local/bin/ \;
           # Also check tools/converter directory
           find /tmp/MNN/build_vk/tools/converter -name "MNNConvert" -type f -exec sudo cp {} /usr/local/bin/ \;
+          # Copy missing libraries that cmake doesn't install
+          find /tmp/MNN/build_vk -name "libMNN_Vulkan.so" -type f -exec sudo cp {} /usr/local/lib/ \;
+          find /tmp/MNN/build_vk -name "libMNNConvertDeps.so" -type f -exec sudo cp {} /usr/local/lib/ \;
           ls -la /usr/local/bin/MNNConvert || echo "MNNConvert not found, searching..."
           find /tmp/MNN -name "MNNConvert" -type f 2>/dev/null
           ls -la /usr/local/lib/libMNN*.so
