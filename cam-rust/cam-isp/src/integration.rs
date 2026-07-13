@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn test_camera_isp_service_process() {
         crate::init();
-        let mut service = CameraIspService::new("cpu", 1023.0, 0).unwrap();
+        let service = CameraIspService::new("cpu", 1023.0, 0).unwrap();
         let data = vec![128u8; 64 * 48 * 2];
         let result = service.process_raw_frame(&data, 64, 48, 0);
         if let Err(ref e) = result {
