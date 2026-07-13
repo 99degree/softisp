@@ -461,3 +461,19 @@ Controller ←── [updated params]          ←── MNN Output tensors
 - `libMNNConvertDeps.so` — ONNX→MNN conversion (same-process, buffer API via `mnn_convert_onnx_buffer()`)
 - Static FFI (`mnn_convert_api.cpp`) compiled into Rust crate (CC/ar in build.rs)
 - No subprocess, no IPC, no external converter binary
+
+## 13. PROJECT ROADMAP / OUTSTANDING WORK (TODO)
+
+The live, prioritized list of remaining work (status, P1/P2/P3, build/test
+commands, key files) lives in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
+
+When starting a new task, consult `docs/ROADMAP.md` first and keep it in sync:
+- Mark items `done` as they land; append new findings under the relevant priority.
+- After each completed work item, update the "Status" block with the current
+  test count and any behavioral change.
+- Outstanding priorities (see doc for detail):
+  - **P1** — Wire `AndroidHalIspBridge` / `V4l2IspBridge` into `cam-hal-android`
+    and `cam-binder` (requires Android/NDK target; not buildable in Termux).
+  - **P2** — Neural zoom / AF-VCM → `GpuWarpParams`; `colorspace` HSV→RGB;
+    gyro-aware HDR alignment.
+  - **P3** — Workspace-wide `clippy -D warnings` gate; bridge integration tests.
