@@ -1,7 +1,7 @@
 # Rust Camera ISP Pipeline
 
 A complete Rust ISP pipeline: ONNX generation → MNN conversion → Vulkan GPU inference.
-Compiles with **0 warnings** and **637 tests pass** (621 lib + 16 integration).
+Compiles with **0 warnings** and **740+ lib tests pass** (`--features mnn`).
 
 ## Performance (Vulkan GPU, Snapdragon 8 Gen 2)
 
@@ -37,7 +37,7 @@ RawInput(INT16 [1,1,H,W])
 
 ## Key Features
 
-- **637 tests**, 0 warnings, **44 ISP blocks**, **36 examples**
+- **740+ lib tests**, 0 warnings, **52 ISP blocks**, **36 examples**
 - **Runtime-feedable parameters**: 11 blocks expose 29 per-frame inputs via `extra_inputs()` — saturation, sharpen, contrast, gamma, WB gains, CCM weights, tone curve, display gamma, and more. Conditional tensors only present when active. See [`docs/api/RUNTIME_PARAMS.md`](../docs/api/RUNTIME_PARAMS.md).
 - **MnnEngine** — Vulkan GPU acceleration (4K→FHD 57.7 FPS)
 - **IspChainFusion** — 12 fusion rules (R1–R12b), 32+ ops → 12 dispatches
@@ -92,8 +92,8 @@ ENGINE=vulkan cargo run --release --example bench_e2e_pipeline -p cam-isp --feat
 
 | Suite | Count | Command |
 |-------|------:|--------|
-| Lib unit tests | 621 | `cargo test --lib -p cam-isp --features mnn` |
-| Integration tests | 16 | `cargo test --tests -p cam-isp --features mnn` |
+| Lib unit tests | 740+ | `cargo test --lib -p cam-isp --features mnn` |
+| Integration tests | 6 | `cargo test --tests -p cam-isp --features mnn` (in `src/integration.rs`) |
 
 ## Vulkan GPU Performance
 
@@ -199,7 +199,10 @@ tests/
 ## Status
 
 ### ✅ Completed (All Items)
-- 44 ISP blocks, 579 tests, 36 examples, 0 warnings
+- 52 ISP blocks, 740+ lib tests (`--features mnn`), 0 warnings
+- Deshake (CPU `DeshakeEngine` + GPU `DeshakeGpuPipeline`) and EIS stabilization
+- HAL/ISP integration module: `ZeroCopyBufferManager`, `CameraIspService`,
+  `AndroidHalIspBridge`, `V4l2IspBridge` (`src/integration.rs`)
 - Full GPU ISP pipeline (MNN Vulkan): 4K→FHD 57.7 FPS
 - 12 fusion rules (IspChainFusion.cpp): R1–R12b
 - PipelineBuilder fluent API + 5 presets + config roundtrip
