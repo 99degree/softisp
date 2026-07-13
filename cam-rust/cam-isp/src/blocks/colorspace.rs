@@ -258,14 +258,15 @@ pub fn hsv_to_rgb_interleaved(data: &mut [f32]) {
 /// RGB to LAB (simplified using D65 illuminant).
 /// Input sRGB [0,1], output L [0,100], a [-128,127], b [-128,127].
 #[allow(dead_code)]
+#[allow(clippy::excessive_precision)]
 #[inline]
 pub fn rgb_to_lab_pixel(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     // sRGB linearize
     let lin = |c: f32| {
-        if c <= 0.04045 {
-            c / 12.92
+        if c <= 0.04045_f32 {
+            c / 12.92_f32
         } else {
-            ((c + 0.055) / 1.055).powf(2.4)
+            ((c + 0.055_f32) / 1.055_f32).powf(2.4_f32)
         }
     };
     let rl = lin(r);
@@ -273,20 +274,20 @@ pub fn rgb_to_lab_pixel(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let bl = lin(b);
 
     // D65 XYZ from linear sRGB
-    let x = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl;
-    let y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl;
-    let z = 0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl;
+    let x = 0.4124564_f32 * rl + 0.3575761_f32 * gl + 0.1804375_f32 * bl;
+    let y = 0.2126729_f32 * rl + 0.7151522_f32 * gl + 0.0721750_f32 * bl;
+    let z = 0.0193339_f32 * rl + 0.1191920_f32 * gl + 0.9503041_f32 * bl;
 
     // XYZ → LAB
-    let xn = 0.95047;
-    let yn = 1.00000;
-    let zn = 1.08883;
+    let xn = 0.95047_f32;
+    let yn = 1.00000_f32;
+    let zn = 1.08883_f32;
 
     let f = |t: f32| {
-        if t > 0.008856 {
-            t.powf(1.0 / 3.0)
+        if t > 0.008856_f32 {
+            t.powf(1.0_f32 / 3.0_f32)
         } else {
-            (7.787 * t) + 16.0 / 116.0
+            (7.787_f32 * t) + 16.0_f32 / 116.0_f32
         }
     };
 
@@ -294,9 +295,9 @@ pub fn rgb_to_lab_pixel(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let fy = f(y / yn);
     let fz = f(z / zn);
 
-    let l = 116.0 * fy - 16.0;
-    let a = 500.0 * (fx - fy);
-    let b = 200.0 * (fy - fz);
+    let l = 116.0_f32 * fy - 16.0_f32;
+    let a = 500.0_f32 * (fx - fy);
+    let b = 200.0_f32 * (fy - fz);
 
     (l, a, b)
 }
