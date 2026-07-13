@@ -185,6 +185,9 @@ pub struct UnifiedPipeline {
     hdr_queue: Option<HdrCaptureQueue>,
     /// Accumulated HDR frames for current burst
     hdr_frames: Vec<crate::hdr::HdrFrame>,
+    /// VCM focus position [0.0, 1.0] from AF engine, injected into warp params.
+    /// 0.0 = infinity focus, 1.0 = macro. Overrides neural controller default (0.0).
+    vcm_position: f32,
 }
 
 impl UnifiedPipeline {
@@ -270,6 +273,7 @@ impl UnifiedPipeline {
             format_converter: None,
             hdr_queue,
             hdr_frames: Vec::new(),
+            vcm_position: 0.0,
         })
     }
 
@@ -278,6 +282,14 @@ impl UnifiedPipeline {
     pub fn with_controller(mut self, controller: Box<dyn ControllerApi>) -> Self {
         self.controller = controller;
         self
+    }
+
+    /// Set VCM focus position from AF engine.
+    /// [0.0, 1.0]: 0.0 = infinity, 1.0 = macro.
+    /// Overrides the neural controller's hardcoded vcm_position=0.0
+    /// so that focus breathing correction reaches GpuWarpParams.
+    pub fn set_vcm_position(&mut self, vcm: f32) {
+        self.vcm_position = vcm.clamp(0.0, 1.0);
     }
 
     /// Process a frame, auto-building warp params from lens calibration + controller zoom/VCM.
@@ -306,6 +318,14 @@ impl UnifiedPipeline {
             };
             self.controller.analyze_and_update(&frame)
         };
+
+        // Inject AF engine VCM position into ISP params.
+        // Neural controller hardcodes vcm_position=0.0; the real VCM
+        // comes from the AF engine which is updated per-frame externally.
+        let mut isp_params = isp_params;
+        if self.vcm_position > 0.0 {
+            isp_params.vcm_position = self.vcm_position;
+        }
 
         #[cfg(feature = "mnn")]
         let warp_params = GpuWarpParams::from_isp_params(
