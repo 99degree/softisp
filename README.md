@@ -209,5 +209,5 @@ cargo test --workspace --features mnn   # full workspace
 
 ## License
 
-- **Code:** MIT OR Apache-2.0
+- **Code:** GPL-3.0-or-later — see [LICENSE](LICENSE)
 - **Models:** CC BY-NC 4.0 (non-commercial)
