@@ -315,6 +315,43 @@ All ISP parameters flow through MNN tensors, never Rust function arguments:
 
 ---
 
+### 12.3 CONTROLLER PARAMS FEEDBACK LOOP
+
+```
+Controller ──→ [k1,k2,k3,zoom,vcm,eis_dx,eis_dy] ──→ MNN Inference
+                                                         ↓
+Controller ←── [updated params]          ←── MNN Output tensors
+```
+
+### 12.4 MEMORY-BASED CONVERSION (SAME-PROCESS, NO PERSISTENT FILES)
+
+- ONNX model: generated in memory as `Vec<u8>`, never written to disk
+- ONNX→MNN conversion: `mnn_convert_onnx_buffer()` in `mnn_convert_api.cpp`
+  - Takes ONNX bytes → writes to mkstemp temp file → calls MNN::Cli::convertModel
+  - Reads output temp file → Returns MNN bytes → unlinks both temp files
+  - Temp files exist only during conversion (ms-scale), then deleted
+  - libMNNConvertDeps.so linked directly (no subprocess, no IPC)
+- MNN model: loaded via `from_buffer()`, never read from file
+- Debug builds (`cfg!(debug_assertions)`): dump ONNX/MNN to named files for inspection
+- Release builds: no persistent files — all cleanup immediate
+- File names use mkstemp template (`mnn_onnx_XXXXXX`, `mnn_out_XXXXXX`) in CWD
+
+### 12.5 GPU OPTIMIZATION VIA MNN OPSET
+
+- GDC grid computation uses MNN optimized ops (Mul, Add, Div, Concat, Reshape)
+- MNN Executor fuses these ops into efficient GPU kernels
+- All arithmetic ops run on GPU via MNN Vulkan backend
+- GridSample runs on GPU via VulkanGridSample
+- Result: entire warp pipeline (grid compute + sample) is GPU-only, zero CPU
+
+### 12.6 RUST LIBS LINKED AT BUILD TIME
+
+- `libmnncore.so` — runtime inference
+- `libMNN_Vulkan.so` — Vulkan backend for GPU inference
+- `libMNNConvertDeps.so` — ONNX→MNN conversion (same-process, buffer API via `mnn_convert_onnx_buffer()`)
+- Static FFI (`mnn_convert_api.cpp`) compiled into Rust crate (CC/ar in build.rs)
+- No subprocess, no IPC, no external converter binary
+
 ## 13. CI DEBUGGING TECHNIQUE
 
 ### Problem
@@ -425,44 +462,7 @@ Always use per-step `working-directory:` instead:
         run: cargo build
 ```
 
-### 12.3 CONTROLLER PARAMS FEEDBACK LOOP
-
-```
-Controller ──→ [k1,k2,k3,zoom,vcm,eis_dx,eis_dy] ──→ MNN Inference
-                                                         ↓
-Controller ←── [updated params]          ←── MNN Output tensors
-```
-
-### 12.4 MEMORY-BASED CONVERSION (SAME-PROCESS, NO PERSISTENT FILES)
-
-- ONNX model: generated in memory as `Vec<u8>`, never written to disk
-- ONNX→MNN conversion: `mnn_convert_onnx_buffer()` in `mnn_convert_api.cpp`
-  - Takes ONNX bytes → writes to mkstemp temp file → calls MNN::Cli::convertModel
-  - Reads output temp file → Returns MNN bytes → unlinks both temp files
-  - Temp files exist only during conversion (ms-scale), then deleted
-  - libMNNConvertDeps.so linked directly (no subprocess, no IPC)
-- MNN model: loaded via `from_buffer()`, never read from file
-- Debug builds (`cfg!(debug_assertions)`): dump ONNX/MNN to named files for inspection
-- Release builds: no persistent files — all cleanup immediate
-- File names use mkstemp template (`mnn_onnx_XXXXXX`, `mnn_out_XXXXXX`) in CWD
-
-### 12.5 GPU OPTIMIZATION VIA MNN OPSET
-
-- GDC grid computation uses MNN optimized ops (Mul, Add, Div, Concat, Reshape)
-- MNN Executor fuses these ops into efficient GPU kernels
-- All arithmetic ops run on GPU via MNN Vulkan backend
-- GridSample runs on GPU via VulkanGridSample
-- Result: entire warp pipeline (grid compute + sample) is GPU-only, zero CPU
-
-### 12.6 RUST LIBS LINKED AT BUILD TIME
-
-- `libmnncore.so` — runtime inference
-- `libMNN_Vulkan.so` — Vulkan backend for GPU inference
-- `libMNNConvertDeps.so` — ONNX→MNN conversion (same-process, buffer API via `mnn_convert_onnx_buffer()`)
-- Static FFI (`mnn_convert_api.cpp`) compiled into Rust crate (CC/ar in build.rs)
-- No subprocess, no IPC, no external converter binary
-
-## 13. PROJECT ROADMAP / OUTSTANDING WORK (TODO)
+## 14. PROJECT ROADMAP / OUTSTANDING WORK (TODO)
 
 The live, prioritized list of remaining work (status, P1/P2/P3, build/test
 commands, key files) lives in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
@@ -477,3 +477,4 @@ When starting a new task, consult `docs/ROADMAP.md` first and keep it in sync:
   - **P2** — Neural zoom / AF-VCM → `GpuWarpParams`; `colorspace` HSV→RGB;
     gyro-aware HDR alignment.
   - **P3** — Workspace-wide `clippy -D warnings` gate; bridge integration tests.
+
