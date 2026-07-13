@@ -636,7 +636,11 @@ fn test_wavelet_denoise_full_pipeline() {
         .display()
         .compose()
         .expect("should compose");
-    assert!(onnx.len() > 100, "wavelet denoise pipeline ONNX too small: {} bytes", onnx.len());
+    assert!(
+        onnx.len() > 100,
+        "wavelet denoise pipeline ONNX too small: {} bytes",
+        onnx.len()
+    );
 }
 
 #[test]
