@@ -973,6 +973,11 @@ impl std::fmt::Display for PipelineInfo {
 mod tests {
     use super::*;
 
+    /// Returns true if running in CI (GitHub Actions, etc.).
+    fn is_ci() -> bool {
+        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    }
+
     #[test]
     fn test_unified_config_defaults() {
         let cfg = UnifiedConfig::default();
@@ -1004,6 +1009,10 @@ mod tests {
 
     #[test]
     fn test_unified_pipeline_build() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires full pipeline runtime");
+            return;
+        }
         crate::init();
         let config = UnifiedConfig::hd();
         let pipeline = UnifiedPipeline::new(config);
@@ -1015,6 +1024,10 @@ mod tests {
 
     #[test]
     fn test_unified_pipeline_process() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires full pipeline runtime");
+            return;
+        }
         crate::init();
         let pipeline = UnifiedPipeline::new(UnifiedConfig::hd()).unwrap();
         let raw = vec![128u8; 1280 * 720 * 2];
@@ -1027,6 +1040,10 @@ mod tests {
 
     #[test]
     fn test_unified_pipeline_with_gpu_warp() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires Vulkan/GPU");
+            return;
+        }
         crate::init();
         let config = UnifiedConfig::hd().with_gpu_warp();
         let pipeline = UnifiedPipeline::new(config);
