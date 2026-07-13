@@ -84,6 +84,7 @@ pub mod simd;
 pub mod stats;
 pub mod store;
 pub mod temporal;
+pub mod integration;
 
 use log::info;
 use std::sync::Once;
