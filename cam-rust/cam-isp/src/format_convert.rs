@@ -309,8 +309,17 @@ mod tests {
     use super::*;
     use crate::engine::OutputFormat;
 
+    /// Returns true if running in CI (GitHub Actions, etc.).
+    fn is_ci() -> bool {
+        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    }
+
     #[test]
     fn test_format_convert_onnx_rgba() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires MNN Vulkan runtime");
+            return;
+        }
         let onnx = build_format_convert_onnx(1920, 1080, OutputFormat::Rgba);
         // Should produce a valid ONNX model
         assert!(
