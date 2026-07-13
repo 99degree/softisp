@@ -289,6 +289,11 @@ impl Default for PipelineManager {
 mod tests {
     use super::*;
 
+    /// Returns true if running in CI (GitHub Actions, etc.).
+    fn is_ci() -> bool {
+        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    }
+
     #[test]
     fn test_manager_create() {
         let mgr = PipelineManager::new();
@@ -298,6 +303,10 @@ mod tests {
 
     #[test]
     fn test_manager_build_and_process() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires MNN Vulkan runtime");
+            return;
+        }
         let mut mgr = PipelineManager::new();
         mgr.set_target_width(32);
         mgr.build().expect("Build failed");
@@ -335,6 +344,10 @@ mod tests {
 
     #[test]
     fn test_manager_set_profile() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires MNN Vulkan runtime");
+            return;
+        }
         let mut mgr = PipelineManager::new();
         mgr.set_profile(PipelineProfile::LITE);
         assert_eq!(mgr.profile.label, "LITE");
