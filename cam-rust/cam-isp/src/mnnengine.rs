@@ -1363,7 +1363,7 @@ impl IspEngine for MnnEngine {
             let needs_resize = {
                 let shape_key = (h as i32, w as i32, is_packed);
                 let mut cached = self.last_input_shape.lock().unwrap();
-                let needs = cached.as_ref().map_or(true, |last| *last != shape_key);
+                let needs = cached.as_ref().is_none_or(|last| *last != shape_key);
                 if needs {
                     let _ = sess.resize();
                     *cached = Some(shape_key);
