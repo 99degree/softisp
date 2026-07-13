@@ -143,17 +143,12 @@ jobs:
           MNN_LIB_DIR: /usr/local/lib
           MNN_CONVERT_DIR: /usr/local/lib
 
-      - name: Set MNN library path output
-        id: set-output
-        run: echo "mnn-lib-path=/usr/local/lib" >> $GITHUB_OUTPUT
-
-      - name: Cache MNN libraries
-        uses: actions/cache@v4
+      - name: Upload MNN libraries as artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: mnn-libraries
           path: /usr/local/lib/libMNN*.so
-          key: ${{ runner.os }}-mnn-libs-${{ hashFiles('**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-mnn-libs-
+          retention-days: 1
 
   # Rust linting (fmt + clippy) - depends on MNN for cam-isp --all-features
   rust-lint-full:
@@ -194,6 +189,12 @@ jobs:
           echo "MNN_DIR=/tmp/MNN" >> $GITHUB_ENV
           echo "MNN_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
           echo "MNN_CONVERT_DIR=/usr/local/lib" >> $GITHUB_ENV
+
+      - name: Download MNN libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: mnn-libraries
+          path: /usr/local/lib
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -342,6 +343,12 @@ jobs:
           echo "MNN_DIR=/tmp/MNN" >> $GITHUB_ENV
           echo "MNN_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
           echo "MNN_CONVERT_DIR=/usr/local/lib" >> $GITHUB_ENV
+
+      - name: Download MNN libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: mnn-libraries
+          path: /usr/local/lib
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -559,6 +566,12 @@ jobs:
           echo "MNN_DIR=/tmp/MNN" >> $GITHUB_ENV
           echo "MNN_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
           echo "MNN_CONVERT_DIR=/usr/local/lib" >> $GITHUB_ENV
+
+      - name: Download MNN libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: mnn-libraries
+          path: /usr/local/lib
 
       - name: Cache cargo
         uses: actions/cache@v4

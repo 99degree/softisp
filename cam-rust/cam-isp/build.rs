@@ -297,25 +297,38 @@ fn link_onnxruntime() {
 fn link_mnn() {
     let abi_dir = abi_dir();
     let mnn_include = mnn_include_dir();
-
-    copy_if_newer(&mnn_lib_src().join("libMNN.so"), &abi_dir.join("libMNN.so"));
-    // Also copy companion shared libraries from their build locations
+    let mnn_lib = mnn_lib_src();
     let mnn_root = mnn_dir();
+
+    // Copy libMNN.so from MNN_LIB_DIR (or default build_vk/OFF)
+    copy_if_newer(&mnn_lib.join("libMNN.so"), &abi_dir.join("libMNN.so"));
+    // Copy companion shared libraries — try multiple source paths
+    // Vulkan lib: try build_vk subdirs, then MNN_LIB_DIR sibling paths
     copy_if_newer(
         &mnn_root.join("build_vk/source/backend/vulkan/OFF/libMNN_Vulkan.so"),
         &abi_dir.join("libMNN_Vulkan.so"),
     );
     copy_if_newer(
+        &mnn_lib.join("libMNN_Vulkan.so"),
+        &abi_dir.join("libMNN_Vulkan.so"),
+    );
+    // Express lib
+    copy_if_newer(
         &mnn_root.join("build_vk/express/OFF/libMNN_Express.so"),
         &abi_dir.join("libMNN_Express.so"),
     );
+    copy_if_newer(
+        &mnn_lib.join("libMNN_Express.so"),
+        &abi_dir.join("libMNN_Express.so"),
+    );
+    // ConvertDeps lib
     copy_if_newer(
         &mnn_root.join("build_vk/tools/converter/OFF/libMNNConvertDeps.so"),
         &abi_dir.join("libMNNConvertDeps.so"),
     );
     copy_if_newer(
-        &mnn_lib_src().join("../source/backend/vulkan/OFF/libMNN_Vulkan.so"),
-        &abi_dir.join("libMNN_Vulkan.so"),
+        &mnn_convert_lib_src().join("libMNNConvertDeps.so"),
+        &abi_dir.join("libMNNConvertDeps.so"),
     );
 
     let wrapper_src = Path::new("mnn_sys/mnn_wrapper.cpp");
@@ -348,10 +361,19 @@ fn link_mnn() {
     }
 
     println!("cargo:rustc-link-search=native={}", abi_dir.display());
+    // Also search MNN_LIB_DIR directly — needed when libraries are installed
+    // system-wide (e.g. /usr/local/lib) but not yet copied to abi_dir.
+    println!("cargo:rustc-link-search=native={}", mnn_lib.display());
     println!("cargo:rustc-link-lib=static=mnn_wrapper");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=MNN_Vulkan");
-    println!("cargo:rustc-link-lib=c++_shared");
+    // Link C++ standard library: libc++_shared on Android, libstdc++ on Linux
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "android" {
+        println!("cargo:rustc-link-lib=c++_shared");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
     // Embed rpath so binary finds libMNN.so at runtime
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
 }
@@ -392,6 +414,9 @@ fn link_mnnconvert() {
     }
 
     println!("cargo:rustc-link-search=native={}", abi_dir.display());
+    // Also search MNN_CONVERT_DIR directly
+    let convert_lib = mnn_convert_lib_src();
+    println!("cargo:rustc-link-search=native={}", convert_lib.display());
     println!("cargo:rustc-link-lib=static=mnn_convert_api");
     println!("cargo:rustc-link-lib=MNNConvertDeps");
     println!("cargo:rustc-link-lib=MNN_Express");
