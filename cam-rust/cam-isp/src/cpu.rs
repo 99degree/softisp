@@ -439,7 +439,6 @@ mod tests {
     use crate::blocks::RawInputBlock;
 
     #[test]
-    #[ignore = "requires CPU engine implementation"]
     fn test_cpu_engine_process() {
         let mut engine = CpuEngine::new();
         assert!(engine
