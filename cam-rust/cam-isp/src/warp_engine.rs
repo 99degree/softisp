@@ -681,8 +681,17 @@ impl GpuWarpEngine {
 mod tests {
     use super::*;
 
+    /// Returns true if running in CI (GitHub Actions, etc.).
+    fn is_ci() -> bool {
+        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    }
+
     #[test]
     fn test_gpu_warp_engine_build() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires Vulkan/MNN GPU runtime");
+            return;
+        }
         crate::init();
 
         // Build a simple warp ONNX (GridSample only, grid computed on CPU)
