@@ -438,8 +438,18 @@ mod tests {
     use super::*;
     use crate::blocks::RawInputBlock;
 
+    /// Returns true if running in CI (GitHub Actions, etc.).
+    /// Device-specific tests that need Vulkan/GPU should skip on CI.
+    fn is_ci() -> bool {
+        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    }
+
     #[test]
     fn test_cpu_engine_process() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires full pipeline runtime");
+            return;
+        }
         let mut engine = CpuEngine::new();
         assert!(engine
             .build(Box::new(RawInputBlock::new()), vec![], None, 21)
