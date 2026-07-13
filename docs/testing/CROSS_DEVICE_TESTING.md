@@ -25,16 +25,16 @@ bash scripts/cross_device_test.sh 2>&1 | tee /sdcard/softisp_$(date +%Y%m%d_%H%M
 
 | Field | Phone 1 | Phone 2 |
 |-------|---------|---------|
-| **Model** | Redmi Note 9 Pro (Xiaomi) | |
-| **SoC** | Snapdragon 720G (atoll / ATOLL-AB) | |
-| **GPU** | Adreno 618 @ 750 MHz (vulkan.adreno.so) | |
-| **RAM** | 5.5 GiB | |
-| **Android version** | 15 (API 35) | |
-| **Kernel** | 4.14.336-g803b55865869 | |
-| **Termux version** | — | |
-| **Rust version** | 1.95.0 (59807616e 2026-04-14) | |
-| **MNN lib version** | custom build (libMNN.so 3.1M, libMNN_Vulkan.so 2.1M) | |
-| **Test date** | 2026-07-13 | |
+| **Model** | Redmi Note 9 Pro (Xiaomi) | 2109119DG (Xiaomi) |
+| **SoC** | Snapdragon 720G (atoll / ATOLL-AB) | Snapdragon 888 (lahaina) |
+| **GPU** | Adreno 618 @ 750 MHz (vulkan.adreno.so) | Adreno (vulkan.adreno.so) |
+| **RAM** | 5.5 GiB | — |
+| **Android version** | 15 (API 35) | 14 (API 34) |
+| **Kernel** | 4.14.336-g803b55865869 | 5.4.302-qgki-g7ede20c8692e |
+| **Termux version** | — | — |
+| **Rust version** | 1.95.0 (59807616e 2026-04-14) | 1.96.1 (31fca3adb 2026-06-26) |
+| **MNN lib version** | custom build (libMNN.so 3.1M, libMNN_Vulkan.so 2.1M) | custom build |
+| **Test date** | 2026-07-13 | 2026-07-13 |
 
 Collect with:
 ```bash
@@ -87,9 +87,9 @@ RUSTFLAGS="-C link-arg=-Wl,--warn-unresolved-symbols -C link-arg=-Wl,--noinhibit
 
 | Test Suite | Phone 1 | Phone 2 |
 |------------|---------|---------|
-| `test_new_blocks` | ✅ 51/51 passed | |
-| `test_mnn_engine` | (runs with GPU) | |
-| `pipeline_test` | (slow, CPU) | |
+| `test_new_blocks` | ✅ 51/51 passed | ✅ 51/51 passed |
+| `test_mnn_engine` | ✅ (GPU required) | ✅ (GPU required) |
+| `pipeline_test` | ✅ (slow, CPU) | ✅ |
 
 ### C — Pipeline Benchmarks
 
@@ -104,11 +104,11 @@ RUST_LOG=cam_isp::mnnengine=info \
 
 | Metric | Phone 1 | Phone 2 |
 |--------|---------|---------|
-| Engine selected | `mnn_vulkan (priority 99)` | |
-| Avg latency | 31.7 ms | |
-| FPS | 31.6 | |
-| First frame (init) | 8.4ms tensor_assign + infer | |
-| Steady-state infer | ~25µs tensor_assign | |
+| Engine selected | `mnn_vulkan (priority 99)` | `mnn_vulkan (priority 99)` |
+| Avg latency | 31.7 ms | **16.9 ms** |
+| FPS | 31.6 | **59.2** |
+| First frame init | 8.4ms tensor_assign | 51.5ms tensor_assign |
+| Steady-state | ~25µs tensor_assign | **~5µs tensor_assign** |
 
 #### C2 — Unified Pipeline ARGB
 
@@ -118,9 +118,11 @@ cargo run --release --example bench_unified_argb -p cam-isp --features mnn 2>&1
 
 | Metric | Phone 1 | Phone 2 |
 |--------|---------|---------|
-| Pipeline build time | 598 ms | |
-| Avg latency | 111 ms | |
-| FPS | 9 | |
+| Pipeline build time | 598 ms | 425 ms |
+| Avg latency | 111 ms | **179 ms** |
+| FPS | 9 | **6** |
+
+> Note: SD888 is slower on Unified ARGB despite faster 4K→FHD. Likely memory-bandwidth-bound — the 25-block Unified pipeline has high memory traffic that doesn't scale with additional compute units.
 
 #### C3 — Profile Comparison
 
@@ -215,16 +217,17 @@ needs_resize=false elapsed=~10µs   ← all subsequent frames (shape cached)
 
 ## Comparison Summary Table
 
-| Category | Metric | Phone 1 | Phone 2 | Delta |
-|----------|--------|---------|---------|-------|
-| **Unit** | Tests passed | 730/730 | | |
-| **Integration** | Tests passed | 51/51 | | |
-| **4K→FHD** | FPS | 31.6 | | |
-| **4K→FHD** | Latency (ms) | 31.7 | | |
-| **4K→FHD** | Steady infer (ms) | ~31.7 | | |
-| **4K→FHD** | `tensor_assign` after opt (µs) | 25 | | |
-| **Unified ARGB** | FPS | 9 | | |
-| **Unified ARGB** | Pipeline build | 598 ms | | |
+| Category | Metric | Phone 1 (SD720G) | Phone 2 (SD888) | Delta |
+|----------|--------|-----------------|-----------------|-------|
+| **Unit** | Tests passed | 730/730 | **734/734** | +4 enabled |
+| **Integration** | Tests passed | 51/51 | 51/51 | — |
+| **4K→FHD** | FPS | 31.6 | **59.2** | **+87%** |
+| **4K→FHD** | Latency (ms) | 31.7 | **16.9** | **-47%** |
+| **4K→FHD** | First tensor_assign | 8.4 ms | 51.5 ms | slower init |
+| **4K→FHD** | Steady tensor_assign (µs) | 25 | **5** | **5× faster** |
+| **Unified ARGB** | FPS | 9 | **6** | -33% |
+| **Unified ARGB** | Pipeline build | 598 ms | **425 ms** | -29% |
+| **Unified ARGB** | Latency | 111 ms | **179 ms** | +61% |
 
 ---
 
