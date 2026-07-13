@@ -179,7 +179,9 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
         config.optimizeLevel = optimize_level;
         config.weightQuantBits = weight_quant_bits;
         config.saveHalfFloat = fp16 != 0;
+#ifdef MNN_HAS_PRESERVE_INPUT_TYPE
         config.preserveInputType = preserve_input_type != 0;
+#endif
 
         if (!MNN::Cli::convertModel(config)) {
             result->success = -1;
@@ -271,7 +273,9 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
         config.optimizeLevel = 1;
         config.weightQuantBits = 0;
         config.saveHalfFloat = false;
+#ifdef MNN_HAS_PRESERVE_INPUT_TYPE
         config.preserveInputType = true;
+#endif
 
         if (!MNN::Cli::convertModel(config)) {
             result->success = -1;
