@@ -9,7 +9,7 @@ cargo test --lib -p cam-isp
 bash bench-tests.sh quick
 ```
 
-**Result:** 705 tests pass in ~36s
+**Result:** 730 tests pass in ~18s
 
 ## Extended Test (includes CPU pipeline)
 Runs all unit tests plus CPU pipeline integration tests (slow!):
@@ -63,7 +63,20 @@ cargo test --test test_neural_controller_onnx
 
 These also use the CPU backend and are marked as slow.
 
-## Current Test Results (2025-07-11)
+## Current Test Results (2026-07-13)
+
+### Phone Hardware
+
+| Field | Value |
+|-------|-------|
+| Device | Redmi Note 9 Pro (Xiaomi) |
+| SoC | Snapdragon 720G (atoll / ATOLL-AB) |
+| GPU | Adreno 618 @ 750 MHz (Vulkan) |
+| RAM | 5.5 GiB |
+| Android | 15 (API 35) |
+| Kernel | 4.14.336 |
+| Rust | 1.95.0 |
+| MNN backend | Vulkan (priority 99) |
 
 ### Unit Tests (cam-isp library)
 ```
@@ -74,7 +87,7 @@ test blocks::ccm::tests::test_ccm_with_channels ... ok      (FIXED)
 test blocks::ccm::tests::test_ccm_different_channels ... ok  (FIXED)
 test blocks::ccm::tests::test_ccm_nodes ... ok
 ...
-test result: ok. 705 passed; 0 failed
+test result: ok. 730 passed; 0 failed; 8 ignored
 ```
 
 **Recent fix:** CCM block 4-channel support - matrix/bias changed from fixed `[f32;9]`/`[f32;3]` to `Vec<f32>` with dynamic sizing in `with_channels(ch)`.

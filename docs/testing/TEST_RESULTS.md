@@ -1,9 +1,10 @@
 # SoftISP Test Results & Benchmark Report
 
-**Last Updated:** 2025-07-11  
-**Platform:** Android/Termux (Snapdragon 8 Gen 2)  
+**Last Updated:** 2026-07-13  
+**Platform:** Android/Termux (Snapdragon 720G / Redmi Note 9 Pro)  
 **Backend:** MNN Vulkan GPU  
-**Rust:** 1.75+
+**GPU:** Adreno 618 @ 750 MHz  
+**Rust:** 1.95.0
 
 ---
 
@@ -13,11 +14,12 @@
 
 | Suite | Tests | Passed | Failed | Duration |
 |-------|-------|--------|--------|----------|
-| Lib unit tests | 705 | **705** | 0 | 36s |
+| Lib unit tests | 730 | **730** | 0 | 18.6s |
 | Neural controller | 6 | **6** | 0 | 2.6s |
 | Neural controller ONNX | 6 | **6** | 0 | 2.0s |
+| Integration (test_new_blocks) | 51 | **51** | 0 | 1.2s |
 
-**Total:** 717 tests, **100% pass rate**
+**Total:** 793 tests, **100% pass rate**
 
 ### Recent Fixes Verified
 - ✅ CCM 4-channel support (matrix Vec<f32>, dynamic sizing)
@@ -37,9 +39,31 @@
 
 ---
 
-## GPU Performance Benchmarks (Vulkan, Snapdragon 8 Gen 2)
+## GPU Performance Benchmarks (Vulkan, Adreno 618 / Snapdragon 720G)
 
-### Stress Tests (30s duration)
+### 4K→FHD ISP Pipeline
+
+| Metric | Value |
+|--------|-------|
+| Engine | `mnn_vulkan (priority 99)` |
+| Average latency | 31.7 ms |
+| FPS | 31.6 |
+| `tensor_assign` (first frame) | 8.4 ms |
+| `tensor_assign` (steady-state) | 25 µs |
+
+### Unified Pipeline (4K Bayer → FHD ARGB8888)
+
+| Metric | Value |
+|--------|-------|
+| Pipeline build | 598 ms |
+| Average latency | 111 ms |
+| FPS | 9 |
+
+### sess.resize() Optimization
+
+The shape caching fix in `mnnengine.rs` (`last_input_shape`) reduces `tensor_assign` from **7.3ms → 25µs** (292× improvement) for fixed-resolution pipelines.
+
+### Stress Tests (30s duration) — Previous Gen
 
 | Test | Resolution | Profile | Frames | Avg FPS | P50 Latency | P99 Latency | Status |
 |------|------------|---------|--------|---------|-------------|-------------|--------|
