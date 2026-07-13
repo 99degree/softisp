@@ -117,19 +117,17 @@ jobs:
       - name: Download MNN release binaries
         run: |
           cd /tmp
-          wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/MNN-3.6.0-linux-x64.tar.gz || \
-            wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip
-          ls -la /tmp/MNN* 2>/dev/null
-          # Extract libraries to /usr/local/lib
-          if [ -f /tmp/MNN-3.6.0-linux-x64.tar.gz ]; then
-            tar xzf /tmp/MNN-3.6.0-linux-x64.tar.gz -C /tmp/
-            find /tmp/MNN* -name '*.so*' -exec sudo cp {} /usr/local/lib/ \;
-          elif [ -f /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip ]; then
+          wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip || true
+          ls -la /tmp/mnn*.zip 2>/dev/null
+          if [ -f /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip ]; then
             unzip -q /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip -d /tmp/
             find /tmp/MNN* -name '*.so*' -exec sudo cp {} /usr/local/lib/ \;
+            find /tmp/MNN* -name 'MNNConvert' -type f -exec sudo cp {} /usr/local/bin/ \;
           fi
           sudo ldconfig
+          echo '=== MNN libraries ==='
           ls -la /usr/local/lib/libMNN*.so
+          ls -la /usr/local/bin/MNNConvert 2>/dev/null || echo 'MNNConvert not found'
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -281,17 +279,16 @@ jobs:
       - name: Download MNN release binaries
         run: |
           cd /tmp
-          wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/MNN-3.6.0-linux-x64.tar.gz || \
-            wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip
-          if [ -f /tmp/MNN-3.6.0-linux-x64.tar.gz ]; then
-            tar xzf /tmp/MNN-3.6.0-linux-x64.tar.gz -C /tmp/
-            find /tmp/MNN* -name '*.so*' -exec sudo cp {} /usr/local/lib/ \;
-          elif [ -f /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip ]; then
+          wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip || true
+          if [ -f /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip ]; then
             unzip -q /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip -d /tmp/
             find /tmp/MNN* -name '*.so*' -exec sudo cp {} /usr/local/lib/ \;
+            find /tmp/MNN* -name 'MNNConvert' -type f -exec sudo cp {} /usr/local/bin/ \;
           fi
           sudo ldconfig
+          echo '=== MNN libraries ==='
           ls -la /usr/local/lib/libMNN*.so
+          ls -la /usr/local/bin/MNNConvert 2>/dev/null || echo 'MNNConvert not found'
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -512,17 +509,16 @@ jobs:
       - name: Download MNN release binaries
         run: |
           cd /tmp
-          wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/MNN-3.6.0-linux-x64.tar.gz || \
-            wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip
-          if [ -f /tmp/MNN-3.6.0-linux-x64.tar.gz ]; then
-            tar xzf /tmp/MNN-3.6.0-linux-x64.tar.gz -C /tmp/
-            find /tmp/MNN* -name '*.so*' -exec sudo cp {} /usr/local/lib/ \;
-          elif [ -f /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip ]; then
+          wget -q https://github.com/alibaba/MNN/releases/download/3.6.0/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip || true
+          if [ -f /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip ]; then
             unzip -q /tmp/mnn_3.6.0_linux_x64_cpu_opencl_vulkan.zip -d /tmp/
             find /tmp/MNN* -name '*.so*' -exec sudo cp {} /usr/local/lib/ \;
+            find /tmp/MNN* -name 'MNNConvert' -type f -exec sudo cp {} /usr/local/bin/ \;
           fi
           sudo ldconfig
+          echo '=== MNN libraries ==='
           ls -la /usr/local/lib/libMNN*.so
+          ls -la /usr/local/bin/MNNConvert 2>/dev/null || echo 'MNNConvert not found'
 
       - name: Cache cargo
         uses: actions/cache@v4
