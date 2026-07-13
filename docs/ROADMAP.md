@@ -1,12 +1,14 @@
 # Project Roadmap & Outstanding Work
 
-> Last updated: 2026-07-13. See [`AGENTS.md`](../AGENTS.md) §13 for the canonical pointer.
+> Last updated: 2026-07-13. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
 
 ## Status (2026-07-13)
 
-- **cam-isp tests:** 741 lib tests pass with `--features mnn`, **0 failures, 0 warnings**
-  (clippy `-D warnings` clean; only a benign external MNN C++ build note remains).
-  The default (no-feature) build also compiles.
+- **cam-isp tests:** **754** lib tests pass with `--features mnn`, **0 failures, 0 warnings**
+  (up from 741). Added 13 new colorspace conversion unit tests (HSV↔RGB roundtrip,
+  LAB, interleaved buffer helpers).
+- **P2 items completed:** VCM injection → GpuWarpParams; HSV↔RGB/LAB CPU math
+  with ONNX YCbCr weight chain; gyro-aware HDR alignment (EisEngine fallback).
 - **HAL/ISP integration module** (`cam-isp/src/integration.rs`): `ZeroCopyBufferManager`
   (CMA/ION/memfd), `CameraIspService` (auto-builds the CPU pipeline), `AndroidHalIspBridge`,
   `V4l2IspBridge` (`process_frame` / `process_batch` + `BridgeStats`). 6 integration tests pass.
@@ -32,12 +34,20 @@
 - **Constraint:** `cam-hal-android` / `cam-binder` pull Android/NDK deps and require the
   `aarch64-linux-android` target toolchain — they do **not** build in this Termux env.
 
-### P2 — Feature Completeness (in-repo, testable here)
-- Neural controller **zoom** output → `IspParams` → `GpuWarpParams`.
-- **VCM** position from `AfEngine` → `IspParams.vcm_position`.
-- `blocks/colorspace.rs` HSV→RGB placeholder → real implementation.
-- Extend `HdrWorker::align_frames()` to consume gyro/`EisEngine` motion when available
-  (image-based block-matching remains the IMU-less fallback).
+### P2 — Feature Completeness ✅ (Completed 2026-07-13)
+- **Neural controller zoom output → IspParams → GpuWarpParams** — already wired
+  via `GpuWarpParams::from_isp_params()` which reads `isp.zoom` and `isp.vcm_position`.
+- **VCM position from AfEngine → IspParams.vcm_position** — `UnifiedPipeline` now
+  has `set_vcm_position()` which injects AF engine VCM after neural controller
+  inference, before warp param construction. ✅
+- **`blocks/colorspace.rs` HSV→RGB/LAB** — Identity placeholders replaced with real
+  Rust CPU math functions (`rgb_to_hsv_pixel`, `hsv_to_rgb_pixel`, `rgb_to_lab_pixel`,
+  plane/interleaved helpers). ONNX YCbCr updated with proper Mul-by-weight chain.
+  Full GPU ONNX conditional (Where/Floor) graph deferred to follow-up. ✅
+- **`HdrWorker::align_frames()` gyro/EisEngine** — Added optional `EisEngine` to
+  `HdrWorker`. `align_frames()` now tries gyro-based translation (via integrated
+  angular velocity → focal-length pixel shift) before falling back to image-based
+  block-matching. ✅
 
 ### P3 — Hardening / CI
 - Run `cargo clippy --workspace --all-targets --features mnn -D warnings` as a gate
