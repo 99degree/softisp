@@ -4,6 +4,8 @@
 cam-isp/lib/
 lib/**/libmnn_wrapper.a
 lib/**/*.so
+# Ignore the entire lib/ directory (MNN shared libs for build)
+lib/
 .mnn_last_pipeline.onnx
 # MNN converter temp files (mkstemp pattern)
 mnn_onnx_*
