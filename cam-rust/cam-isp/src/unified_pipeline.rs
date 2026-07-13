@@ -1003,7 +1003,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     #[ignore = "requires MNN/Vulkan engine not available on CI"]
     fn test_unified_pipeline_build() {
         crate::init();
@@ -1015,7 +1014,6 @@ mod tests {
         assert_eq!(p.info().profile, "LITE");
     }
 
-    #[test]
     #[test]
     #[ignore = "requires MNN/Vulkan engine not available on CI"]
     fn test_unified_pipeline_process() {
@@ -1029,7 +1027,6 @@ mod tests {
         assert!(frame.width > 0 && !frame.data.is_empty());
     }
 
-    #[test]
     #[test]
     #[ignore = "requires MNN/Vulkan engine not available on CI"]
     fn test_unified_pipeline_with_gpu_warp() {
