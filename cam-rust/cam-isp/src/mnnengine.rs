@@ -105,6 +105,11 @@ pub struct MnnEngine {
     /// GPU hang watchdog for fault-tolerant inference.
     /// Triggers CPU fallback when MNN/Vulkan hangs exceed threshold.
     watchdog: crate::gpu_watchdog::GpuWatchdog,
+    /// Cached input tensor shape to skip redundant sess.resize().
+    /// Fixed-resolution pipelines (e.g. 4K→FHD) never change shape,
+    /// so resize() is only needed on the very first frame.
+    /// Stores (h, w, is_packed) of the last fully-configured frame.
+    last_input_shape: Mutex<Option<(i32, i32, bool)>>,
 }
 
 #[cfg(feature = "mnn")]
@@ -149,6 +154,7 @@ impl MnnEngine {
             watchdog: crate::gpu_watchdog::GpuWatchdog::new(
                 crate::gpu_watchdog::WatchdogConfig::default(),
             ),
+            last_input_shape: Mutex::new(None),
         }
     }
 
@@ -1330,19 +1336,41 @@ impl IspEngine for MnnEngine {
                 false
             };
 
-            // ── Pre-inference: resize session and set extra inputs ──
+            // ── Pre-inference: set input shape and extra inputs ──
+            //
+            // set_shape() is cheap (just updates a shape descriptor). We
+            // always call it so that each session's input tensor has the
+            // correct dimensions even on first use after pool rotation.
+            //
+            // sess.resize() (Interpreter::resizeSession) is EXPENSIVE on
+            // Vulkan (~7ms): it propagates shapes through the graph and
+            // re-allocates GPU buffers / rebuilds descriptor sets.
+            // MNN's own mnn_run_with_output (mnn_wrapper.cpp:412) already
+            // calls resizeSession on-demand if the element count changed,
+            // so we skip our own call when the shape hasn't changed.
             let t_tensor_before: std::time::Instant = Instant::now();
-            {
-                let shape = if is_packed {
-                    vec![1, 1, h as i32, (w / 2).max(1) as i32]
-                } else {
-                    vec![1, 1, h as i32, w as i32]
-                };
-                if let Some(t) = interp.get_first_input(sess) {
-                    let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
+            let shape = if is_packed {
+                vec![1, 1, h as i32, (w / 2).max(1) as i32]
+            } else {
+                vec![1, 1, h as i32, w as i32]
+            };
+            // Always set shape (cheap) so C++ on-demand resize works
+            if let Some(t) = interp.get_first_input(sess) {
+                let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
+            }
+            // Skip resize if shape unchanged from last full setup.
+            // The C++ wrapper handles first-use resize per session.
+            let needs_resize = {
+                let shape_key = (h as i32, w as i32, is_packed);
+                let mut cached = self.last_input_shape.lock().unwrap();
+                let needs = cached.as_ref().map_or(true, |last| *last != shape_key);
+                if needs {
+                    let _ = sess.resize();
+                    *cached = Some(shape_key);
                 }
-                let _ = sess.resize();
-                Self::set_extra_inputs(
+                needs
+            };
+            Self::set_extra_inputs(
                     &slot.tensor_pool,
                     ccm,
                     tone,
@@ -1351,10 +1379,10 @@ impl IspEngine for MnnEngine {
                     bayer_pattern,
                     p.isp_params.as_ref(),
                 );
-            }
             let t_tensor_after: std::time::Instant = Instant::now();
             info!(
-                "pipeline stage=tensor_assign elapsed={:?}",
+                "pipeline stage=tensor_assign needs_resize={} elapsed={:?}",
+                needs_resize,
                 t_tensor_after.duration_since(t_tensor_before)
             );
 
