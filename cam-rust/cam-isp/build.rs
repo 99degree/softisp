@@ -392,6 +392,14 @@ fn link_mnnconvert() {
     if conv_src.exists() {
         println!("cargo:rerun-if-changed=mnn_sys/mnn_convert_api.cpp");
 
+        // Check if MNN headers have preserveInputType (custom ISP build)
+        let config_hpp = convert_include.join("config.hpp");
+        if let Ok(content) = std::fs::read_to_string(&config_hpp) {
+            if content.contains("preserveInputType") {
+                println!("cargo:rustc-cfg=MNN_HAS_PRESERVE_INPUT_TYPE");
+            }
+        }
+
         let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
         let mut build = cc::Build::new();
         build
