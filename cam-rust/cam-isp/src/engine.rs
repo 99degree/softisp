@@ -274,13 +274,16 @@ pub trait IspEngine: Send + Sync {
     /// Whether the engine has been built and is ready for inference.
     fn is_loaded(&self) -> bool;
 
-    /// Downcast to dyn Any for engine-specific configuration before build().
-    fn as_any(&self) -> &dyn std::any::Any {
-        unimplemented!()
-    }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        unimplemented!()
-    }
+    /// Downcast to `dyn Any` for engine-specific configuration before `build()`.
+    ///
+    /// Every engine MUST implement this (returning `self`) so callers can
+    /// downcast to the concrete type. There is intentionally **no default**:
+    /// a missing implementation would otherwise panic at runtime the first
+    /// time a caller tries to downcast (see `integration.rs`).
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Mutable variant of [`IspEngine::as_any`].
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 
     /// Build the engine from a pipeline of blocks.
     ///
