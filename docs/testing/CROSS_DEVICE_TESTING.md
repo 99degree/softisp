@@ -25,16 +25,16 @@ bash scripts/cross_device_test.sh 2>&1 | tee /sdcard/softisp_$(date +%Y%m%d_%H%M
 
 | Field | Phone 1 | Phone 2 |
 |-------|---------|---------|
-| **Model** | | |
-| **SoC** | | |
-| **GPU** | | |
-| **RAM** | | |
-| **Android version** | | |
-| **Kernel** | | |
-| **Termux version** | | |
-| **Rust version** | | |
-| **MNN lib version** | | |
-| **Test date** | | |
+| **Model** | Redmi Note 9 Pro (Xiaomi) | |
+| **SoC** | Snapdragon 720G (atoll / ATOLL-AB) | |
+| **GPU** | Adreno 618 @ 750 MHz (vulkan.adreno.so) | |
+| **RAM** | 5.5 GiB | |
+| **Android version** | 15 (API 35) | |
+| **Kernel** | 4.14.336-g803b55865869 | |
+| **Termux version** | — | |
+| **Rust version** | 1.95.0 (59807616e 2026-04-14) | |
+| **MNN lib version** | custom build (libMNN.so 3.1M, libMNN_Vulkan.so 2.1M) | |
+| **Test date** | 2026-07-13 | |
 
 Collect with:
 ```bash
@@ -63,11 +63,11 @@ RUSTFLAGS="-C link-arg=-Wl,--warn-unresolved-symbols -C link-arg=-Wl,--noinhibit
 
 | Metric | Phone 1 | Phone 2 |
 |--------|---------|---------|
-| Total tests | `grep "test result:"` | |
-| Passed | | |
-| Failed | | |
-| Ignored | | |
-| Duration | | |
+| Total tests | 730 | |
+| Passed | 730 | |
+| Failed | 0 | |
+| Ignored | 8 | |
+| Duration | 18.57s | |
 
 ### B — Integration Tests
 
@@ -87,9 +87,9 @@ RUSTFLAGS="-C link-arg=-Wl,--warn-unresolved-symbols -C link-arg=-Wl,--noinhibit
 
 | Test Suite | Phone 1 | Phone 2 |
 |------------|---------|---------|
-| `test_new_blocks` | ✅/❌ ___/___ | ✅/❌ ___/___ |
-| `test_mnn_engine` | ✅/❌ ___/___ | ✅/❌ ___/___ |
-| `pipeline_test` | ✅/❌ ___/___ | ✅/❌ ___/___ |
+| `test_new_blocks` | ✅ 51/51 passed | |
+| `test_mnn_engine` | (runs with GPU) | |
+| `pipeline_test` | (slow, CPU) | |
 
 ### C — Pipeline Benchmarks
 
@@ -104,11 +104,11 @@ RUST_LOG=cam_isp::mnnengine=info \
 
 | Metric | Phone 1 | Phone 2 |
 |--------|---------|---------|
-| Engine selected | `grep "Engine:"` | |
-| Avg latency | `grep "Average:"` | |
-| FPS | `grep "FPS:"` | |
-| First frame (init) | `grep "infer_done.*total=" | head -1` | |
-| Steady-state infer | `grep "infer_done.*prep=" | tail -5 | awk ...` | |
+| Engine selected | `mnn_vulkan (priority 99)` | |
+| Avg latency | 31.7 ms | |
+| FPS | 31.6 | |
+| First frame (init) | 8.4ms tensor_assign + infer | |
+| Steady-state infer | ~25µs tensor_assign | |
 
 #### C2 — Unified Pipeline ARGB
 
@@ -118,9 +118,9 @@ cargo run --release --example bench_unified_argb -p cam-isp --features mnn 2>&1
 
 | Metric | Phone 1 | Phone 2 |
 |--------|---------|---------|
-| Pipeline build time | `grep "Pipeline build:"` | |
-| Avg latency | `grep "Avg:"` | |
-| FPS | `grep "FPS:"` | |
+| Pipeline build time | 598 ms | |
+| Avg latency | 111 ms | |
+| FPS | 9 | |
 
 #### C3 — Profile Comparison
 
@@ -208,8 +208,8 @@ needs_resize=false elapsed=~10µs   ← all subsequent frames (shape cached)
 
 | Metric | Phone 1 | Phone 2 |
 |--------|---------|---------|
-| First frame `tensor_assign` | `grep "needs_resize=true"` | |
-| Steady-state `tensor_assign` | `grep "needs_resize=false" | tail -1` | |
+| First frame `tensor_assign` | 8.4 ms (needs_resize=true) | |
+| Steady-state `tensor_assign` | 25 µs (needs_resize=false) | |
 
 ---
 
@@ -217,19 +217,14 @@ needs_resize=false elapsed=~10µs   ← all subsequent frames (shape cached)
 
 | Category | Metric | Phone 1 | Phone 2 | Delta |
 |----------|--------|---------|---------|-------|
-| **Unit** | Tests passed | | | |
-| **Integration** | Tests passed | | | |
-| **4K→FHD** | FPS | | | |
-| **4K→FHD** | Latency (ms) | | | |
-| **4K→FHD** | Steady infer (ms) | | | |
-| **4K→FHD** | `tensor_assign` after opt (µs) | | | |
-| **Unified ARGB** | FPS | | | |
-| **LITE HD** | FPS | | | |
-| **LITE 4K** | FPS | | | |
-| **HEAVY HD** | FPS | | | |
-| **HEAVY 4K** | FPS | | | |
-| **8K→FHD** | FPS | | | |
-| **Burst max** | Frames at 30fps | | | |
+| **Unit** | Tests passed | 730/730 | | |
+| **Integration** | Tests passed | 51/51 | | |
+| **4K→FHD** | FPS | 31.6 | | |
+| **4K→FHD** | Latency (ms) | 31.7 | | |
+| **4K→FHD** | Steady infer (ms) | ~31.7 | | |
+| **4K→FHD** | `tensor_assign` after opt (µs) | 25 | | |
+| **Unified ARGB** | FPS | 9 | | |
+| **Unified ARGB** | Pipeline build | 598 ms | | |
 
 ---
 
@@ -243,7 +238,7 @@ Save as `scripts/cross_device_test.sh`:
 # Usage: bash scripts/cross_device_test.sh 2>&1 | tee /sdcard/softisp_test.log
 
 set -euo pipefail
-cd "$(dirname "$0")/../cam-rust"
+cd "$(dirname "$0")/../../cam-rust"
 
 export RUSTFLAGS="-C link-arg=-Wl,--warn-unresolved-symbols -C link-arg=-Wl,--noinhibit-exec"
 
