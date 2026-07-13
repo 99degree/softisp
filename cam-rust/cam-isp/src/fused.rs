@@ -73,6 +73,11 @@ mod tests {
     use super::*;
     use crate::profile::PipelineProfile;
 
+    /// Returns true if running in CI (GitHub Actions, etc.).
+    fn is_ci() -> bool {
+        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    }
+
     #[test]
     fn test_fused_pipeline_cpu() {
         crate::init();
@@ -106,6 +111,10 @@ mod tests {
 
     #[test]
     fn test_fused_pipeline_build() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires MNN converter runtime");
+            return;
+        }
         crate::init();
         let profile = PipelineProfile::MED;
         let blocks = profile.build_blocks(32, 0);
