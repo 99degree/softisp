@@ -1721,6 +1721,11 @@ macro_rules! register_mnn_engine {
 mod tests {
     use super::*;
 
+    /// Returns true if running in CI (GitHub Actions, etc.).
+    fn is_ci() -> bool {
+        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    }
+
     #[test]
     fn test_mnn_backend_id() {
         assert_eq!(MnnBackend::Vulkan.id(), "mnn_vulkan");
@@ -1754,6 +1759,10 @@ mod tests {
 
     #[test]
     fn test_query_optimal_workgroup() {
+        if is_ci() {
+            eprintln!("Skipping on CI — requires MNN Vulkan runtime");
+            return;
+        }
         let (wx, wy) = MnnEngine::query_optimal_workgroup();
         assert!(wx > 0 && wy > 0);
     }
