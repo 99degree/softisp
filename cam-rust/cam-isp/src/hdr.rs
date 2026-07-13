@@ -247,14 +247,24 @@ impl Drop for HdrCaptureQueue {
 
 /// HDR processing worker — runs align → merge → tone map → enhance → encode.
 struct HdrWorker {
-    // Future: MNN-based neural pipeline for enhance
-    // neural_pipeline: MnnInterpreterSafe,
+    /// Optional EIS engine for gyro-aware frame alignment.
+    /// When gyro samples covering the frame timestamps are available,
+    /// the integrated angular displacement is used instead of (or
+    /// combined with) image-based block-matching.
+    eis_engine: Option<crate::eis::EisEngine>,
 }
 
 impl HdrWorker {
     fn new() -> Self {
         Self {
-            // neural_pipeline loaded from hdr_enhance.mnn
+            eis_engine: None,
+        }
+    }
+
+    /// Create HdrWorker with EIS engine for gyro-aware alignment.
+    fn with_eis(eis: crate::eis::EisEngine) -> Self {
+        Self {
+            eis_engine: Some(eis),
         }
     }
 
@@ -360,7 +370,14 @@ impl HdrWorker {
 
     /// Align frames using EIS-style global motion estimation.
     ///
-    /// When gyro/IMU data is unavailable we fall back to image-based
+    /// When gyro/IMU data is available (via `eis_engine`) we integrate
+    /// angular velocities between frame timestamps to estimate the
+    /// inter-frame rotation, then convert to pixel translation via the
+    /// effective focal length. This is faster and more accurate than
+    /// image-based block-matching, especially for under/over-exposed
+    /// regions where image content is unreliable.
+    ///
+    /// When gyro data is unavailable we fall back to image-based
     /// block-matching (the same translation model EIS uses to stabilise a
     /// video stream): every non-reference frame is translated to best match
     /// the reference (neutral-EV) frame. The reference frame is left
@@ -386,10 +403,65 @@ impl HdrWorker {
                 out.push(f.clone());
                 continue;
             }
-            let (dx, dy) = Self::estimate_translation(&f.frame, reference, 16);
-            out.push(Self::shift_frame(f, dx, dy));
+
+            // Try gyro-based alignment first
+            let gyro_ok = if let Some(ref eis) = self.eis_engine {
+                if let Some((dx, dy)) = self.gyro_translation(eis, f, reference) {
+                    out.push(Self::shift_frame(f, dx as i32, dy as i32));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !gyro_ok {
+                let (dx, dy) = Self::estimate_translation(&f.frame, reference, 16);
+                out.push(Self::shift_frame(f, dx, dy));
+            }
         }
         Ok(out)
+    }
+
+    /// Estimate inter-frame translation from gyro angular displacement.
+    /// Returns `(dx, dy)` in pixels, or `None` if gyro data is insufficient.
+    fn gyro_translation(
+        &self,
+        eis: &crate::eis::EisEngine,
+        frame: &HdrFrame,
+        reference: &crate::pipeline::types::IspFrame,
+    ) -> Option<(f32, f32)> {
+        let ref_ts = reference.timestamp_ns as i64;
+        let frame_ts = frame.frame.timestamp_ns as i64;
+        if ref_ts == 0 || frame_ts == 0 || ref_ts == frame_ts {
+            return None;
+        }
+
+        // Integrate gyro between the two frame timestamps.
+        // The start/end timestamps are the reference and frame capture times.
+        let angular = if ref_ts < frame_ts {
+            eis.integrate_gyro(ref_ts, frame_ts)
+        } else {
+            eis.integrate_gyro(frame_ts, ref_ts)
+        };
+        let (pitch, yaw, _roll) = (angular[0], angular[1], angular[2]);
+
+        // Convert angular displacement (radians) to pixel translation.
+        // Focal length in pixels ≈ image_width / (2 * tan(FOV/2)).
+        // Assume 70° horizontal FOV as a reasonable default.
+        let fov_horizontal_deg = 70.0_f32.to_radians();
+        let focal_px = (reference.width as f32) / (2.0 * (fov_horizontal_deg / 2.0).tan());
+
+        // dx = focal * tan(yaw), dy = focal * tan(pitch)
+        // For small angles (< 10°): dx ≈ focal * yaw
+        let dx = focal_px * yaw;
+        let dy = focal_px * pitch;
+
+        // Clamp to sane bounds (max 20% of frame dimension)
+        let max_dx = reference.width as f32 * 0.2;
+        let max_dy = reference.height as f32 * 0.2;
+        Some((dx.clamp(-max_dx, max_dx), dy.clamp(-max_dy, max_dy)))
     }
 
 /// Build a grayscale luminance buffer (length `w*h`) from an ISP frame.
