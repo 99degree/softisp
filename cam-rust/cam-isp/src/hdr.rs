@@ -358,16 +358,202 @@ impl HdrWorker {
 
     // ── Alignment ──────────────────────────────────────────────
 
-    /// Align frames using EIS motion vectors.
-    /// For current implementation: identity (no alignment).
-    /// Future: MNN-based optical flow or EIS motion vector warp.
+    /// Align frames using EIS-style global motion estimation.
+    ///
+    /// When gyro/IMU data is unavailable we fall back to image-based
+    /// block-matching (the same translation model EIS uses to stabilise a
+    /// video stream): every non-reference frame is translated to best match
+    /// the reference (neutral-EV) frame. The reference frame is left
+    /// untouched. This removes handshake/registration error between the
+    /// under/over exposures before they are merged.
     fn align_frames(&self, frames: &[HdrFrame]) -> Result<Vec<HdrFrame>, HdrError> {
-        // TODO: Implement EIS-based alignment
-        // - Compute homography from gyro/IMU data
-        // - Warp under/over exposures to match neutral frame
-        // - Or use MNN optical flow model for per-pixel alignment
-        Ok(frames.to_vec())
+        if frames.len() < 2 {
+            return Ok(frames.to_vec());
+        }
+
+        // Reference = frame whose EV is closest to neutral (0).
+        let ref_idx = frames
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.ev.abs().partial_cmp(&b.1.ev.abs()).unwrap())
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let reference = &frames[ref_idx].frame;
+
+        let mut out = Vec::with_capacity(frames.len());
+        for (i, f) in frames.iter().enumerate() {
+            if i == ref_idx {
+                out.push(f.clone());
+                continue;
+            }
+            let (dx, dy) = Self::estimate_translation(&f.frame, reference, 16);
+            out.push(Self::shift_frame(f, dx, dy));
+        }
+        Ok(out)
     }
+
+/// Build a grayscale luminance buffer (length `w*h`) from an ISP frame.
+fn frame_luma(frame: &crate::pipeline::types::IspFrame) -> Vec<f32> {
+    let w = frame.width as usize;
+    let h = frame.height as usize;
+    let mut lum = vec![0.0f32; w * h];
+    if let Some(ref fd) = frame.float_data {
+        let plane = w * h;
+        for i in 0..plane {
+            let r = fd.get(i).copied().unwrap_or(0.0);
+            let g = fd.get(plane + i).copied().unwrap_or(0.0);
+            let b = fd.get(2 * plane + i).copied().unwrap_or(0.0);
+            lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        }
+    } else {
+        for i in 0..(w * h) {
+            let base = i * 4;
+            if base + 3 < frame.data.len() {
+                let r = frame.data[base + 1] as f32;
+                let g = frame.data[base + 2] as f32;
+                let b = frame.data[base + 3] as f32;
+                lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            }
+        }
+    }
+    lum
+}
+
+/// Sum of absolute differences between the block at `(bx,by)` in `lum_from`
+/// and the same block shifted by `(dx,dy)` in `lum_to`.
+fn block_sad(
+    lum_from: &[f32],
+    lum_to: &[f32],
+    w: i32,
+    h: i32,
+    bx: i32,
+    by: i32,
+    bw: i32,
+    bh: i32,
+    dx: i32,
+    dy: i32,
+) -> f32 {
+    let mut sad = 0.0f32;
+    for yy in 0..bh {
+        for xx in 0..bw {
+            let fx = bx + xx;
+            let fy = by + yy;
+            let tx = bx + xx + dx;
+            let ty = by + yy + dy;
+            let fv = if fx >= 0 && fx < w && fy >= 0 && fy < h {
+                lum_from[(fy * w + fx) as usize]
+            } else {
+                0.0
+            };
+            let tv = if tx >= 0 && tx < w && ty >= 0 && ty < h {
+                lum_to[(ty * w + tx) as usize]
+            } else {
+                0.0
+            };
+            sad += (fv - tv).abs();
+        }
+    }
+    sad
+}
+
+/// Estimate the integer `(dx, dy)` that best translates `from` onto `to` using
+/// a 4×4 grid of block matches with median voting (robust to moving content).
+fn estimate_translation(
+    from: &crate::pipeline::types::IspFrame,
+    to: &crate::pipeline::types::IspFrame,
+    max_shift: i32,
+) -> (i32, i32) {
+    let w = from.width as i32;
+    let h = from.height as i32;
+    if w <= 0 || h <= 0 {
+        return (0, 0);
+    }
+    let lum_from = Self::frame_luma(from);
+    let lum_to = Self::frame_luma(to);
+
+    let blocks = 4usize;
+    let bw = (w as usize / blocks).max(1) as i32;
+    let bh = (h as usize / blocks).max(1) as i32;
+    if bw < 4 || bh < 4 {
+        return (0, 0);
+    }
+
+    let mut dxs = Vec::new();
+    let mut dys = Vec::new();
+    for by in 0..(blocks as i32) {
+        for bx in 0..(blocks as i32) {
+            let x0 = bx * bw;
+            let y0 = by * bh;
+            let mut best = (0i32, 0i32);
+            let mut best_sad = f32::INFINITY;
+            for dy in -max_shift..=max_shift {
+                for dx in -max_shift..=max_shift {
+                    let s = Self::block_sad(&lum_from, &lum_to, w, h, x0, y0, bw, bh, dx, dy);
+                    if s < best_sad {
+                        best_sad = s;
+                        best = (dx, dy);
+                    }
+                }
+            }
+            dxs.push(best.0);
+            dys.push(best.1);
+        }
+    }
+    (Self::median(&dxs), Self::median(&dys))
+}
+
+/// Median of a small integer slice (returns 0 for empty input).
+fn median(v: &[i32]) -> i32 {
+    if v.is_empty() {
+        return 0;
+    }
+    let mut s = v.to_vec();
+    s.sort_unstable();
+    s[s.len() / 2]
+}
+
+/// Return a copy of `f` shifted by `(dx, dy)` with edge replication.
+fn shift_frame(f: &HdrFrame, dx: i32, dy: i32) -> HdrFrame {
+    if dx == 0 && dy == 0 {
+        return f.clone();
+    }
+    let w = f.frame.width as i32;
+    let h = f.frame.height as i32;
+    let mut out = f.clone();
+
+    if out.frame.float_data.is_none() {
+        // ARGB interleaved path.
+        let mut data = vec![0u8; out.frame.data.len()];
+        let pw = 4;
+        for y in 0..h {
+            for x in 0..w {
+                let sx = (x - dx).clamp(0, w - 1);
+                let sy = (y - dy).clamp(0, h - 1);
+                let di = ((y * w + x) * pw) as usize;
+                let si = ((sy * w + sx) * pw) as usize;
+                data[di..di + 4].copy_from_slice(&out.frame.data[si..si + 4]);
+            }
+        }
+        out.frame.data = data;
+    } else if let Some(ref fd) = f.frame.float_data {
+        // Planar NCHW f32: 3 planes of `w*h`.
+        let plane = (w * h) as usize;
+        let mut new_fd = vec![0.0f32; fd.len()];
+        for c in 0..3 {
+            for y in 0..h {
+                for x in 0..w {
+                    let sx = (x - dx).clamp(0, w - 1);
+                    let sy = (y - dy).clamp(0, h - 1);
+                    let di = c * plane + (y * w + x) as usize;
+                    let si = c * plane + (sy * w + sx) as usize;
+                    new_fd[di] = fd[si];
+                }
+            }
+        }
+        out.frame.float_data = Some(new_fd);
+    }
+    out
+}
 
     // ── Merge ──────────────────────────────────────────────────
 
@@ -754,6 +940,54 @@ mod tests {
         for &b in &result {
             let _ = b; // u8 always in [0, 255]
         }
+    }
+
+    #[test]
+    fn test_hdr_align_recovers_translation() {
+        // Build a pseudo-random texture. Random texture has a sharply
+        // peaked autocorrelation, so block-matching's SAD minimum is unique at
+        // the true shift (a checkerboard or gradient would alias onto wrong
+        // periodic / rank-1 shifts).
+        let w = 64u32;
+        let h = 64u32;
+        let mut data = vec![0u8; (w * h * 4) as usize];
+        for i in 0..(w * h) {
+            let x = (i % w) as u64;
+            let y = (i / w) as u64;
+            let v = (((x * 73856093) ^ (y * 19349663)) % 256) as u8;
+            let b = i as usize * 4;
+            data[b] = 255;
+            data[b + 1] = v;
+            data[b + 2] = v;
+            data[b + 3] = v;
+        }
+        let reference = HdrFrame {
+            frame: crate::pipeline::types::IspFrame {
+                data,
+                width: w,
+                height: h,
+                format: cam_types::FrameFormat::NchwFloat,
+                float_data: None,
+                aux: None,
+                params: crate::isp_params::IspParams::default(),
+                timestamp_ns: 0,
+                prep_duration_ns: 0,
+                inference_duration_ns: 0,
+                total_duration_ns: 0,
+            },
+            ev: 0.0,
+            iso: 100.0,
+            exposure_time: 0.033,
+        };
+
+        // Simulate handshake by shifting the reference by (+5, +3).
+        let shifted = HdrWorker::shift_frame(&reference, 5, 3);
+
+        // The estimator must recover the inverse translation (≈ -5, -3)
+        // so align_frames() can undo the shift.
+        let (dx, dy) = HdrWorker::estimate_translation(&shifted.frame, &reference.frame, 16);
+        assert!((dx + 5).abs() <= 2, "expected dx≈-5, got {}", dx);
+        assert!((dy + 3).abs() <= 2, "expected dy≈-3, got {}", dy);
     }
 
     #[test]
