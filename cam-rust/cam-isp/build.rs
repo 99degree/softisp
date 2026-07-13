@@ -235,7 +235,7 @@ fn abi_dir() -> PathBuf {
 /// Map Rust target arch to Android/Linux ABI directory name.
 ///
 /// Android NDK convention:
-///   aarch64     → aarch64-v8a
+///   aarch64     → arm64-v8a
 ///   arm         → armeabi-v7a
 ///   x86_64     → x86_64
 ///   x86 / i686 → x86
@@ -251,17 +251,17 @@ fn abi_suffix() -> String {
 
     if os == "android" {
         match arch.as_str() {
-            "aarch64" | "arm64" => "aarch64-v8a".to_string(),
+            "aarch64" | "arm64" => "arm64-v8a".to_string(),
             "arm" | "armv7" => "armeabi-v7a".to_string(),
             "x86_64" => "x86_64".to_string(),
             "x86" | "i686" => "x86".to_string(),
             "riscv64" => "riscv64".to_string(),
             other => {
                 eprintln!(
-                    "warning: unknown Android ABI arch '{}', defaulting to aarch64-v8a",
+                    "warning: unknown Android ABI arch '{}', defaulting to arm64-v8a",
                     other
                 );
-                "aarch64-v8a".to_string()
+                "arm64-v8a".to_string()
             }
         }
     } else {
@@ -297,38 +297,25 @@ fn link_onnxruntime() {
 fn link_mnn() {
     let abi_dir = abi_dir();
     let mnn_include = mnn_include_dir();
-    let mnn_lib = mnn_lib_src();
-    let mnn_root = mnn_dir();
 
-    // Copy libMNN.so from MNN_LIB_DIR (or default build_vk/OFF)
-    copy_if_newer(&mnn_lib.join("libMNN.so"), &abi_dir.join("libMNN.so"));
-    // Copy companion shared libraries — try multiple source paths
-    // Vulkan lib: try build_vk subdirs, then MNN_LIB_DIR sibling paths
+    copy_if_newer(&mnn_lib_src().join("libMNN.so"), &abi_dir.join("libMNN.so"));
+    // Also copy companion shared libraries from their build locations
+    let mnn_root = mnn_dir();
     copy_if_newer(
         &mnn_root.join("build_vk/source/backend/vulkan/OFF/libMNN_Vulkan.so"),
         &abi_dir.join("libMNN_Vulkan.so"),
     );
     copy_if_newer(
-        &mnn_lib.join("libMNN_Vulkan.so"),
-        &abi_dir.join("libMNN_Vulkan.so"),
-    );
-    // Express lib
-    copy_if_newer(
         &mnn_root.join("build_vk/express/OFF/libMNN_Express.so"),
         &abi_dir.join("libMNN_Express.so"),
     );
-    copy_if_newer(
-        &mnn_lib.join("libMNN_Express.so"),
-        &abi_dir.join("libMNN_Express.so"),
-    );
-    // ConvertDeps lib
     copy_if_newer(
         &mnn_root.join("build_vk/tools/converter/OFF/libMNNConvertDeps.so"),
         &abi_dir.join("libMNNConvertDeps.so"),
     );
     copy_if_newer(
-        &mnn_convert_lib_src().join("libMNNConvertDeps.so"),
-        &abi_dir.join("libMNNConvertDeps.so"),
+        &mnn_lib_src().join("../source/backend/vulkan/OFF/libMNN_Vulkan.so"),
+        &abi_dir.join("libMNN_Vulkan.so"),
     );
 
     let wrapper_src = Path::new("mnn_sys/mnn_wrapper.cpp");
@@ -360,11 +347,28 @@ fn link_mnn() {
         }
     }
 
+    // Compile weak Vulkan stubs for official MNN compatibility
+    let stubs_src = Path::new("mnn_sys/mnn_vulkan_stubs.cpp");
+    if stubs_src.exists() {
+        println!("cargo:rerun-if-changed=mnn_sys/mnn_vulkan_stubs.cpp");
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        let mut build = cc::Build::new();
+        build.cpp(true).std("c++17").file(stubs_src);
+        setup_cc_for_android(&mut build);
+        build.compile("mnn_vulkan_stubs");
+        let src = out_dir.join("libmnn_vulkan_stubs.a");
+        let dst = abi_dir.join("libmnn_vulkan_stubs.a");
+        if src.exists() {
+            std::fs::copy(&src, &dst).ok();
+        }
+    }
+
     println!("cargo:rustc-link-search=native={}", abi_dir.display());
-    // Also search MNN_LIB_DIR directly — needed when libraries are installed
-    // system-wide (e.g. /usr/local/lib) but not yet copied to abi_dir.
+    // Also search MNN_LIB_DIR directly
+    let mnn_lib = mnn_lib_src();
     println!("cargo:rustc-link-search=native={}", mnn_lib.display());
     println!("cargo:rustc-link-lib=static=mnn_wrapper");
+    println!("cargo:rustc-link-lib=static=mnn_vulkan_stubs");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=MNN_Vulkan");
     // Link C++ standard library: libc++_shared on Android, libstdc++ on Linux
@@ -392,14 +396,6 @@ fn link_mnnconvert() {
     if conv_src.exists() {
         println!("cargo:rerun-if-changed=mnn_sys/mnn_convert_api.cpp");
 
-        // Check if MNN headers have preserveInputType (custom ISP build)
-        let config_hpp = convert_include.join("config.hpp");
-        if let Ok(content) = std::fs::read_to_string(&config_hpp) {
-            if content.contains("preserveInputType") {
-                println!("cargo:rustc-cfg=MNN_HAS_PRESERVE_INPUT_TYPE");
-            }
-        }
-
         let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
         let mut build = cc::Build::new();
         build
@@ -408,7 +404,7 @@ fn link_mnnconvert() {
             .file(conv_src)
             .include(&mnn_include)
             .include(&convert_include)
-            .include(mnn_schema_dir())
+            .include(&mnn_schema_dir())
             .include(vendor_mnn_dir().join("3rd_party/flatbuffers/include"));
 
         setup_cc_for_android(&mut build);
@@ -422,9 +418,6 @@ fn link_mnnconvert() {
     }
 
     println!("cargo:rustc-link-search=native={}", abi_dir.display());
-    // Also search MNN_CONVERT_DIR directly
-    let convert_lib = mnn_convert_lib_src();
-    println!("cargo:rustc-link-search=native={}", convert_lib.display());
     println!("cargo:rustc-link-lib=static=mnn_convert_api");
     println!("cargo:rustc-link-lib=MNNConvertDeps");
     println!("cargo:rustc-link-lib=MNN_Express");
