@@ -109,8 +109,8 @@ jobs:
           git clone --depth 1 --branch 3.6.0 https://github.com/alibaba/MNN.git
           cd MNN
           
-          # Build with Vulkan support
-          mkdir build && cd build
+          # Build with Vulkan support in build_vk directory (matches build.rs expectations)
+          mkdir build_vk && cd build_vk
           cmake .. -G Ninja \
             -DMNN_BUILD_CONVERTER=ON \
             -DMNN_BUILD_TOOLS=ON \
@@ -126,15 +126,19 @@ jobs:
           ninja -j4 MNNConvert
           sudo ninja install
           # Find and copy MNNConvert if not installed
-          find /tmp/MNN/build -name "MNNConvert" -type f -exec sudo cp {} /usr/local/bin/ \;
+          find /tmp/MNN/build_vk -name "MNNConvert" -type f -exec sudo cp {} /usr/local/bin/ \;
           # Also check tools/converter directory
-          find /tmp/MNN/build/tools/converter -name "MNNConvert" -type f -exec sudo cp {} /usr/local/bin/ \;
+          find /tmp/MNN/build_vk/tools/converter -name "MNNConvert" -type f -exec sudo cp {} /usr/local/bin/ \;
           ls -la /usr/local/bin/MNNConvert || echo "MNNConvert not found, searching..."
           find /tmp/MNN -name "MNNConvert" -type f 2>/dev/null
           ls -la /usr/local/lib/libMNN*.so
           ls -la /usr/local/bin/MNNConvert
           ls -la /usr/local/bin/MNNConvert
           ls -la /usr/local/bin/MNNConvert
+        env:
+          MNN_DIR: /tmp/MNN
+          MNN_LIB_DIR: /usr/local/lib
+          MNN_CONVERT_DIR: /usr/local/lib
 
       - name: Set MNN library path output
         id: set-output
@@ -180,8 +184,13 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q libv4l-dev
 
-      - name: Set LD_LIBRARY_PATH for MNN
-        run: echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+      - name: Set MNN environment variables
+        run: |
+          echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-L /usr/local/lib" >> $GITHUB_ENV
+          echo "MNN_DIR=/tmp/MNN" >> $GITHUB_ENV
+          echo "MNN_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
+          echo "MNN_CONVERT_DIR=/usr/local/lib" >> $GITHUB_ENV
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -201,6 +210,12 @@ jobs:
 
       - name: Run clippy (with MNN feature)
         working-directory: ./cam-rust
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:${LD_LIBRARY_PATH}
+          RUSTFLAGS: -L /usr/local/lib
+          MNN_DIR: /tmp/MNN
+          MNN_LIB_DIR: /usr/local/lib
+          MNN_CONVERT_DIR: /usr/local/lib
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
@@ -317,8 +332,13 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q libv4l-dev
 
-      - name: Set LD_LIBRARY_PATH for MNN
-        run: echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+      - name: Set MNN environment variables
+        run: |
+          echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-L /usr/local/lib" >> $GITHUB_ENV
+          echo "MNN_DIR=/tmp/MNN" >> $GITHUB_ENV
+          echo "MNN_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
+          echo "MNN_CONVERT_DIR=/usr/local/lib" >> $GITHUB_ENV
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -351,10 +371,19 @@ jobs:
         env:
           LD_LIBRARY_PATH: /usr/local/lib:${LD_LIBRARY_PATH}
           RUSTFLAGS: -L /usr/local/lib
+          MNN_DIR: /tmp/MNN
+          MNN_LIB_DIR: /usr/local/lib
+          MNN_CONVERT_DIR: /usr/local/lib
         run: cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --lib --features "rectifier mnn" --no-fail-fast
 
       - name: Run MNN integration tests
         working-directory: ./cam-rust
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:${LD_LIBRARY_PATH}
+          RUSTFLAGS: -L /usr/local/lib
+          MNN_DIR: /tmp/MNN
+          MNN_LIB_DIR: /usr/local/lib
+          MNN_CONVERT_DIR: /usr/local/lib
         run: |
           # Run MNN-specific tests (require MNN libs)
           cargo test -p cam-isp --jobs $CARGO_TEST_JOBS --test test_mnn_engine --features "mnn" -- --ignored --nocapture 2>&1 || true
@@ -520,8 +549,13 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q libv4l-dev
 
-      - name: Set LD_LIBRARY_PATH for MNN
-        run: echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+      - name: Set MNN environment variables
+        run: |
+          echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-L /usr/local/lib" >> $GITHUB_ENV
+          echo "MNN_DIR=/tmp/MNN" >> $GITHUB_ENV
+          echo "MNN_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
+          echo "MNN_CONVERT_DIR=/usr/local/lib" >> $GITHUB_ENV
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -543,6 +577,9 @@ jobs:
         env:
           LD_LIBRARY_PATH: /usr/local/lib:${LD_LIBRARY_PATH}
           RUSTFLAGS: -L /usr/local/lib
+          MNN_DIR: /tmp/MNN
+          MNN_LIB_DIR: /usr/local/lib
+          MNN_CONVERT_DIR: /usr/local/lib
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
@@ -564,6 +601,10 @@ jobs:
 
       - name: Build tests (with MNN feature)
         working-directory: ./cam-rust
+        env:
+          MNN_DIR: /tmp/MNN
+          MNN_LIB_DIR: /usr/local/lib
+          MNN_CONVERT_DIR: /usr/local/lib
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
@@ -584,6 +625,9 @@ jobs:
         env:
           LD_LIBRARY_PATH: /usr/local/lib:${LD_LIBRARY_PATH}
           RUSTFLAGS: -L /usr/local/lib
+          MNN_DIR: /tmp/MNN
+          MNN_LIB_DIR: /usr/local/lib
+          MNN_CONVERT_DIR: /usr/local/lib
         run: |
           ERRORS=0
           for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
