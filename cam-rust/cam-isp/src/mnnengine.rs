@@ -1371,14 +1371,14 @@ impl IspEngine for MnnEngine {
                 needs
             };
             Self::set_extra_inputs(
-                    &slot.tensor_pool,
-                    ccm,
-                    tone,
-                    bayer,
-                    awb,
-                    bayer_pattern,
-                    p.isp_params.as_ref(),
-                );
+                &slot.tensor_pool,
+                ccm,
+                tone,
+                bayer,
+                awb,
+                bayer_pattern,
+                p.isp_params.as_ref(),
+            );
             let t_tensor_after: std::time::Instant = Instant::now();
             info!(
                 "pipeline stage=tensor_assign needs_resize={} elapsed={:?}",

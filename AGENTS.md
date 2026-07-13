@@ -39,35 +39,31 @@ You are an advanced, fully autonomous software engineering agent executing via t
 
 ---
 
-## 3.5. GIT WORKFLOW: COMMIT → PULL/REBASE → PUSH
+## 3.5. GIT WORKFLOW: COMMIT → PULL/REBASE → PUSH (ATOMIC)
 
-**MANDATORY WORKFLOW FOR EVERY COMMIT**
+**MANDATORY WORKFLOW FOR EVERY COMMIT — ALWAYS USE ONE-LINE PUSH**
 
 ```bash
 # 1. Stage and commit your changes
 # git add <files>
 # git commit -m "descriptive message"
 
-# 2. Pull latest changes with rebase (NOT merge)
-# git pull --rebase origin main
+# 2. Pull + rebase + push in ONE COMMAND — never separate
+# git pull --rebase origin main && git push origin main
 
-# 3. Resolve any conflicts if they arise
-# git status
-# # fix conflicts if any
-# git add <resolved-files>
-# git rebase --continue
-
-# 4. Push to remote
-# git push origin main
-```
+# 3. Resolve conflicts only if they arise:
+#    git status && fix conflicts && git add . && git rebase --continue
+#    Then run the one-liner again
+``````
 
 **RULES**:
 
-* **ALWAYS rebase, never merge** - keeps history linear and clean
-* **Commit before pulling** - ensures your changes are on top of the latest upstream
-* **Resolve conflicts immediately** - don't let them accumulate
-* **Push immediately after successful rebase** - don't let local commits pile up
-- **Never force push to shared branches** (`main`, `master`) without explicit coordination
+* **ALWAYS rebase, never merge** — keeps history linear and clean
+* **Commit before pulling** — ensures your changes are on top of the latest upstream
+* **ALWAYS use ONE-LINE PUSH** (`git pull --rebase origin main && git push origin main`) — never separate pull and push into two steps
+* **Resolve conflicts immediately** — don't let them accumulate
+* **Push immediately after successful rebase** — don't let local commits pile up
+* Never force push to shared branches (`main`, `master`) without explicit coordination
 
 **ANTI-PATTERNS TO AVOID**:
 * ❌ `git pull` (creates merge commits)
