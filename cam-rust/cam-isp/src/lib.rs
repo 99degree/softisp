@@ -84,6 +84,7 @@ pub mod simd;
 pub mod stats;
 pub mod store;
 pub mod temporal;
+#[cfg(feature = "mnn_buffer")]
 pub mod integration;
 
 use log::info;
