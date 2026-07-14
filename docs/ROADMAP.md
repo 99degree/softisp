@@ -64,8 +64,10 @@
   7 buildable crates (cam-types, cam-hal, cam-motion, cam-onnx, cam-core, cam-hal-linux,
   cam-app, cam-isp). Zero Rust warnings. Only 2 NDK crates excluded (cam-hal-android,
   cam-binder). ✅
-- Add workspace-level integration tests exercising the bridges (in `cam-binder`).
-- Keep benchmark numbers device-labeled consistently (SD888 vs Snapdragon 8 Gen 2).
+- **19 bridge integration tests** in `cam-binder/tests/bridge_integration.rs` — covers
+  `V4l2AidlBridge` (construction, sensor config, synthetic capture, capture loop, stats,
+  error display), `HardwareBufferBridge` (pool, formats, acquire/release), and
+  `CameraIspService` wiring (mnn-gated). All pass with and without `--features mnn`. ✅
 
 ## Build & Test
 
