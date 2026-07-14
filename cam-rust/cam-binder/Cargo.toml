@@ -28,3 +28,4 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 default = []
 v4l2 = ["dep:cam-hal-linux"]
 android = ["dep:cam-hal-android"]
+mnn = ["cam-isp/mnn"]
