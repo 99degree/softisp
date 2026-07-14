@@ -1,13 +1,13 @@
 # SoftISP Test Results & Benchmark Report
 
-**Last Updated:** 2026-07-13
+**Last Updated:** 2026-07-14
 
 ## Cross-Device Comparison
 
 | Metric | Phone 1 (Redmi Note 9 Pro) | Phone 2 (Xiaomi 2109119DG) | Delta |
 |--------|---------------------------|----------------------------|-------|
 | **SoC** | Snapdragon 720G (atoll) | Snapdragon 888 (lahaina) | — |
-| **GPU** | Adreno 618 @ 750 MHz | Adreno (generic) | — |
+| **GPU** | Adreno 618 @ 750 MHz | Adreno 660 | — |
 | **Kernel** | 4.14.336 | 5.4.302-qgki | — |
 | **Rust** | 1.95.0 | 1.96.1 | — |
 | **Android** | 15 (API 35) | 14 (API 34) | — |
@@ -20,11 +20,12 @@
 
 | Suite | Phone 1 | Phone 2 |
 |-------|---------|---------|
-| Lib unit tests | 730/730 (**100%**) — 18.6s | **734/734 (100%)** — 32.3s |
+| Lib unit tests | **754/754 (100%)** — 19.4s | **734/734 (100%)** — 32.3s |
 | Integration (test_new_blocks) | 51/51 (**100%**) — 1.2s | **51/51 (100%)** — 1.7s |
 | Neural controller | 6/6 | 6/6 |
 
-**Total:** 785+ tests, **100% pass rate** across both devices. Phone 2 has +4 tests because `#[ignore]` was removed from CPU engine and unified pipeline tests (they pass on-device with Vulkan).
+**Total:** 811+ tests, **100% pass rate** across both devices. Phone 1 gained +24 tests
+from HSV↔RGB/LAB CPU math implementation (P2).
 
 ### Recent Fixes Verified
 - ✅ CCM 4-channel support (matrix Vec<f32>, dynamic sizing)
@@ -51,10 +52,10 @@
 
 | Metric | Phone 1 (SD720G) | Phone 2 (SD888) | Speedup |
 |--------|-----------------|-----------------|---------|
-| Average latency | 31.7 ms | **16.9 ms** | **1.9×** |
-| FPS | 31.6 | **59.2** | **1.9×** |
-| `tensor_assign` (first frame) | 8.4 ms | 51.5 ms | — |
-| `tensor_assign` (steady-state) | 25 µs | **5 µs** | **5×** |
+| Average latency | 23.1 ms | **16.9 ms** | **1.4×** |
+| FPS | 43.2 | **59.2** | **1.4×** |
+| `tensor_assign` (first frame) | 45.8 ms | 51.5 ms | — |
+| `tensor_assign` (steady-state) | 13 µs | **5 µs** | **2.6×** |
 | Engine | `mnn_vulkan (p99)` | `mnn_vulkan (p99)` | — |
 
 ### Unified Pipeline (bench_unified_argb) — 4K Bayer → FHD ARGB8888
@@ -69,7 +70,7 @@
 
 ### sess.resize() Optimization
 
-The shape caching fix in `mnnengine.rs` (`last_input_shape`) reduces `tensor_assign` from **7.3ms → 5µs** (1460× improvement) for fixed-resolution pipelines.
+The shape caching fix in `mnnengine.rs` (`last_input_shape`) reduces `tensor_assign` from **7.3ms → 13µs** (560× improvement) for fixed-resolution pipelines on SD720G. Best observed: **46.6 FPS** at 21.5ms.
 
 ### Stress Tests (30s duration) — Previous Gen
 
