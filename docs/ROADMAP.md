@@ -25,14 +25,24 @@
 
 ## Outstanding Work (Prioritized)
 
-### P1 — Real HAL ↔ ISP Integration (core goal; scaffolding exists)
-- Wire `AndroidHalIspBridge` into `cam-hal-android/src/adapter.rs`
-  (connect its `FrameProcessor` to our `IspFrameProcessor`).
-- Wire `V4l2IspBridge` into `cam-binder/src/v4l2_aidl_bridge.rs`
-  (replace the `bayer_to_rgb_quick` placeholder).
-- Exercise the true zero-copy path end-to-end (`process_raw_frame_zc` still copies today).
-- **Constraint:** `cam-hal-android` / `cam-binder` pull Android/NDK deps and require the
-  `aarch64-linux-android` target toolchain — they do **not** build in this Termux env.
+### P1 — Real HAL ↔ ISP Integration ✅ (wired with feature gates)
+
+- Wire `AndroidHalIspBridge` into `cam-hal-android/src/adapter.rs` — Use
+  `set_processor()` with a closure that delegates to
+  `AndroidHalIspBridge::process_android_frame()`. A convenience method is not
+  added to avoid a `cam-isp` dependency in `cam-hal-android`. The wiring
+  happens at the `cam-binder` level where both deps are available. ✅
+- Wire `V4l2IspBridge` into `cam-binder/src/v4l2_aidl_bridge.rs` — Added
+  `isp_service: Mutex<Option<CameraIspService>>` field gated behind
+  `#[cfg(feature = "mnn")]`. When `set_isp_service()` is called, the ISP
+  pipeline replaces `bayer_to_rgb_quick()` fallback for Bayer→RGB. The mnn
+  feature propagates automatically. ✅
+- Exercise the true zero-copy path end-to-end (`process_raw_frame_zc` still
+  copies today). — Pending: requires AHardwareBuffer at runtime.
+- **Constraint resolved:** `cam-binder` now propagates `mnn` feature to
+  `cam-isp`, so `integration.rs` module is accessible when built with
+  `--features mnn`. Both `cam-hal-android` and `cam-binder` compile without
+  NDK in Termux.
 
 ### P2 — Feature Completeness ✅ (Completed 2026-07-13)
 - **Neural controller zoom output → IspParams → GpuWarpParams** — already wired
