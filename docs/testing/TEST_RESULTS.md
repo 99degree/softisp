@@ -52,8 +52,8 @@ from HSV↔RGB/LAB CPU math implementation (P2).
 
 | Metric | Phone 1 (SD720G) | Phone 2 (SD888) | Speedup |
 |--------|-----------------|-----------------|---------|
-| Average latency | 23.1 ms | **16.9 ms** | **1.4×** |
-| FPS | 43.2 | **59.2** | **1.4×** |
+| Average latency | 21.3 ms | **16.9 ms** | **1.4×** |
+| FPS | 47.0 | **59.2** | **1.3×** |
 | `tensor_assign` (first frame) | 45.8 ms | 51.5 ms | — |
 | `tensor_assign` (steady-state) | 13 µs | **5 µs** | **2.6×** |
 | Engine | `mnn_vulkan (p99)` | `mnn_vulkan (p99)` | — |
