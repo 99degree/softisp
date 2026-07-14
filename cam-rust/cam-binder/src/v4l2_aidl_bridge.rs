@@ -119,6 +119,11 @@ pub struct V4l2AidlBridge {
     stats: BridgeStats,
     capture_us_sum: AtomicU64,
     process_us_sum: AtomicU64,
+    /// Optional ISP pipeline for raw Bayer → RGB conversion.
+    /// When set, replaces the fallback `bayer_to_rgb_quick()`.
+    /// Requires `mnn` feature on cam-isp for `CameraIspService`.
+    #[cfg(feature = "mnn")]
+    isp_service: Mutex<Option<cam_isp::integration::CameraIspService>>,
 }
 
 impl V4l2AidlBridge {
@@ -130,12 +135,22 @@ impl V4l2AidlBridge {
             stats: BridgeStats::default(),
             capture_us_sum: AtomicU64::new(0),
             process_us_sum: AtomicU64::new(0),
+            #[cfg(feature = "mnn")]
+            isp_service: Mutex::new(None),
         }
     }
 
     /// Set sensor specification
     pub fn set_sensor(&self, spec: SensorSpec) {
         *self.sensor.lock().unwrap() = spec;
+    }
+
+    /// Attach an ISP service for real raw→RGB conversion.
+    /// When set, `bayer_to_rgb_quick()` fallback is only used on ISP failure.
+    /// Requires `mnn` feature on cam-isp for `CameraIspService`.
+    #[cfg(feature = "mnn")]
+    pub fn set_isp_service(&self, service: cam_isp::integration::CameraIspService) {
+        *self.isp_service.lock().unwrap() = Some(service);
     }
 
     /// Get current sensor spec
@@ -158,8 +173,29 @@ impl V4l2AidlBridge {
         .map_err(BridgeError::DeviceError)?;
         let capture_us = t_cap.elapsed().as_micros() as u64;
 
-        // Convert Bayer to RGB (simplified — real impl uses ISP)
+        // Convert Bayer to RGB via ISP pipeline, falling back to quick converter
         let t_proc = Instant::now();
+        #[cfg(feature = "mnn")]
+        let rgb = match self.isp_service.lock().unwrap().as_ref() {
+            Some(isp) => {
+                match isp.process_raw_frame(
+                    &data,
+                    sensor.width,
+                    sensor.height,
+                    sensor.bayer_pattern as i32,
+                ) {
+                    Ok(frame) => frame,
+                    Err(e) => {
+                        log::warn!("ISP pipeline failed ({}), using fallback", e);
+                        bayer_to_rgb_quick(&data, sensor.width as usize, sensor.height as usize)
+                    }
+                }
+            }
+            None => {
+                bayer_to_rgb_quick(&data, sensor.width as usize, sensor.height as usize)
+            }
+        };
+        #[cfg(not(feature = "mnn"))]
         let rgb = bayer_to_rgb_quick(&data, sensor.width as usize, sensor.height as usize);
         let process_us = t_proc.elapsed().as_micros() as u64;
 
