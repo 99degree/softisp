@@ -3,9 +3,9 @@
 # Usage: bash scripts/cross_device_test.sh 2>&1 | tee /sdcard/softisp_test.log
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
-
-cd cam-rust
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Navigate to repo root (parent of cam-rust/scripts/)
+cd "$SCRIPT_DIR/.."
 
 export RUSTFLAGS="-C link-arg=-Wl,--warn-unresolved-symbols -C link-arg=-Wl,--noinhibit-exec"
 
