@@ -64,16 +64,16 @@ camera3_capture_request_t
 
 ## 2. Performance Baseline (4K→FHD, MNN Vulkan)
 
-### Current Timing (Release Build)
+### Current Timing (Release Build, Phone 1 — SD720G / Adreno 618)
 
 ```
-Steady State: 30.9 ms/frame (32 FPS)
-├── tensor_assign (sess.resize + param upload)   7.5 ms  (24%)
-│     └── sess.resize() alone                    7.3 ms
-│     └── set_extra_inputs (ISP params)          ~0.2 ms
-└── inference (mnn_run_with_output)              23.0 ms (76%)
-      └── Vulkan GPU kernels                     ~18 ms  (after warm)
-      └── Tensor setup/readback                  ~5 ms
+Steady State: 25.4 ms/frame (39.3 FPS)
+├── tensor_assign (sess.resize cached + param upload)   0.3 ms  (1%)
+│     └── sess.resize() (shape cached)                 ~13 µs
+│     └── set_extra_inputs (ISP params)                 ~0.3 ms
+└── inference (mnn_run_with_output)                     23.0 ms (91%)
+      └── Vulkan GPU kernels                            ~18 ms  (after warm)
+      └── Tensor setup/readback                         ~5 ms
 
 First frame:  35.6 ms (session pool create + shader compile)
 Warm frames:   3 required for stable timing
@@ -194,10 +194,10 @@ Frame N+1:              [CPU prep] [GPU infer]
 
 | Scenario | Frame Time | 30fps Spare | Burst 3 (99ms) Spare | Max Burst Depth |
 |---|---|---|---|---|
-| **Current** | 30.9 ms | 2.4 ms | 7.3 ms | 3 frames |
-| **Phase 1** | 20 ms | 13.3 ms | 39 ms | 5 frames |
-| **Phase 2** | 20 ms (async: hidden prep) | 13.3 ms | ~60 ms | 5+ frames |
-| **Phase 3** | 12 ms (zero-copy) | 21.3 ms | 63 ms | 8 frames |
+| **Current** (after resize caching) | 25.4 ms | 7.9 ms | 23.8 ms | 3 frames |
+| **Phase 1** (workgroup tuning) | 20 ms | 13.3 ms | 39 ms | 5 frames |
+| **Phase 2** (async: hidden prep) | 20 ms | 13.3 ms | ~60 ms | 5+ frames |
+| **Phase 3** (zero-copy) | 12 ms | 21.3 ms | 63 ms | 8 frames |
 
 ---
 
