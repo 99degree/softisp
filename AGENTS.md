@@ -4,7 +4,9 @@ Instructions for AI coding agents working in this repository. Read this file in 
 
 This repo is **softisp** (Soft ISP): a complete camera ISP pipeline in Rust with Vulkan GPU acceleration. Because the pipeline runs on-device and bridges into Android Camera HAL3 / V4L2 / AOSP binder HALs, changes here affect runtime safety, memory correctness (zero-copy CMA/ION/memfd buffers), and the GPU warp path on real silicon. Move carefully, and verify with the actual build/test commands below — not by gut feel.
 
-> This file is edited primarily by autonomous agents running under the Pi harness. The operating manifesto in §1 is load-bearing: follow it literally. The convention sections (§2–§6) are adapted from a generic agent-coding-agent playbook and re-grounded for this project.
+> **Source / provenance:** The convention sections (§2–§6) in this file are adapted from the generic agent-coding-agent playbook at `../agent-code/AGENTS.md` and re-grounded for the softisp project (real crates, CI commands, MNN/Vulkan, GPL-3.0 licensing). The operating manifesto (§1) and the project-specific architecture/CI/roadmap sections (§7–§12) are softisp-native. When the upstream playbook changes, re-merge the relevant conventions here rather than copying verbatim — keep softisp paths and rules authoritative.
+>
+> This file is edited primarily by autonomous agents running under the Pi harness. The operating manifesto in §1 is load-bearing: follow it literally.
 
 ---
 
@@ -161,7 +163,7 @@ softisp/
 The `.github/workflows/ci.yml` file is the **canonical gate**. Run the exact commands in §3 locally before pushing.
 
 Supporting docs you should read before a non-trivial change:
-`README.md`, `docs/ROADMAP.md`, `docs/architecture/`, `cam-isp/docs/PIPELINE_BLOCKS.md`, `cam-isp/src/controller_api.rs`, `docs/MNN_VULKAN_GUIDE.md`, `docs/testing/TESTING.md`.
+`README.md`, `docs/ROADMAP.md`, `docs/architecture/`, `docs/architecture/PIPELINE_BLOCKS.md`, `cam-rust/cam-isp/src/controller_api.rs`, `docs/guides/MNN_VULKAN_GUIDE.md`, `docs/testing/TESTING.md`.
 
 ---
 
@@ -337,7 +339,7 @@ Build, convert, and inference are three separate stages with no state overlap:
 ```
 [init ──────────────────────────────────────────────────────────────]
   Stage 1: Build ONNX graph (pure Rust, no MNN, no C++, no loaded libs)
-            - Uses cam-isp/src/onnx/proto.rs to serialize ONNX protobuf
+            - Uses cam-rust/cam-isp/src/onnx/proto.rs to serialize ONNX protobuf
             - GpuWarpBlock computes GDC grid using ONNX arithmetic ops
             - ISP params become runtime tensor inputs (not Rust function args)
             - Output: Vec<u8> (ONNX protobuf bytes, memory-only)
@@ -407,7 +409,7 @@ Controller ←── [updated params]          ←── MNN Output tensors
 ### 8.4 MEMORY-BASED CONVERSION (SAME-PROCESS, NO PERSISTENT FILES)
 
 - ONNX model: generated in memory as `Vec<u8>`, never written to disk
-- ONNX→MNN conversion: `mnn_convert_onnx_buffer()` in `mnn_convert_api.cpp`
+- ONNX→MNN conversion: `mnn_convert_onnx_buffer()` in `cam-rust/cam-isp/mnn_sys/mnn_convert_api.cpp`
   - Takes ONNX bytes → writes to mkstemp temp file → calls MNN::Cli::convertModel
   - Reads output temp file → Returns MNN bytes → unlinks both temp files
   - Temp files exist only during conversion (ms-scale), then deleted
@@ -552,48 +554,48 @@ Always use per-step `working-directory:` instead:
 All project documentation is in markdown. Reference these files before asking questions or making assumptions:
 
 ### Core Architecture
-- `cam-isp/docs/PIPELINE_BLOCKS.md` — **All pipeline blocks with ONNX input/output tensor specs**
-- `cam-isp/docs/CONTROLLER_API.md` — **Unified controller API documentation**
-- `cam-isp/src/controller_api.rs` — **Unified controller API (ControllerApi trait)**
-- `cam-isp/src/rectifier_model.rs` — **Mock ONNX model generator (no PyTorch)**
+- `docs/architecture/PIPELINE_BLOCKS.md` — **All pipeline blocks with ONNX input/output tensor specs**
+- `docs/api/CONTROLLER_API.md` — **Unified controller API documentation**
+- `cam-rust/cam-isp/src/controller_api.rs` — **Unified controller API (ControllerApi trait)**
+- `cam-rust/cam-isp/src/rectifier_model.rs` — **Mock ONNX model generator (no PyTorch)**
 - `isp-rectifier/MODEL_SPECIFICATION.md` — **Neural ISP controller model spec (267→20)**
 - `isp-rectifier/RUST_API_STATUS.md` — **Rust API for rectifier integration**
 - `isp-rectifier/TEACHER_ANALYSIS.md` — **Teacher model analysis (AWB/CCM)**
-- `cam-isp/docs/DEBAYER_DESIGN.md` — Bayer demosaic algorithm design and comparison
-- `cam-isp/docs/UNPACK_IMPLEMENTATION_SUMMARY.md` — INT32→FLOAT unpack implementation
-- `cam-isp/docs/UNPACK_PERFORMANCE.md` — Unpack block performance analysis
+- `docs/architecture/DEBAYER_DESIGN.md` — Bayer demosaic algorithm design and comparison
+- `docs/architecture/UNPACK_IMPLEMENTATION_SUMMARY.md` — INT32→FLOAT unpack implementation
+- `docs/architecture/UNPACK_PERFORMANCE.md` — Unpack block performance analysis
 
 ### MNN & Vulkan GPU
-- `docs/MNN_VULKAN_GUIDE.md` — MNN Vulkan backend integration guide
-- `docs/MNN_SOLUTION_SUMMARY.md` — MNN integration summary and architecture
-- `docs/mnn-inference-guide.md` — MNN inference API usage guide
-- `docs/MEMFD_MNN_GUIDE.md` — Zero-copy memory (memfd) with MNN
+- `docs/guides/MNN_VULKAN_GUIDE.md` — MNN Vulkan backend integration guide
+- `docs/guides/MNN_SOLUTION_SUMMARY.md` — MNN integration summary and architecture
+- `docs/guides/mnn-inference-guide.md` — MNN inference API usage guide
+- `docs/guides/MEMFD_MNN_GUIDE.md` — Zero-copy memory (memfd) with MNN
 
 ### Performance & Profiling
-- `PERFORMANCE_BENCHMARK.md` — HD/FHD/4K Vulkan benchmark results
-- `PERFORMANCE_BENCHMARKS.md` — Cross-profile performance comparison
-- `PERF_REPORT.md` — Performance report with optimization analysis
-- `SIMD_PERF.md` — SIMD (NEON/SSE) performance analysis
+- `docs/performance/PERFORMANCE_BENCHMARK.md` — HD/FHD/4K Vulkan benchmark results
+- `docs/performance/PERFORMANCE_BENCHMARKS.md` — Cross-profile performance comparison
+- `docs/performance/PERF_REPORT.md` — Performance report with optimization analysis
+- `docs/performance/SIMD_PERF.md` — SIMD (NEON/SSE) performance analysis
 
 ### Configuration & Profiles
-- `docs/profiles-technical.md` — Pipeline profile technical reference (LITE/MED/HEAVY/PRO/UNIFIED)
+- `docs/guides/profiles-technical.md` — Pipeline profile technical reference (LITE/MED/HEAVY/PRO/UNIFIED)
 - `docs/testing/TESTING.md` — Test suite structure and how to run tests
 
 ### Project Status
 - `README.md` — Project overview and quick start
-- `BUILD_STATUS.md` — Current build status and known issues
-- `MNN_STATUS.md` — MNN integration status
+- `docs/BUILD_STATUS.md` — Current build status and known issues
+- `docs/MNN_STATUS.md` — MNN integration status
 
 ### Quick Reference
 ```
-Block I/O Reference:    cam-isp/docs/PIPELINE_BLOCKS.md
-Controller API:         cam-isp/src/controller_api.rs
+Block I/O Reference:    docs/architecture/PIPELINE_BLOCKS.md
+Controller API:         cam-rust/cam-isp/src/controller_api.rs
 Neural Model Spec:      isp-rectifier/MODEL_SPECIFICATION.md
 Rust API Status:        isp-rectifier/RUST_API_STATUS.md
-Pipeline Profiles:     docs/profiles-technical.md
-MNN/Vulkan Setup:      docs/MNN_VULKAN_GUIDE.md
-Performance Numbers:   PERFORMANCE_BENCHMARK.md
-Test Commands:         docs/testing/TESTING.md
+Pipeline Profiles:      docs/guides/profiles-technical.md
+MNN/Vulkan Setup:       docs/guides/MNN_VULKAN_GUIDE.md
+Performance Numbers:    docs/performance/PERFORMANCE_BENCHMARK.md
+Test Commands:          docs/testing/TESTING.md
 ```
 
 ---
@@ -618,14 +620,14 @@ When starting a new task, consult `docs/ROADMAP.md` first and keep it in sync:
 
 ## 12. WHERE TO ASK WHEN STUCK
 
-- Architecture questions → `docs/architecture/` and `cam-isp/src/`
-- Pipeline blocks / tensor specs → `cam-isp/docs/PIPELINE_BLOCKS.md`
-- Controller API → `cam-isp/src/controller_api.rs`
-- ONNX / MNN conversion & inference → `cam-onnx/` and `cam-isp/src/onnx/`
-- MNN / Vulkan GPU → `docs/MNN_VULKAN_GUIDE.md`, `docs/mnn-inference-guide.md`
+- Architecture questions → `docs/architecture/` and `cam-rust/cam-isp/src/`
+- Pipeline blocks / tensor specs → `docs/architecture/PIPELINE_BLOCKS.md`
+- Controller API → `cam-rust/cam-isp/src/controller_api.rs`
+- ONNX / MNN conversion & inference → `cam-rust/cam-onnx/` and `cam-rust/cam-isp/src/onnx/`
+- MNN / Vulkan GPU → `docs/guides/MNN_VULKAN_GUIDE.md`, `docs/guides/mnn-inference-guide.md`
 - Vulkan shaders → `vulkan_isp/`
-- HAL integration (Android / V4L2 / binder) → `cam-hal-*`, `cam-binder/`
-- Performance → `PERFORMANCE_BENCHMARK.md`, `SIMD_PERF.md`
+- HAL integration (Android / V4L2 / binder) → `cam-rust/cam-hal-*`, `cam-rust/cam-binder/`
+- Performance → `docs/performance/PERFORMANCE_BENCHMARK.md`, `docs/performance/SIMD_PERF.md`
 - Testing → `docs/testing/TESTING.md`
 - Roadmap / what's planned → `docs/ROADMAP.md`
 - CI failures → `scripts/get_ci_logs.py` (see §9)
