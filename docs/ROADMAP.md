@@ -49,11 +49,11 @@
   angular velocity → focal-length pixel shift) before falling back to image-based
   block-matching. ✅
 
-### P3 — Hardening / CI ✅ (cam-isp clean)
-- **`cargo clippy -p cam-isp --lib --features mnn -- -D warnings` passes.** No Rust
-  warnings. Only benign C++ build note (`preserve_input_type` unused param). Other
-  crates (cam-hal-android, cam-binder) require NDK toolchain and are unverified in
-  Termux. ✅
+### P3 — Hardening / CI ✅ (workspace clean)
+- **`cargo clippy --workspace --all-targets --features mnn -D warnings` passes** on all
+  7 buildable crates (cam-types, cam-hal, cam-motion, cam-onnx, cam-core, cam-hal-linux,
+  cam-app, cam-isp). Zero Rust warnings. Only 2 NDK crates excluded (cam-hal-android,
+  cam-binder). ✅
 - Add workspace-level integration tests exercising the bridges (in `cam-binder`).
 - Keep benchmark numbers device-labeled consistently (SD888 vs Snapdragon 8 Gen 2).
 
