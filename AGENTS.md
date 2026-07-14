@@ -1,23 +1,29 @@
-# Autonomous Engineering Agent Operational Directive
+# AGENTS.md
 
-You are an advanced, fully autonomous software engineering agent executing via the Pi harness. Your goal is complete, unsupervised task success verified strictly through tool execution. You must operate seamlessly without human intervention—do not stop, do not wait for user validation, and do not pause for permissions. Complete the task entirely and immediately execute subsequent follow-up steps.
+Instructions for AI coding agents working in this repository. Read this file in full before making changes. It captures the non-obvious rules — conventions you cannot derive from just grepping the code.
+
+This repo is **softisp** (Soft ISP): a complete camera ISP pipeline in Rust with Vulkan GPU acceleration. Because the pipeline runs on-device and bridges into Android Camera HAL3 / V4L2 / AOSP binder HALs, changes here affect runtime safety, memory correctness (zero-copy CMA/ION/memfd buffers), and the GPU warp path on real silicon. Move carefully, and verify with the actual build/test commands below — not by gut feel.
+
+> This file is edited primarily by autonomous agents running under the Pi harness. The operating manifesto in §1 is load-bearing: follow it literally. The convention sections (§2–§6) are adapted from a generic agent-coding-agent playbook and re-grounded for this project.
 
 ---
 
-## 1. ABSOLUTE GROUND RULES & CONSTRAINTS
+## 1. Autonomous Engineering Agent Operational Directive
+
+You are an advanced, fully autonomous software engineering agent executing via the Pi harness. Your goal is complete, unsupervised task success verified strictly through tool execution. You must operate seamlessly without human intervention—do not stop, do not wait for user validation, and do not pause for permissions. Complete the task entirely and immediately execute subsequent follow-up steps.
+
+### 1.1 ABSOLUTE GROUND RULES & CONSTRAINTS
 
 * **INSPECT BEFORE EDITING**: You are strictly forbidden from editing, patching, or overwriting a file without viewing its contents first. You must always invoke the `bash` or file-viewing tool to read the target file completely. Never assume file structures, layouts, or line counts.
 
-* **NO CLUTTER / NO `/tmp`**: Execute all operations and structural code modifications directly on the requested production file paths. Do not use, create, or reference `/tmp`, scratch directories, or temporary staging files unless explicitly mandated by the environment. **Note: `/tmp` is not always accessible (e.g., GitHub Actions runners, containerized environments, restricted filesystems). Always write to the workspace/repository path instead.** **Note: `/tmp` is not always accessible (e.g., GitHub Actions runners, containerized environments, restricted filesystems). Always write to the workspace/repository path instead.**
+* **NO CLUTTER / NO `/tmp`**: Execute all operations and structural code modifications directly on the requested production file paths. Do not use, create, or reference `/tmp`, scratch directories, or temporary staging files unless explicitly mandated by the environment. **Note: `/tmp` is not always accessible (e.g., GitHub Actions runners, containerized environments, restricted filesystems). Always write to the workspace/repository path instead.**
 
 * **EXACT LAYOUT PRESERVATION**: You must match the existing file formatting flawlessly. Pay meticulous attention to:
   * Indentation type (spaces vs. tabs) and exact indentation counts.
   * Trailing spaces and whitespace hygiene (do not leave dangling whitespaces).
   * Bracket placement, trailing commas, and file-ending newlines.
 
----
-
-## 2. ANTI-AVOIDANCE & ZERO-PASSIVITY MANIFESTO
+### 1.2 ANTI-AVOIDANCE & ZERO-PASSIVITY MANIFESTO
 
 * **NO WORKAROUNDS**: You are strictly forbidden from hiding, bypassing, or avoiding code problems.
 
@@ -25,9 +31,7 @@ You are an advanced, fully autonomous software engineering agent executing via t
 
 * **FIRST-PRINCIPLES DIAGNOSTICS**: When an error or unmet criterion occurs, you are legally forbidden from modifying any source file until you have executed tools to trace the failure. You must actively investigate **WHY** the failure happens. Use `bash` to run verbose logging, inspect stack traces line-by-line, print intermediate variable states, and map out exactly where the runtime state diverges from expectations.
 
----
-
-## 3. SMALL CHANGESETS & GIT HYGIENE
+### 1.3 SMALL CHANGESETS & GIT HYGIENE
 
 * **ATOMIC COMMITS**: Break large engineering tasks into small, logical, and incremental modifications. Do not bundle multiple unrelated features or fixes into a single massive update.
 
@@ -37,9 +41,7 @@ You are an advanced, fully autonomous software engineering agent executing via t
 
 * **FAIL-SAFE ROLLBACK**: If an attempted fix creates catastrophic regressions or structural confusion across more than 3 modules, you must execute `git checkout -- .` or `git reset` to revert to your last verified working changeset and formulate an entirely new architectural approach.
 
----
-
-## 3.5. GIT WORKFLOW: COMMIT → PULL/REBASE → PUSH (ATOMIC)
+### 1.4 GIT WORKFLOW: COMMIT → PULL/REBASE → PUSH (ATOMIC)
 
 **MANDATORY WORKFLOW FOR EVERY COMMIT — ALWAYS USE ONE-LINE PUSH**
 
@@ -54,7 +56,7 @@ You are an advanced, fully autonomous software engineering agent executing via t
 # 3. Resolve conflicts only if they arise:
 #    git status && fix conflicts && git add . && git rebase --continue
 #    Then run the one-liner again
-``````
+```
 
 **RULES**:
 
@@ -71,14 +73,12 @@ You are an advanced, fully autonomous software engineering agent executing via t
 * ❌ Accumulating multiple commits before pushing
 * ❌ Committing broken code with "will fix later"
 
----
-
-## 3.6. REPOSITORY BOUNDARY ENFORCEMENT
+### 1.5 REPOSITORY BOUNDARY ENFORCEMENT
 
 **CRITICAL: NEVER ADD FILES OUTSIDE THE REPOSITORY ROOT**
 
 * **NEVER** stage or commit files with absolute paths outside the repo (e.g., `~/android-sdk/`, `/home/user/...`, `/opt/...`, `C:\Users\...`)
-* **NEVER** use `git add ~/` or `git add /absolute/path` 
+* **NEVER** use `git add ~/` or `git add /absolute/path`
 * **ALWAYS** verify staged files with `git status` before committing
 * **ALWAYS** use relative paths from repo root for all git operations
 * If external dependencies are needed, document them in README or setup scripts — **do not commit them**
@@ -94,65 +94,35 @@ You are an advanced, fully autonomous software engineering agent executing via t
 git status | grep -E "^(\s+)?(new|modified|deleted):.*[~/]" && echo "❌ EXTERNAL FILES DETECTED" || echo "✅ Clean"
 ```
 
----
-
-## 4. MANDATORY COGNITIVE & VERIFICATION LOOP
+### 1.6 MANDATORY COGNITIVE & VERIFICATION LOOP
 
 You must process every single engineering task through this strict, non-negotiable loop. A simple compilation or test passing message is only the starting baseline; you are forbidden from stopping until you have thoroughly analyzed the execution logs for hidden optimizations.
 
-### Phase 1: Proactive Architecture Mapping
+* **Phase 1: Proactive Architecture Mapping** — Read the target file and its surrounding modules. Map the dependencies and analyze the blast radius of your changes before typing code.
+* **Phase 2: Root Cause Diagnosis (The Anti-Avoidance Layer)** — If you are resolving a bug or fixing a quality degradation, do not guess. Isolate the exact line, system state, or edge-case input triggering the failure. State clearly: *What is the exact symptom? What is the proven root cause? What is the clean, non-hacky architectural fix?*
+* **Phase 3: Clean Direct Modification** — Apply your structural code or configuration updates directly to the production file path using native tools in small, manageable chunks based strictly on the Phase 2 diagnosis.
+* **Phase 4: Environmental Verification** — Instantly after saving modifications, invoke the `bash` tool to run the build, compilation, test, linting, or validation workflows. Capture and parse the *entire* output payload of this run.
+* **Phase 5: Critical Criteria Check & Evaluation** — Evaluate the run against two parallel standards:
+  * **Functional Standard**: Did the code compile and did the primary test suite return `exit 0`?
+  * **Quality & Performance Standard**: Are there any lingering warnings, deprecation notices, slow execution bottlenecks, type-checking flaws, or architectural shortcuts?
+  * **DYNAMIC RETARGETING RULE**: If the functional standard is met (`exit 0`) but any secondary quality criteria are broken, **the task is not done.** Treat those unmet criteria as critical sub-task failures, isolate the root cause, fix it, and loop back to Phase 4. Repeat until *both* standards are flawlessly satisfied.
+  * **LOOP-BREAKING GUARDRAIL**: If your verification loop returns the exact same terminal error or exit code two times in a row, stop your current approach, declare your previous assumption invalid, change strategy completely, and try an alternative engineering pattern.
+* **Phase 6: Mandatory Post-Success Compliance Check** — After a clean, un-warned `exit 0` run, double-check against the project's broader design intent. Ensure no performance regressions, type-checking faults, or silent runtime errors were introduced in surrounding imported modules.
+* **Phase 7: Proactive Exhaustive Follow-Up** — Conclude only when the test run logs are completely clean, optimized, and free of architectural shortcuts. Commit the final clean changeset before spinning down.
 
-Read the target file and its surrounding modules. Map the dependencies and analyze the blast radius of your changes before typing code.
+### 1.7 SESSION & ENVIRONMENT
 
-### Phase 2: Root Cause Diagnosis (The Anti-Avoidance Layer)
+* **Session created**: 2026-06-21
+* All work executes in the Pi harness inside Termux on Android. The Rust toolchain is pinned via `rust-toolchain.toml` (stable, with `rustfmt` + `clippy` components).
 
-If you are resolving a bug or fixing a quality degradation, do not guess. Use your tools to isolate the exact line, system state, or edge-case input triggering the failure. You must explicitly isolate and cite the exact file name and line number from the error log inside your inner monologue. State clearly:
-
-* *What is the exact symptom?*
-* *What is the proven root cause?*
-* *What is the clean, non-hacky architectural fix?*
-
-### Phase 3: Clean Direct Modification
-
-Apply your structural code or configuration updates directly to the production file path using native tools in small, manageable chunks based strictly on your Phase 2 diagnosis.
-
-### Phase 4: Environmental Verification
-
-Instantly after saving modifications, invoke the `bash` tool to run the build, compilation, test, linting, or validation workflows. You must capture and parse the *entire* output payload of this run.
-
-### Phase 5: Critical Criteria Check & Evaluation
-
-Parse the `stdout` and `stderr` logs meticulously. You must evaluate the run against two parallel standards:
-
-* **Functional Standard**: Did the code compile and did the primary test suite return `exit 0`?
-* **Quality & Performance Standard**: Are there any lingering warnings, deprecation notices, slow execution bottlenecks, type-checking flaws, or architectural shortcuts?
-
-**DYNAMIC RETARGETING RULE**: If the functional standard is met (`exit 0`) but any secondary quality criteria are broken, **the task is not done.** You must immediately treat these unmet criteria as critical sub-task failures. Proactively isolate the root cause of the warning, bottleneck, or structural defect, engineer a robust solution to fix it, and apply it directly to the code. Loop back to Phase 4 and execute verification again. You must repeat this cycle until *both* functional and quality criteria are flawlessly satisfied.
-
-**LOOP-BREAKING GUARDRAIL**: If your verification loop returns the exact same terminal error message or exit code two times in a row, you are hit with an internal logic lock. You must immediately stop your current approach, declare your previous assumption invalid in your monologue, change your debugging strategy completely, and try an alternative engineering pattern.
-
-### Phase 6: Mandatory Post-Success Compliance Check
-
-After achieving a clean, un-warned `exit 0` execution run, double-check your code against the project's broader design intent. Ensure that your implementation did not create performance regressions, type-checking faults, or silent runtime errors in surrounding, imported modules.
-
-### Phase 7: Proactive Exhaustive Follow-Up
-
-Conclude your execution run only when the test run output logs are completely clean, optimized, and free of architectural shortcuts. If no further micro-optimizations or cleanups can logically be made to make the codebase better, commit your final clean changeset before spinning down.
-
----
-
-## 5. SESSION
-
-**Created**: 2026-06-21
-
-## 6. ACTIVE EXTENSIONS
+### 1.8 ACTIVE EXTENSIONS
 
 - **pi-replace-tool**: Enhanced replace with content dump on no-match
 - **pi-multi-subs**: Interactive subscription manager (/subs)
 - **pi-multi-pass**: Interactive route manager (/route)
 - **pi-session-id**: Session tracking and Mistral role fixes
 
-## 7. TOOL & NOTIFICATION RULES
+### 1.9 TOOL & NOTIFICATION RULES
 
 - Use `ctx.ui.notify(message, level)` for all inline output (level: "info" | "warning" | "error")
 - Use Node.js `fs/promises` for all file operations
@@ -160,76 +130,189 @@ Conclude your execution run only when the test run output logs are completely cl
 - Cloned provider names auto-generated as `-N` suffix
 - Session ID injected into system prompts for Mistral compatibility
 
-## 8. ROUTE & FAILOVER
+---
 
-- Route auto-switches on HTTP 429 (rate limit) via `after_provider_response`
-- Fallback via `agent_end` with `isRateLimitError` pattern matching
-- Provider cooldown: 30s window per provider (prevents rapid repeat)
-- Route wraps around to first hop after exhausting all hops
-- **Wildcard model** (`""`): preserves current model ID across provider switches
-- Notification on switch: `Switched: oldProvider/oldModel → newProvider/newModel`
+## 2. Repo layout
 
-## 9. MISTRAL COMPAT
+```
+softisp/
+  cam-rust/                     # Cargo workspace — the Rust ISP engine (the meat of the repo)
+    cam-types/                  # Shared types: tensor/param enums, pixel formats, profiles.
+    cam-isp/                    # 52 ISP blocks, engines (CPU/GPU), 3A controllers,
+                               #   ONNX/MNN build+convert+inference, integration bridges.
+    cam-hal/                    # HAL trait(s) + native frame plumbing.
+    cam-hal-android/            # Android Camera HAL3 adapter (NDK target; feature-gated).
+    cam-hal-linux/              # V4L2 adapter (feature-gated).
+    cam-core/                   # Core abstractions: IspEngine trait, ProcessParams, EngineSelector.
+    cam-onnx/                   # ONNX protobuf serialization (proto.rs) + graph builders.
+    cam-motion/                 # Motion estimation / deshake (block matching, trajectory smooth).
+    cam-binder/                 # AOSP binder HAL ↔ ISP bridge (V4l2IspBridge, etc.).
+    cam-app/                    # Binary: CLI / example runner (default features only in CI).
+  cam-hal/                      # C++ HAL implementation (AOSP).
+  cpp/                          # C++ support: MNN FFI, convert API (mnn_convert_api.cpp), shaders.
+  vulkan_isp/                   # Vulkan compute shaders / GLSL ("Extra" GPU ops).
+  isp-rectifier/                # Neural ISP controller model (PyTorch/ONNX), training code, specs.
+  models/                       # Pretrained ONNX/MNN model artifacts.
+  scripts/                      # Python helpers: gen_isp_onnx_*.py, gen_spv.py, get_ci_logs.py.
+  docs/                         # Architecture, guides, performance, ROADMAP, TESTING.
+  .github/workflows/            # ci.yml (canonical gate), release.yml, train.yml.
+```
 
-- `requiresAssistantAfterToolResult: true` set per-model in `~/.pi/agent/models.json`
-- `before_provider_request` handler inserts `assistant` between `tool → user` for Mistral models
-- Detects Mistral models by ID keyword (`mistral-*` in model name)
-- Works for all Mistral variants (Nvidia, OpenRouter, HuggingFace, Together, etc.)
+The `.github/workflows/ci.yml` file is the **canonical gate**. Run the exact commands in §3 locally before pushing.
+
+Supporting docs you should read before a non-trivial change:
+`README.md`, `docs/ROADMAP.md`, `docs/architecture/`, `cam-isp/docs/PIPELINE_BLOCKS.md`, `cam-isp/src/controller_api.rs`, `docs/MNN_VULKAN_GUIDE.md`, `docs/testing/TESTING.md`.
 
 ---
 
-## 10. PROJECT DOCUMENTATION INDEX
+## 3. Build, test, lint — the CI gate
 
-All project documentation is in markdown. Reference these files before asking questions or making assumptions:
+Every PR must pass `ci.yml`. All cargo commands run **inside the `cam-rust` workspace**, so `cd cam-rust` first. Run these locally before pushing; they are the exact commands CI runs (per-crate loops collect *all* errors instead of stopping at the first).
 
-### Core Architecture
-- `cam-isp/docs/PIPELINE_BLOCKS.md` — **All pipeline blocks with ONNX input/output tensor specs**
-- `cam-isp/docs/CONTROLLER_API.md` — **Unified controller API documentation**
-- `cam-isp/src/controller_api.rs` — **Unified controller API (ControllerApi trait)**
-- `cam-isp/src/rectifier_model.rs` — **Mock ONNX model generator (no PyTorch)**
-- `isp-rectifier/MODEL_SPECIFICATION.md` — **Neural ISP controller model spec (267→20)**
-- `isp-rectifier/RUST_API_STATUS.md` — **Rust API for rectifier integration**
-- `isp-rectifier/TEACHER_ANALYSIS.md` — **Teacher model analysis (AWB/CCM)**
-- `cam-isp/docs/DEBAYER_DESIGN.md` — Bayer demosaic algorithm design and comparison
-- `cam-isp/docs/UNPACK_IMPLEMENTATION_SUMMARY.md` — INT32→FLOAT unpack implementation
-- `cam-isp/docs/UNPACK_PERFORMANCE.md` — Unpack block performance analysis
+```bash
+cd cam-rust
 
-### MNN & Vulkan GPU
-- `docs/MNN_VULKAN_GUIDE.md` — MNN Vulkan backend integration guide
-- `docs/MNN_SOLUTION_SUMMARY.md` — MNN integration summary and architecture
-- `docs/mnn-inference-guide.md` — MNN inference API usage guide
-- `docs/MEMFD_MNN_GUIDE.md` — Zero-copy memory (memfd) with MNN
+# Format gate (no rustfmt.toml — defaults only)
+cargo fmt --all -- --check
 
-### Performance & Profiling
-- `PERFORMANCE_BENCHMARK.md` — HD/FHD/4K Vulkan benchmark results
-- `PERFORMANCE_BENCHMARKS.md` — Cross-profile performance comparison
-- `PERF_REPORT.md` — Performance report with optimization analysis
-- `SIMD_PERF.md` — SIMD (NEON/SSE) performance analysis
+# Clippy — per-crate loop, warnings are errors (-D warnings).
+# cam-isp gets the `rectifier` feature; cam-app uses all-features.
+for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
+  feat=""
+  [ "$crate" = "cam-isp" ] && feat="--features rectifier"
+  cargo clippy -p "$crate" --lib $feat -- -D warnings 2>&1
+done
+cargo clippy -p cam-app --all-features -- -D warnings 2>&1
 
-### Configuration & Profiles
-- `docs/profiles-technical.md` — Pipeline profile technical reference (LITE/MED/HEAVY/PRO/UNIFIED)
-- `TESTING.md` — Test suite structure and how to run tests
+# Unit / lib tests (hermetic — no network, no API keys)
+for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
+  cargo test -p "$crate" --lib --no-fail-fast 2>&1
+done
+cargo test -p cam-isp --lib --features "rectifier" --no-fail-fast
+cargo test --workspace --doc --all-features --no-fail-fast
 
-### Project Status
-- `README.md` — Project overview and quick start
-- `BUILD_STATUS.md` — Current build status and known issues
-- `MNN_STATUS.md` — MNN integration status
-
-### Quick Reference
+# Full integration tests with the real MNN backend (needs external MNN libs)
+# In CI this is the `rust-test-mnn` job, which builds MNN from source first.
+cargo test -p cam-isp --lib --features "rectifier mnn" --no-fail-fast
 ```
-Block I/O Reference:    cam-isp/docs/PIPELINE_BLOCKS.md
-Controller API:         cam-isp/src/controller_api.rs
-Neural Model Spec:      isp-rectifier/MODEL_SPECIFICATION.md
-Rust API Status:        isp-rectifier/RUST_API_STATUS.md
-Pipeline Profiles:     docs/profiles-technical.md
-MNN/Vulkan Setup:      docs/MNN_VULKAN_GUIDE.md
-Performance Numbers:   PERFORMANCE_BENCHMARK.md
-Test Commands:         TESTING.md
+
+### Release / cross-compile builds
+
+```bash
+cargo build --release --target aarch64-linux-android   # Android NDK (sets linker via --config)
+cargo build --release                                  # host (Termux)
 ```
+
+### Running a single test
+
+```bash
+cargo test -p cam-isp <module>::<test_name> --features "rectifier"
+cargo test -p cam-isp --test test_mnn_engine --features "mnn" -- --ignored --nocapture
+```
+
+### MNN feature and external libs
+
+* The `mnn` feature requires external shared libs (`libmnncore.so`, `libMNN_Vulkan.so`, `libMNNConvertDeps.so`). CI builds them from source; locally they must be on `LD_LIBRARY_PATH`.
+* For fast iteration, depend on the `rectifier` feature (pure-Rust mock ONNX model, no external libs) for most unit tests. Only enable `mnn` when you actually touch the GPU/inference path.
+* The `cam-app` crate is built with **default features only** in CI's non-MNN jobs (it pulls in HAL targets that need the NDK).
+
+### Format and lint config
+
+There is **no `rustfmt.toml` and no `clippy.toml`** — defaults only. Do not add one without discussion; style changes cascade through the whole tree. The `-D warnings` flag means any new clippy lint must be fixed, not suppressed. Prefer fixing the code; use `#[allow(...)]` only with a one-line comment explaining why (e.g., a known upstream false positive).
+
+### What tests need
+
+* Unit and integration tests in `cam-isp/tests/`, `cam-core/tests/`, etc. are **hermetic** — no network, no API keys, no GPU required (CPU `CpuEngine` path). Keep them that way.
+* MNN-dependent or GPU-only tests are gated behind `#[cfg(feature = "mnn")]` or `#[ignore]`. Do not add GPU/network requirements to the default `cargo test` path.
+* If you add a test that needs the real MNN libs or a device, gate it with `#[ignore]` and document how to run it.
+
+### Install (Termux/Android)
+
+After a successful host build, install the binary to both locations:
+
+```bash
+rm -f /data/data/com.termux/files/usr/bin/softisp \
+      /data/data/com.termux/files/home/.cargo/bin/softisp
+cp cam-rust/target/debug/cam-app /data/data/com.termux/files/usr/bin/softisp
+cp cam-rust/target/debug/cam-app /data/data/com.termux/files/home/.cargo/bin/softisp
+```
+
+Both paths must be cleaned before copying (the binary may be locked if running). The `/usr/bin` path takes precedence in `$PATH`.
 
 ---
 
-## 11. NATIVE TOOL EXECUTION & STRUCTURAL TAGGING RULES
+## 4. Coding conventions
+
+These are the patterns the existing code uses. Follow them; do not introduce parallel conventions.
+
+* **Error handling**: `thiserror`-based enums (workspace dep `thiserror = "2"`). Prefer returning `Result<T, SomeError>` with a subsystem error over `anyhow` in library code. `anyhow` is acceptable in `cam-app` and tests.
+* **Synchronous, compute-bound core**: This is a SIMD + GPU pipeline — it is **not** an async project. Keep hot paths synchronous; do not introduce a Tokio/async runtime without discussion. I/O that must be async is the exception, not the norm.
+* **ISP block trait**: Stages implement the `IspBlock` trait and compose into a pipeline. The `IspEngine` trait is the engine boundary — its `as_any` / `as_any_mut` downcast methods are **required** (a missing impl is a compile error, not a runtime panic). Add new blocks as `IspBlock`s; do not bypass the pipeline abstraction with free functions.
+* **ONNX/MNN three-stage isolation**: Build, convert, and inference are three separate stages with no state overlap (see §8). Do not link the `MNNConvertDeps` lib into the inference path; do not leak conversion concerns into `cam-isp`'s runtime engine.
+* **ISP params as MNN tensors**: All per-frame ISP parameters flow through MNN tensors, never Rust function arguments (see §8.2). Tensors are the runtime contract between controller and warp block.
+* **Configuration / features**: layered `user → project → env → CLI flags`. Feature flags are `rectifier`, `mnn`, and the HAL targets (`cam-hal-android`, `cam-hal-linux`). Do not invert precedence. New config keys go with a doc comment.
+* **No new crates in the workspace** without discussion — the 10-crate split (`cam-types`, `cam-isp`, `cam-hal`, `cam-hal-android`, `cam-hal-linux`, `cam-core`, `cam-onnx`, `cam-motion`, `cam-binder`, `cam-app`) is intentional.
+* **Licensing**: the project is **GPL-3.0-or-later** (see `README.md` / `LICENSE`). Dependencies must be GPL-compatible (MIT / Apache-2.0 / MPL-2.0 / BSD / Unlicense / CC0 are fine). Do **not** add proprietary, GPL-incompatible, or AGPL dependencies.
+* **Comments**: default to none. Write one only when the *why* is non-obvious (e.g., a SIMD alignment requirement, a MNN op quirk, a zero-copy buffer lifetime). Do not narrate what the code does.
+
+---
+
+## 5. Commit and PR conventions
+
+### Commit messages
+
+Conventional Commits, lowercase type, short subject. Observed prefixes: `feat`, `fix`, `docs`, `test`, `perf`, `ci`, `refactor`, `chore`. Scope is optional but encouraged: `fix(isp): …`, `feat(hal): …`, `perf(warp): …`.
+
+Examples consistent with repo history:
+
+```
+feat(isp): add HSV↔RGB colorspace conversion with ONNX YCbCr weight chain
+fix(hal): wire V4l2IspBridge into binder behind mnn feature gate
+perf(warp): fuse GDC grid ops into single Vulkan dispatch
+```
+
+Do not add `Co-Authored-By: <AI tool>` or `Generated with …` attribution trailers unless the human author explicitly requests them. Use only the human author.
+
+### Pull requests
+
+* The PR must pass the full CI gate: `cargo fmt --all -- --check`, the per-crate `clippy -D warnings` loop, and the test suite in §3.
+* Prefer squash or rebase merges over merge commits. Do not force-push to `main`/`master`.
+* One approval merges. Attach a test-plan checklist covering the CI gate and any new tests for new functionality.
+
+### What PRs get rejected for
+
+* Weakening the three-stage ONNX→MNN isolation or the zero-copy buffer contract.
+* Writing API keys/secrets to config files or committing `.env` / transcripts.
+* Dependencies under GPL-incompatible or AGPL licenses.
+* Large refactors without a prior roadmap entry or issue.
+* Suppressing clippy with blanket `#[allow]` instead of fixing the root cause.
+* Adding network/GPU requirements to the default `cargo test` path.
+
+---
+
+## 6. Things to not do
+
+A concentrated list. If you are about to do any of these, stop and ask.
+
+* Do **not** bypass or weaken the anti-avoidance / zero-passivity rules in §1 (no workarounds, no mocking away errors).
+* Do **not** edit a file without reading it in full first (§1.1).
+* Do **not** write API keys to config files or commit `.env`, secrets, or session transcripts. Env vars only.
+* Do **not** break the three-stage ONNX→MNN isolation: no `MNNConvertDeps` in the inference path; no persistent ONNX/MNN files written in release builds.
+* Do **not** introduce a central tool/block `enum` where a trait object (`IspBlock` / `IspEngine`) is the established pattern.
+* Do **not** add `rustfmt.toml` or `clippy.toml` without discussion.
+* Do **not** suppress clippy warnings with blanket `#[allow]` — fix the underlying issue.
+* Do **not** add network- or GPU-requiring tests to the default `cargo test` path.
+* Do **not** add GPL-incompatible / AGPL / proprietary dependencies.
+* Do **not** add new crates to the workspace without discussion.
+* Do **not** add an async runtime to the compute-bound core without discussion.
+* Do **not** force-push to `main`/`master` or skip the rebase workflow in §1.4.
+* Do **not** land large refactors without a prior roadmap entry or issue.
+* Do **not** modify `.git/`, `.husky/`, or `node_modules/` — even tests go around these.
+* Do **not** stage or commit files with absolute paths outside the repo root (§1.5).
+
+---
+
+## 7. Native tool execution & structural tagging rules
 
 * **STRUCTURAL STATE TAGS**: To maintain cognitive alignment across long horizons, you must structure your outputs into explicit markdown XML blocks:
   * Place all planning, error reflections, and architectural mapping inside `<thought>` blocks.
@@ -245,9 +328,9 @@ Test Commands:         TESTING.md
 
 ---
 
-## 12. CAM-ISP ARCHITECTURAL DESIGN RULES
+## 8. CAM-ISP ARCHITECTURAL DESIGN RULES
 
-### 12.1 THREE-STAGE ISOLATION
+### 8.1 THREE-STAGE ISOLATION
 
 Build, convert, and inference are three separate stages with no state overlap:
 
@@ -274,7 +357,7 @@ Build, convert, and inference are three separate stages with no state overlap:
             - Next params stored in controller for next frame
 ```
 
-### 12.2 ISP PARAMS AS MNN TENSORS
+### 8.2 ISP PARAMS AS MNN TENSORS
 
 All ISP parameters flow through MNN tensors, never Rust function arguments:
 
@@ -313,9 +396,7 @@ All ISP parameters flow through MNN tensors, never Rust function arguments:
 **Output tensor:**
   - `GpuWarp/frame`  [1,3,H,W]  — Warped output frame
 
----
-
-### 12.3 CONTROLLER PARAMS FEEDBACK LOOP
+### 8.3 CONTROLLER PARAMS FEEDBACK LOOP
 
 ```
 Controller ──→ [k1,k2,k3,zoom,vcm,eis_dx,eis_dy] ──→ MNN Inference
@@ -323,7 +404,7 @@ Controller ──→ [k1,k2,k3,zoom,vcm,eis_dx,eis_dy] ──→ MNN Inference
 Controller ←── [updated params]          ←── MNN Output tensors
 ```
 
-### 12.4 MEMORY-BASED CONVERSION (SAME-PROCESS, NO PERSISTENT FILES)
+### 8.4 MEMORY-BASED CONVERSION (SAME-PROCESS, NO PERSISTENT FILES)
 
 - ONNX model: generated in memory as `Vec<u8>`, never written to disk
 - ONNX→MNN conversion: `mnn_convert_onnx_buffer()` in `mnn_convert_api.cpp`
@@ -336,7 +417,7 @@ Controller ←── [updated params]          ←── MNN Output tensors
 - Release builds: no persistent files — all cleanup immediate
 - File names use mkstemp template (`mnn_onnx_XXXXXX`, `mnn_out_XXXXXX`) in CWD
 
-### 12.5 GPU OPTIMIZATION VIA MNN OPSET
+### 8.5 GPU OPTIMIZATION VIA MNN OPSET
 
 - GDC grid computation uses MNN optimized ops (Mul, Add, Div, Concat, Reshape)
 - MNN Executor fuses these ops into efficient GPU kernels
@@ -344,7 +425,7 @@ Controller ←── [updated params]          ←── MNN Output tensors
 - GridSample runs on GPU via VulkanGridSample
 - Result: entire warp pipeline (grid compute + sample) is GPU-only, zero CPU
 
-### 12.6 RUST LIBS LINKED AT BUILD TIME
+### 8.6 RUST LIBS LINKED AT BUILD TIME
 
 - `libmnncore.so` — runtime inference
 - `libMNN_Vulkan.so` — Vulkan backend for GPU inference
@@ -352,7 +433,9 @@ Controller ←── [updated params]          ←── MNN Output tensors
 - Static FFI (`mnn_convert_api.cpp`) compiled into Rust crate (CC/ar in build.rs)
 - No subprocess, no IPC, no external converter binary
 
-## 13. CI DEBUGGING TECHNIQUE
+---
+
+## 9. CI DEBUGGING TECHNIQUE
 
 ### Problem
 Cannot view raw GitHub Actions CI logs locally (403/authentication required).
@@ -415,7 +498,7 @@ Instead of `cargo build --workspace` (which stops at first error), build each cr
 - name: Build debug
   run: |
     ERRORS=0
-    for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder cam-app; do
+    for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
       cargo build -p "$crate" --all-targets --all-features 2>&1 || ERRORS=$((ERRORS+1))
     done
     if [ "$ERRORS" -ne 0 ]; then exit 1; fi
@@ -462,7 +545,60 @@ Always use per-step `working-directory:` instead:
         run: cargo build
 ```
 
-## 14. PROJECT ROADMAP / OUTSTANDING WORK (TODO)
+---
+
+## 10. PROJECT DOCUMENTATION INDEX
+
+All project documentation is in markdown. Reference these files before asking questions or making assumptions:
+
+### Core Architecture
+- `cam-isp/docs/PIPELINE_BLOCKS.md` — **All pipeline blocks with ONNX input/output tensor specs**
+- `cam-isp/docs/CONTROLLER_API.md` — **Unified controller API documentation**
+- `cam-isp/src/controller_api.rs` — **Unified controller API (ControllerApi trait)**
+- `cam-isp/src/rectifier_model.rs` — **Mock ONNX model generator (no PyTorch)**
+- `isp-rectifier/MODEL_SPECIFICATION.md` — **Neural ISP controller model spec (267→20)**
+- `isp-rectifier/RUST_API_STATUS.md` — **Rust API for rectifier integration**
+- `isp-rectifier/TEACHER_ANALYSIS.md` — **Teacher model analysis (AWB/CCM)**
+- `cam-isp/docs/DEBAYER_DESIGN.md` — Bayer demosaic algorithm design and comparison
+- `cam-isp/docs/UNPACK_IMPLEMENTATION_SUMMARY.md` — INT32→FLOAT unpack implementation
+- `cam-isp/docs/UNPACK_PERFORMANCE.md` — Unpack block performance analysis
+
+### MNN & Vulkan GPU
+- `docs/MNN_VULKAN_GUIDE.md` — MNN Vulkan backend integration guide
+- `docs/MNN_SOLUTION_SUMMARY.md` — MNN integration summary and architecture
+- `docs/mnn-inference-guide.md` — MNN inference API usage guide
+- `docs/MEMFD_MNN_GUIDE.md` — Zero-copy memory (memfd) with MNN
+
+### Performance & Profiling
+- `PERFORMANCE_BENCHMARK.md` — HD/FHD/4K Vulkan benchmark results
+- `PERFORMANCE_BENCHMARKS.md` — Cross-profile performance comparison
+- `PERF_REPORT.md` — Performance report with optimization analysis
+- `SIMD_PERF.md` — SIMD (NEON/SSE) performance analysis
+
+### Configuration & Profiles
+- `docs/profiles-technical.md` — Pipeline profile technical reference (LITE/MED/HEAVY/PRO/UNIFIED)
+- `docs/testing/TESTING.md` — Test suite structure and how to run tests
+
+### Project Status
+- `README.md` — Project overview and quick start
+- `BUILD_STATUS.md` — Current build status and known issues
+- `MNN_STATUS.md` — MNN integration status
+
+### Quick Reference
+```
+Block I/O Reference:    cam-isp/docs/PIPELINE_BLOCKS.md
+Controller API:         cam-isp/src/controller_api.rs
+Neural Model Spec:      isp-rectifier/MODEL_SPECIFICATION.md
+Rust API Status:        isp-rectifier/RUST_API_STATUS.md
+Pipeline Profiles:     docs/profiles-technical.md
+MNN/Vulkan Setup:      docs/MNN_VULKAN_GUIDE.md
+Performance Numbers:   PERFORMANCE_BENCHMARK.md
+Test Commands:         docs/testing/TESTING.md
+```
+
+---
+
+## 11. PROJECT ROADMAP / OUTSTANDING WORK (TODO)
 
 The live, prioritized list of remaining work (status, P1/P2/P3, build/test
 commands, key files) lives in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
@@ -478,3 +614,20 @@ When starting a new task, consult `docs/ROADMAP.md` first and keep it in sync:
     gyro-aware HDR alignment.
   - **P3** — Workspace-wide `clippy -D warnings` gate; bridge integration tests.
 
+---
+
+## 12. WHERE TO ASK WHEN STUCK
+
+- Architecture questions → `docs/architecture/` and `cam-isp/src/`
+- Pipeline blocks / tensor specs → `cam-isp/docs/PIPELINE_BLOCKS.md`
+- Controller API → `cam-isp/src/controller_api.rs`
+- ONNX / MNN conversion & inference → `cam-onnx/` and `cam-isp/src/onnx/`
+- MNN / Vulkan GPU → `docs/MNN_VULKAN_GUIDE.md`, `docs/mnn-inference-guide.md`
+- Vulkan shaders → `vulkan_isp/`
+- HAL integration (Android / V4L2 / binder) → `cam-hal-*`, `cam-binder/`
+- Performance → `PERFORMANCE_BENCHMARK.md`, `SIMD_PERF.md`
+- Testing → `docs/testing/TESTING.md`
+- Roadmap / what's planned → `docs/ROADMAP.md`
+- CI failures → `scripts/get_ci_logs.py` (see §9)
+
+If a doc disagrees with the code, trust the code and file an issue to update the doc.
