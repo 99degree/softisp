@@ -324,19 +324,34 @@ extern "C" int mnn_run_true_zero_copy(
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!net || !sess || !buffer || !out_data) return -1;
-    (void)buffer_type_code;
-    (void)buffer_type_bits;
-    (void)in_shape;
-    (void)in_ndim;
-    (void)max_out;
-    // Fall back to standard session run
-    net->runSession(sess);
+
+    // Zero-copy INPUT: bind the caller's `buffer` as the session input tensor's
+    // host memory. MNN reads from here directly instead of copying.
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+
+    // Type sanity check: if the caller declares the buffer's type, it must match
+    // the model's input type, otherwise we would silently corrupt data.
+    if (buffer_type_bits > 0 && in_tensor->getType().bits != buffer_type_bits) return -1;
+    if (buffer_type_code > 0 && in_tensor->getType().code != buffer_type_code) return -1;
+
+    // Optional dynamic input shape. Must happen before binding hosts, because
+    // resizeTensor may reallocate the tensors.
+    if (in_shape && in_ndim > 0) {
+        std::vector<int> dims(in_shape, in_shape + in_ndim);
+        net->resizeTensor(in_tensor, dims);
+    }
+    in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
+
+    // Zero-copy OUTPUT: bind the caller's `out_data` as the session output
+    // tensor's host. MNN writes the result here directly (no memcpy).
     auto* output = net->getSessionOutput(sess, nullptr);
     if (!output) return -1;
-    auto host = output->host<float>();
-    auto elements = output->elementSize();
-    size_t count = (size_t)elements < (size_t)max_out ? (size_t)elements : (size_t)max_out;
-    std::memcpy(out_data, host, count * sizeof(float));
+    if (max_out > 0 && (int)output->elementSize() > max_out) return -1; // would overrun out_data
+    output->buffer().host = reinterpret_cast<uint8_t*>(out_data);
+
+    // Run in place: input read from `buffer`, output written to `out_data`.
+    net->runSession(sess);
     return 0;
 }
 
