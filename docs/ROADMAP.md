@@ -1,14 +1,25 @@
 # Project Roadmap & Outstanding Work
 
-> Last updated: 2026-07-13. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
+> Last updated: 2026-07-15. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
 
-## Status (2026-07-13)
+## Status (2026-07-15)
 
 - **cam-isp tests:** **754** lib tests pass with `--features mnn`, **0 failures, 0 warnings**
   (up from 741). Added 13 new colorspace conversion unit tests (HSV↔RGB roundtrip,
   LAB, interleaved buffer helpers).
 - **P2 items completed:** VCM injection → GpuWarpParams; HSV↔RGB/LAB CPU math
   with ONNX YCbCr weight chain; gyro-aware HDR alignment (EisEngine fallback).
+- **True zero-copy investigation (2026-07-15):** MNN exposes the external-memory
+  sibling API `Tensor::setDevicePtr(ptr, MNN_MEMORY_AHARDWAREBUFFER=14)`. The
+  **OpenCL** backend already imports an AHardwareBuffer (wraps the CMA/dma-buf fd
+  from V4L2) as device memory, but the **Vulkan** backend does **not** consume
+  `setDevicePtr`/external fd at all (only the primitive + `VK_EXT_external_memory_dma_buf`
+  headers exist). Recorded as **P2b** below. Also fixed a stale `(noop)` comment in
+  `hdr.rs` (`align_frames` is real block-matching, not a noop).
+- **`mnn_run_true_zero_copy` hardening:** the C++ stub that ignored its input
+  `buffer` (`(void)buffer;`) was rewritten to bind the caller's CMA mmap ptr as the
+  MNN input/output tensor host via `Tensor::buffer().host` (zero-copy on the CPU
+  path). Remaining gap (Vulkan host→device copy) tracked under P2b.
 - **HAL/ISP integration module** (`cam-isp/src/integration.rs`): `ZeroCopyBufferManager`
   (CMA/ION/memfd), `CameraIspService` (auto-builds the CPU pipeline), `AndroidHalIspBridge`,
   `V4l2IspBridge` (`process_frame` / `process_batch` + `BridgeStats`). 6 integration tests pass.
@@ -58,6 +69,34 @@
   `HdrWorker`. `align_frames()` now tries gyro-based translation (via integrated
   angular velocity → focal-length pixel shift) before falling back to image-based
   block-matching. ✅
+
+### P2b — True Zero-Copy via External Memory (Pending)
+
+For large MIPI Bayer (e.g. 48 MP raw ≈ 100+ MB), binding a host pointer
+(`Tensor::buffer().host = ptr`, as `mnn_run_true_zero_copy` now does) is correct on
+the CPU path but on a **Vulkan** session still forces MNN to allocate a GPU buffer
+and copy host→device — i.e. a heap staging copy we want to eliminate.
+
+- **Correct architecture:** CMA buffer → `mmap` → fd passed to V4L2/MIPI (sensor
+  DMA-writes in place) → import that fd into Vulkan as **external device memory**
+  and wrap it as an MNN tensor via `Tensor::setDevicePtr(fd, MNN_MEMORY_AHARDWAREBUFFER)`.
+  The GPU then reads the sensor's DMA pages directly: no CPU copy, no heap staging.
+- **MNN capability today:** `setDevicePtr` + `MNN_MEMORY_AHARDWAREBUFFER (=14)` exist;
+  the **OpenCL** backend already imports AHardwareBuffer, but the **Vulkan** backend
+  does not consume it yet (no `VkImportMemoryFdInfoKHR` / AHardwareBuffer import in
+  `source/backend/vulkan`). Headers (`VK_EXT_external_memory_dma_buf`, `vkGetMemoryFdKHR`)
+  and the OpenCL reference impl are present.
+- **Plan (enhance our custom MNN fork — feasible):** implement external-memory import
+  in the Vulkan backend (mirror `OpenCLBackend.cpp`): in buffer allocation, when
+  `mBuffer.flags == MNN_MEMORY_AHARDWAREBUFFER`, use `VkImportMemoryFdInfoKHR`
+  (dma-buf) / `AHardwareBuffer` import instead of `vkAllocateMemory`. Then expose a
+  new FFI (`mnn_run_external_zero_copy` / extend `mnn_run_true_zero_copy` with an fd +
+  memoryType) so `ZeroCopyBufferManager` can hand the V4L2 dma-buf straight to MNN.
+- **Enhancement surface:** `cam-isp/mnn_sys/mnn_vulkan_stubs.cpp` holds weak no-op
+  Vulkan extension stubs (e.g. `MNNVulkanHotSwapConstBuffer`) that our custom MNN
+  build overrides — the natural place to add the import entry point.
+- **Status:** investigation complete; implementation deferred (requires building the
+  custom MNN Vulkan backend with external-memory support).
 
 ### P3 — Hardening / CI ✅ (workspace clean)
 - **`cargo clippy --workspace --all-targets --features mnn -D warnings` passes** on all
