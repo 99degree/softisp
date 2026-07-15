@@ -18,6 +18,11 @@
 
 pub use std::os::raw::{c_char, c_float, c_int, c_void};
 
+/// MNN external-memory device-pointer type: import an AHardwareBuffer (which
+/// wraps a CMA/dma-buf fd from V4L2/MIPI) as device memory for zero-copy input.
+/// Passed to `Tensor::setDevicePtr` / `mnn_run_external_zero_copy`.
+pub const MNN_MEMORY_AHARDWAREBUFFER: c_int = 14;
+
 // ── Backend enum ─────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -111,6 +116,27 @@ extern "C" {
         buffer: *const c_void,
         buffer_type_code: c_int,
         buffer_type_bits: c_int,
+        in_shape: *const c_int,
+        in_ndim: c_int,
+        out_data: *mut c_float,
+        max_out: c_int,
+    ) -> c_int;
+
+    /// Run inference with the input tensor bound to EXTERNAL device memory
+    /// (dma-buf fd / AHardwareBuffer) via `Tensor::setDevicePtr`. This lets the
+    /// camera's CMA/dma-buf pages be consumed by the GPU directly — no CPU
+    /// staging copy, no heap allocation for large MIPI Bayer frames. The Vulkan
+    /// backend must honor external-memory import (custom MNN build) for this to
+    /// take effect; otherwise it is a no-op at the backend level.
+    ///
+    /// `ext_handle` is the dma-buf fd (Linux) or AHardwareBuffer* (Android),
+    /// `memory_type` is e.g. `MNN_MEMORY_AHARDWAREBUFFER`. Output is written
+    /// into `out_data` (host) as with `mnn_run_true_zero_copy`.
+    pub fn mnn_run_external_zero_copy(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        ext_handle: i64,
+        memory_type: c_int,
         in_shape: *const c_int,
         in_ndim: c_int,
         out_data: *mut c_float,
