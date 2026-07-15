@@ -334,9 +334,9 @@ impl HdrWorker {
         let mut sorted = frames.to_vec();
         sorted.sort_by(|a, b| a.ev.partial_cmp(&b.ev).unwrap());
 
-        // 2. Align frames using EIS motion vectors
-        //    For now: identity alignment (noop)
-        //    Future: use MNN optical flow model
+        // 2. Align frames using EIS-style global-motion estimation
+        //    (block-matching translation, 4x4 grid + median voting — see align_frames).
+        //    Future: upgrade to an MNN optical-flow model for rotation/warping.
         let aligned = self.align_frames(&sorted)?;
 
         // 3. Merge exposures
