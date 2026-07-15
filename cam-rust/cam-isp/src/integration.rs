@@ -249,6 +249,51 @@ impl CameraIspService {
         }
     }
 
+    /// Process a raw frame with true zero-copy: the input CMA/dma-buf is bound
+    /// to the MNN input tensor as external device memory via `setDevicePtr`, so
+    /// the camera's DMA pages are consumed by the GPU with no CPU copy. Requires
+    /// the MNN (Vulkan) engine and a CMA/ION/dma-buf allocator that produced a
+    /// `dma_fd` on the input buffer.
+    pub fn process_raw_frame_external(
+        &mut self,
+        input: &CameraInputBuffer,
+        output: &mut IspOutputBuffer,
+    ) -> Result<(), String> {
+        let mnn_engine = self
+            .engine
+            .as_any_mut()
+            .downcast_mut::<crate::mnnengine::MnnEngine>()
+            .ok_or_else(|| {
+                "process_raw_frame_external requires the MNN (Vulkan) engine".to_string()
+            })?;
+
+        let dma_fd = input
+            .cma_buffer
+            .as_ref()
+            .and_then(|b| b.as_dma_fd())
+            .ok_or_else(|| {
+                "input buffer has no dma_fd; allocator must be CMA/ION/dma-buf".to_string()
+            })?;
+
+        let memory_type = crate::mnn_sys::MNN_MEMORY_AHARDWAREBUFFER;
+        // Raw Bayer is single-channel; the ISP model expects [1, 1, H, W] f32.
+        let in_shape = [1i32, 1i32, input.height as i32, input.width as i32];
+        // Output staging buffer sized to the ISP output tensor (RGBA f32). This
+        // matches `output.size` bytes when the output is W*H*4 f32.
+        let out_elems = (output.size / 4).max(1);
+        let mut out_buf = vec![0.0f32; out_elems];
+
+        mnn_engine.run_external_zero_copy(dma_fd as i64, memory_type, &in_shape, &mut out_buf)?;
+
+        // Stage the f32 result into the output buffer (same bounded copy the
+        // host-binding path uses). Bounded by output.size.
+        let n = (out_buf.len() * std::mem::size_of::<f32>()).min(output.size);
+        unsafe {
+            std::ptr::copy_nonoverlapping(out_buf.as_ptr() as *const u8, output.ptr, n);
+        }
+        Ok(())
+    }
+
     /// Get the underlying engine for advanced use
     pub fn engine(&self) -> &dyn IspEngine {
         self.engine.as_ref()
