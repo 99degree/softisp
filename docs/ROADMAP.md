@@ -20,6 +20,14 @@
   `buffer` (`(void)buffer;`) was rewritten to bind the caller's CMA mmap ptr as the
   MNN input/output tensor host via `Tensor::buffer().host` (zero-copy on the CPU
   path). Remaining gap (Vulkan host→device copy) tracked under P2b.
+- **External-memory zero-copy surface (cam-isp, VERIFIED):** added the FFI
+  `mnn_run_external_zero_copy` (mnn_wrapper.cpp) using `Tensor::setDevicePtr(fd,
+  MNN_MEMORY_AHARDWAREBUFFER)`, the Rust extern + `MNN_MEMORY_AHARDWAREBUFFER`
+  const (mnn_sys.rs), `MnnEngine::run_external_zero_copy` (mnnengine.rs), and
+  `CameraIspService::process_raw_frame_external` (integration.rs, extracts the
+  CMA `dma_fd` from the input buffer and drives the MNN session directly).
+  Builds clean and passes `cargo clippy -p cam-isp --lib --features mnn -D warnings`.
+  The MNN *backend* import this depends on is still pending (see P2b).
 - **HAL/ISP integration module** (`cam-isp/src/integration.rs`): `ZeroCopyBufferManager`
   (CMA/ION/memfd), `CameraIspService` (auto-builds the CPU pipeline), `AndroidHalIspBridge`,
   `V4l2IspBridge` (`process_frame` / `process_batch` + `BridgeStats`). 6 integration tests pass.
@@ -77,6 +85,29 @@ For large MIPI Bayer (e.g. 48 MP raw ≈ 100+ MB), binding a host pointer
 the CPU path but on a **Vulkan** session still forces MNN to allocate a GPU buffer
 and copy host→device — i.e. a heap staging copy we want to eliminate.
 
+**Verified call-flow difference (OpenCL vs Vulkan) — 2026-07-15:**
+Both backends override `Backend::onAcquire(tensor, storageType)` as the hook where the
+tensor's storage buffer is created. After `setDevicePtr(dev, MNN_MEMORY_AHARDWAREBUFFER)`
+writes `tensor->buffer().device = dev` + `flags`, the two backends diverge completely:
+
+| Aspect | OpenCL | Vulkan |
+|---|---|---|
+| Import hook | `onAcquire` → `_allocHostBuffer` (`OpenCLBackend.cpp:747`) | `onAcquire` (`VulkanBackend.cpp:218`) |
+| Import API | CL `CL_MEM_ANDROID_AHARDWAREBUFFER_HOST_PTR_QCOM` (Adreno) / `CL_IMPORT_TYPE_ANDROID_HARDWARE_BUFFER_ARM` (Mali) | `VkImportMemoryFdInfoKHR` (Linux dma-buf) / `VkImportAndroidHardwareBufferInfoANDROID` (Android AHB) |
+| Platform | **Android AHardwareBuffer only** (`#ifdef __ANDROID__` + `isSupportAHD()`) | external-memory ext enabled per-platform |
+| Memory slot | `TensorUtils::setSharedMem(tensor, …)` (per-tensor shared slot) | `tensor->buffer().device = (uint64_t)VulkanBuffer*` |
+| Release | `CLSharedMemReleaseBuffer` — does **not** free the AHB (external owner keeps it) | `VulkanMemRelease` — frees through the pool (**wrong** for external) |
+
+**Implication — mirroring OpenCL is NOT a copy-paste.** The Vulkan change must:
+1. Branch in `VulkanBackend::onAcquire` on `tensor->buffer().flags == MNN_MEMORY_AHARDWAREBUFFER`.
+2. Import the external handle into a `VulkanBuffer` (new import ctor in `VulkanBuffer` /
+   `VulkanDevice::allocMemory` via `VkImportMemoryFdInfoKHR`).
+3. Use a release path that does **not** free the imported `VkDeviceMemory` (the CMA/dma-buf
+   owns it).
+4. Cover **both** platforms: Linux V4L2 = dma-buf fd (`VK_KHR_external_memory_fd`);
+   Android HAL3 = AHardwareBuffer (`VK_ANDROID_external_memory_android_hardware_buffer`).
+   OpenCL gives **no** Linux dma-buf precedent — that path is net-new Vulkan code.
+
 - **Correct architecture:** CMA buffer → `mmap` → fd passed to V4L2/MIPI (sensor
   DMA-writes in place) → import that fd into Vulkan as **external device memory**
   and wrap it as an MNN tensor via `Tensor::setDevicePtr(fd, MNN_MEMORY_AHARDWAREBUFFER)`.
@@ -86,12 +117,35 @@ and copy host→device — i.e. a heap staging copy we want to eliminate.
   does not consume it yet (no `VkImportMemoryFdInfoKHR` / AHardwareBuffer import in
   `source/backend/vulkan`). Headers (`VK_EXT_external_memory_dma_buf`, `vkGetMemoryFdKHR`)
   and the OpenCL reference impl are present.
-- **Plan (enhance our custom MNN fork — feasible):** implement external-memory import
-  in the Vulkan backend (mirror `OpenCLBackend.cpp`): in buffer allocation, when
-  `mBuffer.flags == MNN_MEMORY_AHARDWAREBUFFER`, use `VkImportMemoryFdInfoKHR`
-  (dma-buf) / `AHardwareBuffer` import instead of `vkAllocateMemory`. Then expose a
-  new FFI (`mnn_run_external_zero_copy` / extend `mnn_run_true_zero_copy` with an fd +
-  memoryType) so `ZeroCopyBufferManager` can hand the V4L2 dma-buf straight to MNN.
+- **cam-isp side — DONE (verified):** FFI `mnn_run_external_zero_copy`, Rust extern
+  + `MNN_MEMORY_AHARDWAREBUFFER` const, `MnnEngine::run_external_zero_copy`, and
+  `CameraIspService::process_raw_frame_external` (extracts CMA `dma_fd`, binds it via
+  `setDevicePtr`, runs the MNN session). Compiles + clippy-clean. It is inert on
+  Vulkan today because the backend does not import the fd yet.
+- **MNN backend side — precise injection spec (pending, needs custom-MNN rebuild +
+  device):** mirror `source/backend/opencl/core/OpenCLBackend.cpp` (~lines 749–1027,
+  which imports AHardwareBuffer via `CL_MEM_ANDROID_AHARDWAREBUFFER_HOST_PTR_QCOM`).
+  1. Enable external-memory instance extensions in `VulkanRuntime`/`VulkanInstance`
+     (`VK_KHR_external_memory_fd` on Linux dma-buf; `VK_ANDROID_external_memory_
+     android_hardware_buffer` on Android AHardwareBuffer). Headers already present
+     (`VK_EXT_external_memory_dma_buf`, `vkGetMemoryFdKHR` in `vulkan_core.h`).
+  2. `source/backend/vulkan/component/VulkanDevice.cpp` `allocMemory`: branch when an
+     external handle is supplied — instead of `vkAllocateMemory`, chain
+     `VkImportMemoryFdInfoKHR{ .fd = dmaFd, .handleType = VK_EXTERNAL_MEMORY_
+     HANDLE_TYPE_DMA_BUF_BIT_EXT }` (Linux) or `VkImportAndroidHardwareBufferInfoANDROID`
+     (Android) into `VkMemoryAllocateInfo`.
+  3. Thread the handle from `Tensor::setDevicePtr` (`mBuffer.device`/`flags`) through
+     `VulkanMemoryPool::allocMemory` → `VulkanAllocator::alloc` → `VulkanDevice::
+     allocMemory` (a new `externalHandle` parameter), or override
+     `VulkanBackend::onSetTensor` (buffer + image backends) to detect
+     `mBuffer.flags == MNN_MEMORY_AHARDWAREBUFFER` and construct an imported
+     `VulkanBuffer`/`VulkanImage` whose `deviceId()` is the imported memory.
+  4. Rebuild the custom MNN (Android NDK target) and copy `libMNN.so`/`libMNN_Vulkan.so`
+     into `cam-rust/lib/arm64-v8a/`.
+- **Verification status:** cam-isp surface verified by `cargo clippy` (no GPU/camera
+  needed). The MNN backend change **cannot be built or runtime-tested in Termux**
+  (no `cmake`/`ninja`/`vulkan` in PATH; no GPU/V4L2 device) — it must be built on the
+  MNN NDK machine and validated on-device (V4L2 dma-buf → Vulkan import → inference).
 - **Enhancement surface:** `cam-isp/mnn_sys/mnn_vulkan_stubs.cpp` holds weak no-op
   Vulkan extension stubs (e.g. `MNNVulkanHotSwapConstBuffer`) that our custom MNN
   build overrides — the natural place to add the import entry point.

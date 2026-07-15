@@ -132,6 +132,48 @@ impl MnnEngine {
         self.expected_input_elements
     }
 
+    /// Run the ISP session with the input bound to EXTERNAL device memory
+    /// (dma-buf fd / AHardwareBuffer) via `Tensor::setDevicePtr`. This is the
+    /// true zero-copy path for large MIPI Bayer: the camera's CMA/dma-buf pages
+    /// are consumed by the GPU directly, with no CPU staging copy and no heap
+    /// allocation. Requires a Vulkan backend that honors external-memory import
+    /// (custom MNN build); otherwise `setDevicePtr` is a no-op at the backend
+    /// level and inference falls back to host staging.
+    ///
+    /// # Contract
+    /// `ext_handle` must be a valid dma-buf fd (Linux) or AHardwareBuffer*
+    /// (Android) sized for the model input tensor. `out_data` must hold at least
+    /// the output tensor's element count.
+    pub fn run_external_zero_copy(
+        &self,
+        ext_handle: i64,
+        memory_type: i32,
+        in_shape: &[i32],
+        out_data: &mut [f32],
+    ) -> Result<(), String> {
+        let pool = self.pool.as_ref().ok_or("MNN engine not initialized")?;
+        let interp = pool.interp.as_ptr();
+        let guard = pool.acquire();
+        let sess = guard.sess.as_ptr();
+        let ret = unsafe {
+            crate::mnn_sys::mnn_run_external_zero_copy(
+                interp,
+                sess,
+                ext_handle,
+                memory_type,
+                in_shape.as_ptr(),
+                in_shape.len() as crate::mnn_sys::c_int,
+                out_data.as_mut_ptr(),
+                out_data.len() as crate::mnn_sys::c_int,
+            )
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(format!("mnn_run_external_zero_copy failed (code {})", ret))
+        }
+    }
+
     pub fn new(backend: MnnBackend) -> Self {
         Self::with_pool_size(backend, 4)
     }
