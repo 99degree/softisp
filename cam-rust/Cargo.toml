@@ -1,21 +1,2 @@
-[workspace]
-resolver = "2"
-members = [
-    "cam-types",
-    "cam-isp",
-    "cam-hal",
-    "cam-hal-android",
-    "cam-hal-linux",
-    "cam-core",
-    "cam-onnx",
-    "cam-motion",
-    "cam-binder",
-    "cam-app",
-]
-
-[workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-log = "0.4"
-thiserror = "2"
-env_logger = "0.10"
-android_logger = "0.14"
+# Workspace moved to repo-root Cargo.toml — this file kept for backward compat.
+# Do NOT add [workspace] here; it would conflict with the root manifest.

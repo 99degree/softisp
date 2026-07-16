@@ -223,6 +223,7 @@ impl Default for ISPRegisters {
 
 impl ISPRegisters {
     /// Convert optimized params to hardware register values
+    #[allow(clippy::field_reassign_with_default)]
     pub fn from_params(params: &ISPOptimizedParams) -> Self {
         let mut regs = Self::default();
 
