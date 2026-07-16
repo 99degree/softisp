@@ -33,15 +33,10 @@ impl PipelineSnapshot {
     ) -> Result<Self, String> {
         let mnn_path = mnn_dir.join(format!("pipeline_{}x{}.mnn", width, height));
 
-        // Convert ONNX to MNN
-        let onnx_path = mnn_dir.join(format!("pipeline_{}x{}.onnx", width, height));
-        std::fs::write(&onnx_path, onnx_bytes).map_err(|e| format!("write onnx: {}", e))?;
-
-        crate::mnn_converter::convert_onnx_to_mnn(
-            &onnx_path.to_string_lossy(),
-            &mnn_path.to_string_lossy(),
-            None,
-        )?;
+        // In-process buffer conversion — zero disk writes
+        let mnn_bytes = crate::mnn_converter::convert_onnx_buffer(onnx_bytes)
+            .map_err(|e| format!("convert: {}", e))?;
+        std::fs::write(&mnn_path, &mnn_bytes).map_err(|e| format!("write mnn: {}", e))?;
 
         Ok(Self {
             onnx_bytes: onnx_bytes.to_vec(),
