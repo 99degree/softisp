@@ -778,10 +778,9 @@ impl PipelineBuilder {
         } else {
             format!("{}.mnn", output_path)
         };
-        let onnx_path = format!("{}.onnx", mnn_path.trim_end_matches(".mnn"));
-        std::fs::write(&onnx_path, &onnx).map_err(|e| format!("write onnx: {}", e))?;
-        crate::mnn_converter::convert_onnx_to_mnn(&onnx_path, &mnn_path, None)
+        let mnn_bytes = crate::mnn_converter::convert_onnx_buffer(&onnx)
             .map_err(|e| format!("convert: {}", e))?;
+        std::fs::write(&mnn_path, &mnn_bytes).map_err(|e| format!("write mnn: {}", e))?;
         Ok((onnx, mnn_path))
     }
 
