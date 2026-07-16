@@ -493,8 +493,8 @@ impl GpuWarpEngine {
             &nodes,
             &inputs,
             &outputs,
-            &[],
             &initializers,
+            &[],
         );
         let opset = Proto::opset("", 21);
         Proto::model(8, &opset, "softisp", &graph)

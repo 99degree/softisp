@@ -1,9 +1,10 @@
-//! MNN ONNX-to-MNN conversion via MNNConvert subprocess.
+//! MNN ONNX-to-MNN conversion.
 //!
-//! Uses MNNConvert binary as a subprocess to isolate MNN's
-//! C++ global state from the inference runtime. This prevents
-//! "pthread_mutex_lock on destroyed mutex" crashes caused by
-//! the converter polluting MNN's global executor/backend state.
+//! Two paths:
+//! 1. **Buffer API** (`convert_onnx_buffer`): in-process via `libMNNConvertDeps.so`.
+//!    Zero disk writes, zero subprocess — preferred for all hot paths.
+//! 2. **Subprocess** (`convert_onnx_to_mnn`): spawns `MNNConvert` binary.
+//!    Retained as fallback for offline/export tooling only.
 
 use std::process::Command;
 
@@ -43,10 +44,56 @@ impl Default for MnnConvertOptions {
     }
 }
 
-/// Convert ONNX model to MNN format via MNNConvert subprocess.
+/// Convert ONNX bytes to MNN bytes in-process (zero disk writes).
 ///
-/// Uses MNNConvert binary (separate process) so the converter's MNN global
-/// state does not pollute the inference runtime's MNN globals.
+/// Uses `libMNNConvertDeps.so` via `mnn_convert_onnx_buffer` FFI.
+/// The converter uses memfd internally — no temp files on Linux.
+/// Caller owns the returned `Vec<u8>`.
+#[cfg(feature = "mnn")]
+pub fn convert_onnx_buffer(onnx_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use crate::mnn_sys::{mnn_convert_onnx_buffer, MnnConvertBufferResult, MnnConvert_FreeBuffer};
+
+    if onnx_bytes.is_empty() {
+        return Err("ONNX bytes are empty".into());
+    }
+
+    let mut result = MnnConvertBufferResult {
+        success: 0,
+        error_msg: [0 as std::os::raw::c_char; 1024usize],
+        data: std::ptr::null_mut(),
+        size: 0,
+    };
+    unsafe {
+        mnn_convert_onnx_buffer(
+            onnx_bytes.as_ptr() as *const std::ffi::c_void,
+            onnx_bytes.len(),
+            &mut result,
+        );
+    }
+    if result.success != 0 {
+        let err_msg = unsafe { std::ffi::CStr::from_ptr(result.error_msg.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let _ = unsafe { MnnConvert_FreeBuffer(&mut result) };
+        return Err(format!("ONNX→MNN buffer convert failed: {}", err_msg));
+    }
+    if result.data.is_null() || result.size == 0 {
+        let _ = unsafe { MnnConvert_FreeBuffer(&mut result) };
+        return Err("ONNX→MNN buffer convert returned empty".into());
+    }
+
+    let slice = unsafe { std::slice::from_raw_parts(result.data as *const u8, result.size) };
+    let mnn_bytes = slice.to_vec();
+    unsafe {
+        MnnConvert_FreeBuffer(&mut result);
+    }
+    Ok(mnn_bytes)
+}
+
+/// Fallback: Convert ONNX file to MNN file via MNNConvert subprocess.
+///
+/// Retained for offline/export tooling. Prefer `convert_onnx_buffer` for
+/// all runtime paths — it avoids disk I/O, temp files, and subprocess overhead.
 pub fn convert_onnx_to_mnn(
     onnx_path: &str,
     mnn_path: &str,

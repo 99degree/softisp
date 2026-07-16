@@ -41,7 +41,7 @@ impl FormatConvertEngine {
         height: u32,
         output_format: OutputFormat,
     ) -> crate::error::IspResult<Self> {
-        use crate::mnn_converter::{convert_onnx_to_mnn, MnnConvertOptions};
+        use crate::mnn_converter::convert_onnx_buffer;
         use crate::mnnengine::{MnnBackendType, MnnInterpreterSafe};
 
         info!(
@@ -52,20 +52,12 @@ impl FormatConvertEngine {
         // Build ONNX model using DisplayBlock's pattern
         let onnx = build_format_convert_onnx(width, height, output_format);
 
-        // Write to temp file, convert to MNN
-        let pid = std::process::id();
-        let on = format!(".fmt_conv_{}_{}.onnx", pid, output_format as u8);
-        let mn = on.replace(".onnx", ".mnn");
-        std::fs::write(&on, &onnx)
-            .map_err(|e| crate::error::IspError::Io(format!("write fmt conv onnx: {}", e)))?;
-        let opts = MnnConvertOptions::default();
-        convert_onnx_to_mnn(&on, &mn, Some(&opts))
+        // In-process buffer conversion — zero disk writes
+        let mnn_bytes = convert_onnx_buffer(&onnx)
             .map_err(|e| crate::error::IspError::Conversion(format!("convert fmt conv: {}", e)))?;
-        let _ = std::fs::remove_file(&on);
 
-        let interp = MnnInterpreterSafe::from_file(&mn)
+        let interp = MnnInterpreterSafe::from_buffer(&mnn_bytes)
             .ok_or_else(|| crate::error::IspError::Mnn("fmt conv model load fail".into()))?;
-        let _ = std::fs::remove_file(&mn);
 
         let session = interp
             .create_session(MnnBackendType::Cpu, 2)
