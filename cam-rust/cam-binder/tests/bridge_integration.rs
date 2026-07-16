@@ -10,7 +10,10 @@ use cam_binder::callback::IFrameCallback;
 use cam_binder::hal_bridge::*;
 use cam_binder::types::StreamBuffer;
 use cam_binder::v4l2_aidl_bridge::*;
-use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -159,8 +162,11 @@ fn test_bridge_stats_accumulate() {
     bridge.capture_loop(3, &cb).unwrap();
     let after = bridge.stats();
     // stats() returns the internal running count:
-    assert!(after.frames_captured <= 3,
-        "stats should reflect captured frames (got {})", after.frames_captured);
+    assert!(
+        after.frames_captured <= 3,
+        "stats should reflect captured frames (got {})",
+        after.frames_captured
+    );
 }
 
 #[test]
@@ -217,7 +223,9 @@ fn test_hwb_bridge_pool_exhaustion() {
 fn test_hwb_bridge_format_separation() {
     let bridge = HardwareBufferBridge::new(8);
     let rgba = bridge.acquire(640, 480, HalPixelFormat::Rgba8888).unwrap();
-    let yuv = bridge.acquire(640, 480, HalPixelFormat::Yuv420SemiPlanar).unwrap();
+    let yuv = bridge
+        .acquire(640, 480, HalPixelFormat::Yuv420SemiPlanar)
+        .unwrap();
     assert_ne!(rgba.id, yuv.id, "different formats → different buffer IDs");
 
     bridge.release(rgba);
@@ -227,12 +235,16 @@ fn test_hwb_bridge_format_separation() {
 #[test]
 fn test_hwb_bridge_reuse_same_dimensions() {
     let bridge = HardwareBufferBridge::new(4);
-    let b1 = bridge.acquire(1920, 1080, HalPixelFormat::Rgba8888).unwrap();
+    let b1 = bridge
+        .acquire(1920, 1080, HalPixelFormat::Rgba8888)
+        .unwrap();
     let _id1 = b1.id;
     bridge.release(b1);
 
     // Next acquire with same dims should reuse cached details
-    let b2 = bridge.acquire(1920, 1080, HalPixelFormat::Rgba8888).unwrap();
+    let b2 = bridge
+        .acquire(1920, 1080, HalPixelFormat::Rgba8888)
+        .unwrap();
     // The struct itself is not reused (ptr remains null in standalone mode),
     // but the stats reflect the zero-copy release.
     assert_eq!(bridge.stats().zero_copy_count, 1);
@@ -296,7 +308,11 @@ fn test_isp_service_set_and_capture() {
     // Capture stub with ISP — should produce RGBA frame
     let cb = TestCallback::new();
     let result = bridge.capture_and_forward(&cb);
-    assert!(result.is_ok(), "capture with ISP should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "capture with ISP should succeed: {:?}",
+        result
+    );
 
     let frame = cb.last_frame().expect("frame received");
     assert_eq!(frame.width, 640);

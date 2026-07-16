@@ -256,9 +256,7 @@ struct HdrWorker {
 
 impl HdrWorker {
     fn new() -> Self {
-        Self {
-            eis_engine: None,
-        }
+        Self { eis_engine: None }
     }
 
     /// Create HdrWorker with EIS engine for gyro-aware alignment.
@@ -464,168 +462,168 @@ impl HdrWorker {
         Some((dx.clamp(-max_dx, max_dx), dy.clamp(-max_dy, max_dy)))
     }
 
-/// Build a grayscale luminance buffer (length `w*h`) from an ISP frame.
-fn frame_luma(frame: &crate::pipeline::types::IspFrame) -> Vec<f32> {
-    let w = frame.width as usize;
-    let h = frame.height as usize;
-    let mut lum = vec![0.0f32; w * h];
-    if let Some(ref fd) = frame.float_data {
-        let plane = w * h;
-        for i in 0..plane {
-            let r = fd.get(i).copied().unwrap_or(0.0);
-            let g = fd.get(plane + i).copied().unwrap_or(0.0);
-            let b = fd.get(2 * plane + i).copied().unwrap_or(0.0);
-            lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        }
-    } else {
-        for i in 0..(w * h) {
-            let base = i * 4;
-            if base + 3 < frame.data.len() {
-                let r = frame.data[base + 1] as f32;
-                let g = frame.data[base + 2] as f32;
-                let b = frame.data[base + 3] as f32;
+    /// Build a grayscale luminance buffer (length `w*h`) from an ISP frame.
+    fn frame_luma(frame: &crate::pipeline::types::IspFrame) -> Vec<f32> {
+        let w = frame.width as usize;
+        let h = frame.height as usize;
+        let mut lum = vec![0.0f32; w * h];
+        if let Some(ref fd) = frame.float_data {
+            let plane = w * h;
+            for i in 0..plane {
+                let r = fd.get(i).copied().unwrap_or(0.0);
+                let g = fd.get(plane + i).copied().unwrap_or(0.0);
+                let b = fd.get(2 * plane + i).copied().unwrap_or(0.0);
                 lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
             }
-        }
-    }
-    lum
-}
-
-/// Sum of absolute differences between the block at `(bx,by)` in `lum_from`
-/// and the same block shifted by `(dx,dy)` in `lum_to`.
-fn block_sad(
-    lum_from: &[f32],
-    lum_to: &[f32],
-    w: i32,
-    h: i32,
-    bx: i32,
-    by: i32,
-    bw: i32,
-    bh: i32,
-    dx: i32,
-    dy: i32,
-) -> f32 {
-    let mut sad = 0.0f32;
-    for yy in 0..bh {
-        for xx in 0..bw {
-            let fx = bx + xx;
-            let fy = by + yy;
-            let tx = bx + xx + dx;
-            let ty = by + yy + dy;
-            let fv = if fx >= 0 && fx < w && fy >= 0 && fy < h {
-                lum_from[(fy * w + fx) as usize]
-            } else {
-                0.0
-            };
-            let tv = if tx >= 0 && tx < w && ty >= 0 && ty < h {
-                lum_to[(ty * w + tx) as usize]
-            } else {
-                0.0
-            };
-            sad += (fv - tv).abs();
-        }
-    }
-    sad
-}
-
-/// Estimate the integer `(dx, dy)` that best translates `from` onto `to` using
-/// a 4×4 grid of block matches with median voting (robust to moving content).
-fn estimate_translation(
-    from: &crate::pipeline::types::IspFrame,
-    to: &crate::pipeline::types::IspFrame,
-    max_shift: i32,
-) -> (i32, i32) {
-    let w = from.width as i32;
-    let h = from.height as i32;
-    if w <= 0 || h <= 0 {
-        return (0, 0);
-    }
-    let lum_from = Self::frame_luma(from);
-    let lum_to = Self::frame_luma(to);
-
-    let blocks = 4usize;
-    let bw = (w as usize / blocks).max(1) as i32;
-    let bh = (h as usize / blocks).max(1) as i32;
-    if bw < 4 || bh < 4 {
-        return (0, 0);
-    }
-
-    let mut dxs = Vec::new();
-    let mut dys = Vec::new();
-    for by in 0..(blocks as i32) {
-        for bx in 0..(blocks as i32) {
-            let x0 = bx * bw;
-            let y0 = by * bh;
-            let mut best = (0i32, 0i32);
-            let mut best_sad = f32::INFINITY;
-            for dy in -max_shift..=max_shift {
-                for dx in -max_shift..=max_shift {
-                    let s = Self::block_sad(&lum_from, &lum_to, w, h, x0, y0, bw, bh, dx, dy);
-                    if s < best_sad {
-                        best_sad = s;
-                        best = (dx, dy);
-                    }
+        } else {
+            for i in 0..(w * h) {
+                let base = i * 4;
+                if base + 3 < frame.data.len() {
+                    let r = frame.data[base + 1] as f32;
+                    let g = frame.data[base + 2] as f32;
+                    let b = frame.data[base + 3] as f32;
+                    lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                 }
             }
-            dxs.push(best.0);
-            dys.push(best.1);
         }
+        lum
     }
-    (Self::median(&dxs), Self::median(&dys))
-}
 
-/// Median of a small integer slice (returns 0 for empty input).
-fn median(v: &[i32]) -> i32 {
-    if v.is_empty() {
-        return 0;
-    }
-    let mut s = v.to_vec();
-    s.sort_unstable();
-    s[s.len() / 2]
-}
-
-/// Return a copy of `f` shifted by `(dx, dy)` with edge replication.
-fn shift_frame(f: &HdrFrame, dx: i32, dy: i32) -> HdrFrame {
-    if dx == 0 && dy == 0 {
-        return f.clone();
-    }
-    let w = f.frame.width as i32;
-    let h = f.frame.height as i32;
-    let mut out = f.clone();
-
-    if out.frame.float_data.is_none() {
-        // ARGB interleaved path.
-        let mut data = vec![0u8; out.frame.data.len()];
-        let pw = 4;
-        for y in 0..h {
-            for x in 0..w {
-                let sx = (x - dx).clamp(0, w - 1);
-                let sy = (y - dy).clamp(0, h - 1);
-                let di = ((y * w + x) * pw) as usize;
-                let si = ((sy * w + sx) * pw) as usize;
-                data[di..di + 4].copy_from_slice(&out.frame.data[si..si + 4]);
+    /// Sum of absolute differences between the block at `(bx,by)` in `lum_from`
+    /// and the same block shifted by `(dx,dy)` in `lum_to`.
+    fn block_sad(
+        lum_from: &[f32],
+        lum_to: &[f32],
+        w: i32,
+        h: i32,
+        bx: i32,
+        by: i32,
+        bw: i32,
+        bh: i32,
+        dx: i32,
+        dy: i32,
+    ) -> f32 {
+        let mut sad = 0.0f32;
+        for yy in 0..bh {
+            for xx in 0..bw {
+                let fx = bx + xx;
+                let fy = by + yy;
+                let tx = bx + xx + dx;
+                let ty = by + yy + dy;
+                let fv = if fx >= 0 && fx < w && fy >= 0 && fy < h {
+                    lum_from[(fy * w + fx) as usize]
+                } else {
+                    0.0
+                };
+                let tv = if tx >= 0 && tx < w && ty >= 0 && ty < h {
+                    lum_to[(ty * w + tx) as usize]
+                } else {
+                    0.0
+                };
+                sad += (fv - tv).abs();
             }
         }
-        out.frame.data = data;
-    } else if let Some(ref fd) = f.frame.float_data {
-        // Planar NCHW f32: 3 planes of `w*h`.
-        let plane = (w * h) as usize;
-        let mut new_fd = vec![0.0f32; fd.len()];
-        for c in 0..3 {
+        sad
+    }
+
+    /// Estimate the integer `(dx, dy)` that best translates `from` onto `to` using
+    /// a 4×4 grid of block matches with median voting (robust to moving content).
+    fn estimate_translation(
+        from: &crate::pipeline::types::IspFrame,
+        to: &crate::pipeline::types::IspFrame,
+        max_shift: i32,
+    ) -> (i32, i32) {
+        let w = from.width as i32;
+        let h = from.height as i32;
+        if w <= 0 || h <= 0 {
+            return (0, 0);
+        }
+        let lum_from = Self::frame_luma(from);
+        let lum_to = Self::frame_luma(to);
+
+        let blocks = 4usize;
+        let bw = (w as usize / blocks).max(1) as i32;
+        let bh = (h as usize / blocks).max(1) as i32;
+        if bw < 4 || bh < 4 {
+            return (0, 0);
+        }
+
+        let mut dxs = Vec::new();
+        let mut dys = Vec::new();
+        for by in 0..(blocks as i32) {
+            for bx in 0..(blocks as i32) {
+                let x0 = bx * bw;
+                let y0 = by * bh;
+                let mut best = (0i32, 0i32);
+                let mut best_sad = f32::INFINITY;
+                for dy in -max_shift..=max_shift {
+                    for dx in -max_shift..=max_shift {
+                        let s = Self::block_sad(&lum_from, &lum_to, w, h, x0, y0, bw, bh, dx, dy);
+                        if s < best_sad {
+                            best_sad = s;
+                            best = (dx, dy);
+                        }
+                    }
+                }
+                dxs.push(best.0);
+                dys.push(best.1);
+            }
+        }
+        (Self::median(&dxs), Self::median(&dys))
+    }
+
+    /// Median of a small integer slice (returns 0 for empty input).
+    fn median(v: &[i32]) -> i32 {
+        if v.is_empty() {
+            return 0;
+        }
+        let mut s = v.to_vec();
+        s.sort_unstable();
+        s[s.len() / 2]
+    }
+
+    /// Return a copy of `f` shifted by `(dx, dy)` with edge replication.
+    fn shift_frame(f: &HdrFrame, dx: i32, dy: i32) -> HdrFrame {
+        if dx == 0 && dy == 0 {
+            return f.clone();
+        }
+        let w = f.frame.width as i32;
+        let h = f.frame.height as i32;
+        let mut out = f.clone();
+
+        if out.frame.float_data.is_none() {
+            // ARGB interleaved path.
+            let mut data = vec![0u8; out.frame.data.len()];
+            let pw = 4;
             for y in 0..h {
                 for x in 0..w {
                     let sx = (x - dx).clamp(0, w - 1);
                     let sy = (y - dy).clamp(0, h - 1);
-                    let di = c * plane + (y * w + x) as usize;
-                    let si = c * plane + (sy * w + sx) as usize;
-                    new_fd[di] = fd[si];
+                    let di = ((y * w + x) * pw) as usize;
+                    let si = ((sy * w + sx) * pw) as usize;
+                    data[di..di + 4].copy_from_slice(&out.frame.data[si..si + 4]);
                 }
             }
+            out.frame.data = data;
+        } else if let Some(ref fd) = f.frame.float_data {
+            // Planar NCHW f32: 3 planes of `w*h`.
+            let plane = (w * h) as usize;
+            let mut new_fd = vec![0.0f32; fd.len()];
+            for c in 0..3 {
+                for y in 0..h {
+                    for x in 0..w {
+                        let sx = (x - dx).clamp(0, w - 1);
+                        let sy = (y - dy).clamp(0, h - 1);
+                        let di = c * plane + (y * w + x) as usize;
+                        let si = c * plane + (sy * w + sx) as usize;
+                        new_fd[di] = fd[si];
+                    }
+                }
+            }
+            out.frame.float_data = Some(new_fd);
         }
-        out.frame.float_data = Some(new_fd);
+        out
     }
-    out
-}
 
     // ── Merge ──────────────────────────────────────────────────
 

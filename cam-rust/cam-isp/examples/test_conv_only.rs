@@ -73,7 +73,10 @@ fn main() {
         )
     };
 
-    let out_f32 = unsafe { std::slice::from_raw_parts(out_buf.as_ptr() as *const f32, n as usize) };
+    assert_eq!(n, 0, "mnn_run_true_zero_copy failed (returned {})", n);
+
+    // Output was written directly into out_buf by zero-copy.
+    let out_f32 = unsafe { std::slice::from_raw_parts(out_buf.as_ptr() as *const f32, 1) };
 
     println!("Input RGB: {:?}", inp_values);
     println!("Expected: {} = 0x{:x}", expected, expected as u32);

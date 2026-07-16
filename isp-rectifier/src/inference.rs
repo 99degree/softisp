@@ -3,9 +3,11 @@
 use crate::types::{FrameMetadata, ISPOptimizedParams};
 use tract_onnx::prelude::*;
 
+type TractModel = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
+
 /// Run inference with tract ONNX
 pub struct TractInference {
-    model: SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>,
+    model: TractModel,
 }
 
 impl TractInference {
@@ -40,7 +42,7 @@ impl TractInference {
                 [ccm[[0, 3]], ccm[[0, 4]], ccm[[0, 5]]],
                 [ccm[[0, 6]], ccm[[0, 7]], ccm[[0, 8]]],
             ],
-            tone_curve_lut: tone.iter().map(|&x| x).collect(),
+            tone_curve_lut: tone.iter().copied().collect(),
             zoom_factor: zoom[[0, 0]],
         })
     }

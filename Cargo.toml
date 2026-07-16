@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "cam-rust/cam-types",
+    "cam-rust/cam-isp",
+    "cam-rust/cam-hal",
+    "cam-rust/cam-hal-android",
+    "cam-rust/cam-hal-linux",
+    "cam-rust/cam-core",
+    "cam-rust/cam-onnx",
+    "cam-rust/cam-motion",
+    "cam-rust/cam-binder",
+    "cam-rust/cam-app",
+]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+thiserror = "2"
+env_logger = "0.10"
+android_logger = "0.14"

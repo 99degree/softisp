@@ -1,0 +1,2 @@
+# MNN libs live in cam-rust/lib/<abi>/ with RPATH set via patchelf.
+# No system-level copies needed.

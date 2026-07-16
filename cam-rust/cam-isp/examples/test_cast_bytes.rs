@@ -67,7 +67,10 @@ fn main() {
         )
     };
 
-    let out_i32 = unsafe { std::slice::from_raw_parts(out_buf.as_ptr() as *const i32, n as usize) };
+    assert_eq!(n, 0, "mnn_run_true_zero_copy failed (returned {})", n);
+
+    // Output was written directly into out_buf by zero-copy (3 INT32 values).
+    let out_i32 = unsafe { std::slice::from_raw_parts(out_buf.as_ptr() as *const i32, 3) };
     let exp = [
         (inp_values[0] * 255.0).trunc(),
         (inp_values[1] * 255.0).trunc(),
