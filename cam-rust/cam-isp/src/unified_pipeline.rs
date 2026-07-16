@@ -1137,4 +1137,37 @@ mod tests {
         assert!(frame.width > 0, "output width should be > 0");
         assert!(!frame.data.is_empty(), "output data should not be empty");
     }
+
+    /// FPS benchmark: 4K bayer → FHD ARGB8888, 10 warmup + 20 measured frames.
+    #[test]
+    fn bench_4k_fhd_argb8888_fps() {
+        crate::init();
+        let config = UnifiedConfig {
+            profile: PipelineProfile::HEAVY,
+            target_width: 1920,
+            output_format: EngineOutputFormat::Argb,
+            ..UnifiedConfig::default()
+        };
+        let mut pipeline = UnifiedPipeline::new(config).expect("pipeline build");
+        let raw = vec![128u8; 3840 * 2160 * 2];
+        let params = ProcessParams::new(3840, 2160, &raw);
+
+        // Warmup: 10 frames
+        for i in 0..10 {
+            let _ = pipeline.process(&params);
+        }
+
+        // Measured: 20 frames
+        let n = 20;
+        let t0 = std::time::Instant::now();
+        for i in 0..n {
+            let r = pipeline.process(&params);
+            assert!(r.is_ok(), "frame {} failed: {:?}", i, r.err());
+        }
+        let elapsed = t0.elapsed();
+        let fps = n as f64 / elapsed.as_secs_f64();
+        let avg_ms = elapsed.as_secs_f64() * 1000.0 / n as f64;
+        eprintln!("\n=== 4K→FHD ARGB8888: {} frames in {:.2?} ===", n, elapsed);
+        eprintln!("   avg: {:.2} ms/frame  |  {:.1} FPS", avg_ms, fps);
+    }
 }
