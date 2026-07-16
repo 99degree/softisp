@@ -71,6 +71,8 @@ pub mod eis;
 pub mod format_convert;
 pub mod genetic;
 pub mod gpu_watchdog;
+#[cfg(feature = "mnn_buffer")]
+pub mod integration;
 pub mod isp_ops;
 pub mod r#match;
 pub mod npu;
@@ -84,8 +86,6 @@ pub mod simd;
 pub mod stats;
 pub mod store;
 pub mod temporal;
-#[cfg(feature = "mnn_buffer")]
-pub mod integration;
 
 use log::info;
 use std::sync::Once;
