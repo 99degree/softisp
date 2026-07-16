@@ -1114,4 +1114,27 @@ mod tests {
             assert!(info.output_format.contains("FloatRgb"));
         }
     }
+
+    /// Full integration: 4K bayer → FHD ARGB8888 → unified pipeline process.
+    #[test]
+    fn test_unified_4k_bayer_fhd_argb8888() {
+        crate::init();
+        // 4K bayer input → FHD output, ARGB8888 format
+        let config = UnifiedConfig {
+            profile: PipelineProfile::HEAVY,
+            target_width: 1920,
+            output_format: EngineOutputFormat::Argb,
+            ..UnifiedConfig::default()
+        };
+        let mut pipeline = UnifiedPipeline::new(config).expect("pipeline build should succeed");
+        // 4K bayer: 3840×2160, u16 per pixel = 2 bytes
+        let raw = vec![128u8; 3840 * 2160 * 2];
+        let params = ProcessParams::new(3840, 2160, &raw);
+        let result = pipeline.process(&params);
+        assert!(result.is_ok(), "process failed: {:?}", result.err());
+        let frame = result.unwrap();
+        // FHD output: expect width ~1920, data non-empty
+        assert!(frame.width > 0, "output width should be > 0");
+        assert!(!frame.data.is_empty(), "output data should not be empty");
+    }
 }
