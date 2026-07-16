@@ -191,9 +191,7 @@ impl V4l2AidlBridge {
                     }
                 }
             }
-            None => {
-                bayer_to_rgb_quick(&data, sensor.width as usize, sensor.height as usize)
-            }
+            None => bayer_to_rgb_quick(&data, sensor.width as usize, sensor.height as usize),
         };
         #[cfg(not(feature = "mnn"))]
         let rgb = bayer_to_rgb_quick(&data, sensor.width as usize, sensor.height as usize);

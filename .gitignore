@@ -62,5 +62,22 @@ __pycache__/
 .mnn_temp_*.onnx
 ~/android-sdk
 
+# Root workspace build dir (workspace moved to repo root)
+target/
+
+# Downloaded CI artifacts
+mnn_aar/
+arm64-v8a-libs.zip
+armeabi-v7a-libs.zip
+
+# Root lib/ is a leftover; canonical libs live in cam-rust/lib/<abi>/
+lib/
+
+# Test ONNX model artifacts
+test_*.onnx
+
+# Session files
+pi-session-*.html
+
 # Android SDK/NDK (outside repo)
 ~/android-sdk/

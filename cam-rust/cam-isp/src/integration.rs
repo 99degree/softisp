@@ -7,13 +7,16 @@
 //! - Zero-copy buffer passing
 
 use crate::engine::{select_engine, select_engine_by_name, IspEngine, ProcessParams};
-use crate::mnn_buffer::cma_buffer::{BufferAlignment, BufferUsage, CMAAllocator, CMABufferManager, CMABuffer};
+use crate::mnn_buffer::cma_buffer::{
+    BufferAlignment, BufferUsage, CMAAllocator, CMABuffer, CMABufferManager,
+};
 use log::{error, info, warn};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 // Type alias for frame processor callback
-pub type IspFrameProcessor = Box<dyn Fn(&[u8], u32, u32, i32) -> Result<Vec<u8>, String> + Send + Sync>;
+pub type IspFrameProcessor =
+    Box<dyn Fn(&[u8], u32, u32, i32) -> Result<Vec<u8>, String> + Send + Sync>;
 
 // ─── Zero-Copy Buffer Management ───────────────────────────────────────────
 
@@ -48,9 +51,7 @@ impl ZeroCopyBufferManager {
     /// Create new zero-copy buffer manager
     pub fn new(allocator: CMAAllocator, alignment: BufferAlignment) -> Self {
         let cma_manager = CMABufferManager::with_settings(allocator, alignment);
-        Self {
-            cma_manager,
-        }
+        Self { cma_manager }
     }
 
     /// Allocate camera input buffer (raw Bayer)
@@ -64,7 +65,9 @@ impl ZeroCopyBufferManager {
         let size = (width * height * bytes_per_pixel) as usize;
         let usage = vec![BufferUsage::Camera, BufferUsage::CPU];
 
-        let cma_buffer = self.cma_manager.allocate(name, size, &usage)
+        let cma_buffer = self
+            .cma_manager
+            .allocate(name, size, &usage)
             .map_err(|e| format!("CMA allocation failed: {}", e))?;
 
         Ok(CameraInputBuffer {
@@ -88,7 +91,9 @@ impl ZeroCopyBufferManager {
         let size = (width * height * bytes_per_pixel) as usize;
         let usage = vec![BufferUsage::ISP, BufferUsage::CPU];
 
-        let cma_buffer = self.cma_manager.allocate(name, size, &usage)
+        let cma_buffer = self
+            .cma_manager
+            .allocate(name, size, &usage)
             .map_err(|e| format!("CMA allocation failed: {}", e))?;
 
         Ok(IspOutputBuffer {
@@ -144,15 +149,12 @@ pub struct CameraIspService {
 
 impl CameraIspService {
     /// Create new camera ISP service
-    pub fn new(
-        engine: &str,
-        sensor_max: f32,
-        bayer_pattern: i32,
-    ) -> Result<Self, String> {
+    pub fn new(engine: &str, sensor_max: f32, bayer_pattern: i32) -> Result<Self, String> {
         let engine: Box<dyn IspEngine> = if engine == "auto" {
             select_engine().ok_or("No ISP engine available")?
         } else {
-            select_engine_by_name(engine).ok_or_else(|| format!("ISP engine '{}' not found", engine))?
+            select_engine_by_name(engine)
+                .ok_or_else(|| format!("ISP engine '{}' not found", engine))?
         };
         let engine_name = engine.backend_name().to_string();
 
@@ -164,16 +166,20 @@ impl CameraIspService {
             zero_copy: true,
         };
 
-        let mut service = Self {
-            engine,
-            config,
-        };
+        let mut service = Self { engine, config };
 
         // Build a minimal pipeline for CPU engine if it's not yet loaded
         // (CPU engine requires build() to be called before process())
         if service.config.engine == "cpu" {
-            if let Some(cpu_engine) = service.engine.as_any_mut().downcast_mut::<crate::cpu::CpuEngine>() {
-                use crate::blocks::{RawInputBlock, NormalizeBlock, CfaBlock, BlcBlock, BayerWbBlock, DemosaicBlock, CcmBlock, ToneBlock, DisplayBlock};
+            if let Some(cpu_engine) = service
+                .engine
+                .as_any_mut()
+                .downcast_mut::<crate::cpu::CpuEngine>()
+            {
+                use crate::blocks::{
+                    BayerWbBlock, BlcBlock, CcmBlock, CfaBlock, DemosaicBlock, DisplayBlock,
+                    NormalizeBlock, RawInputBlock, ToneBlock,
+                };
                 use crate::pipeline::IspBlock;
 
                 let mut blocks: Vec<Box<dyn crate::pipeline::IspBlock>> = vec![
@@ -223,8 +229,9 @@ impl CameraIspService {
         input: &mut CameraInputBuffer,
         output: &mut IspOutputBuffer,
     ) -> Result<(), String> {
-        let mut params = crate::engine::ProcessParams::new(input.width, input.height,
-            unsafe { std::slice::from_raw_parts(input.ptr, input.size) });
+        let mut params = crate::engine::ProcessParams::new(input.width, input.height, unsafe {
+            std::slice::from_raw_parts(input.ptr, input.size)
+        });
         params.sensor_max = self.config.sensor_max;
         params.bayer_pattern = self.config.bayer_pattern;
         params.timestamp_ns = SystemTime::now()
@@ -237,15 +244,15 @@ impl CameraIspService {
         // Copy output to zero-copy buffer
         if frame.data.len() <= output.size {
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    frame.data.as_ptr(),
-                    output.ptr,
-                    frame.data.len(),
-                );
+                std::ptr::copy_nonoverlapping(frame.data.as_ptr(), output.ptr, frame.data.len());
             }
             Ok(())
         } else {
-            Err(format!("Output buffer too small: need {}, have {}", frame.data.len(), output.size))
+            Err(format!(
+                "Output buffer too small: need {}, have {}",
+                frame.data.len(),
+                output.size
+            ))
         }
     }
 
@@ -419,27 +426,23 @@ impl V4l2IspBridge {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, String> {
-        let sensor = self.sensor.lock().unwrap().clone()
+        let sensor = self
+            .sensor
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or("Sensor not configured")?;
 
         let isp_service = self.isp_service.lock().unwrap();
         if let Some(ref service) = *isp_service {
-            service.process_raw_frame(
-                raw_data,
-                width,
-                height,
-                sensor.bayer_pattern as i32,
-            )
+            service.process_raw_frame(raw_data, width, height, sensor.bayer_pattern as i32)
         } else {
             Err("ISP service not initialized".into())
         }
     }
 
     /// Process a batch of captured frames, accumulating statistics.
-    pub fn process_batch(
-        &self,
-        frames: &[(Vec<u8>, u32, u32)],
-    ) -> Result<BridgeStats, String> {
+    pub fn process_batch(&self, frames: &[(Vec<u8>, u32, u32)]) -> Result<BridgeStats, String> {
         let mut stats = BridgeStats::default();
         for (raw_data, w, h) in frames {
             match self.process_frame(raw_data, *w, *h) {
@@ -515,16 +518,17 @@ mod tests {
 
     #[test]
     fn test_zero_copy_buffer_manager() {
-        let manager = ZeroCopyBufferManager::new(
-            CMAAllocator::Malloc,
-            BufferAlignment::Page,
-        );
+        let manager = ZeroCopyBufferManager::new(CMAAllocator::Malloc, BufferAlignment::Page);
 
-        let input = manager.allocate_camera_input("test_in", 1920, 1080, 2).unwrap();
+        let input = manager
+            .allocate_camera_input("test_in", 1920, 1080, 2)
+            .unwrap();
         assert!(!input.ptr.is_null());
         assert_eq!(input.size, 1920 * 1080 * 2);
 
-        let output = manager.allocate_isp_output("test_out", 1920, 1080, 4).unwrap();
+        let output = manager
+            .allocate_isp_output("test_out", 1920, 1080, 4)
+            .unwrap();
         assert!(!output.ptr.is_null());
         assert_eq!(output.size, 1920 * 1080 * 4);
     }
