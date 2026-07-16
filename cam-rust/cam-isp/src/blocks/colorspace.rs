@@ -562,8 +562,11 @@ mod tests {
         ];
         rgb_to_hsv_interleaved(&mut data);
         // Red: H≈0/360, S=1, V=1
-        assert!((data[0] * 360.0).abs() < 1.0 || (data[0] * 360.0 - 360.0).abs() < 1.0,
-            "red h={}", data[0] * 360.0);
+        assert!(
+            (data[0] * 360.0).abs() < 1.0 || (data[0] * 360.0 - 360.0).abs() < 1.0,
+            "red h={}",
+            data[0] * 360.0
+        );
         assert!((data[1] - 1.0).abs() < 0.01, "red s={}", data[1]);
         assert!((data[2] - 1.0).abs() < 0.01, "red v={}", data[2]);
 
@@ -575,9 +578,9 @@ mod tests {
     #[test]
     fn test_hsv_to_rgb_interleaved() {
         let mut data = vec![
-            0.0, 1.0, 1.0,     // H=0, S=1, V=1 → Red
-            0.5, 1.0, 1.0,     // H=180, S=1, V=1 → Cyan
-            0.0, 0.0, 0.5,     // H=0, S=0, V=0.5 → Gray
+            0.0, 1.0, 1.0, // H=0, S=1, V=1 → Red
+            0.5, 1.0, 1.0, // H=180, S=1, V=1 → Cyan
+            0.0, 0.0, 0.5, // H=0, S=0, V=0.5 → Gray
         ];
         hsv_to_rgb_interleaved(&mut data);
         assert!((data[0] - 1.0).abs() < 0.01, "red r={}", data[0]);
