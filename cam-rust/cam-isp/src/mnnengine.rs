@@ -345,12 +345,8 @@ impl MnnEngine {
     /// ~2K weights (all Conv), compute scales with H×W.
     #[cfg(feature = "mnn")]
     pub fn build_bench_model(bench_w: u32, bench_h: u32) -> Result<String, String> {
-        use crate::mnn_converter::convert_onnx_to_mnn;
+        use crate::mnn_converter::convert_onnx_buffer;
         use crate::onnx::proto::Proto;
-
-        let pid = std::process::id();
-        let onnx_path = format!(".mnn_bench_{}.onnx", pid);
-        let mnn_path = format!(".mnn_bench_{}.mnn", pid);
 
         let h = bench_h as i64;
         let w = bench_w as i64;
@@ -546,12 +542,9 @@ impl MnnEngine {
         let graph = Proto::graph("bench", &nodes, &inputs, &outputs, &init, &vi);
         let model = Proto::model(9, &opset, "cam_isp_bench", &graph);
 
-        std::fs::write(&onnx_path, &model).map_err(|e| format!("write: {}", e))?;
-        // Note: Graph optimization (optimizeLevel=2) and INT8 quantization (weightQuantBits=8)
-        // were tested but hurt performance on this synthetic benchmark (3.5 fps → 2.0 fps).
-        // For production ISP pipelines, retest with optimization enabled.
-        convert_onnx_to_mnn(&onnx_path, &mnn_path, None).map_err(|e| format!("convert: {}", e))?;
-        let _ = std::fs::remove_file(&onnx_path);
+        let mnn_bytes = convert_onnx_buffer(&model).map_err(|e| format!("convert: {}", e))?;
+        let mnn_path = format!(".mnn_bench_{}.mnn", std::process::id());
+        std::fs::write(&mnn_path, &mnn_bytes).map_err(|e| format!("write mnn: {}", e))?;
         Ok(mnn_path)
     }
 
@@ -1150,17 +1143,20 @@ impl IspEngine for MnnEngine {
 
         #[cfg(feature = "mnn")]
         {
-            use crate::mnn_converter::MnnConvertOptions;
+            use crate::mnn_converter::{convert_onnx_buffer, MnnConvertOptions};
             use std::path::Path;
 
-            let mnn = match &self.model_path {
+            let mnn_bytes: Vec<u8> = match &self.model_path {
                 Some(p) => {
                     info!(
-                        "build [tid={:?}]: using model_path={}",
+                        "build [tid={:?}]: reading pre-converted .mnn from {}",
                         std::thread::current().id(),
                         p
                     );
-                    p.clone()
+                    std::fs::read(p).map_err(|e| {
+                        error!("Failed to read MNN model: {}", p);
+                        crate::error::IspError::Io(format!("read {}: {}", p, e))
+                    })?
                 }
                 None => {
                     // Build ONNX graph: head + aux as pipeline, stats as aux_blocks
@@ -1180,12 +1176,11 @@ impl IspEngine for MnnEngine {
                         onnx.len()
                     );
 
-                    let on = format!(".mnn_temp_{}.onnx", std::process::id());
-                    let mn = on.replace(".onnx", ".mnn");
-                    std::fs::write(&on, &onnx)
-                        .map_err(|e| crate::error::IspError::Io(format!("write: {}", e)))?;
-                    // Save a copy for inspection
-                    let _ = std::fs::copy(&on, ".mnn_last_pipeline.onnx");
+                    // Save ONNX for inspection (debug only)
+                    if cfg!(debug_assertions) {
+                        let _ = std::fs::write(".mnn_last_pipeline.onnx", &onnx);
+                    }
+
                     let opts = MnnConvertOptions {
                         preserve_input_type: self.preserve_input_type,
                         allow_custom_op: true,
@@ -1195,11 +1190,11 @@ impl IspEngine for MnnEngine {
                         "preserve_input_type: {}, optimize_level: {}",
                         self.preserve_input_type, opts.optimize_level
                     );
-                    crate::mnn_converter::convert_onnx_to_mnn(&on, &mn, Some(&opts)).map_err(
-                        |e| crate::error::IspError::Conversion(format!("convert: {}", e)),
-                    )?;
-                    let _ = std::fs::remove_file(&on);
-                    mn
+
+                    // In-process buffer conversion — zero disk writes
+                    convert_onnx_buffer(&onnx).map_err(|e| {
+                        crate::error::IspError::Conversion(format!("convert: {}", e))
+                    })?
                 }
             };
 
@@ -1223,16 +1218,16 @@ impl IspEngine for MnnEngine {
                 }
             }
 
-            if !Path::new(&mnn).exists() {
-                error!("MNN model not found: {}", mnn);
-                return Err(crate::error::IspError::Mnn(format!(
-                    "missing .mnn: {}",
-                    mnn
-                )));
+            if mnn_bytes.is_empty() {
+                error!("MNN model bytes are empty");
+                return Err(crate::error::IspError::Mnn("MNN model bytes empty".into()));
             }
-            let interp = MnnInterpreterSafe::from_file(&mnn).ok_or_else(|| {
-                error!("Failed to load MNN model: {}", mnn);
-                crate::error::IspError::Mnn(format!("load fail: {}", mnn))
+            let interp = MnnInterpreterSafe::from_buffer(&mnn_bytes).ok_or_else(|| {
+                error!(
+                    "Failed to load MNN model from buffer ({} bytes)",
+                    mnn_bytes.len()
+                );
+                crate::error::IspError::Mnn(format!("load fail ({} bytes)", mnn_bytes.len()))
             })?;
 
             // Use first session to probe model input type (before building pool)
@@ -1285,8 +1280,10 @@ impl IspEngine for MnnEngine {
             // Backend was already validated by probe session above.
             let pool = SessionPool::new(interp, self.backend.to_sys(), self.pool_size.max(1), 4)?;
             info!(
-                "MNN engine loaded from {} (backend={:?}) with {} sessions",
-                mnn, self.backend, self.pool_size
+                "MNN engine loaded ({} bytes, backend={:?}, {} sessions)",
+                mnn_bytes.len(),
+                self.backend,
+                self.pool_size
             );
             self.pool = Some(pool);
         }

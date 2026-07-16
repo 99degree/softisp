@@ -853,15 +853,11 @@ impl GraphComposer {
             }
         }
 
-        let onnx_path = mnn_dir.join(format!("{}.onnx", name));
         let mnn_path = mnn_dir.join(format!("{}.mnn", name));
-        std::fs::write(&onnx_path, &onnx).map_err(|e| format!("write onnx: {}", e))?;
 
-        crate::mnn_converter::convert_onnx_to_mnn(
-            &onnx_path.to_string_lossy(),
-            &mnn_path.to_string_lossy(),
-            None,
-        )?;
+        let mnn_bytes = crate::mnn_converter::convert_onnx_buffer(&onnx)
+            .map_err(|e| format!("convert: {}", e))?;
+        std::fs::write(&mnn_path, &mnn_bytes).map_err(|e| format!("write mnn: {}", e))?;
 
         Ok((onnx, mnn_path, stats))
     }
