@@ -276,6 +276,7 @@ dependencies = [
 name = "cam-isp"
 version = "0.1.0"
 dependencies = [
+ "cam-disp",
  "cam-types",
  "cc",
  "clap",
