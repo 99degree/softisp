@@ -18,6 +18,7 @@ isp-rectifier = { path = "../../isp-rectifier", optional = true }
 cc = "1"
 
 [dev-dependencies]
+cam-disp = { path = "../cam-disp" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 half = "2.4"
 clap = { version = "4", features = ["derive"] }
@@ -53,6 +54,10 @@ required-features = ["mnn"]
 [[example]]
 name = "bench_parallel"
 required-features = ["mnn"]
+
+[[example]]
+name = "bind_all_v4l2_pipeline_drm"
+required-features = ["rectifier"]
 
 [[example]]
 name = "test_cast_bytes"
