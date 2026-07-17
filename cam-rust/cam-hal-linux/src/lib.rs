@@ -85,14 +85,38 @@ pub fn capture_single_v4l2_frame(
     let mut cam = rscam::Camera::new(device_path)
         .map_err(|e| format!("Failed to open {}: {}", device_path, e))?;
 
-    // Use RGBA format (fourcc "RGBA")
-    let cfg = rscam::Config {
+    // Try raw Bayer formats first, fall back to RGBA
+    let raw_formats: &[&[u8; 4]] = &[b"RG10", b"RG12", b"RG16", b"RGGB", b"BA81"];
+    let mut config = None;
+
+    for fourcc in raw_formats {
+        let cfg = rscam::Config {
+            interval: (30, 1),
+            resolution: (width, height),
+            format: *fourcc,
+            field: 0,
+            nbuffers: 2,
+        };
+        if cam.start(&cfg).is_ok() {
+            let _ = cam.stop();
+            config = Some(cfg);
+            log::info!("V4L2 capture using raw format {:?}", std::str::from_utf8(*fourcc));
+            break;
+        }
+    }
+
+    // Fall back to RGBA
+    let cfg = config.unwrap_or(rscam::Config {
         interval: (30, 1),
         resolution: (width, height),
         format: b"RGBA",
         field: 0,
         nbuffers: 2,
-    };
+    });
+
+    if config.is_none() {
+        log::warn!("V4L2: no raw format supported, falling back to RGBA");
+    }
 
     cam.start(&cfg)
         .map_err(|e| format!("Failed to configure V4L2 {}x{}: {}", width, height, e))?;
