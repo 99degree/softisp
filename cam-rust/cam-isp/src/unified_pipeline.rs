@@ -194,7 +194,9 @@ impl UnifiedPipeline {
     /// Create a new unified pipeline with the given configuration.
     #[allow(unused_variables, dead_code)]
     pub fn new(config: UnifiedConfig) -> crate::error::IspResult<Self> {
-        let engine_name = if config.engine_preference == "cpu" {
+        let engine_name = if config.engine_preference == "auto" {
+            "auto"
+        } else if config.engine_preference == "cpu" {
             "cpu"
         } else {
             "mnn_vulkan"

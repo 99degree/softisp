@@ -232,6 +232,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cam-disp"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "cam-hal"
 version = "0.1.0"
 dependencies = [
