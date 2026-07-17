@@ -74,11 +74,11 @@ pub fn convert_onnx_buffer(onnx_bytes: &[u8]) -> Result<Vec<u8>, String> {
         let err_msg = unsafe { std::ffi::CStr::from_ptr(result.error_msg.as_ptr()) }
             .to_string_lossy()
             .into_owned();
-        let _ = unsafe { MnnConvert_FreeBuffer(&mut result) };
+        unsafe { MnnConvert_FreeBuffer(&mut result) };
         return Err(format!("ONNX→MNN buffer convert failed: {}", err_msg));
     }
     if result.data.is_null() || result.size == 0 {
-        let _ = unsafe { MnnConvert_FreeBuffer(&mut result) };
+        unsafe { MnnConvert_FreeBuffer(&mut result) };
         return Err("ONNX→MNN buffer convert returned empty".into());
     }
 
