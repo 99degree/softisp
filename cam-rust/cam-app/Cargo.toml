@@ -17,6 +17,6 @@ clap = { version = "4", features = ["derive"] }
 [features]
 default = []
 mnn = ["cam-isp/mnn"]
-ort = ["cam-isp/ort"]
+ort = []
 v4l2 = []
 binder = []
