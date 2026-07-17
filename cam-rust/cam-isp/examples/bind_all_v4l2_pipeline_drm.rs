@@ -134,7 +134,7 @@ fn try_v4l2_capture(dev: &str, req_w: u32, req_h: u32) -> Result<(u32, u32, Vec<
         return Err("not a capture device".into());
     }
 
-    // VIDIOC_S_FMT — request UYVY (packed 422, widely supported) or fallback
+    // VIDIOC_S_FMT — try raw Bayer formats first, fall back to UYVY
     #[repr(C)]
     struct V4l2Format {
         typ: u32,
@@ -163,32 +163,83 @@ fn try_v4l2_capture(dev: &str, req_w: u32, req_h: u32) -> Result<(u32, u32, Vec<
         xfer_func: u32,
     }
 
-    let mut fmt: V4l2Format = unsafe { std::mem::zeroed() };
-    fmt.typ = 1; // V4L2_BUF_TYPE_VIDEO_CAPTURE
-    {
-        let pix = unsafe { &mut *(fmt.fmt.raw.as_mut_ptr() as *mut V4l2PixFormat) };
-        pix.width = req_w;
-        pix.height = req_h;
-        pix.pixelformat = 0x59565955; // UYVY
-        pix.field = 1; // V4L2_FIELD_NONE
+    /// Helper: try to set a format via S_FMT. Returns negotiated (w, h, fourcc, bpl, size, field).
+    fn try_set_format(
+        fd: std::os::unix::io::RawFd,
+        fourcc: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<(u32, u32, u32, u32, u32, u32), String> {
+        let mut fmt: V4l2Format = unsafe { std::mem::zeroed() };
+        fmt.typ = 1; // V4L2_BUF_TYPE_VIDEO_CAPTURE
+        {
+            let pix = unsafe { &mut *(fmt.fmt.raw.as_mut_ptr() as *mut V4l2PixFormat) };
+            pix.width = w;
+            pix.height = h;
+            pix.pixelformat = fourcc;
+            pix.field = 1; // V4L2_FIELD_NONE
+        }
+        // VIDIOC_S_FMT = 0xc0cc5605
+        unsafe {
+            ioctl_obj(fd, 0xc0cc5605u64, &mut fmt)?;
+        }
+        unsafe {
+            let pix = *(fmt.fmt.raw.as_ptr() as *const V4l2PixFormat);
+            Ok((
+                pix.width,
+                pix.height,
+                pix.pixelformat,
+                pix.bytesperline,
+                pix.sizeimage,
+                pix.field,
+            ))
+        }
     }
 
-    // VIDIOC_S_FMT = 0xc0cc5605 (type=1, sizeof=204)
-    let sfmt_req = 0xc0cc5605u64;
-    unsafe {
-        ioctl_obj(fd, sfmt_req, &mut fmt).map_err(|e| format!("S_FMT: {e}"))?;
+    // Priority-ordered list of (fourcc, name, bayer_pattern) — raw Bayer first
+    const PREFERRED_FORMATS: &[(u32, &str, &str)] = &[
+        // Raw Bayer SRGGB (most common)
+        (0x30314752, "SRGGB10", "rggb"), // 'RG10'
+        (0x32314752, "SRGGB12", "rggb"), // 'RG12'
+        (0x36314752, "SRGGB16", "rggb"), // 'RG16'
+        (0x42474752, "SRGGB8",  "rggb"), // 'RGGB'
+        // SBGGR
+        (0x30314742, "SBGGR10", "bggr"), // 'BG10'
+        (0x32314742, "SBGGR12", "bggr"), // 'BG12'
+        (0x36314742, "SBGGR16", "bggr"), // 'BG16'
+        (0x38314142, "SBGGR8",  "bggr"), // 'BA81'
+        // Packed YUV fallback
+        (0x59565955, "UYVY",    "uyvy"), // 'UYVY'
+        (0x56595559, "YUYV",    "yuyv"), // 'YUYV'
+    ];
+
+    let mut actual_w = req_w;
+    let mut actual_h = req_h;
+    let mut pixfmt = 0u32;
+    let mut bytesperline = 0u32;
+    let mut sizeimage = 0u32;
+    let mut _format_name = "none";
+
+    for &(fourcc, name, _pat) in PREFERRED_FORMATS {
+        match try_set_format(fd, fourcc, actual_w, actual_h) {
+            Ok((w, h, fmt, bpl, size, _field)) => {
+                actual_w = w;
+                actual_h = h;
+                pixfmt = fmt;
+                bytesperline = bpl;
+                sizeimage = size;
+                _format_name = name;
+                println!("    ✓ using {name} {actual_w}x{actual_h}");
+                break;
+            }
+            Err(_) => { /* try next */ }
+        }
     }
 
-    let (actual_w, actual_h, pixfmt, bytesperline, sizeimage) = unsafe {
-        let pix = *(fmt.fmt.raw.as_ptr() as *const V4l2PixFormat);
-        (
-            pix.width,
-            pix.height,
-            pix.pixelformat,
-            pix.bytesperline,
-            pix.sizeimage,
-        )
-    };
+    if pixfmt == 0 {
+        return Err("no supported capture format (tried raw Bayer + UYVY)".into());
+    }
+
     println!(
         "    format: {actual_w}x{actual_h} fourcc=0x{pixfmt:08x} bpl={bytesperline} size={sizeimage}"
     );
@@ -367,14 +418,23 @@ fn try_v4l2_capture(dev: &str, req_w: u32, req_h: u32) -> Result<(u32, u32, Vec<
         libc::munmap(mmapped, buf_len as usize);
     }
 
-    // Convert to Bayer u16 LE
+    // Convert raw format to Bayer u16 LE (always 2 bytes per pixel, 10→16 bit scaled).
     let bayer = match pixfmt {
+        // Raw Bayer 8-bit: promote to u16
+        0x42474752 | 0x38314142 => rggb_to_bayer_u16(&captured, actual_w, actual_h), // RGGB8 / BA81
+        // Raw Bayer 16-bit: direct copy
+        0x36314752 | 0x36314742 => raw16_to_bayer_u16(&captured, actual_w, actual_h),
+        // Raw Bayer 10-bit unpacked → u16 (shift-left 6)
+        0x30314752 | 0x30314742 => raw10_to_bayer_u16(&captured, actual_w, actual_h),
+        // Raw Bayer 12-bit unpacked → u16 (shift-left 4)
+        0x32314752 | 0x32314742 => raw12_to_bayer_u16(&captured, actual_w, actual_h),
+        // Packed YUV fallback
         0x59565955 => uyvy_to_bayer_u16(&captured, actual_w, actual_h), // UYVY
         0x56595559 => yuyv_to_bayer_u16(&captured, actual_w, actual_h), // YUYV
-        0x52474230 => rggb_to_bayer_u16(&captured, actual_w, actual_h), // RGGB8
+        0x52474230 => rggb_to_bayer_u16(&captured, actual_w, actual_h), // RGGB8 (alt)
         0x32305652 => vr20_to_bayer_u16(&captured, actual_w, actual_h), // VR20 (Android)
         _ => {
-            // Generic: treat raw bytes as grayscale → bayer u16
+            // Generic: treat as 1-byte grayscale → bayer u16
             generic_to_bayer_u16(&captured, actual_w, actual_h)
         }
     };
@@ -482,6 +542,49 @@ fn vr20_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
         let sample = (y_val as u16) * 64;
         out[i * 2] = (sample & 0xFF) as u8;
         out[i * 2 + 1] = ((sample >> 8) & 0xFF) as u8;
+    }
+    out
+}
+
+/// Raw 10-bit unpacked Bayer → 16-bit LE (shift left 6, scale 0-1023 → 0-65535).
+fn raw10_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let pixels = (w * h) as usize;
+    let mut out = vec![0u8; pixels * 2];
+    for i in 0..pixels {
+        let b0 = if i * 2 < data.len() { data[i * 2] } else { 0 };
+        let b1 = if i * 2 + 1 < data.len() { data[i * 2 + 1] } else { 0 };
+        let raw10 = ((b1 as u16) << 8) | (b0 as u16);
+        let sample = raw10 << 6; // 10-bit → 16-bit
+        out[i * 2] = (sample & 0xFF) as u8;
+        out[i * 2 + 1] = ((sample >> 8) & 0xFF) as u8;
+    }
+    out
+}
+
+/// Raw 12-bit unpacked Bayer → 16-bit LE (shift left 4, scale 0-4095 → 0-65535).
+fn raw12_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let pixels = (w * h) as usize;
+    let mut out = vec![0u8; pixels * 2];
+    for i in 0..pixels {
+        let b0 = if i * 2 < data.len() { data[i * 2] } else { 0 };
+        let b1 = if i * 2 + 1 < data.len() { data[i * 2 + 1] } else { 0 };
+        let raw12 = ((b1 as u16) << 8) | (b0 as u16);
+        let sample = raw12 << 4; // 12-bit → 16-bit
+        out[i * 2] = (sample & 0xFF) as u8;
+        out[i * 2 + 1] = ((sample >> 8) & 0xFF) as u8;
+    }
+    out
+}
+
+/// Raw 16-bit Bayer → 16-bit LE pass-through.
+fn raw16_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let pixels = (w * h) as usize;
+    let mut out = vec![0u8; pixels * 2];
+    for i in 0..pixels {
+        let b0 = if i * 2 < data.len() { data[i * 2] } else { 0 };
+        let b1 = if i * 2 + 1 < data.len() { data[i * 2 + 1] } else { 0 };
+        out[i * 2] = b0;
+        out[i * 2 + 1] = b1;
     }
     out
 }
