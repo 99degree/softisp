@@ -21,7 +21,7 @@ fn main() {
         GraphComposer::wire_blocks(&mut blocks);
         let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> =
             blocks.iter().map(|b| b.as_ref()).collect();
-        let onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
+        let _onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
         let mut block_vec = blocks;
         let head = block_vec.remove(0);
         let aux = block_vec;
