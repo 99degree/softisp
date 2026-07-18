@@ -293,6 +293,15 @@ int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelI
 // ── Benchmark with GPU synchronization ─────────────────────────────────
 
 /**
+ * Query the actual forward type a session is using (post-fallback).
+ * Returns MNNForwardType: 0=CPU, 7=Vulkan, etc.
+ */
+int mnn_get_actual_backend(
+    MnnInterpreter interpreter,
+    MnnSession session
+);
+
+/**
  * Benchmark a session with proper GPU synchronization.
  * Uses map/unmap on input+output tensors to force GPU→CPU sync,
  * giving accurate end-to-end latency (not async-fire-and-forget).
