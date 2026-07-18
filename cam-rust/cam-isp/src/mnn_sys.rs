@@ -194,6 +194,12 @@ extern "C" {
         max_costs: c_int,
     ) -> c_int;
 
+    /// Query the actual forward type a session is using (post-fallback).
+    pub fn mnn_get_actual_backend(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+    ) -> c_int;
+
     // Retrieve per‑node profiling info (requires session built with profiling enabled).
     // extern declaration removed; stub provided below
 }
@@ -373,6 +379,12 @@ impl MnnSessionSafe {
         } else {
             Err("Session run failed".to_string())
         }
+    }
+
+    /// Query the actual forward type this session is using.
+    /// Returns MNNForwardType: 0=CPU, 7=Vulkan, etc.
+    pub fn get_actual_backend(&self) -> i32 {
+        unsafe { mnn_get_actual_backend(self.interpreter, self.inner) }
     }
 
     /// Benchmark with GPU synchronization (accurate timing).

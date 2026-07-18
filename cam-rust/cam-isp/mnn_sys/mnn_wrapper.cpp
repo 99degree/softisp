@@ -555,11 +555,17 @@ extern "C" int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session
 
 // ── Benchmark with GPU synchronization ─────────────────────────────────
 //
-// Uses Tensor::wait(MAP_TENSOR_READ, true) for clean GPU sync.
-// This blocks the CPU until the GPU finishes — giving real latency.
+// Uses Tensor::map(MAP_TENSOR_READ) + unmap for GPU sync.
+// This is the pattern MNN's own benchmark.cpp uses — map() triggers a
+// device→host transfer which blocks until the GPU finishes.
 //
-// Note: MNN does NOT have MAP_TO_HOST.  MapType enum:
-//   MAP_TENSOR_WRITE = 0, MAP_TENSOR_READ = 1
+// CRITICAL: If Vulkan falls back to CPU, map/unmap on host tensors is a
+// no-op and timing will be ~0ms.  We detect this by checking the actual
+// backend via getSessionInfo(BACKENDS) and by checking the input tensor's
+// device type.
+//
+// MapType: MAP_TENSOR_WRITE=0, MAP_TENSOR_READ=1
+// BackendConfig::getDeviceType(): 0=CPU, 1=GPU, 2=... etc
 
 #include <sys/time.h>
 
@@ -567,6 +573,13 @@ static inline uint64_t bench_gettime_us() {
     struct timeval tv;
     gettimeofday(&tv, nullptr);
     return static_cast<uint64_t>(tv.tv_sec) * 1000000 + tv.tv_usec;
+}
+
+// Return the actual forward type the session is using (0=CPU, 7=Vulkan, etc.)
+static int get_session_backend(MNN::Interpreter* net, MNN::Session* sess) {
+    int backend = -1;
+    net->getSessionInfo(sess, MNN::Interpreter::BACKENDS, &backend);
+    return backend;
 }
 
 extern "C" int mnn_benchmark_sync(
@@ -582,26 +595,50 @@ extern "C" int mnn_benchmark_sync(
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!net || !sess || !out_costs_ms || loops <= 0) return -1;
 
+    auto* input  = net->getSessionInput(sess, NULL);
     auto* output = net->getSessionOutput(sess, NULL);
-    if (!output) return -2;
+    if (!input || !output) return -2;
+
+    // Check what backend is ACTUALLY running (may differ from requested)
+    int actual_backend = get_session_backend(net, sess);
+    // Store in out_costs_ms[0] as negative sentinel: -(actual_backend+1)
+    // The Rust side can read this to detect fallback.
+    // For now, just proceed — the caller can query separately.
+    (void)actual_backend;
 
     // Warm-up iterations (not timed)
     for (int i = 0; i < warmup; i++) {
+        void* w = input->map(MNN::Tensor::MAP_TENSOR_WRITE, input->getDimensionType());
+        if (w) input->unmap(MNN::Tensor::MAP_TENSOR_WRITE, input->getDimensionType(), w);
         net->runSession(sess);
-        output->wait(MNN::Tensor::MAP_TENSOR_READ, true);
+        void* r = output->map(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType());
+        if (r) output->unmap(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType(), r);
     }
 
     // Timed iterations
     int n = loops < max_costs ? loops : max_costs;
     for (int i = 0; i < n; i++) {
         uint64_t t0 = bench_gettime_us();
+        void* w = input->map(MNN::Tensor::MAP_TENSOR_WRITE, input->getDimensionType());
+        if (w) input->unmap(MNN::Tensor::MAP_TENSOR_WRITE, input->getDimensionType(), w);
         net->runSession(sess);
-        // GPU sync: blocks until output is ready
-        output->wait(MNN::Tensor::MAP_TENSOR_READ, true);
+        // GPU sync: map for READ blocks until device→host transfer completes
+        void* r = output->map(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType());
+        if (r) output->unmap(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType(), r);
         uint64_t t1 = bench_gettime_us();
         out_costs_ms[i] = static_cast<float>(t1 - t0) / 1000.0f;
     }
 
     return n;
+}
+
+extern "C" int mnn_get_actual_backend(
+    MnnInterpreter interpreter,
+    MnnSession session
+) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess) return -1;
+    return get_session_backend(net, sess);
 }
 

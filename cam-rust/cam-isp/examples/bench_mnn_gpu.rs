@@ -13,6 +13,17 @@
 use std::env;
 use std::time::Instant;
 
+/// Map MNNForwardType int to a name.
+fn forward_type_name(code: i32) -> &'static str {
+    match code {
+        0 => "CPU",
+        1 => "OpenCL",
+        3 => "Metal",
+        7 => "Vulkan",
+        _ => "Other",
+    }
+}
+
 fn main() {
     let _ = env_logger::builder()
         .is_test(false)
@@ -69,6 +80,15 @@ fn main() {
     // Resize
     session.resize().expect("Session resize failed");
     eprintln!("  session resized");
+
+    // Query actual backend (may differ from requested due to fallback)
+    let actual_backend = session.get_actual_backend();
+    let actual_name = forward_type_name(actual_backend);
+    eprintln!("  actual backend: {actual_name} ({actual_backend})");
+    if actual_backend != 7 {
+        eprintln!("  NOTE: Vulkan not available, running on {actual_name}");
+        eprintln!("  (GPU sync via map/unmap is only meaningful on Vulkan/OpenCL/Metal)");
+    }
 
     // Run benchmark
     eprintln!("\nRunning {loops} iterations ({warmup} warmup)...\n");
