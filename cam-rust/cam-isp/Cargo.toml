@@ -60,6 +60,10 @@ name = "bind_all_v4l2_pipeline_drm"
 required-features = ["rectifier"]
 
 [[example]]
+name = "bench_mnn_gpu"
+required-features = ["mnn"]
+
+[[example]]
 name = "test_cast_bytes"
 required-features = ["mnn"]
 

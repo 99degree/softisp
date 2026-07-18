@@ -553,3 +553,62 @@ extern "C" int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session
     }
 }
 
+// ── Benchmark with GPU synchronization ─────────────────────────────────
+//
+// Mirrors MNN's benchmark.cpp doBench() pattern:
+//   1. Warm-up iterations (not timed) — input→unmap→run→output map→unmap
+//   2. Timed iterations — same pattern, each iteration timed individually
+//   3. Output map() is a GPU sync point: it blocks until the GPU finishes
+//      the last queued command, giving real end-to-end latency.
+
+#include <sys/time.h>
+
+static inline uint64_t bench_gettime_us() {
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    return static_cast<uint64_t>(tv.tv_sec) * 1000000 + tv.tv_usec;
+}
+
+extern "C" int mnn_benchmark_sync(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    int warmup,
+    int loops,
+    int precision,
+    float* out_costs_ms,
+    int max_costs
+) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !out_costs_ms || loops <= 0) return -1;
+
+    auto* input  = net->getSessionInput(sess, NULL);
+    auto* output = net->getSessionOutput(sess, NULL);
+    if (!input || !output) return -2;
+
+    // Warm-up: fill input, run, sync output — not timed
+    for (int i = 0; i < warmup; i++) {
+        void* host = input->map(MNN::Tensor::MAP_TENSOR_WRITE, input->getDimensionType());
+        if (host) input->unmap(MNN::Tensor::MAP_TENSOR_WRITE, input->getDimensionType(), host);
+        net->runSession(sess);
+        host = output->map(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType());
+        if (host) output->unmap(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType(), host);
+    }
+
+    // Timed iterations
+    int n = loops < max_costs ? loops : max_costs;
+    for (int i = 0; i < n; i++) {
+        uint64_t t0 = bench_gettime_us();
+        void* host = input->map(MNN::Tensor::MAP_TENSOR_WRITE, input->getDimensionType());
+        if (host) input->unmap(MNN::Tensor::MAP_TENSOR_WRITE, input->getDimensionType(), host);
+        net->runSession(sess);
+        // map(MAP_TENSOR_READ) is the GPU sync point — blocks until GPU finishes
+        host = output->map(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType());
+        if (host) output->unmap(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType(), host);
+        uint64_t t1 = bench_gettime_us();
+        out_costs_ms[i] = static_cast<float>(t1 - t0) / 1000.0f;
+    }
+
+    return n;
+}
+
