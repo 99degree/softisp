@@ -1061,6 +1061,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_unified_pipeline_with_gpu_warp() {
         if is_ci() {
             eprintln!("Skipping on CI — requires Vulkan/GPU");
@@ -1146,7 +1147,13 @@ mod tests {
 
     /// FPS benchmark: 4K bayer → FHD ARGB8888, 10 warmup + 20 measured frames.
     #[test]
+    #[ignore]
     fn bench_4k_fhd_argb8888_fps() {
+        // Benchmark: needs full pipeline (MNN for HEAVY profile) + runs 30 frames.
+        if !cfg!(feature = "mnn") {
+            eprintln!("Skipping — requires `mnn` feature for HEAVY profile");
+            return;
+        }
         crate::init();
         let config = UnifiedConfig {
             profile: PipelineProfile::HEAVY,

@@ -290,6 +290,33 @@ typedef enum {
  */
 int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelInfo info_code, void* out);
 
+// ── Benchmark with GPU synchronization ─────────────────────────────────
+
+/**
+ * Benchmark a session with proper GPU synchronization.
+ * Uses map/unmap on input+output tensors to force GPU→CPU sync,
+ * giving accurate end-to-end latency (not async-fire-and-forget).
+ *
+ * @param interpreter  Handle.
+ * @param session      Handle.
+ * @param warmup       Number of warm-up iterations (not timed).
+ * @param loops        Number of timed iterations.
+ * @param precision    BackendConfig::PrecisionMode (0=high, 1=normal, 2=low).
+ * @param out_costs_ms Output buffer for per-iteration costs in milliseconds.
+ *                     Must hold at least `loops` floats.
+ * @param max_costs    Capacity of out_costs_ms.
+ * @return Actual number of cost values written, or -1 on error.
+ */
+int mnn_benchmark_sync(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    int warmup,
+    int loops,
+    int precision,
+    float* out_costs_ms,
+    int max_costs
+);
+
 #ifdef __cplusplus
 }
 #endif
