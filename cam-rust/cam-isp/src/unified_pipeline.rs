@@ -1066,6 +1066,10 @@ mod tests {
             eprintln!("Skipping on CI — requires Vulkan/GPU");
             return;
         }
+        if !cfg!(feature = "mnn") {
+            eprintln!("Skipping — requires `mnn` feature for GpuWarpEngine");
+            return;
+        }
         crate::init();
         let config = UnifiedConfig::hd().with_gpu_warp();
         let pipeline = UnifiedPipeline::new(config);
