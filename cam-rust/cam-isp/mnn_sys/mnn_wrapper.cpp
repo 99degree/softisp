@@ -17,6 +17,25 @@
 #include <cstdint>
 #include <MNN/MNNForwardType.h>
 #include <cstring>
+#include <dlfcn.h>
+#include <mutex>
+
+// ── Vulkan plugin loader ───────────────────────────────────────────────
+// MNN_SEP_BUILD compiles backends as separate .so files. Each backend has
+// a static initializer (gResistor) that calls MNNInsertExtraRuntimeCreator(),
+// but this only fires when the .so is dlopen'd into the process. libMNN.so
+// does NOT auto-dlopen backend plugins — the caller must do it.
+static std::once_flag g_vulkan_load_flag;
+static void ensure_vulkan_loaded() {
+    std::call_once(g_vulkan_load_flag, []() {
+        void* h = dlopen("libMNN_Vulkan.so", RTLD_NOW | RTLD_LOCAL);
+        if (!h) {
+            MNN_PRINT("[mnn_wrapper] dlopen(libMNN_Vulkan.so) failed: %s\n", dlerror());
+        } else {
+            MNN_PRINT("[mnn_wrapper] libMNN_Vulkan.so loaded OK\n");
+        }
+    });
+}
 
 // ── Interpreter ──────────────────────────────────────────────────────────
 
@@ -43,6 +62,11 @@ void mnn_interpreter_destroy(MnnInterpreter interpreter) {
 MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend, int num_threads) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     if (!net) return nullptr;
+
+    // Ensure Vulkan backend plugin is loaded (MNN_SEP_BUILD requires dlopen)
+    if (backend == MNN_BACKEND_VULKAN) {
+        ensure_vulkan_loaded();
+    }
 
     MNN::ScheduleConfig config;
     config.numThread = num_threads;
