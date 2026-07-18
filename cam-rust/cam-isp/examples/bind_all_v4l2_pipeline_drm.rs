@@ -202,15 +202,15 @@ fn try_v4l2_capture(dev: &str, req_w: u32, req_h: u32) -> Result<(u32, u32, Vec<
         (0x30314752, "SRGGB10", "rggb"), // 'RG10'
         (0x32314752, "SRGGB12", "rggb"), // 'RG12'
         (0x36314752, "SRGGB16", "rggb"), // 'RG16'
-        (0x42474752, "SRGGB8",  "rggb"), // 'RGGB'
+        (0x42474752, "SRGGB8", "rggb"),  // 'RGGB'
         // SBGGR
         (0x30314742, "SBGGR10", "bggr"), // 'BG10'
         (0x32314742, "SBGGR12", "bggr"), // 'BG12'
         (0x36314742, "SBGGR16", "bggr"), // 'BG16'
-        (0x38314142, "SBGGR8",  "bggr"), // 'BA81'
+        (0x38314142, "SBGGR8", "bggr"),  // 'BA81'
         // Packed YUV fallback
-        (0x59565955, "UYVY",    "uyvy"), // 'UYVY'
-        (0x56595559, "YUYV",    "yuyv"), // 'YUYV'
+        (0x59565955, "UYVY", "uyvy"), // 'UYVY'
+        (0x56595559, "YUYV", "yuyv"), // 'YUYV'
     ];
 
     let mut actual_w = req_w;
@@ -552,7 +552,11 @@ fn raw10_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
     let mut out = vec![0u8; pixels * 2];
     for i in 0..pixels {
         let b0 = if i * 2 < data.len() { data[i * 2] } else { 0 };
-        let b1 = if i * 2 + 1 < data.len() { data[i * 2 + 1] } else { 0 };
+        let b1 = if i * 2 + 1 < data.len() {
+            data[i * 2 + 1]
+        } else {
+            0
+        };
         let raw10 = ((b1 as u16) << 8) | (b0 as u16);
         let sample = raw10 << 6; // 10-bit → 16-bit
         out[i * 2] = (sample & 0xFF) as u8;
@@ -567,7 +571,11 @@ fn raw12_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
     let mut out = vec![0u8; pixels * 2];
     for i in 0..pixels {
         let b0 = if i * 2 < data.len() { data[i * 2] } else { 0 };
-        let b1 = if i * 2 + 1 < data.len() { data[i * 2 + 1] } else { 0 };
+        let b1 = if i * 2 + 1 < data.len() {
+            data[i * 2 + 1]
+        } else {
+            0
+        };
         let raw12 = ((b1 as u16) << 8) | (b0 as u16);
         let sample = raw12 << 4; // 12-bit → 16-bit
         out[i * 2] = (sample & 0xFF) as u8;
@@ -582,7 +590,11 @@ fn raw16_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
     let mut out = vec![0u8; pixels * 2];
     for i in 0..pixels {
         let b0 = if i * 2 < data.len() { data[i * 2] } else { 0 };
-        let b1 = if i * 2 + 1 < data.len() { data[i * 2 + 1] } else { 0 };
+        let b1 = if i * 2 + 1 < data.len() {
+            data[i * 2 + 1]
+        } else {
+            0
+        };
         out[i * 2] = b0;
         out[i * 2 + 1] = b1;
     }
