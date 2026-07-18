@@ -100,7 +100,10 @@ pub fn capture_single_v4l2_frame(
         if cam.start(&cfg).is_ok() {
             let _ = cam.stop();
             config = Some(cfg);
-            log::info!("V4L2 capture using raw format {:?}", std::str::from_utf8(*fourcc));
+            log::info!(
+                "V4L2 capture using raw format {:?}",
+                std::str::from_utf8(*fourcc)
+            );
             break;
         }
     }
