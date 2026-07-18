@@ -181,6 +181,19 @@ extern "C" {
 
     /// Get expected input tensor element count.
     pub fn mnn_get_model_input_elements(interpreter: *mut c_void, session: *mut c_void) -> c_int;
+
+    /// Benchmark with GPU synchronization.
+    /// Uses tensor map/unmap to force GPU→CPU sync for accurate timing.
+    pub fn mnn_benchmark_sync(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        warmup: c_int,
+        loops: c_int,
+        precision: c_int,
+        out_costs_ms: *mut c_float,
+        max_costs: c_int,
+    ) -> c_int;
+
     // Retrieve per‑node profiling info (requires session built with profiling enabled).
     // extern declaration removed; stub provided below
 }
@@ -360,6 +373,44 @@ impl MnnSessionSafe {
         } else {
             Err("Session run failed".to_string())
         }
+    }
+
+    /// Benchmark with GPU synchronization (accurate timing).
+    ///
+    /// Uses tensor map/unmap to force GPU→CPU sync, giving real end-to-end
+    /// latency — not the async fire-and-forget illusion.
+    ///
+    /// Returns `(avg_ms, min_ms, max_ms, per_frame_ms)`.
+    pub fn benchmark_sync(
+        &self,
+        warmup: i32,
+        loops: i32,
+        precision: i32,
+    ) -> Result<(f32, f32, f32, Vec<f32>), String> {
+        let cap = loops as usize;
+        let mut costs = vec![0.0f32; cap];
+        let ret = unsafe {
+            mnn_benchmark_sync(
+                self.interpreter,
+                self.inner,
+                warmup,
+                loops,
+                precision,
+                costs.as_mut_ptr(),
+                cap as i32,
+            )
+        };
+        if ret < 0 {
+            return Err(format!("mnn_benchmark_sync failed: {ret}"));
+        }
+        costs.truncate(ret as usize);
+        if costs.is_empty() {
+            return Err("no benchmark iterations completed".into());
+        }
+        let avg = costs.iter().sum::<f32>() / costs.len() as f32;
+        let min = costs.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max = costs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        Ok((avg, min, max, costs))
     }
 
     /// Query model info (memory, FLOPS, etc.) via `MnnModelInfo`.
