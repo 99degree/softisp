@@ -226,9 +226,22 @@ fn try_v4l2_capture(dev: &str, req_w: u32, req_h: u32) -> Result<(u32, u32, Vec<
     let mut sizeimage = 0u32;
     let mut _format_name = "none";
 
+    // Fourcc values we have converters for — used to validate S_FMT negotiation.
+    const KNOWN_FOURCCS: &[u32] = &[
+        0x30314752, 0x32314752, 0x36314752, 0x42474752, // SRGGB 10/12/16/8
+        0x30314742, 0x32314742, 0x36314742, 0x38314142, // SBGGR 10/12/16/8
+        0x30315052, 0x32315052, 0x30315042, 0x32315042, // MIPI packed 10/12
+        0x59565955, 0x56595559, 0x52474230, 0x32305652, // UYVY/YUYV/RGGB8/VR20
+    ];
+
     for &(fourcc, name, _pat) in PREFERRED_FORMATS {
         match try_set_format(fd, fourcc, actual_w, actual_h) {
             Ok((w, h, fmt, bpl, size, _field)) => {
+                // V4L2 S_FMT is a negotiation: driver may silently substitute
+                // a different format.  Only accept if we can decode it.
+                if !KNOWN_FOURCCS.contains(&fmt) {
+                    continue;
+                }
                 actual_w = w;
                 actual_h = h;
                 pixfmt = fmt;
