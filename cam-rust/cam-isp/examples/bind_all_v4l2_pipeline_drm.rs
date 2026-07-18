@@ -196,18 +196,24 @@ fn try_v4l2_capture(dev: &str, req_w: u32, req_h: u32) -> Result<(u32, u32, Vec<
         }
     }
 
-    // Priority-ordered list of (fourcc, name, bayer_pattern) — raw Bayer first
+    // Priority-ordered list of (fourcc, name, bayer_pattern) — raw Bayer first.
+    // Unpacked formats are tried before MIPI-packed; YUV last.
     const PREFERRED_FORMATS: &[(u32, &str, &str)] = &[
-        // Raw Bayer SRGGB (most common)
+        // Raw Bayer SRGGB — unpacked (driver does demux)
         (0x30314752, "SRGGB10", "rggb"), // 'RG10'
         (0x32314752, "SRGGB12", "rggb"), // 'RG12'
         (0x36314752, "SRGGB16", "rggb"), // 'RG16'
         (0x42474752, "SRGGB8", "rggb"),  // 'RGGB'
-        // SBGGR
+        // Raw Bayer SBGGR — unpacked
         (0x30314742, "SBGGR10", "bggr"), // 'BG10'
         (0x32314742, "SBGGR12", "bggr"), // 'BG12'
         (0x36314742, "SBGGR16", "bggr"), // 'BG16'
         (0x38314142, "SBGGR8", "bggr"),  // 'BA81'
+        // MIPI CSI-2 packed raw (5 bytes → 4 px for 10-bit; 6 bytes → 4 px for 12-bit)
+        (0x30315052, "SRGGB10P", "rggb"), // 'RP10' — MIPI packed 10-bit
+        (0x32315052, "SRGGB12P", "rggb"), // 'RP12' — MIPI packed 12-bit
+        (0x30315042, "SBGGR10P", "bggr"), // 'BP10'
+        (0x32315042, "SBGGR12P", "bggr"), // 'BP12'
         // Packed YUV fallback
         (0x59565955, "UYVY", "uyvy"), // 'UYVY'
         (0x56595559, "YUYV", "yuyv"), // 'YUYV'
@@ -406,7 +412,14 @@ fn try_v4l2_capture(dev: &str, req_w: u32, req_h: u32) -> Result<(u32, u32, Vec<
         })?;
     }
 
-    let bytes_used = dqbuf.bytes_used as usize;
+    // Some drivers return 0 for bytes_used; fall back to sizeimage or W*H*2.
+    let bytes_used = if dqbuf.bytes_used > 0 {
+        dqbuf.bytes_used as usize
+    } else if sizeimage > 0 {
+        sizeimage as usize
+    } else {
+        (actual_w * actual_h * 2) as usize
+    };
 
     // Copy captured data
     let captured = unsafe { std::slice::from_raw_parts(mmapped as *const u8, bytes_used).to_vec() };
@@ -421,22 +434,22 @@ fn try_v4l2_capture(dev: &str, req_w: u32, req_h: u32) -> Result<(u32, u32, Vec<
     // Convert raw format to Bayer u16 LE (always 2 bytes per pixel, 10→16 bit scaled).
     let bayer = match pixfmt {
         // Raw Bayer 8-bit: promote to u16
-        0x42474752 | 0x38314142 => rggb_to_bayer_u16(&captured, actual_w, actual_h), // RGGB8 / BA81
+        0x42474752 | 0x38314142 => rggb_to_bayer_u16(&captured, actual_w, actual_h),
         // Raw Bayer 16-bit: direct copy
         0x36314752 | 0x36314742 => raw16_to_bayer_u16(&captured, actual_w, actual_h),
         // Raw Bayer 10-bit unpacked → u16 (shift-left 6)
         0x30314752 | 0x30314742 => raw10_to_bayer_u16(&captured, actual_w, actual_h),
         // Raw Bayer 12-bit unpacked → u16 (shift-left 4)
         0x32314752 | 0x32314742 => raw12_to_bayer_u16(&captured, actual_w, actual_h),
+        // MIPI CSI-2 packed: 4 pixels packed into 5 bytes (10-bit) or 6 bytes (12-bit)
+        0x30315052 | 0x30315042 => mipi_raw10_to_bayer_u16(&captured, actual_w, actual_h),
+        0x32315052 | 0x32315042 => mipi_raw12_to_bayer_u16(&captured, actual_w, actual_h),
         // Packed YUV fallback
-        0x59565955 => uyvy_to_bayer_u16(&captured, actual_w, actual_h), // UYVY
-        0x56595559 => yuyv_to_bayer_u16(&captured, actual_w, actual_h), // YUYV
-        0x52474230 => rggb_to_bayer_u16(&captured, actual_w, actual_h), // RGGB8 (alt)
-        0x32305652 => vr20_to_bayer_u16(&captured, actual_w, actual_h), // VR20 (Android)
-        _ => {
-            // Generic: treat as 1-byte grayscale → bayer u16
-            generic_to_bayer_u16(&captured, actual_w, actual_h)
-        }
+        0x59565955 => uyvy_to_bayer_u16(&captured, actual_w, actual_h),
+        0x56595559 => yuyv_to_bayer_u16(&captured, actual_w, actual_h),
+        0x52474230 => rggb_to_bayer_u16(&captured, actual_w, actual_h),
+        0x32305652 => vr20_to_bayer_u16(&captured, actual_w, actual_h),
+        _ => generic_to_bayer_u16(&captured, actual_w, actual_h),
     };
 
     Ok((actual_w, actual_h, bayer))
@@ -597,6 +610,83 @@ fn raw16_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
         };
         out[i * 2] = b0;
         out[i * 2 + 1] = b1;
+    }
+    out
+}
+
+/// MIPI CSI-2 packed raw10: 4 pixels in 5 bytes.
+/// Byte layout: [p0_low p1_low p2_low p3_low (p0_hi<<6|p1_hi<<4|p2_hi<<2|p3_hi)]
+/// Each pixel: 8 low bits + 2 high bits from the 5th byte.
+fn mipi_raw10_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let pixels = (w * h) as usize;
+    let mut out = vec![0u8; pixels * 2];
+    let groups = pixels / 4;
+    for g in 0..groups {
+        let src = g * 5;
+        if src + 5 > data.len() {
+            break;
+        }
+        let hi = data[src + 4];
+        for j in 0..4u32 {
+            let px = g * 4 + j as usize;
+            let lo = data[src + j as usize];
+            let val10: u16 = (lo as u16) | (((hi >> (j * 2)) & 0x03) as u16) << 8;
+            let sample = val10 << 6; // 10-bit → 16-bit
+            out[px * 2] = (sample & 0xFF) as u8;
+            out[px * 2 + 1] = ((sample >> 8) & 0xFF) as u8;
+        }
+    }
+    // Handle trailing pixels (< 4 remaining)
+    let done = groups * 4;
+    for px in done..pixels {
+        let src = groups * 5 + (px - done);
+        let val = if src < data.len() {
+            data[src] as u16
+        } else {
+            0
+        };
+        let sample = val << 8;
+        out[px * 2] = (sample & 0xFF) as u8;
+        out[px * 2 + 1] = ((sample >> 8) & 0xFF) as u8;
+    }
+    out
+}
+
+/// MIPI CSI-2 packed raw12: 4 pixels in 6 bytes.
+/// Byte layout: [p0_lo p1_lo p2_lo p3_lo (p0_hi<<4|p1_hi) (p2_hi<<4|p3_hi)]
+/// Each pixel: 8 low bits + 4 high bits.
+fn mipi_raw12_to_bayer_u16(data: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let pixels = (w * h) as usize;
+    let mut out = vec![0u8; pixels * 2];
+    let groups = pixels / 4;
+    for g in 0..groups {
+        let src = g * 6;
+        if src + 6 > data.len() {
+            break;
+        }
+        let hi01 = data[src + 4];
+        let hi23 = data[src + 5];
+        let highs = [hi01 >> 4, hi01 & 0x0F, hi23 >> 4, hi23 & 0x0F];
+        for j in 0..4u32 {
+            let px = g * 4 + j as usize;
+            let lo = data[src + j as usize];
+            let val12: u16 = (lo as u16) | (highs[j as usize] as u16) << 8;
+            let sample = val12 << 4; // 12-bit → 16-bit
+            out[px * 2] = (sample & 0xFF) as u8;
+            out[px * 2 + 1] = ((sample >> 8) & 0xFF) as u8;
+        }
+    }
+    let done = groups * 4;
+    for px in done..pixels {
+        let src = groups * 6 + (px - done);
+        let val = if src < data.len() {
+            data[src] as u16
+        } else {
+            0
+        };
+        let sample = val << 8;
+        out[px * 2] = (sample & 0xFF) as u8;
+        out[px * 2 + 1] = ((sample >> 8) & 0xFF) as u8;
     }
     out
 }
