@@ -195,10 +195,7 @@ extern "C" {
     ) -> c_int;
 
     /// Query the actual forward type a session is using (post-fallback).
-    pub fn mnn_get_actual_backend(
-        interpreter: *mut c_void,
-        session: *mut c_void,
-    ) -> c_int;
+    pub fn mnn_get_actual_backend(interpreter: *mut c_void, session: *mut c_void) -> c_int;
 
     // Retrieve per‑node profiling info (requires session built with profiling enabled).
     // extern declaration removed; stub provided below

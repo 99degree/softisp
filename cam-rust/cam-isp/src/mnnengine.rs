@@ -671,11 +671,7 @@ impl MnnEngine {
 
         /// Write a single f32 value into a named tensor (4 bytes).
         /// No-op if the tensor is missing or too small.
-        fn write_f32(
-            pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
-            name: &str,
-            val: f32,
-        ) {
+        fn write_f32(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, val: f32) {
             if let Some(t) = find(pool, name) {
                 if let Some(bytes) = t.as_bytes_mut() {
                     if bytes.len() >= 4 {
@@ -778,7 +774,11 @@ impl MnnEngine {
         write_f32(pool, "NormalizeBlock/max_val", 65535.0);
         // GammaBlock — inv_gamma, min, max, lift, norm
         if let Some(isp) = isp_params {
-            let inv_gamma = if isp.tone.gamma > 0.0 { 1.0 / isp.tone.gamma } else { 1.0 };
+            let inv_gamma = if isp.tone.gamma > 0.0 {
+                1.0 / isp.tone.gamma
+            } else {
+                1.0
+            };
             write_f32(pool, "Gamma/inv_gamma", inv_gamma);
             write_f32(pool, "Gamma/min", isp.tone.black_crush);
             write_f32(pool, "Gamma/max", isp.tone.white_clip);
@@ -811,7 +811,10 @@ impl MnnEngine {
             // FcsBlock/bias [3] — per-channel bias
             write_f32_array(pool, "FcsBlock/bias", &[isp.tone.brightness; 3]);
             // NormalizeBlock/max_val [1] — from sensor_max or blc
-            let max_val = isp_params.as_ref().map(|p| p.blc.r * 2.0).unwrap_or(65535.0);
+            let max_val = isp_params
+                .as_ref()
+                .map(|p| p.blc.r * 2.0)
+                .unwrap_or(65535.0);
             write_f32(pool, "NormalizeBlock/max_val", max_val);
         }
     }
@@ -1285,7 +1288,8 @@ impl IspEngine for MnnEngine {
                     ts_vals = Some(ts);
                 }
                 // CoarseHistogramBlock/frame → [1, 16]
-                if let Some(vals) = read_output_f32(&interp, sess, "CoarseHistogramBlock/frame", 16) {
+                if let Some(vals) = read_output_f32(&interp, sess, "CoarseHistogramBlock/frame", 16)
+                {
                     let mut hist = [0.0f32; 16];
                     let n = vals.len().min(16);
                     hist[..n].copy_from_slice(&vals[..n]);
