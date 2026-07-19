@@ -37,7 +37,12 @@ impl FramePipeline {
         let plugin_clone = plugin.clone();
         std::thread::spawn(move || {
             while *run.lock().unwrap_or_else(|e| e.into_inner()) {
-                if let Some(frame) = hist.lock().unwrap_or_else(|e| e.into_inner()).prev_frame().cloned() {
+                if let Some(frame) = hist
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .prev_frame()
+                    .cloned()
+                {
                     let prev = coeffs.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     *coeffs.lock().unwrap_or_else(|e| e.into_inner()) =
                         Some(plugin_clone.extractor().extract(&frame, prev.as_ref()));
@@ -54,12 +59,16 @@ impl FramePipeline {
         std::thread::spawn(move || {
             while *run2.lock().unwrap_or_else(|e| e.into_inner()) {
                 if let Ok(frame) = input_rx.recv() {
-                    hist2.lock().unwrap_or_else(|e| e.into_inner()).push(frame.clone());
-                    let output = if let Some(ref c) = *coeffs2.lock().unwrap_or_else(|e| e.into_inner()) {
-                        plugin_clone2.processor().process(&frame, c)
-                    } else {
-                        frame
-                    };
+                    hist2
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(frame.clone());
+                    let output =
+                        if let Some(ref c) = *coeffs2.lock().unwrap_or_else(|e| e.into_inner()) {
+                            plugin_clone2.processor().process(&frame, c)
+                        } else {
+                            frame
+                        };
                     let _ = output_tx.send(output);
                 }
             }
@@ -96,7 +105,10 @@ impl FramePipeline {
 
     /// Get current coefficients.
     pub fn coefficients(&self) -> Option<FrameCoefficients> {
-        self.coefficients.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.coefficients
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Get history size.
