@@ -1050,7 +1050,7 @@ impl IspEngine for MnnEngine {
 
             let t_start = Instant::now();
 
-            info!(
+            debug!(
                 "pipeline stage=arrive raw={}×{} bayer={}B sensor_max={}",
                 w,
                 h,
@@ -1124,7 +1124,7 @@ impl IspEngine for MnnEngine {
                 p.isp_params.as_ref(),
             );
             let t_tensor_after: std::time::Instant = Instant::now();
-            info!(
+            debug!(
                 "pipeline stage=tensor_assign needs_resize={} elapsed={:?}",
                 needs_resize,
                 t_tensor_after.duration_since(t_tensor_before)
@@ -1165,7 +1165,7 @@ impl IspEngine for MnnEngine {
                     )
                 };
 
-            info!(
+            debug!(
                 "pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
                 buf.len(),
                 if is_packed {
@@ -1202,7 +1202,7 @@ impl IspEngine for MnnEngine {
                 let info_c = crate::mnn_sys::MNN_GetSessionInfoString(sess.as_ptr());
                 if !info_c.is_null() {
                     let info = CStr::from_ptr(info_c).to_string_lossy();
-                    info!("MNN profiling info:\n{}", info);
+                    debug!("MNN profiling info:\n{}", info);
                 }
                 // ------------------------------------------------------------------
             }
@@ -1220,7 +1220,7 @@ impl IspEngine for MnnEngine {
                 )));
             }
 
-            info!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts) prep={:?} infer={:?}",
+            debug!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts) prep={:?} infer={:?}",
                 path, t_infer_elapsed, w, h, n,
                 t_prep_end - t_start, t_infer_elapsed);
 
@@ -1253,65 +1253,50 @@ impl IspEngine for MnnEngine {
                 let mut hist_vals: Option<[f32; 16]> = None;
                 let mut zone_data: Option<ZoneData> = None;
 
+                /// Read a named output tensor and reinterpret bytes as `f32`.
+                /// Returns up to `max_n` floats, or `None` if the tensor is missing.
+                fn read_output_f32(
+                    interp: &crate::mnn_sys::MnnInterpreterSafe,
+                    sess: &crate::mnn_sys::MnnSessionSafe,
+                    name: &str,
+                    max_n: usize,
+                ) -> Option<Vec<f32>> {
+                    let t = interp.get_output(sess, name)?;
+                    let bytes = t.as_bytes()?;
+                    let n_floats = bytes.len() / 4;
+                    let n = n_floats.min(max_n);
+                    let floats: &[f32] = unsafe {
+                        std::slice::from_raw_parts(bytes.as_ptr() as *const f32, n_floats)
+                    };
+                    Some(floats[..n].to_vec())
+                }
+
                 // ChannelMeansBlock/frame → [1, 3] or [3]
-                if let Some(t) = interp.get_output(sess, "ChannelMeansBlock/frame") {
-                    if let Some(bytes) = t.as_bytes() {
-                        let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(
-                                bytes.as_ptr() as *const f32,
-                                bytes.len() / 4,
-                            )
-                        };
-                        if floats.len() >= 3 {
-                            cm_vals = Some([floats[0], floats[1], floats[2]]);
-                        }
+                if let Some(vals) = read_output_f32(&interp, sess, "ChannelMeansBlock/frame", 3) {
+                    if vals.len() >= 3 {
+                        cm_vals = Some([vals[0], vals[1], vals[2]]);
                     }
                 }
                 // ToneStatsBlock/frame → [6]
-                if let Some(t) = interp.get_output(sess, "ToneStatsBlock/frame") {
-                    if let Some(bytes) = t.as_bytes() {
-                        let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(
-                                bytes.as_ptr() as *const f32,
-                                bytes.len() / 4,
-                            )
-                        };
-                        let mut ts = [0.0f32; 6];
-                        let n = floats.len().min(6);
-                        ts[..n].copy_from_slice(&floats[..n]);
-                        ts_vals = Some(ts);
-                    }
+                if let Some(vals) = read_output_f32(&interp, sess, "ToneStatsBlock/frame", 6) {
+                    let mut ts = [0.0f32; 6];
+                    let n = vals.len().min(6);
+                    ts[..n].copy_from_slice(&vals[..n]);
+                    ts_vals = Some(ts);
                 }
                 // CoarseHistogramBlock/frame → [1, 16]
-                if let Some(t) = interp.get_output(sess, "CoarseHistogramBlock/frame") {
-                    if let Some(bytes) = t.as_bytes() {
-                        let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(
-                                bytes.as_ptr() as *const f32,
-                                bytes.len() / 4,
-                            )
-                        };
-                        let mut hist = [0.0f32; 16];
-                        let n = floats.len().min(16);
-                        hist[..n].copy_from_slice(&floats[..n]);
-                        hist_vals = Some(hist);
-                    }
+                if let Some(vals) = read_output_f32(&interp, sess, "CoarseHistogramBlock/frame", 16) {
+                    let mut hist = [0.0f32; 16];
+                    let n = vals.len().min(16);
+                    hist[..n].copy_from_slice(&vals[..n]);
+                    hist_vals = Some(hist);
                 }
-
                 // CalibrationBlock/frame → [24] (quad means, vars, mins, maxs, ranges, frame stats)
-                if let Some(t) = interp.get_output(sess, "CalibrationBlock/frame") {
-                    if let Some(bytes) = t.as_bytes() {
-                        let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(
-                                bytes.as_ptr() as *const f32,
-                                bytes.len() / 4,
-                            )
-                        };
-                        let mut cal = [0.0f32; 24];
-                        let n = floats.len().min(24);
-                        cal[..n].copy_from_slice(&floats[..n]);
-                        calib_vals = Some(cal);
-                    }
+                if let Some(vals) = read_output_f32(&interp, sess, "CalibrationBlock/frame", 24) {
+                    let mut cal = [0.0f32; 24];
+                    let n = vals.len().min(24);
+                    cal[..n].copy_from_slice(&vals[..n]);
+                    calib_vals = Some(cal);
                 }
 
                 // ZoneStatsBlock/frame → [1, 3, rows, cols]
@@ -1411,7 +1396,7 @@ impl IspEngine for MnnEngine {
                 }
             }
 
-            info!("pipeline stage=output_frame {}×{} frame={}B total={:?} prep={:?} resize={:?} infer={:?}",
+            debug!("pipeline stage=output_frame {}×{} frame={}B total={:?} prep={:?} resize={:?} infer={:?}",
                 tw, oh, data_out.len(), t_total_elapsed,
                 t_prep_end - t_start,
                 t_tensor_after - t_tensor_before,
