@@ -166,6 +166,9 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
     int preserve_input_type,
     MnnConvertResult* result)
 {
+    if (result == nullptr) {
+        return;
+    }
     ensure_cleanup_registered();
     result->success = 0;
     result->error_msg[0] = '\0';
@@ -211,6 +214,9 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
     size_t onnx_len,
     MnnConvertBufferResult* result)
 {
+    if (result == nullptr) {
+        return;
+    }
     ensure_cleanup_registered();
     result->success = 0;
     result->error_msg[0] = '\0';
