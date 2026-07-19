@@ -29,16 +29,17 @@ impl FramePipeline {
         // Create a wrapper that owns the plugin
         let plugin = std::sync::Arc::new(plugin);
 
-        // Extraction thread
+        // Extraction thread — recover from poisoned mutexes so one bad frame
+        // doesn't cascade-panic the pipeline.
         let hist = history.clone();
         let coeffs = coefficients.clone();
         let run = running.clone();
         let plugin_clone = plugin.clone();
         std::thread::spawn(move || {
-            while *run.lock().unwrap() {
-                if let Some(frame) = hist.lock().unwrap().prev_frame().cloned() {
-                    let prev = coeffs.lock().unwrap().clone();
-                    *coeffs.lock().unwrap() =
+            while *run.lock().unwrap_or_else(|e| e.into_inner()) {
+                if let Some(frame) = hist.lock().unwrap_or_else(|e| e.into_inner()).prev_frame().cloned() {
+                    let prev = coeffs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    *coeffs.lock().unwrap_or_else(|e| e.into_inner()) =
                         Some(plugin_clone.extractor().extract(&frame, prev.as_ref()));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
@@ -51,10 +52,10 @@ impl FramePipeline {
         let run2 = running.clone();
         let plugin_clone2 = plugin.clone();
         std::thread::spawn(move || {
-            while *run2.lock().unwrap() {
+            while *run2.lock().unwrap_or_else(|e| e.into_inner()) {
                 if let Ok(frame) = input_rx.recv() {
-                    hist2.lock().unwrap().push(frame.clone());
-                    let output = if let Some(ref c) = *coeffs2.lock().unwrap() {
+                    hist2.lock().unwrap_or_else(|e| e.into_inner()).push(frame.clone());
+                    let output = if let Some(ref c) = *coeffs2.lock().unwrap_or_else(|e| e.into_inner()) {
                         plugin_clone2.processor().process(&frame, c)
                     } else {
                         frame
@@ -75,12 +76,12 @@ impl FramePipeline {
 
     /// Start the pipeline.
     pub fn start(&self) {
-        *self.running.lock().unwrap() = true;
+        *self.running.lock().unwrap_or_else(|e| e.into_inner()) = true;
     }
 
     /// Stop the pipeline.
     pub fn stop(&self) {
-        *self.running.lock().unwrap() = false;
+        *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
 
     /// Send a frame for processing.
@@ -95,11 +96,11 @@ impl FramePipeline {
 
     /// Get current coefficients.
     pub fn coefficients(&self) -> Option<FrameCoefficients> {
-        self.coefficients.lock().unwrap().clone()
+        self.coefficients.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Get history size.
     pub fn history_size(&self) -> usize {
-        self.history.lock().unwrap().len()
+        self.history.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
