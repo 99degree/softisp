@@ -13,8 +13,9 @@
 #   cargo build --target aarch64-linux-android \
 #     --config 'target.aarch64-linux-android.linker="aarch64-linux-android24-clang"'
 
-# Termux native build: preload MNN_Express for Android linker namespace compat.
-# libMNNConvertDeps.so transitively depends on libMNN_Express.so,
-# but Android's linker isolation prevents RUNPATH resolution.
+# Termux native build: libMNNConvertDeps.so is self-contained on convert path.
+# The AAR libMNN_Express.so requires libc++_shared.so (NDK r25c) which is NOT
+# vendored in the AAR and is absent from Termux's libc++. Preloading it fails to
+# resolve __emutls_get_address, so we link via LD_LIBRARY_PATH only (no LD_PRELOAD).
 [target.aarch64-linux-android]
-runner = "env LD_PRELOAD=/data/data/com.termux/files/home/softisp/cam-rust/lib/aarch64-v8a/libMNN_Express.so LD_LIBRARY_PATH=/data/data/com.termux/files/home/softisp/cam-rust/lib/aarch64-v8a:/system/lib64:/vendor/lib64"
+runner = "env LD_LIBRARY_PATH=/data/data/com.termux/files/home/softisp/cam-rust/lib/aarch64-v8a:/system/lib64:/vendor/lib64"
