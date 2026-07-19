@@ -10,7 +10,7 @@
 
 use log::info;
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 use crate::mnn_sys::{MnnBackendType, MnnInterpreterSafe, MnnSessionSafe, MnnTensorSafe};
 
@@ -28,7 +28,9 @@ pub(crate) struct SessionSlot {
 #[cfg(feature = "mnn")]
 pub(crate) struct SessionPool {
     /// Queue of available slots (dropped first — sessions before interpreter).
-    pub(crate) slots: Mutex<VecDeque<SessionSlot>>,
+    inner: Mutex<VecDeque<SessionSlot>>,
+    /// Wakes a blocked `acquire()` when a slot is returned.
+    cond: Condvar,
     /// Shared interpreter (owns the model). Dropped last.
     pub(crate) interp: MnnInterpreterSafe,
     /// Cached tensor names used during pool construction.
@@ -93,27 +95,29 @@ impl SessionPool {
         );
         Ok(Self {
             interp,
-            slots: Mutex::new(slots),
+            inner: Mutex::new(slots),
+            cond: Condvar::new(),
             tensor_names,
         })
     }
 
     /// Acquire a slot (blocks until one is free).
     pub(crate) fn acquire(&self) -> SessionGuard<'_> {
-        loop {
-            if let Some(slot) = self.slots.lock().unwrap().pop_front() {
-                return SessionGuard {
-                    pool: self,
-                    slot: Some(slot),
-                };
-            }
-            std::thread::yield_now();
+        let mut slots = self.inner.lock().unwrap();
+        while slots.is_empty() {
+            slots = self.cond.wait(slots).unwrap();
+        }
+        SessionGuard {
+            pool: self,
+            slot: Some(slots.pop_front().unwrap()),
         }
     }
 
     /// Return a slot to the pool.
     fn release(&self, slot: SessionSlot) {
-        self.slots.lock().unwrap().push_back(slot);
+        let mut slots = self.inner.lock().unwrap();
+        slots.push_back(slot);
+        self.cond.notify_one();
     }
 
     /// Return the number of tensor names tracked by this pool.
