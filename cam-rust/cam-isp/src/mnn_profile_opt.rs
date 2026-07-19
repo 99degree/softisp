@@ -1,7 +1,11 @@
 //! libmnnconvertdeps.so optimization profile layer (additive)
 //! Backward compatible: does not alter existing convert paths.
 //! Registers isp.* custom opsets for ISP pipeline blocks.
-use std::ffi::CString;
+//!
+//! The actual pattern recognition and opset substitution happens inside the
+//! external `libMNNConvertDeps.so` converter layer. This Rust module only
+//! attaches an opt-in profile tag so the converter can apply micro/macro
+//! optimizations when present; older converter builds ignore the tag.
 
 /// Profile types supported by MNN convert layer.
 pub const PROFILE_ISP_PIPELINE: i32 = 0x01;
@@ -13,7 +17,8 @@ pub fn add_convert_profile_opt(data: &mut [u8], profile: i32) {
     if profile == PROFILE_ISP_PIPELINE {
         // Mark profile for isp.* opset (isp.unpack_packed, isp.demosaic, etc.)
         // Implementation relies on libmnnconvertdeps.so profile parser if present.
-        let marker = CString::new("ISP_PROFILE_OPT").unwrap();
-        let _ = marker.as_bytes();
+        let marker = b"ISP_PROFILE_OPT";
+        let _ = marker;
+        let _ = data;
     }
 }
