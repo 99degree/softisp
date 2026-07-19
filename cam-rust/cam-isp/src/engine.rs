@@ -363,7 +363,9 @@ impl EngineRegistry {
 ///
 /// Called during `init()` to register available backends.
 pub fn register_engine(factory: EngineFactory) {
-    let mut registry = REGISTRY.lock().expect("Engine registry mutex poisoned - previous thread panicked during init");
+    let mut registry = REGISTRY
+        .lock()
+        .expect("Engine registry mutex poisoned - previous thread panicked during init");
     let name = factory.name;
     let priority = factory.priority;
     registry.insert(factory);
@@ -379,7 +381,9 @@ pub fn register_engine(factory: EngineFactory) {
 ///
 /// Returns ``true`` if an engine was removed.
 pub fn unregister_engine(name: &str) -> bool {
-    let mut registry = REGISTRY.lock().expect("Engine registry mutex poisoned - previous thread panicked during init");
+    let mut registry = REGISTRY
+        .lock()
+        .expect("Engine registry mutex poisoned - previous thread panicked during init");
     let len_before = registry.len();
     registry.remove_by_name(name);
     let removed = registry.len() < len_before;
@@ -393,7 +397,9 @@ pub fn unregister_engine(name: &str) -> bool {
 ///
 /// Returns the highest-priority engine that can be created.
 pub fn select_engine() -> Option<Box<dyn IspEngine>> {
-    let registry = REGISTRY.lock().expect("Engine registry mutex poisoned - previous thread panicked during init");
+    let registry = REGISTRY
+        .lock()
+        .expect("Engine registry mutex poisoned - previous thread panicked during init");
     for factory in registry.all() {
         let engine = (factory.create_fn)();
         info!(
@@ -414,7 +420,9 @@ pub fn select_engine_by_name(name: &str) -> Option<Box<dyn IspEngine>> {
     if name == "auto" {
         return select_engine();
     }
-    let registry = REGISTRY.lock().expect("Engine registry mutex poisoned - previous thread panicked during init");
+    let registry = REGISTRY
+        .lock()
+        .expect("Engine registry mutex poisoned - previous thread panicked during init");
     let lower = name.to_lowercase();
     for factory in registry.all() {
         if factory.name.to_lowercase().contains(&lower) {
