@@ -669,6 +669,42 @@ impl MnnEngine {
             pool.iter().find(|(n, _)| n == name).map(|(_, t)| t)
         }
 
+        /// Write a single f32 value into a named tensor (4 bytes).
+        /// No-op if the tensor is missing or too small.
+        fn write_f32(
+            pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
+            name: &str,
+            val: f32,
+        ) {
+            if let Some(t) = find(pool, name) {
+                if let Some(bytes) = t.as_bytes_mut() {
+                    if bytes.len() >= 4 {
+                        bytes[..4].copy_from_slice(&val.to_ne_bytes());
+                    }
+                }
+            }
+        }
+
+        /// Write a fixed-size f32 slice into a named tensor.
+        /// No-op if the tensor is missing or too small.
+        fn write_f32_array(
+            pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
+            name: &str,
+            vals: &[f32],
+        ) {
+            if let Some(t) = find(pool, name) {
+                if let Some(bytes) = t.as_bytes_mut() {
+                    let byte_count = vals.len() * 4;
+                    if bytes.len() >= byte_count {
+                        let src = unsafe {
+                            std::slice::from_raw_parts(vals.as_ptr() as *const u8, byte_count)
+                        };
+                        bytes[..byte_count].copy_from_slice(src);
+                    }
+                }
+            }
+        }
+
         // DemosaicCcmBlock/w [3,4,1,1] — fused CCM × demosaic weights
         //
         // The demosaic operation extracts 2×2 Bayer quadrants into 3 RGB
@@ -717,397 +753,66 @@ impl MnnEngine {
             }
         }
         // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
-        if let Some(t) = find(pool, "DemosaicCcmBlock/b") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                // When tone is fused in, absorb brightness into bias
-                let bias = [tone.brightness; 3];
-                let src = unsafe { std::slice::from_raw_parts(bias.as_ptr() as *const u8, 12) };
-                if bytes.len() >= 12 {
-                    bytes[..12].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32_array(pool, "DemosaicCcmBlock/b", &[tone.brightness; 3]);
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains
         if let Some(gains) = bayer {
-            if let Some(t) = find(pool, "BayerWbBlock/gains") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src =
-                        unsafe { std::slice::from_raw_parts(gains.as_ptr() as *const u8, 16) };
-                    if bytes.len() >= 16 {
-                        bytes[..16].copy_from_slice(src);
-                    }
-                }
-            }
+            write_f32_array(pool, "BayerWbBlock/gains", gains);
         }
         // ToneBlock/contrast [1]
-        if let Some(t) = find(pool, "ToneBlock/contrast") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe {
-                    std::slice::from_raw_parts((&tone.contrast as *const f32) as *const u8, 4)
-                };
-                if bytes.len() >= 4 {
-                    bytes[..4].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32(pool, "ToneBlock/contrast", tone.contrast);
         // ToneBlock/brightness [1]
-        if let Some(t) = find(pool, "ToneBlock/brightness") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe {
-                    std::slice::from_raw_parts((&tone.brightness as *const f32) as *const u8, 4)
-                };
-                if bytes.len() >= 4 {
-                    bytes[..4].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32(pool, "ToneBlock/brightness", tone.brightness);
         // ToneBlock/gamma_recip [1]
-        if let Some(t) = find(pool, "ToneBlock/gamma_recip") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe {
-                    std::slice::from_raw_parts((&tone.gamma_recip as *const f32) as *const u8, 4)
-                };
-                if bytes.len() >= 4 {
-                    bytes[..4].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32(pool, "ToneBlock/gamma_recip", tone.gamma_recip);
         // SaturationBlock/scale [3] — color saturation strength
-        if let Some(t) = find(pool, "saturation/scale") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let scale_default = [1.0f32, 1.0, 1.0];
-                let src =
-                    unsafe { std::slice::from_raw_parts(scale_default.as_ptr() as *const u8, 12) };
-                if bytes.len() >= 12 {
-                    bytes[..12].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32_array(pool, "saturation/scale", &[1.0f32; 3]);
         // Sharpen/strength [1] — sharpening strength
-        if let Some(t) = find(pool, "Sharpen/strength") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let src =
-                    unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
-                if bytes.len() >= 4 {
-                    bytes[..4].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32(pool, "Sharpen/strength", 1.0);
         // LdciBlock/strength [1] — local contrast strength
-        if let Some(t) = find(pool, "LdciBlock/strength") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let src =
-                    unsafe { std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4) };
-                if bytes.len() >= 4 {
-                    bytes[..4].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32(pool, "LdciBlock/strength", 1.0);
         // FcsBlock/gain [3] — per-channel gain (default: identity)
-        if let Some(t) = find(pool, "FcsBlock/gain") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let gain_default = [1.0f32, 1.0, 1.0];
-                let src =
-                    unsafe { std::slice::from_raw_parts(gain_default.as_ptr() as *const u8, 12) };
-                if bytes.len() >= 12 {
-                    bytes[..12].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32_array(pool, "FcsBlock/gain", &[1.0f32; 3]);
         // FcsBlock/bias [3] — per-channel bias (default: zero)
-        if let Some(t) = find(pool, "FcsBlock/bias") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let bias_default = [0.0f32, 0.0, 0.0];
-                let src =
-                    unsafe { std::slice::from_raw_parts(bias_default.as_ptr() as *const u8, 12) };
-                if bytes.len() >= 12 {
-                    bytes[..12].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32_array(pool, "FcsBlock/bias", &[0.0f32; 3]);
         // NormalizeBlock/max_val [1] — max value for division (default: 65535)
-        if let Some(t) = find(pool, "NormalizeBlock/max_val") {
-            if let Some(bytes) = t.as_bytes_mut() {
-                let src = unsafe {
-                    std::slice::from_raw_parts((&65535.0f32 as *const f32) as *const u8, 4)
-                };
-                if bytes.len() >= 4 {
-                    bytes[..4].copy_from_slice(src);
-                }
-            }
-        }
+        write_f32(pool, "NormalizeBlock/max_val", 65535.0);
         // GammaBlock — inv_gamma, min, max, lift, norm
         if let Some(isp) = isp_params {
-            // inv_gamma [1] — 1/gamma from tone.gamma
-            if let Some(t) = find(pool, "Gamma/inv_gamma") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let inv_gamma = if isp.tone.gamma > 0.0 {
-                        1.0 / isp.tone.gamma
-                    } else {
-                        1.0
-                    };
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&inv_gamma as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // min [1] — black crush from tone.black_crush
-            if let Some(t) = find(pool, "Gamma/min") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            (&isp.tone.black_crush as *const f32) as *const u8,
-                            4,
-                        )
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // max [1] — white clip from tone.white_clip
-            if let Some(t) = find(pool, "Gamma/max") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            (&isp.tone.white_clip as *const f32) as *const u8,
-                            4,
-                        )
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // lift [1] — shadow lift from tone.black_crush (conditional)
-            if let Some(t) = find(pool, "Gamma/lift") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            (&isp.tone.black_crush as *const f32) as *const u8,
-                            4,
-                        )
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // norm [1] — normalization factor
-            if let Some(t) = find(pool, "Gamma/norm") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
+            let inv_gamma = if isp.tone.gamma > 0.0 { 1.0 / isp.tone.gamma } else { 1.0 };
+            write_f32(pool, "Gamma/inv_gamma", inv_gamma);
+            write_f32(pool, "Gamma/min", isp.tone.black_crush);
+            write_f32(pool, "Gamma/max", isp.tone.white_clip);
+            write_f32(pool, "Gamma/lift", isp.tone.black_crush);
+            write_f32(pool, "Gamma/norm", 1.0);
             // AutoContrastBlock — lift, half, contrast_w, zero, one
-            // lift [1] — shadow lift
-            if let Some(t) = find(pool, "AutoContrast/lift") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            (&isp.tone.black_crush as *const f32) as *const u8,
-                            4,
-                        )
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // half [1] — 0.5 constant
-            if let Some(t) = find(pool, "AutoContrast/half") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&0.5f32 as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // contrast_w [1] — contrast factor
-            if let Some(t) = find(pool, "AutoContrast/contrast_w") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            (&isp.tone.contrast as *const f32) as *const u8,
-                            4,
-                        )
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // zero [1] — clip lower bound
-            if let Some(t) = find(pool, "AutoContrast/zero") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&0.0f32 as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // one [1] — clip upper bound
-            if let Some(t) = find(pool, "AutoContrast/one") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
+            write_f32(pool, "AutoContrast/lift", isp.tone.black_crush);
+            write_f32(pool, "AutoContrast/half", 0.5);
+            write_f32(pool, "AutoContrast/contrast_w", isp.tone.contrast);
+            write_f32(pool, "AutoContrast/zero", 0.0);
+            write_f32(pool, "AutoContrast/one", 1.0);
             // DisplayBlock — scale, gamma_exp, zero, one (FloatRgb path)
-            // scale [1] — scale factor
-            if let Some(t) = find(pool, "DisplayBlock/scale") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // gamma_exp [1] — 1/2.4 for sRGB
-            if let Some(t) = find(pool, "DisplayBlock/gamma_exp") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let gamma_exp = 1.0f32 / 2.4;
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&gamma_exp as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // zero [1] — clip lower bound
-            if let Some(t) = find(pool, "DisplayBlock/zero") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&0.0f32 as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
-            // one [1] — clip upper bound
-            if let Some(t) = find(pool, "DisplayBlock/one") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&1.0f32 as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
+            write_f32(pool, "DisplayBlock/scale", 1.0);
+            write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
+            write_f32(pool, "DisplayBlock/zero", 0.0);
+            write_f32(pool, "DisplayBlock/one", 1.0);
             // SaturationBlock/scale [3] — from saturation.factor
-            if let Some(t) = find(pool, "saturation/scale") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let scale = [
-                        isp.saturation.factor,
-                        isp.saturation.factor,
-                        isp.saturation.factor,
-                    ];
-                    let src =
-                        unsafe { std::slice::from_raw_parts(scale.as_ptr() as *const u8, 12) };
-                    if bytes.len() >= 12 {
-                        bytes[..12].copy_from_slice(src);
-                    }
-                }
-            }
+            write_f32_array(pool, "saturation/scale", &[isp.saturation.factor; 3]);
             // Sharpen/strength [1] — from sharpen.amount
-            if let Some(t) = find(pool, "Sharpen/strength") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            (&isp.sharpen.amount as *const f32) as *const u8,
-                            4,
-                        )
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
+            write_f32(pool, "Sharpen/strength", isp.sharpen.amount);
             // LdciBlock/strength [1] — from denoise params (use sharpen radius as proxy)
-            if let Some(t) = find(pool, "LdciBlock/strength") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let strength = isp.sharpen.radius.max(0.1);
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&strength as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
+            write_f32(pool, "LdciBlock/strength", isp.sharpen.radius.max(0.1));
             // FcsBlock/gain [3] — per-channel gain from CCM diagonal
-            if let Some(t) = find(pool, "FcsBlock/gain") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    if let Some(ccm) = ccm {
-                        let gain = [ccm[0], ccm[4], ccm[8]]; // diagonal of CCM
-                        let src =
-                            unsafe { std::slice::from_raw_parts(gain.as_ptr() as *const u8, 12) };
-                        if bytes.len() >= 12 {
-                            bytes[..12].copy_from_slice(src);
-                        }
-                    } else {
-                        let src = unsafe {
-                            std::slice::from_raw_parts(
-                                (&[1.0f32, 1.0, 1.0] as *const f32) as *const u8,
-                                12,
-                            )
-                        };
-                        if bytes.len() >= 12 {
-                            bytes[..12].copy_from_slice(src);
-                        }
-                    }
-                }
-            }
+            let fcs_gain = if let Some(ccm) = ccm {
+                [ccm[0], ccm[4], ccm[8]]
+            } else {
+                [1.0f32; 3]
+            };
+            write_f32_array(pool, "FcsBlock/gain", &fcs_gain);
             // FcsBlock/bias [3] — per-channel bias
-            if let Some(t) = find(pool, "FcsBlock/bias") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let bias = [
-                        isp.tone.brightness,
-                        isp.tone.brightness,
-                        isp.tone.brightness,
-                    ];
-                    let src = unsafe { std::slice::from_raw_parts(bias.as_ptr() as *const u8, 12) };
-                    if bytes.len() >= 12 {
-                        bytes[..12].copy_from_slice(src);
-                    }
-                }
-            }
+            write_f32_array(pool, "FcsBlock/bias", &[isp.tone.brightness; 3]);
             // NormalizeBlock/max_val [1] — from sensor_max or blc
-            if let Some(t) = find(pool, "NormalizeBlock/max_val") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let max_val = isp_params
-                        .as_ref()
-                        .map(|p| p.blc.r * 2.0)
-                        .unwrap_or(65535.0);
-                    let src = unsafe {
-                        std::slice::from_raw_parts((&max_val as *const f32) as *const u8, 4)
-                    };
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(src);
-                    }
-                }
-            }
+            let max_val = isp_params.as_ref().map(|p| p.blc.r * 2.0).unwrap_or(65535.0);
+            write_f32(pool, "NormalizeBlock/max_val", max_val);
         }
     }
 }
