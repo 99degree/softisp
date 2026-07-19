@@ -309,9 +309,14 @@ impl Proto {
     }
 
     /// `onnx.NodeProto`.
-    /// NOTE: MNN's ONNX parser reads op_type from field 4 (output) rather than field 2.
-    /// So we encode: op_type → field 4, inputs → field 1, outputs → field 2.
-    /// See docs/mnn-inference-guide.md for details.
+    /// MNN uses a CUSTOMIZED onnx.proto (see MNN/tools/converter/source/onnx/generated/onnx.pb.h):
+    ///   field 1 = input (repeated string)
+    ///   field 2 = output (repeated string)
+    ///   field 3 = name (string)
+    ///   field 4 = op_type (string)   ← MNN's location, NOT standard field 7
+    ///   field 5 = attribute (repeated AttributeProto)
+    /// Writing op_type to field 7 (standard) causes MNN to see empty op_type →
+    /// "These Op Not Support: ONNX::" and conversion fails.
     pub fn node(op_type: &str, inputs: &[&str], outputs: &[&str], attrs: &[Vec<u8>]) -> Vec<u8> {
         let mut buf = Self::string(4, op_type);
         for inp in inputs {
@@ -355,6 +360,12 @@ impl Proto {
     }
 
     /// `onnx.ModelProto`.
+    /// MNN uses a CUSTOMIZED onnx.proto (see onnx.pb.h):
+    ///   field 1 = ir_version (int64)
+    ///   field 2 = producer_name (string)
+    ///   field 7 = graph (GraphProto)
+    ///   field 8 = opset_import (repeated OperatorSetIdProto)  ← MNN's location, NOT standard 12
+    /// Writing opset to field 12 (standard) causes MNN to see no opset → 0 FLOPs.
     pub fn model(ir_version: i64, opset: &[u8], producer: &str, graph: &[u8]) -> Vec<u8> {
         let mut buf = Self::int64(1, ir_version);
         buf.extend_from_slice(&Self::string(2, producer));
