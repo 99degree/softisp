@@ -197,11 +197,18 @@ impl GpuWarpEngine {
                 &mut result,
             );
         }
+        // Free buffer on all paths (success, error, empty) to avoid leak.
+        macro_rules! free_and_return {
+            ($err:expr) => {{
+                unsafe { crate::mnn_sys::MnnConvert_FreeBuffer(&mut result) };
+                return Err($err);
+            }};
+        }
         if result.success != 0 {
             let err_msg = unsafe { std::ffi::CStr::from_ptr(result.error_msg.as_ptr()) }
                 .to_string_lossy()
                 .into_owned();
-            return Err(crate::error::IspError::Conversion(format!(
+            free_and_return!(crate::error::IspError::Conversion(format!(
                 "convert warp onnx: {}",
                 err_msg
             )));
@@ -223,8 +230,8 @@ impl GpuWarpEngine {
             }
             owned
         } else {
-            return Err(crate::error::IspError::Conversion(
-                "convert returned empty buffer".into(),
+            free_and_return!(crate::error::IspError::Conversion(
+                "convert returned empty buffer".into()
             ));
         };
 
