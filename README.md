@@ -23,6 +23,15 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 > assert that the numerical behavior of every block has been independently
 > verified against the pure-Rust reference. Treat ONNX/MNN output as a GPU fast
 > path; the authoritative pipeline semantics live in `CpuEngine`.
+>
+> **If you implement a new algorithm as an `IspBlock`**, you must make sure the
+> ONNX op sequence you emit is actually *recognized* by `libMNNConvertDeps` and
+> gets fused into the intended custom `isp.*` opset. If the pattern is **not**
+> recognized, the converter silently falls back to the **standard ONNX→MNN opset**
+> path. Worse, a *partially* matching (but semantically different) pattern can be
+> mis-classified as an existing `isp.*` opset and executed via the wrong custom
+> shader — producing **incorrect output with no error**. Always validate a new
+> block's GPU/MNN result numerically against the `CpuEngine` reference.
 
 ## Key Features
 

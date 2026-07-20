@@ -10,6 +10,14 @@ Compiles with **0 warnings** and **740+ lib tests pass** (`--features mnn`).
 > *trigger* for MNN's custom-opset GPU path — it does **not** guarantee that every
 > block's math has been proven correct. The ONNX/MNN output is a GPU fast path;
 > the authoritative, numerically-checked pipeline is `CpuEngine` (pure Rust).
+>
+> **If you implement a new algorithm as an `IspBlock`**, ensure the ONNX pattern
+> you emit is actually recognized by `libMNNConvertDeps` and fused into the
+> intended `isp.*` opset. An unrecognized pattern silently runs as the **standard
+> ONNX→MNN opset**, and a *partially* matching (but semantically different) pattern
+> can be mis-classified as an existing `isp.*` opset and run on the **wrong** custom
+> shader — yielding **wrong results with no error**. Always validate the new block's
+> MNN/GPU output numerically against the `CpuEngine` reference.
 
 ## Performance (Vulkan GPU, Snapdragon 8 Gen 2)
 
