@@ -1,9 +1,14 @@
 //! MNN ONNX-to-MNN conversion.
 //!
-//! Two paths:
-//! 1. **Buffer API** (`convert_onnx_buffer`): in-process via `libMNNConvertDeps.so`.
-//!    Zero disk writes, zero subprocess — preferred for all hot paths.
-//! 2. **Subprocess** (`convert_onnx_to_mnn`): spawns `MNNConvert` binary.
+//! Three paths:
+//! 1. **memfd API** (`convert_onnx_memfd`): in-process via `libMNNConvertDeps.so`.
+//!    The converted `.mnn` is written into a memfd and the fd is returned;
+//!    the model never lands in the Rust heap. Load with `MnnInterpreterSafe::from_fd`.
+//!    Preferred for the zero-copy ONNX→MNN→inference hot path.
+//! 2. **Buffer API** (`convert_onnx_buffer`): in-process via `libMNNConvertDeps.so`.
+//!    Zero disk writes, zero subprocess — returns a `Vec<u8>` for callers that
+//!    need the bytes.
+//! 3. **Subprocess** (`convert_onnx_to_mnn`): spawns `MNNConvert` binary.
 //!    Retained as fallback for offline/export tooling only.
 
 use std::process::Command;
@@ -88,6 +93,42 @@ pub fn convert_onnx_buffer(onnx_bytes: &[u8]) -> Result<Vec<u8>, String> {
         MnnConvert_FreeBuffer(&mut result);
     }
     Ok(mnn_bytes)
+}
+
+/// Convert ONNX bytes to an MNN model held in a memfd, returning the fd.
+///
+/// Same as `convert_onnx_buffer` but the converted `.mnn` is written into a
+/// memfd and the fd is returned instead of copying bytes into a `Vec<u8>`.
+/// The model therefore never lands in the Rust heap. Load it with
+/// `MnnInterpreterSafe::from_fd(fd)` and `close(fd)` when done.
+#[cfg(feature = "mnn")]
+pub fn convert_onnx_memfd(onnx_bytes: &[u8]) -> Result<std::os::unix::io::RawFd, String> {
+    use crate::mnn_sys::mnn_convert_onnx_memfd;
+    use std::os::unix::io::RawFd;
+
+    if onnx_bytes.is_empty() {
+        return Err("ONNX bytes are empty".into());
+    }
+
+    // 1024-byte error buffer (matches the C API contract).
+    let mut err_buf = [0 as std::os::raw::c_char; 1024usize];
+    let fd = unsafe {
+        mnn_convert_onnx_memfd(
+            onnx_bytes.as_ptr() as *const std::ffi::c_void,
+            onnx_bytes.len(),
+            err_buf.as_mut_ptr(),
+            err_buf.len(),
+        )
+    };
+
+    if fd < 0 {
+        let err_msg = unsafe { std::ffi::CStr::from_ptr(err_buf.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        return Err(format!("ONNX→MNN memfd convert failed: {}", err_msg));
+    }
+
+    Ok(fd as RawFd)
 }
 
 /// Fallback: Convert ONNX file to MNN file via MNNConvert subprocess.
@@ -231,5 +272,42 @@ mod tests {
         assert_eq!(opts.optimize_level, 1);
         assert!(!opts.fp16);
         assert_eq!(opts.biz_code, "MNN");
+    }
+
+    // Build a trivial ONNX model (identity) and verify the memfd conversion
+    // path returns a usable fd that loads as an MNN interpreter without ever
+    // copying the model into a Rust heap Vec.
+    #[cfg(feature = "mnn")]
+    #[test]
+    fn test_convert_onnx_memfd_roundtrip() {
+        use crate::mnn_sys::MnnInterpreterSafe;
+        use crate::onnx::proto::Proto;
+
+        // Minimal identity graph: input "x" -> output "y" (no ops).
+        let nodes = Vec::new();
+        let dims = vec![
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(1),
+            Proto::tensor_dim_value(1),
+        ];
+        let inputs = vec![Proto::value_info("x", &dims, 1)];
+        let outputs = vec![Proto::value_info("y", &dims, 1)];
+        let init = Vec::new();
+        let vi = Vec::new();
+        let opset = Proto::opset("", 21);
+        let graph = Proto::graph("memfd_test", &nodes, &inputs, &outputs, &init, &vi);
+        let onnx = Proto::model(9, &opset, "memfd_test", &graph);
+
+        let fd = convert_onnx_memfd(&onnx).expect("memfd ONNX→MNN conversion should succeed");
+        assert!(fd >= 0, "expected a valid fd");
+
+        let interp =
+            MnnInterpreterSafe::from_fd(fd).expect("MNN interpreter should load from memfd fd");
+        // Drop the interpreter, then close the fd (model already parsed).
+        drop(interp);
+        unsafe {
+            libc::close(fd);
+        }
     }
 }
