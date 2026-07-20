@@ -3,6 +3,14 @@
 A complete Rust ISP pipeline: ONNX generation → MNN conversion → Vulkan GPU inference.
 Compiles with **0 warnings** and **740+ lib tests pass** (`--features mnn`).
 
+> **Note on ONNX usage:** The generated ONNX graph is an *optimization/dispatch
+> pattern*, not a verified algorithm spec. It exists so MNN's fusion rules rewrite
+> standard ops into custom ISP *opset* shaders (`isp.unpack_packed`,
+> `isp.argb_convert`, `isp.gamma`, …). In other words, the ONNX op sequence is a
+> *trigger* for MNN's custom-opset GPU path — it does **not** guarantee that every
+> block's math has been proven correct. The ONNX/MNN output is a GPU fast path;
+> the authoritative, numerically-checked pipeline is `CpuEngine` (pure Rust).
+
 ## Performance (Vulkan GPU, Snapdragon 8 Gen 2)
 
 | Resolution | GPU Latency | GPU FPS | CPU Latency | CPU FPS | Speedup |
