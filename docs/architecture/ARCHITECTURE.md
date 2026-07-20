@@ -147,6 +147,14 @@ Custom SPIR-V shaders for ISP operations:
 > MNN's custom-opset GPU path — it does **not** assert that the numerical result
 > of every block has been verified against the pure-Rust `CpuEngine` reference.
 > Use the GPU path for speed; `CpuEngine` remains the source of truth for semantics.
+>
+> **If you add a new algorithm as an `IspBlock`**, confirm that the ONNX pattern
+> you emit is recognized by `libMNNConvertDeps` and fused into the intended
+> `isp.*` opset. An unrecognized pattern silently falls back to the **standard
+> ONNX→MNN opset**; a *partially* matching (but semantically different) pattern
+> can be mis-classified as an existing `isp.*` opset and dispatched to the
+> **wrong** custom shader — producing **incorrect output with no diagnostic**.
+> Always validate a new block's MNN/GPU result numerically against `CpuEngine`.
 
 ## Neural Controller
 
