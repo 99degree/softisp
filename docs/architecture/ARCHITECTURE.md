@@ -141,6 +141,13 @@ Custom SPIR-V shaders for ISP operations:
 - `isp.yuv420_convert` - YUV420 encoding
 - `isp.gamma` - Gamma correction (WIP)
 
+> **The ONNX graph is a dispatch pattern, not an algorithm proof.** softISP emits
+> standard ONNX ops specifically so MNN's fusion rules match them and *rewrite*
+> them into the custom `isp.*` opsets above. The op sequence is a *trigger* for
+> MNN's custom-opset GPU path — it does **not** assert that the numerical result
+> of every block has been verified against the pure-Rust `CpuEngine` reference.
+> Use the GPU path for speed; `CpuEngine` remains the source of truth for semantics.
+
 ## Neural Controller
 
 ### Model Architecture

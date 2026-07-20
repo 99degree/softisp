@@ -15,6 +15,15 @@ converted to ONNX, fused into GPU "Extra" ops, and executed on CPU (pure Rust)
 or on the GPU (MNN Vulkan). Per-frame parameters (gain, saturation, sharpen,
 gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 
+> **Note on ONNX usage:** The ONNX graph is an *optimization/dispatch pattern*,
+> not a guaranteed-correct algorithm specification. softISP emits ONNX primarily
+> so that MNN's fusion rules rewrite the standard ops into custom ISP *opset*
+> shaders (e.g. `isp.unpack_packed`, `isp.argb_convert`, `isp.gamma`). The ONNX
+> op sequence is there to *trigger* MNN's custom-opset code path — it does **not**
+> assert that the numerical behavior of every block has been independently
+> verified against the pure-Rust reference. Treat ONNX/MNN output as a GPU fast
+> path; the authoritative pipeline semantics live in `CpuEngine`.
+
 ## Key Features
 
 - **52 ISP blocks** across input, black-level, white-balance, demosaic, color,
