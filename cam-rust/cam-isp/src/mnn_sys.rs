@@ -272,6 +272,22 @@ impl MnnInterpreterSafe {
         }
     }
 
+    /// Create an Interpreter from a model fd (e.g. a memfd returned by
+    /// `mnn_convert_onnx_memfd`). The path `/proc/self/fd/<fd>` is passed to
+    /// MNN, so the model is read straight from the fd without copying into the
+    /// Rust heap. `fd` must remain open for the lifetime of the returned
+    /// interpreter's load; it can be closed afterwards.
+    pub fn from_fd(fd: std::os::unix::io::RawFd) -> Option<Self> {
+        let path = format!("/proc/self/fd/{}", fd);
+        let c_path = std::ffi::CString::new(path).ok()?;
+        let ptr = unsafe { mnn_interpreter_create_from_file(c_path.as_ptr()) };
+        if ptr.is_null() {
+            None
+        } else {
+            Some(Self { inner: ptr })
+        }
+    }
+
     /// Get raw interpreter pointer (for C FFI calls).
     pub fn as_ptr(&self) -> *mut c_void {
         self.inner
@@ -648,6 +664,21 @@ extern "C" {
 
     /// Free data allocated by mnn_convert_onnx_buffer.
     pub fn MnnConvert_FreeBuffer(result: *mut MnnConvertBufferResult);
+
+    /// memfd-based ONNX→MNN conversion (libMNNConvertDeps.so, same-process).
+    ///
+    /// The ONNX bytes are written into an input memfd and the converted `.mnn`
+    /// is written into an output memfd; the output fd is returned to the caller.
+    /// The model never materializes in the Rust heap — the caller loads it via
+    /// `MnnInterpreterSafe::from_fd(out_fd)`. Returns the output fd (>=0) on
+    /// success, or -1 on error (message written into `error_msg`, capped at
+    /// `error_msg_cap`). The caller owns the returned fd and must `close()` it.
+    pub fn mnn_convert_onnx_memfd(
+        onnx_data: *const c_void,
+        onnx_len: usize,
+        error_msg: *mut c_char,
+        error_msg_cap: usize,
+    ) -> i32;
 
     /// Convert TensorFlow model to MNN format.
     pub fn mnn_convert_tf_to_mnn(
