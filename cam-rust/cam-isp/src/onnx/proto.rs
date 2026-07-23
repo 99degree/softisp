@@ -159,11 +159,22 @@ impl Proto {
     }
 
     /// `onnx.TypeProto.Tensor` with given element type and shape dimensions.
+    /// ONNX spec: TypeProto has `oneof value { Tensor tensor_type = 1; ... }` —
+    /// i.e., field 1 is the TensorTypeProto submessage (length-delimited),
+    /// NOT a separate value_type tag.
+    /// TensorTypeProto: field 1 = elem_type (int32), field 2 = TensorShapeProto.
+    /// TensorShapeProto: field 1 = repeated Dimension (Dimension.field1 = dim_value).
     pub fn tensor_type(elem_type: i32, dims: &[Vec<u8>]) -> Vec<u8> {
-        let shape = Self::join_bytes(dims);
-        let mut tt = Self::int32(1, elem_type);
-        tt.extend_from_slice(&Self::raw_bytes(2, &shape));
-        Self::raw_bytes(1, &tt) // TypeProto.tensor_type = field 1
+        // TensorShapeProto: each `tensor_dim_value` already encodes a
+        // Dimension submessage (`0a <len> <int64 of field 1>`); join the
+        // Dimension submessages in order (an extra `raw_bytes(1, ...)`
+        // would wrongly merge them into a single Dimension submessage).
+        let tensor_shape = Self::join_bytes(dims);
+        // TensorTypeProto: field 1 = elem_type (int32), field 2 = TensorShapeProto
+        let mut tensor_type = Self::int32(1, elem_type);
+        tensor_type.extend_from_slice(&Self::raw_bytes(2, &tensor_shape));
+        // TypeProto: field 1 = TensorTypeProto (submessage via oneof `value`)
+        Self::raw_bytes(1, &tensor_type)
     }
 
     /// `onnx.ValueInfoProto`.

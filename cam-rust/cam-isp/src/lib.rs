@@ -85,6 +85,7 @@ pub mod serializer;
 pub mod simd;
 pub mod stats;
 pub mod store;
+pub mod synth_bayer;
 pub mod temporal;
 
 use log::info;

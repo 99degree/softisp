@@ -105,10 +105,11 @@ pub struct WarpGridBlock {
     pub output_width: u32,
     pub output_height: u32,
     pub rotate_mode: i32,
-    pub grid_initializer: Option<Vec<u8>>,
+    /// Raw grid floats [1,H,W,2] — fed as runtime extra_input, not initializer.
+    pub grid_data: Option<Vec<f32>>,
     pub bcs: Option<(f32, f32, f32)>,
-    // Lens shading: [1,3,H,W] radial gain LUT (fused into warp output).
-    pub shading_lut: Option<Vec<u8>>,
+    /// Raw lens shading LUT [1,3,H,W] — fed as runtime extra_input, not initializer.
+    pub shading_data: Option<Vec<f32>>,
 }
 
 impl WarpGridBlock {
@@ -125,9 +126,9 @@ impl WarpGridBlock {
             output_width: target_width,
             output_height: target_height,
             rotate_mode: 0,
-            grid_initializer: None,
+            grid_data: None,
             bcs: None,
-            shading_lut: None,
+            shading_data: None,
         }
     }
 
@@ -151,12 +152,7 @@ impl WarpGridBlock {
 
     pub fn with_grid(mut self, grid: Option<Vec<f32>>) -> Self {
         if let Some(g) = grid {
-            let initializer = Proto::tensor_proto_float(
-                &format!("{}/grid", self.tensor_ns()),
-                &[1, self.output_height as i64, self.output_width as i64, 2],
-                &g,
-            );
-            self.grid_initializer = Some(initializer);
+            self.grid_data = Some(g);
         }
         self
     }
@@ -176,11 +172,7 @@ impl WarpGridBlock {
         let h = self.output_height;
         let w = self.output_width;
         let grid = Self::generate_gdc_grid(h, w, k1, k2, k3);
-        self.grid_initializer = Some(Proto::tensor_proto_float(
-            &format!("{}/grid", self.tensor_ns()),
-            &[1, h as i64, w as i64, 2],
-            &grid,
-        ));
+        self.grid_data = Some(grid);
         self
     }
 
@@ -221,11 +213,7 @@ impl WarpGridBlock {
                 composed.push(gy.clamp(-1.0, 1.0));
             }
         }
-        self.grid_initializer = Some(Proto::tensor_proto_float(
-            &format!("{}/grid", self.tensor_ns()),
-            &[1, h as i64, w as i64, 2],
-            &composed,
-        ));
+        self.grid_data = Some(composed);
         self
     }
 
@@ -266,17 +254,13 @@ impl WarpGridBlock {
         let h = self.output_height;
         let w = self.output_width;
         let lut = Self::generate_radial_lut(h, w, corner_gain, center_gain);
-        let name = format!("{}/shading_lut", self.tensor_ns());
-        let init = Proto::tensor_proto_float(&name, &[1, 3, h as i64, w as i64], &lut);
-        self.shading_lut = Some(init);
+        self.shading_data = Some(lut);
         self
     }
 
     /// Use a pre-built shading LUT (already packed as `[1,3,H,W]` f32).
-    pub fn with_shading_lut(mut self, h: u32, w: u32, lut: Vec<f32>) -> Self {
-        let name = format!("{}/shading_lut", self.tensor_ns());
-        let init = Proto::tensor_proto_float(&name, &[1, 3, h as i64, w as i64], &lut);
-        self.shading_lut = Some(init);
+    pub fn with_shading_lut(mut self, _h: u32, _w: u32, lut: Vec<f32>) -> Self {
+        self.shading_data = Some(lut);
         self
     }
 
@@ -368,6 +352,27 @@ impl IspBlock for WarpGridBlock {
         Some(&self.frame_tensor)
     }
 
+    /// Grid and shading LUT are runtime graph inputs — NOT initializers.
+    /// The engine writes actual data into these tensors via set_extra_inputs().
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let mut inputs = Vec::new();
+        if self.grid_data.is_some() {
+            inputs.push((
+                format!("{}/grid", self.tensor_ns()),
+                1, // FLOAT
+                vec![1, self.output_height as i64, self.output_width as i64, 2],
+            ));
+        }
+        if self.shading_data.is_some() {
+            inputs.push((
+                format!("{}/shading_lut", self.tensor_ns()),
+                1, // FLOAT
+                vec![1, 3, self.output_height as i64, self.output_width as i64],
+            ));
+        }
+        inputs
+    }
+
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.effective_input(),
@@ -399,7 +404,9 @@ impl IspBlock for WarpGridBlock {
         let mut nodes = Vec::new();
 
         // ── 1. GridSample ─────────────────────────────────────────
-        let grid_input = if self.grid_initializer.is_some() {
+        // Grid is a runtime extra_input (not an initializer) so MNN cannot
+        // statically resolve GridSample to identity.
+        let grid_input = if self.grid_data.is_some() {
             format!("{}/grid", ns)
         } else {
             format!("{}/grid_init", ns)
@@ -465,7 +472,7 @@ impl IspBlock for WarpGridBlock {
         }
 
         // ── 3. Lens shading (fused Mul) ───────────────────────────
-        if self.shading_lut.is_some() {
+        if self.shading_data.is_some() {
             let lut_name = format!("{}/shading_lut", ns);
             let shaded = format!("{}/shaded", ns);
             nodes.push(Proto::node("Mul", &[&prev, &lut_name], &[&shaded], &[]));
@@ -540,15 +547,9 @@ impl IspBlock for WarpGridBlock {
         let ns = self.tensor_ns();
         let mut inits = Vec::new();
 
-        // Grid initializer
-        if let Some(init) = &self.grid_initializer {
-            inits.push(init.clone());
-        }
-
-        // Lens shading LUT initializer
-        if let Some(lut) = &self.shading_lut {
-            inits.push(lut.clone());
-        }
+        // Grid and shading LUT are runtime extra_inputs — NOT initializers.
+        // This keeps the ONNX model small (~200KB-1MB) and prevents MNN
+        // from DCE-ing the entire ISP graph.
 
         if self.swaps_dims() {
             return inits;
@@ -668,8 +669,17 @@ mod tests {
         // GridSample + Mul(shading) + Identity = 3 nodes
         assert_eq!(nodes.len(), 3, "should have GridSample + Mul + Identity");
         let inits = block.initializers();
-        // grid + shading_lut = 2
-        assert!(inits.len() >= 2, "should have grid + shading_lut inits");
+        // grid + shading_lut moved to extra_inputs — initializers should be empty
+        assert!(
+            inits.is_empty(),
+            "grid/shading are extra_inputs now, not initializers"
+        );
+        let extras = block.extra_inputs();
+        assert_eq!(
+            extras.len(),
+            2,
+            "should have grid + shading_lut extra_inputs"
+        );
     }
 
     #[test]
@@ -756,7 +766,9 @@ mod tests {
         // GridSample + Identity = 2 nodes
         assert_eq!(nodes.len(), 2, "GDC should emit GridSample + Identity");
         let inits = block.initializers();
-        assert_eq!(inits.len(), 1, "should have GDC grid initializer");
+        assert!(inits.is_empty(), "grid is extra_input now, not initializer");
+        let extras = block.extra_inputs();
+        assert_eq!(extras.len(), 1, "should have grid extra_input");
     }
 
     #[test]
@@ -768,8 +780,13 @@ mod tests {
         // GridSample + Mul(shading) + Identity = 3 nodes
         assert_eq!(nodes.len(), 3, "GDC + lens shading = 3 nodes");
         let inits = block.initializers();
-        // grid + shading_lut = 2
-        assert_eq!(inits.len(), 2, "should have grid + shading_lut");
+        assert!(inits.is_empty(), "grid is extra_input now, not initializer");
+        let extras = block.extra_inputs();
+        assert_eq!(
+            extras.len(),
+            2,
+            "should have grid + shading_lut extra_inputs"
+        );
     }
 
     #[test]
