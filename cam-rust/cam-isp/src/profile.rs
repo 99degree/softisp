@@ -248,7 +248,7 @@ impl PipelineProfile {
         pipeline_downscale_target: 0, // 0 = disabled; set to e.g. 1920 for perf measurement
         eis_margin: 0.0,
         use_bilateral: true,
-        use_saturation: true,
+        use_saturation: false,
         use_vignetting: true,
         use_colorspace: false,
         use_gamma: true,
