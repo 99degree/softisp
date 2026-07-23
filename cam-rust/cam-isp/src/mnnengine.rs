@@ -660,6 +660,8 @@ impl MnnEngine {
         _awb: Option<&[f32; 3]>,
         bayer_pattern: i32,
         isp_params: Option<&crate::isp_params::IspParams>,
+        warp_grid: Option<&[f32]>,
+        warp_shading: Option<&[f32]>,
     ) {
         /// Look up a cached tensor handle by name prefix (fast — no CString alloc).
         fn find<'a>(
@@ -816,6 +818,17 @@ impl MnnEngine {
                 .map(|p| p.blc.r * 2.0)
                 .unwrap_or(65535.0);
             write_f32(pool, "NormalizeBlock/max_val", max_val);
+        }
+
+        // ── Warp grid + shading LUT (runtime extra_inputs) ────────
+        // These are declared as graph inputs (not initializers) to prevent
+        // MNN from DCE-ing the ISP graph. The engine writes the actual
+        // per-frame data here.
+        if let Some(grid) = warp_grid {
+            write_f32_array(pool, "WarpGrid/grid", grid);
+        }
+        if let Some(lut) = warp_shading {
+            write_f32_array(pool, "WarpGrid/shading_lut", lut);
         }
     }
 }
@@ -1125,6 +1138,8 @@ impl IspEngine for MnnEngine {
                 awb,
                 bayer_pattern,
                 p.isp_params.as_ref(),
+                p.warp_grid,
+                p.warp_shading,
             );
             let t_tensor_after: std::time::Instant = Instant::now();
             debug!(
