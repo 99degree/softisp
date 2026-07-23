@@ -2,6 +2,7 @@ use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::isp_params::IspParams;
 use cam_isp::pipeline::GraphComposer;
 use cam_isp::profile::PipelineProfile;
+use cam_isp::synth_bayer;
 use std::time::{Duration, Instant};
 
 fn main() {
@@ -10,7 +11,7 @@ fn main() {
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
 
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║  UNIFIED Profile Stress Test: 4K Bayer → FHD ARGB8888      ║");
+    println!("║  HEAVY Profile Stress Test: 4K Bayer → FHD ARGB8888        ║");
     println!("║  Neural Controller (Rule-Based) | 30s Duration              ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
 
@@ -22,8 +23,8 @@ fn main() {
     let duration_secs = 30;
     let bayer_pattern = 0; // RGGB
 
-    // Build UNIFIED profile pipeline (all post-processing blocks)
-    let mut profile = PipelineProfile::UNIFIED;
+    // Build HEAVY profile pipeline (fewer blocks than UNIFIED, fits in memory at 4K)
+    let mut profile = PipelineProfile::HEAVY;
     profile.output_format = OutputFormat::Argb;
 
     println!("\n[1/4] Building pipeline...");
@@ -47,12 +48,13 @@ fn main() {
     engine.build(head, aux, None, 21).unwrap();
     println!("   Pipeline built: {} blocks", num_blocks);
 
-    // Create synthetic 4K Bayer data (16-bit per pixel)
+    // Generate a rich synthetic Bayer mosaic: rainbow + maze + diffuse.
+    // High spatial frequency prevents MNN graph collapse.
     println!(
-        "[2/4] Generating 4K Bayer test pattern ({} MB)...",
+        "[2/4] Generating 4K stress Bayer pattern ({} MB)...",
         (input_w * input_h * 2) / (1024 * 1024)
     );
-    let raw: Vec<u8> = vec![0u8; (input_w * input_h * 2) as usize];
+    let raw_bytes = synth_bayer::bayer_stress(input_w, input_h);
 
     // Run stress test
     println!("[3/4] Running stress test for {} seconds...", duration_secs);
@@ -80,7 +82,7 @@ fn main() {
         params.tone.gamma = 1.0;
 
         // Process frame
-        let mut process_params = ProcessParams::new(input_w, input_h, &raw);
+        let mut process_params = ProcessParams::new(input_w, input_h, &raw_bytes);
         process_params.target_width = output_w;
         process_params.target_height = output_h;
         process_params.bayer_pattern = bayer_pattern;

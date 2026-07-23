@@ -134,6 +134,8 @@ pub struct ProcessParams<'a> {
     pub lsc_gains: Option<&'a [f32]>,
     pub blc_values: Option<[f32; 4]>,
     pub warp_grid: Option<&'a [f32]>,
+    /// Warp shading LUT `[1,3,H,W]` f32 — fed as runtime extra_input.
+    pub warp_shading: Option<&'a [f32]>,
     /// Output format: PackedInt32 (raw) or Bgra (converted).
     pub output_format: OutputFormat,
     /// Capture timestamp in nanoseconds (from HAL/framework). Passed through to IspFrame.
@@ -166,6 +168,7 @@ impl<'a> ProcessParams<'a> {
             lsc_gains: None,
             blc_values: None,
             warp_grid: None,
+            warp_shading: None,
         }
     }
 
