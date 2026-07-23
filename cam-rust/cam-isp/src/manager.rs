@@ -222,6 +222,7 @@ impl PipelineManager {
             lsc_gains: None,
             blc_values: None,
             warp_grid: None,
+            warp_shading: None,
             target_height: height,
             output_format: self.output_format,
             timestamp_ns: 0,
