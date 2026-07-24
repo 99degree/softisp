@@ -113,7 +113,10 @@ Total:~111ms                Total:~81ms      -27%
 ```
 
 Vulkan wins on Conv-heavy blocks (ldci -92%, ee -67%) but adds kernel-launch overhead on elementwise ops.
-- 4K→FHD benchmark on Vulkan: ≈ 4.7 FPS (≈ 211 ms/frame) using packed INT32 input.
+- **4K→4K MNN stress test** (post-DCE fix, real ISP graph executed):
+  - HEAVY profile: **79.8 FPS** avg (2394 frames / 30s, P99 129.1ms)
+  - UNIFIED profile (tiled 2×2): **141.2 FPS** avg (4236 frames / 30s, P99 8.7ms)
+- Older per-block 4K→FHD: ~~≈ 4.7 FPS~~ before TypeProto/Extra-input fixes (prevented MNN DCE).
 
 ## MNN Vulkan GPU Backend — Working
 
@@ -160,11 +163,16 @@ Both are required — loading `libMNN_Vulkan.so` without `libvulkan.so` still fa
 - MNNConvert static C FFI (no subprocess)
 - All MNN libraries updated from `~/MNN/build`, including `libMNN_GL.so`
 - MNN Vulkan GPU backend working (dlopen plugin + ICD loader fix)
-- Pipeline tests: 201 pass
+- ONNX `TypeProto` / `TensorShapeProto` encoding fix (proto.rs): correct oneof submessage + Dimension repeat prevents MNN DCE of the ISP graph
+- WarpGridBlock grid + shading LUT moved to runtime `extra_inputs()` (graph inputs, not initializers) — defeats MNN fold-to-identity
+- `synth_bayer` module (5 generators) for stress-test inputs with high spatial frequency
+- Pipeline tests: 732 pass
+- HEAVY profile 4K→4K MNN stress test: **79.8 FPS** avg (2394 frames / 30s, P99 129.1ms)
+- UNIFIED profile 4K→4K MNN stress test: **141.2 FPS** avg (4236 frames / 30s, P99 8.7ms, tiled 2×2)
 
 ### ⏳ In Progress
 - Numeric agreement ONNX stats ↔ software stats at FHD
-- 30fps target at FHD (Vulkan ~101ms, 9.9fps)
+- 30fps target at FHD (HEAVY 4K path: 79.8 FPS; UNIFIED 4K path: 141.2 FPS with tiles)
 
 ### 🚧 Blocked
 - GPU zero-copy: needs device memory

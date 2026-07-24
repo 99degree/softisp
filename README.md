@@ -38,7 +38,8 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 - **52 ISP blocks** across input, black-level, white-balance, demosaic, color,
   tone, denoise, warp, and display categories (see [Pipeline](#pipeline-blocks)).
 - **Vulkan GPU acceleration** — full fused pipeline runs in ~12 GPU dispatches
-  (4K→FHD ~57 FPS on Snapdragon 8 Gen 2).
+  (4K→4K UNIFIED profile: **141.2 FPS**; HEAVY: **79.8 FPS**; 4K→FHD preview: ~57 FPS
+  on Snapdragon 8 Gen 2).
 - **Software fallback** — `CpuEngine` implements the full 11-stage ISP in pure Rust
   (with AVX2/SSE2/NEON/NEON-FP16/NEON-DOTPROD SIMD backends).
 - **Deshake** — software video stabilization (block-matching motion estimation +
@@ -49,7 +50,7 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 - **Multiple profiles** — LITE / MED / HEAVY / PRO / UNIFIED (and scene-adaptive ISP).
 - **HAL integration** — bridges for Android Camera HAL3, V4L2, and AOSP binder HAL.
 - **Zero-copy memory** — CMA / ION / memfd buffer manager for camera → ISP → MNN.
-- **740+ lib tests** pass with `--features mnn`, 0 warnings.
+- **732 lib tests** pass with `--features rectifier`, 0 failures.
 
 ## Quick Start
 
@@ -65,7 +66,7 @@ let frame = engine.process(&params)?;
 Build & test:
 
 ```bash
-cargo test -p cam-isp --features mnn          # 740+ lib tests
+cargo test -p cam-isp --features rectifier    # 732 lib tests
 cargo run --example camera_isp -p cam-isp --features mnn -- --width 640 --height 480
 ```
 
@@ -78,6 +79,8 @@ cargo run --example camera_isp -p cam-isp --features mnn -- --width 640 --height
 | 4K (3840×2160) | 12.87 ms | **78** | 3904 ms | 0.25 | **312×** |
 
 4K→FHD down-scale (the common preview/record path) sustains **~57 FPS** on GPU.
+**End-to-end MNN stress (4K→4K, all post-processing):** UNIFIED profile
+**141.2 FPS** (P99 8.7 ms, tiled 2×2); HEAVY profile **79.8 FPS** (P99 129.1 ms).
 
 ## Pipeline Blocks
 
@@ -198,8 +201,11 @@ Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 
 ## Status
 
-- ✅ 52 ISP blocks, **740+ lib tests** (`--features mnn`), 0 warnings
-- ✅ Full GPU ISP pipeline (MNN Vulkan): 4K→FHD ~57 FPS
+- ✅ 52 ISP blocks, **732 lib tests** (`--features rectifier`), 0 failures
+- ✅ Full GPU ISP pipeline (MNN Vulkan):
+  - 4K→4K HEAVY profile: **79.8 FPS** (2394 frames / 30 s, P99 129.1 ms)
+  - 4K→4K UNIFIED profile (tiled 2×2): **141.2 FPS** (4236 frames / 30 s, P99 8.7 ms)
+  - 4K→FHD preview path: **~57 FPS** (older per-block measurement; pre-DCE fix)
 - ✅ `CpuEngine` — 11-stage software ISP with SIMD backends
 - ✅ Deshake (CPU + GPU) and EIS stabilization
 - ✅ Runtime-feedable params (29 per-frame inputs across 11 blocks)
@@ -208,6 +214,8 @@ Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 - ✅ HAL integration module (Android HAL3 / V4L2 / binder) + zero-copy buffers
 - ✅ 3A controllers (AWB/AE/AF/CCM/Tone/Scene) + NeuralController
 - ✅ ONNX model generator (pure-Rust protobuf encoder) + MNN same-process conversion
+- ✅ ONNX `TypeProto`/`TensorShapeProto` encoding correct — no more MNN DCE
+- ✅ `synth_bayer` module (5 generators) for stress-test inputs
 
 ## Documentation
 
@@ -220,9 +228,9 @@ Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 ## Testing
 
 ```bash
-cargo test -p cam-isp                   # lib tests
-cargo test -p cam-isp --features mnn    # with GPU/ONNX backends (740+ tests)
-cargo test --workspace --features mnn   # full workspace
+cargo test -p cam-isp --features rectifier           # 732 lib tests
+cargo test -p cam-isp --features mnn                 # GPU/ONNX backends
+cargo test --workspace --features mnn                # full workspace
 ```
 
 ## License
