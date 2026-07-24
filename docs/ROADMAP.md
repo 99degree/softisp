@@ -1,6 +1,35 @@
 # Project Roadmap & Outstanding Work
 
-> Last updated: 2026-07-15. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
+> Last updated: 2026-07-21. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
+
+## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
+
+- **Root cause of impossibly-fast MNN inference identified and fixed.**
+  MNN was DCE-ing the **entire 20-block HEAVY ISP pipeline** to identity
+  (≈ 0.1 ms/frame, ≈ 7151 FPS) for two independent reasons:
+  1. **`Proto::tensor_type()` (proto.rs) encoded `TypeProto` wrong.**
+     It emitted `field 1 = value_type=1` (a varint) plus
+     `field 2 = TensorTypeProto` (submessage). ONNX `TypeProto` is actually
+     a `oneof value { Tensor tensor_type = 1; … }` — i.e., field 1 IS the
+     `TensorTypeProto` submessage (length-delimited). The shape bytes were
+     also wrongly wrapped in an extra `raw_bytes(1, ...)`, merging all
+     `Dimension` submessages into one and collapsing e.g. `[1, 267]` to `[10]`.
+     Fix: emit `raw_bytes(1, &tensor_type)` directly, with `tensor_shape` as
+     the joined `Dimension` submessage bytes (no outer wrap).
+  2. **`WarpGridBlock` grid + lens-shading LUT were ONNX initializers.**
+     MNN saw constant grid/LUT data and folded the warp into identity. Both
+     are now runtime `extra_inputs()` (graph input ports fed by
+     `set_extra_inputs()` at frame time) — matching how CCM/tone/AWB already
+     override initializers, and keeping data-dependent paths alive.
+- **`synth_bayer` module added** — 5 synthetic Bayer pattern generators
+  (constant, rainbow, maze, color-diffuse, stress) with high spatial
+  frequency so MNN cannot mark part of the graph as constant.
+- **cam-isp tests:** **732** lib tests pass with `--features rectifier`, 0 failures.
+- **4K→4K MNN stress tests:**
+  - HEAVY: **79.8 FPS** avg (2394 frames / 30 s, P99 129.1 ms).
+  - UNIFIED (tiled 2×2): **141.2 FPS** avg (4236 frames / 30 s, P99 8.7 ms).
+- **Profile defaults:** `HEAVY.use_saturation = false` (SaturationBlock
+  has no MNN Extra runtime executor and raised `NOT_SUPPORT`).
 
 ## Status (2026-07-15)
 
