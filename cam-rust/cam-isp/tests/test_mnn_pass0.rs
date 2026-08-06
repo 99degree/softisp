@@ -29,8 +29,6 @@ use cam_isp::mnn_sys::{MnnBackendType, MnnInterpreterSafe};
 use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::profile::PipelineProfile;
 
-use std::ffi::CString;
-use std::os::raw::c_void;
 use std::sync::Mutex;
 
 /// MNN's converter keeps a process-global `Global<modelConfig>` singleton;
@@ -59,6 +57,9 @@ struct BlockCase {
     /// compares against the model input tensor's `getType()`):
     /// 0 = int32, 2 = float32, 5 = int16, 10 = float16.
     dtype_code: i32,
+    /// Element bit width (16 for INT16, 32 for INT32/FLOAT32).
+    /// Passed as `buffer_type_bits` to `mnn_run_with_output`.
+    type_bits: u8,
     /// Output tensor name (tail block output). Defaults to the tail's
     /// `graph_output_name()`.
     out_name: Option<String>,
@@ -90,57 +91,43 @@ fn run_pass0_block(mut case: BlockCase) -> (Vec<f32>, usize) {
     }
     let _ = sess.resize();
 
-    // Synthetic input sized to the input shape, in the block's dtype.
+    // Synthetic float input sized to the input shape.
     let input_count: usize = shape.iter().map(|&d| d.max(1) as usize).product();
     let mut input = vec![0.0f32; input_count];
+    // unpack_blc16 subtracts BLC=64 and clips via ReLU6; raw Bayer data is
+    // in [0, 65535], so generate values above the BLC threshold.
+    let use_raw_range = case.name == "unpack_blc16";
     for (i, v) in input.iter_mut().enumerate() {
-        *v = ((i % 251) as f32) / 255.0;
-    }
-    let input_ptr: *const c_void;
-    let mut input_ints;
-    let mut input_i16;
-    if case.dtype_code == 0 {
-        // INT32 packed input (legacy unpack block): generate int32 payload.
-        input_ints = vec![0i32; input_count];
-        for (i, v) in input_ints.iter_mut().enumerate() {
-            *v = ((i % 4093) as i32) % 2048;
+        if use_raw_range {
+            *v = 100.0 + ((i % 4093) as f32) % 65400.0;
+        } else {
+            *v = ((i % 251) as f32) / 255.0;
         }
-        input_ptr = input_ints.as_ptr() as *const c_void;
-    } else if case.dtype_code == 5 {
-        // INT16 input (unpack_blc16 block): generate int16 payload.
-        input_i16 = vec![0i16; input_count];
-        for (i, v) in input_i16.iter_mut().enumerate() {
-            *v = ((i % 4093) as i16) % 2048;
-        }
-        input_ptr = input_i16.as_ptr() as *const c_void;
-    } else {
-        input_ptr = input.as_ptr() as *const c_void;
     }
 
-    let out_name = case.out_name.clone().unwrap_or_else(|| {
-        let tail = case.chain.last().expect("chain tail");
-        tail.graph_output_name()
-            .expect("graph output name")
-            .to_string()
-    });
-    let out_name_c = CString::new(out_name).expect("out name nul");
+    // Use mnn_run_host_tensors (copyFromHostTensor/copyToHostTensor) instead of
+    // mnn_run_with_output (zero-copy buffer().host). The zero-copy path requires
+    // gralloc mmap'd device memory (as cam_app provides); tests use regular heap.
     let max_out = (input_count * 4).max(1024);
     let mut out = vec![0.0f32; max_out];
 
     unsafe {
-        let ret = cam_isp::mnn_sys::mnn_run_with_output(
+        let ret = cam_isp::mnn_sys::mnn_run_host_tensors(
             interp.as_ptr(),
             sess.as_ptr(),
-            input_ptr,
-            case.dtype_code,
-            32,
+            input.as_ptr(),
             shape.as_ptr(),
             shape.len() as i32,
-            out_name_c.as_ptr(),
             out.as_mut_ptr(),
             max_out as i32,
         );
-        assert_eq!(ret, 0, "inference failed for {} (ret={})", case.name, ret);
+        eprintln!(
+            "[pass0:{}] mnn_run_host_tensors returned ret={}, out[0..4]: {:?}",
+            case.name,
+            ret,
+            &out[..4.min(out.len())]
+        );
+        assert!(ret > 0, "inference failed for {} (ret={})", case.name, ret);
     }
 
     // Finite check.
@@ -196,7 +183,10 @@ fn core_blocks() -> Vec<BlockCase> {
 
     let mut cases: Vec<BlockCase> = Vec::new();
 
-    // unpack_blc16 (ISP1): INT16 [1,1,H,W] → FLOAT16 [1,1,H,W] via BLC.
+    // unpack_blc16 (ISP1): INT16 [1,1,H,W] → FLOAT via BLC.
+    // NOTE: MNN's ONNX→MNN converter upcasts INT16 inputs to FLOAT32,
+    // so we pass dtype_code=2/32 to match what the converted MNN model
+    // actually expects, even though the ONNX graph declares INT16.
     cases.push(BlockCase {
         name: "unpack_blc16",
         chain: vec![
@@ -204,11 +194,12 @@ fn core_blocks() -> Vec<BlockCase> {
                 RawInputBlock::new()
                     .with_elem_type(5)
                     .with_concrete_dims(16, 16),
-            ), // INT16
+            ), // INT16 in ONNX, but MNN upcasts to FLOAT32
             Box::new(UnpackBlc16Block::new()),
         ],
         shape: vec![1, 1, 16, 16],
-        dtype_code: 5, // INT16
+        dtype_code: 2, // FLOAT32 — matches MNN model input after converter upcast
+        type_bits: 32,
         out_name: None,
     });
 
@@ -225,6 +216,7 @@ fn core_blocks() -> Vec<BlockCase> {
         ],
         shape: vec![1, 4, 16, 16],
         dtype_code: 2, // FLOAT (halide code 2)
+        type_bits: 32,
         out_name: None,
     });
 
@@ -241,6 +233,7 @@ fn core_blocks() -> Vec<BlockCase> {
         ],
         shape: vec![1, 3, 16, 16],
         dtype_code: 2, // FLOAT
+        type_bits: 32,
         out_name: None,
     });
 
@@ -257,6 +250,7 @@ fn core_blocks() -> Vec<BlockCase> {
         ],
         shape: vec![1, 3, 16, 16],
         dtype_code: 2, // FLOAT
+        type_bits: 32,
         out_name: None,
     });
 
@@ -273,6 +267,7 @@ fn core_blocks() -> Vec<BlockCase> {
         ],
         shape: vec![1, 3, 16, 16],
         dtype_code: 2, // FLOAT
+        type_bits: 32,
         out_name: None,
     });
 
@@ -289,6 +284,7 @@ fn core_blocks() -> Vec<BlockCase> {
         ],
         shape: vec![1, 3, 16, 16],
         dtype_code: 2, // FLOAT
+        type_bits: 32,
         out_name: None,
     });
 
@@ -301,6 +297,12 @@ fn test_pass0_core_blocks_onnx_to_mnn() {
     for case in core_blocks() {
         let name = case.name;
         let (out, _) = run_pass0_block(case);
+        let first4: Vec<f32> = out.iter().take(4).copied().collect();
+        let nonzero = out.iter().filter(|&&v| v != 0.0).count();
+        eprintln!(
+            "[pass0:{}]: nonzero={}, total={}, first4={:?}",
+            name, nonzero, out.len(), first4
+        );
         assert!(
             out.iter().any(|&v| v != 0.0),
             "all-zero output for block {}",
