@@ -479,4 +479,244 @@ MNN_PUBLIC int mnn_convert_onnx_memfd(
     return rc;
 }
 
+// ── MNN→MNN conversion (Pass1: applies IspChainFusion) ──────────────────
+//
+// Same in-process buffer pattern as mnn_convert_onnx_buffer, but the input
+// is an existing MNN model. The converter re-parses it with framework=MNN,
+// which runs the IspChainFusion post-converter: standard primitive ops
+// (Conv/BinaryOp/Pool/...) are fused into isp.* custom ops carrying
+// pre-compiled SPIR-V.
+
+/// Convert MNN bytes to MNN bytes (framework=MNN → IspChainFusion).
+/// Caller must free result->data via MnnConvert_FreeBuffer.
+MNN_PUBLIC void mnn_convert_mnn_buffer(
+    const void* mnn_data,
+    size_t mnn_len,
+    MnnConvertBufferResult* result)
+{
+    if (result == nullptr) {
+        return;
+    }
+    ensure_cleanup_registered();
+    result->success = 0;
+    result->error_msg[0] = '\0';
+    result->data = nullptr;
+    result->size = 0;
+
+    if (!mnn_data || mnn_len == 0) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "NULL or empty MNN data");
+        return;
+    }
+
+    TempFileGuard in_guard("mnn_in_XXXXXX");
+    if (!in_guard.active) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "failed to create input tempfile");
+        return;
+    }
+    {
+        int fd = open(in_guard.path.c_str(), O_WRONLY);
+        if (fd < 0) {
+            result->success = -1;
+            snprintf(result->error_msg, sizeof(result->error_msg), "failed to open input tempfile");
+            return;
+        }
+        size_t written = 0;
+        while (written < mnn_len) {
+            ssize_t n = write(fd, (const char*)mnn_data + written, mnn_len - written);
+            if (n < 0) {
+                close(fd);
+                result->success = -1;
+                snprintf(result->error_msg, sizeof(result->error_msg), "write input failed");
+                return;
+            }
+            written += n;
+        }
+        close(fd);
+    }
+
+    TempFileGuard out_guard("mnn_out_XXXXXX");
+    if (!out_guard.active) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "failed to create output tempfile");
+        return;
+    }
+
+    try {
+        modelConfig config;
+        config.model = modelConfig::MNN;   // MNN→MNN: triggers IspChainFusion
+        config.modelFile = in_guard.path;
+        config.MNNModel = out_guard.path;
+        config.bizCode = "MNN";
+        config.optimizeLevel = 1;
+        config.weightQuantBits = 0;
+        config.saveHalfFloat = false;
+#ifdef MNN_HAS_PRESERVE_INPUT_TYPE
+        config.preserveInputType = true;
+#endif
+
+        if (!MNN::Cli::convertModel(config)) {
+            result->success = -1;
+            snprintf(result->error_msg, sizeof(result->error_msg),
+                     "MNN::Cli::convertModel returned false");
+            return;
+        }
+
+        FILE* f = fopen(out_guard.path.c_str(), "rb");
+        if (!f) {
+            result->success = -1;
+            snprintf(result->error_msg, sizeof(result->error_msg), "failed to open output");
+            return;
+        }
+        fseek(f, 0, SEEK_END);
+        long fsize = ftell(f);
+        rewind(f);
+
+        void* mnn_out = malloc(fsize > 0 ? fsize : 1);
+        if (!mnn_out) {
+            fclose(f);
+            result->success = -1;
+            snprintf(result->error_msg, sizeof(result->error_msg),
+                     "Failed to allocate %ld bytes", fsize);
+            return;
+        }
+        size_t total = fread(mnn_out, 1, fsize, f);
+        fclose(f);
+
+        result->data = mnn_out;
+        result->size = total;
+    } catch (const std::exception& e) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "%s", e.what());
+        if (result->data) { free(result->data); result->data = nullptr; }
+    } catch (...) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "Unknown exception");
+        if (result->data) { free(result->data); result->data = nullptr; }
+    }
+}
+
+// ── MNN→JSON dump (Pass1 opset verification) ────────────────────────────
+//
+// Dumps an MNN model to the flatbuffer-JSON text format via
+// MNN::Cli::mnn2json. The JSON contains one object per op with fields
+// "type" (MNN OpType enum name, e.g. "Conv", "BinaryOp") and, for custom
+// ops, "main_type": "Extra" with "main.type" = the isp.* string.
+// The test parses this JSON in Rust to verify the B-test constraint:
+// Pass1 MNN must contain ONLY isp.* custom opset operations.
+
+/// Result of a MNN→JSON dump.
+/// Caller must free `data` via MnnConvert_FreeBuffer.
+typedef struct {
+    int success;    // 0 = success, -1 = error
+    char error_msg[1024];
+    void* data;     // JSON string bytes (NUL-terminated, malloc'd)
+    size_t size;    // size of JSON data (incl. NUL)
+} MnnConvertJsonResult;
+
+/// Dump MNN bytes to JSON text via MNN::Cli::mnn2json (in-process).
+MNN_PUBLIC void mnn_dump_mnn_to_json(
+    const void* mnn_data,
+    size_t mnn_len,
+    MnnConvertJsonResult* result)
+{
+    if (result == nullptr) {
+        return;
+    }
+    ensure_cleanup_registered();
+    result->success = 0;
+    result->error_msg[0] = '\0';
+    result->data = nullptr;
+    result->size = 0;
+
+    if (!mnn_data || mnn_len == 0) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "NULL or empty MNN data");
+        return;
+    }
+
+    TempFileGuard in_guard("mnn_in_XXXXXX");
+    if (!in_guard.active) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "failed to create input tempfile");
+        return;
+    }
+    {
+        int fd = open(in_guard.path.c_str(), O_WRONLY);
+        if (fd < 0) {
+            result->success = -1;
+            snprintf(result->error_msg, sizeof(result->error_msg), "failed to open input tempfile");
+            return;
+        }
+        size_t written = 0;
+        while (written < mnn_len) {
+            ssize_t n = write(fd, (const char*)mnn_data + written, mnn_len - written);
+            if (n < 0) {
+                close(fd);
+                result->success = -1;
+                snprintf(result->error_msg, sizeof(result->error_msg), "write input failed");
+                return;
+            }
+            written += n;
+        }
+        close(fd);
+    }
+
+    TempFileGuard out_guard("mnn_json_XXXXXX");
+    if (!out_guard.active) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "failed to create json tempfile");
+        return;
+    }
+
+    try {
+        modelConfig config;
+        config.model = modelConfig::MNN;
+        config.modelFile = in_guard.path;
+        config.MNNModel = out_guard.path;
+        config.mnn2json = true;
+
+        if (!MNN::Cli::convertModel(config)) {
+            result->success = -1;
+            snprintf(result->error_msg, sizeof(result->error_msg),
+                     "MNN::Cli::convertModel (mnn2json) returned false");
+            return;
+        }
+
+        FILE* f = fopen(out_guard.path.c_str(), "rb");
+        if (!f) {
+            result->success = -1;
+            snprintf(result->error_msg, sizeof(result->error_msg), "failed to open json output");
+            return;
+        }
+        fseek(f, 0, SEEK_END);
+        long fsize = ftell(f);
+        rewind(f);
+
+        void* json_data = malloc(fsize + 1);
+        if (!json_data) {
+            fclose(f);
+            result->success = -1;
+            snprintf(result->error_msg, sizeof(result->error_msg),
+                     "Failed to allocate %ld bytes", fsize);
+            return;
+        }
+        size_t total = fread(json_data, 1, fsize, f);
+        fclose(f);
+        ((char*)json_data)[total] = '\0';  // NUL-terminate
+
+        result->data = json_data;
+        result->size = total + 1;
+    } catch (const std::exception& e) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "%s", e.what());
+        if (result->data) { free(result->data); result->data = nullptr; }
+    } catch (...) {
+        result->success = -1;
+        snprintf(result->error_msg, sizeof(result->error_msg), "Unknown exception");
+        if (result->data) { free(result->data); result->data = nullptr; }
+    }
+}
+
 } // extern "C"

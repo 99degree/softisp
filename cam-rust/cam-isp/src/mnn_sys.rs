@@ -639,6 +639,17 @@ pub struct MnnConvertBufferResult {
     pub size: usize,
 }
 
+/// MNN→JSON dump result (mnn_convert_api.cpp).
+/// `data` is a NUL-terminated JSON string (malloc'd); caller must free
+/// via MnnConvert_FreeBuffer.
+#[repr(C)]
+pub struct MnnConvertJsonResult {
+    pub success: i32,
+    pub error_msg: [c_char; 1024usize],
+    pub data: *mut c_void,
+    pub size: usize,
+}
+
 extern "C" {
     /// Convert ONNX model to MNN format (statically linked from mnn_convert_api.cpp).
     /// Returns result via MnnConvertResult struct. No heap allocation, no free needed.
@@ -690,6 +701,28 @@ extern "C" {
         fp16: i32,
         preserve_input_type: i32,
         result: *mut MnnConvertResult,
+    );
+
+    // MNN→MNN buffer conversion (framework=MNN → applies IspChainFusion).
+    // Pass1 (B test): converts the Pass0 .mnn through the converter again,
+    // fusing primitive ops into isp.* custom ops carrying SPIR-V.
+    // Caller must free result->data via MnnConvert_FreeBuffer.
+    pub fn mnn_convert_mnn_buffer(
+        mnn_data: *const c_void,
+        mnn_len: usize,
+        result: *mut MnnConvertBufferResult,
+    );
+
+    /// MNN→JSON dump via MNN::Cli::mnn2json (in-process).
+    /// Produces the flatbuffer JSON text: one object per op with "type"
+    /// (MNN OpType enum name) and, for custom ops, "main_type": "Extra"
+    /// with "main.type" = the isp.* string. Used by the Pass1 (B) test to
+    /// verify the converted MNN contains ONLY isp.* custom opset ops.
+    /// Caller must free result->data via MnnConvert_FreeBuffer.
+    pub fn mnn_dump_mnn_to_json(
+        mnn_data: *const c_void,
+        mnn_len: usize,
+        result: *mut MnnConvertJsonResult,
     );
 }
 
