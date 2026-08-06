@@ -526,14 +526,24 @@ fn mnn_include_dir() -> PathBuf {
 
 #[allow(dead_code)]
 fn mnn_convert_include_dir() -> PathBuf {
+    // Prefer the checked-in vendored converter headers: they are pinned to the
+    // ABI of the checked-in libMNNConvertDeps.so (lib/aarch64-v8a). The live
+    // $MNN_DIR/tools/converter/include can drift from that .so (e.g. MNN
+    // upstream removing modelConfig fields), which corrupts the wrapper's
+    // modelConfig layout and crashes in the .so's destructor.
     std::env::var_os("MNN_CONVERT_INCLUDE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let primary = mnn_dir().join("tools/converter/include");
-            if primary.exists() {
-                primary
+            let vendored = vendor_mnn_dir().join("mnnconvert/include/converter");
+            if vendored.exists() {
+                vendored
             } else {
-                vendor_mnn_dir().join("tools/converter/include")
+                let primary = mnn_dir().join("tools/converter/include");
+                if primary.exists() {
+                    primary
+                } else {
+                    vendor_mnn_dir().join("tools/converter/include")
+                }
             }
         })
 }
