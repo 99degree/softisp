@@ -3,12 +3,11 @@ use crate::pipeline::IspBlock;
 
 /// UnpackBlc16Block -- INT16 Bayer -> FLOAT32 with fused BLC.
 ///
-/// MNN upcasts INT16 inputs to FLOAT32 at model-load time, so the graph
-/// operates entirely in FLOAT32: Input(F32) → Sub(BLC) → Clip(0, 65504).
-/// No Cast nodes — MNN handles the INT16→F32 promotion externally.
+/// Graph: Input(INT16) → Cast(to=FLOAT32) → Sub(BLC) → Clip(0, 65504).
+/// The Cast makes the ONNX graph self-consistent: the Sub node receives
+/// two FLOAT32 inputs instead of relying on MNN's silent INT16→F32 promotion.
 ///
-/// Input:  INT16  [1,1,H,W]  (native Bayer — ONNX elem_type 5,
-///          but MNN converts to FLOAT32 before inference)
+/// Input:  INT16  [1,1,H,W]  (native Bayer — ONNX elem_type 5)
 /// Output: FLOAT32 [1,1,H,W]  (BLC-corrected)
 pub struct UnpackBlc16Block {
     pub id: String,
@@ -107,14 +106,19 @@ impl IspBlock for UnpackBlc16Block {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        // MNN handles INT16→FLOAT32 promotion at model-load time.
-        // Graph is pure FLOAT32: Input → Sub(BLC) → Clip(0, 65504).
+        // Cast INT16 input → FLOAT32, then Sub(BLC) → Clip.
         let ns = self.tensor_ns();
         let inp = self.effective_input();
         vec![
             Proto::node(
+                "Cast",
+                &[&inp],
+                &[&format!("{}/float", ns)],
+                &[Proto::attribute_int("to", 1)], // to FLOAT32
+            ),
+            Proto::node(
                 "Sub",
-                &[&inp, &format!("{}/blc_val", ns)],
+                &[&format!("{}/float", ns), &format!("{}/blc_val", ns)],
                 &[&format!("{}/subbed", ns)],
                 &[],
             ),
@@ -173,7 +177,8 @@ mod tests {
     fn test_unpack_blc16_nodes() {
         let mut b = UnpackBlc16Block::new();
         b.set_input_source("in/bayer");
-        assert_eq!(b.nodes().len(), 2);
+        // Cast + Sub + Clip = 3 nodes
+        assert_eq!(b.nodes().len(), 3);
     }
 
     #[test]
