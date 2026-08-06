@@ -9,6 +9,10 @@ engine with the Vulkan backend. The goal is to:
    reference `.mnn` files aligned with `cam_isp`.
 2. **Pass1 (B test)** — MNN→MNN inference using the Pass0 `.mnn` files on the
    Vulkan backend, verifying SPIRV custom opset correctness.
+   **Constraint**: Pass1 MNN models must contain ONLY `isp.*` custom opset
+   operations — no MNN primitive ops (Conv, Add, Mul, GridSample, etc.)
+   are allowed. Every computation must be routed through a custom ISP
+   SPIRV shader via `VulkanFuseCreator`.
 3. **A/B comparison** — Compare Pass0 (ONNX→MNN reference) results against
    Pass1 (Vulkan MNN inference) results to detect SPIRV correctness issues.
 
@@ -343,19 +347,65 @@ fn pass0_heavy_pipeline() {
 ### Purpose
 
 Load each Pass0 `.mnn` reference file and run inference on the Vulkan backend.
-This verifies that the MNN Vulkan backend correctly executes the ISP custom
-opset SPIRV shaders. Any discrepancy between Pass0 (reference) and Pass1
-(Vulkan inference) results indicates a SPIRV correctness issue.
+This verifies that:
+
+1. The MNN Vulkan backend correctly executes the ISP custom opset SPIRV
+   shaders.
+2. **The MNN model contains ONLY `isp.*` custom opset operations** — no
+   MNN primitive ops (Conv, Add, Mul, GridSample, Resize, etc.) are
+   present in the graph. Every computation must be routed through a custom
+   ISP SPIRV shader via `VulkanFuseCreator`.
+
+Any discrepancy between Pass0 (reference) and Pass1 (Vulkan inference)
+results indicates a SPIRV correctness issue or a primitive op leakage
+issue.
 
 ### Test Structure
 
 Each test:
 1. Loads the Pass0 `.mnn` reference file
-2. Creates a Vulkan MNN session
-3. Sets input tensor data
-4. Runs inference
-5. Reads output tensor data
-6. Returns the output for A/B comparison
+2. **Verifies the MNN graph contains ONLY `isp.*` custom opset ops** (no
+   primitive MNN ops like Conv, Add, Mul, GridSample, Resize, etc.)
+3. Creates a Vulkan MNN session
+4. Sets input tensor data
+5. Runs inference
+6. Reads output tensor data
+7. Returns the output for A/B comparison
+
+#### Opset Verification Helper
+
+```rust
+/// Verify that the MNN model graph contains ONLY isp.* custom opset
+/// operations — no MNN primitive ops are present.
+///
+/// Returns Ok(()) if all ops are isp.* custom ops, Err with the
+/// offending primitive op name otherwise.
+fn verify_isp_only_opset(mnn_bytes: &[u8]) -> Result<(), String> {
+    use cam_isp::mnn_sys::MnnInterpreterSafe;
+
+    let interp = MnnInterpreterSafe::from_buffer(mnn_bytes)
+        .ok_or("Failed to load MNN for opset verification")?;
+
+    // MNN stores op info in the net flatbuffer.
+    // Iterate over all ops and check that every op type starts with "isp."
+    // Any op that does NOT start with "isp." is a primitive op
+    // (e.g. Conv, Add, Mul, GridSample, Resize, Split, Concat, etc.)
+    // and indicates the conversion did not properly fuse the ISP block
+    // into a single custom op.
+    let net = interp.net(); // internal flatbuffer reference
+    for op in net.oplists() {
+        let op_type = op.op_type().unwrap_or("");
+        if !op_type.starts_with("isp.") {
+            return Err(format!(
+                "Primitive op '{}' found in MNN graph — expected only isp.* custom ops",
+                op_type
+            ));
+        }
+    }
+
+    Ok(())
+}
+```
 
 ### Individual Block Pass1 Tests
 
@@ -508,6 +558,23 @@ Compare Pass0 (ONNX→MNN reference) results against Pass1 (Vulkan MNN inference
 results for each ISP block. Any significant deviation indicates a SPIRV
 correctness issue in the Vulkan custom opset.
 
+### B Test Constraint: ISP-Only Opset Verification
+
+Before running the A/B comparison for any block, the Pass1 MNN model must
+pass the **ISP-only opset verification** described in the Pass1 section.
+If the MNN graph contains any primitive MNN ops (Conv, Add, Mul,
+GridSample, Resize, etc.), the test fails immediately — the conversion
+pipeline has not properly fused the ISP block into a single custom
+`isp.*` op, and the SPIRV shader will not be invoked.
+
+This constraint ensures that:
+
+- **Pass0 MNN files** are aligned with `cam_isp` (contain only `isp.*`
+  custom ops)
+- **Pass1 Vulkan inference** exercises the custom SPIRV shaders exclusively
+- **A/B comparison** is meaningful — both sides use the same custom opset
+  path, so any discrepancy is a genuine SPIRV correctness issue
+
 ### Comparison Criteria
 
 | Metric | Threshold | Action |
@@ -618,12 +685,28 @@ primary goal of the B test (Pass1).
 
 1. **Load Pass0 reference `.mnn`** — the ONNX→MNN converted model with
    custom ISP opset SPIRV embedded
-2. **Run Vulkan inference** — execute the model on the Vulkan backend
-3. **Compare with CPU reference** — run the same model on CPU backend
+2. **Verify ISP-only opset** — confirm the MNN graph contains ONLY
+   `isp.*` custom ops (no primitive MNN ops). See `verify_isp_only_opset()`
+   in the Pass1 test structure above.
+3. **Run Vulkan inference** — execute the model on the Vulkan backend
+4. **Compare with CPU reference** — run the same model on CPU backend
    and compare Vulkan output against CPU output
-4. **Check per-op correctness** — for each custom op (`isp.unpack_blc`,
+5. **Check per-op correctness** — for each custom op (`isp.unpack_blc`,
    `isp.demosaic_ccm`, `isp.fcs`, `isp.ee`, `isp.ldci`, `isp.display`),
    verify the output matches the expected mathematical result
+
+#### Opset Alignment Check
+
+The B test also verifies that the Pass0 MNN opset matches what `cam_isp`
+produces for the same ONNX graph. This is the **alignment target**:
+
+```
+Pass0 MNN opset (ours)  ──must match──►  cam_isp MNN opset
+```
+
+If `cam_isp` uses `isp.unpack_blc` but our conversion produces a
+`Conv` + `Add` + `ReLU` subgraph for the same block, the opset is
+misaligned and must be fixed in the conversion pipeline.
 
 ### SPIRV Custom Opset List
 
@@ -690,10 +773,13 @@ cargo test --test test_mnn_ab_comparison -p cam-isp --features mnn -- --ignored 
 
 1. **Pass0**: All blocks produce valid `.mnn` files that load and run on MNN
 2. **Pass1**: All blocks produce valid Vulkan inference output (no NaN/Inf)
-3. **A/B**: MAE < 0.01 and PSNR > 40 dB for all blocks between Pass0 and Pass1
-4. **SPIRV**: All custom opset shaders produce mathematically correct output
+3. **B Test Opset Constraint**: All Pass1 MNN models contain ONLY `isp.*`
+   custom opset operations — zero MNN primitive ops (Conv, Add, Mul,
+   GridSample, Resize, etc.) are present in any graph
+4. **A/B**: MAE < 0.01 and PSNR > 40 dB for all blocks between Pass0 and Pass1
+5. **SPIRV**: All custom opset shaders produce mathematically correct output
    matching the CPU reference implementation
-5. **Alignment**: Pass0 MNN files match what `cam_isp` produces for the same
+6. **Alignment**: Pass0 MNN files match what `cam_isp` produces for the same
    ONNX graphs (node-for-node alignment)
 
 ## Failure Modes
@@ -706,3 +792,5 @@ cargo test --test test_mnn_ab_comparison -p cam-isp --features mnn -- --ignored 
 | A/B MAE > 0.01 | SPIRV computation error | Fix GLSL shader math, recompile, re-embed |
 | A/B output shape mismatch | ONNX graph shape inference error | Fix `output_value_info` in block definition |
 | NaN/Inf in Pass1 output | Division by zero or invalid FP op | Add epsilon guards in SPIRV shader |
+| Primitive op in Pass1 graph | ONNX→MNN conversion did not fuse ISP block into custom op | Fix conversion pipeline to produce `isp.*` ops only; check `allow_custom_op` flag and MNN opset registration |
+| Pass1 opset mismatch with cam_isp | Our conversion produces different ops than cam_isp | Align ONNX graph structure with cam_isp's expected node layout; verify `isp.*` op names match exactly |
