@@ -1290,20 +1290,20 @@ impl IspEngine for MnnEngine {
                 }
 
                 // ChannelMeansBlock/frame → [1, 3] or [3]
-                if let Some(vals) = read_output_f32(&interp, sess, "ChannelMeansBlock/frame", 3) {
+                if let Some(vals) = read_output_f32(interp, sess, "ChannelMeansBlock/frame", 3) {
                     if vals.len() >= 3 {
                         cm_vals = Some([vals[0], vals[1], vals[2]]);
                     }
                 }
                 // ToneStatsBlock/frame → [6]
-                if let Some(vals) = read_output_f32(&interp, sess, "ToneStatsBlock/frame", 6) {
+                if let Some(vals) = read_output_f32(interp, sess, "ToneStatsBlock/frame", 6) {
                     let mut ts = [0.0f32; 6];
                     let n = vals.len().min(6);
                     ts[..n].copy_from_slice(&vals[..n]);
                     ts_vals = Some(ts);
                 }
                 // CoarseHistogramBlock/frame → [1, 16]
-                if let Some(vals) = read_output_f32(&interp, sess, "CoarseHistogramBlock/frame", 16)
+                if let Some(vals) = read_output_f32(interp, sess, "CoarseHistogramBlock/frame", 16)
                 {
                     let mut hist = [0.0f32; 16];
                     let n = vals.len().min(16);
@@ -1311,7 +1311,7 @@ impl IspEngine for MnnEngine {
                     hist_vals = Some(hist);
                 }
                 // CalibrationBlock/frame → [24] (quad means, vars, mins, maxs, ranges, frame stats)
-                if let Some(vals) = read_output_f32(&interp, sess, "CalibrationBlock/frame", 24) {
+                if let Some(vals) = read_output_f32(interp, sess, "CalibrationBlock/frame", 24) {
                     let mut cal = [0.0f32; 24];
                     let n = vals.len().min(24);
                     cal[..n].copy_from_slice(&vals[..n]);

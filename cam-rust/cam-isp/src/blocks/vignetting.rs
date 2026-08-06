@@ -93,6 +93,32 @@ impl IspBlock for VignettingBlock {
 
     fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
 
+    fn input_value_info(&self) -> Option<Vec<u8>> {
+        Some(Proto::value_info(
+            self.input_source().unwrap_or("vignetting/input"),
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
+    }
+
+    fn output_value_info(&self) -> Option<Vec<u8>> {
+        Some(Proto::value_info(
+            self.frame_tensor().unwrap_or("vignetting/output"),
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
+    }
+
     fn nodes(&self) -> Vec<Vec<u8>> {
         // Vignetting correction: Apply pre-computed gain map
         // The gain_map is stored as an initializer, so we just multiply
