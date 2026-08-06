@@ -106,7 +106,16 @@ impl IspBlock for BayerWbBlock {
         ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        self.input_value_info()
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(4),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();

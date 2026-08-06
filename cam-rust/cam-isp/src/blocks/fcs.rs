@@ -136,17 +136,9 @@ impl IspBlock for FcsBlock {
         vec![
             // Per-channel gain: [1,3,1,1] — broadcasts trivially over N,H,W
             // Shape [1,3,1,1] so MNN shape inference can resolve without 1D broadcast
-            Proto::tensor_proto_float(
-                &format!("{}/gain", ns),
-                &[1, 3, 1, 1],
-                &[1.0, 1.0, 1.0],
-            ),
+            Proto::tensor_proto_float(&format!("{}/gain", ns), &[1, 3, 1, 1], &[1.0, 1.0, 1.0]),
             // Per-channel bias: [1,3,1,1]
-            Proto::tensor_proto_float(
-                &format!("{}/bias", ns),
-                &[1, 3, 1, 1],
-                &[0.0, 0.0, 0.0],
-            ),
+            Proto::tensor_proto_float(&format!("{}/bias", ns), &[1, 3, 1, 1], &[0.0, 0.0, 0.0]),
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
