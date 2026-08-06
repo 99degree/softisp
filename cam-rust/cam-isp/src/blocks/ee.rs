@@ -106,7 +106,16 @@ impl IspBlock for EeBlock {
         ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        self.input_value_info()
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     /// Single Conv(3×3, group=3, unsharp) matching R4 → isp.ee

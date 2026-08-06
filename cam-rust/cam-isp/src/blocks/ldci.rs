@@ -97,7 +97,16 @@ impl IspBlock for LdciBlock {
         ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        self.input_value_info()
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     /// Pool(AVG 3×3) → Sub(original, blur) → Mul(diff, strength) → Add(original, boost)

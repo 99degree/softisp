@@ -120,6 +120,7 @@ fn run_pass1_block(
     chain: Vec<Box<dyn IspBlock>>,
     shape: &[i32],
     dtype_code: i32,
+    type_bits: i32,
 ) -> Vec<f32> {
     let mut chain = chain;
     GraphComposer::wire_blocks(&mut chain);
@@ -210,7 +211,7 @@ fn run_pass1_block(
             sess.as_ptr(),
             input_ptr,
             dtype_code,
-            32,
+            type_bits,
             shape.as_ptr(),
             shape.len() as i32,
             out_name_c.as_ptr(),
@@ -226,7 +227,7 @@ fn run_pass1_block(
     out
 }
 
-fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
+fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32, i32)> {
     use cam_isp::blocks::*;
     vec![
         // Chains start with RawInputBlock (production topology): a head block
@@ -244,6 +245,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 1, 16, 16],
             5,
+            16,
         ),
         (
             "demosaic",
@@ -257,6 +259,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 4, 16, 16],
             2,
+            32,
         ),
         (
             "fcs",
@@ -270,6 +273,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 3, 16, 16],
             2,
+            32,
         ),
         (
             "ee",
@@ -283,6 +287,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 3, 16, 16],
             2,
+            32,
         ),
         (
             "ldci",
@@ -296,6 +301,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 3, 16, 16],
             2,
+            32,
         ),
         (
             "display",
@@ -309,6 +315,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 3, 16, 16],
             2,
+            32,
         ),
     ]
 }
@@ -316,8 +323,8 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
 #[test]
 #[ignore]
 fn test_pass1_core_blocks_isp_only_opset() {
-    for (name, chain, shape, dtype) in core_blocks() {
-        let out = run_pass1_block(name, chain, &shape, dtype);
+    for (name, chain, shape, dtype, bits) in core_blocks() {
+        let out = run_pass1_block(name, chain, &shape, dtype, bits);
         assert!(
             out.iter().any(|&v| v != 0.0),
             "[pass1:{}] all-zero output",
