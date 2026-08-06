@@ -95,7 +95,105 @@ pub fn convert_onnx_buffer(onnx_bytes: &[u8]) -> Result<Vec<u8>, String> {
     Ok(mnn_bytes)
 }
 
-/// Convert ONNX bytes to an MNN model held in a memfd, returning the fd.
+/// Convert MNN bytes to MNN bytes in-process (framework=MNN).
+///
+/// Pass1 (B test): re-runs the Pass0 .mnn through the converter with
+/// framework=MNN, which applies IspChainFusion — fusing primitive ops
+/// (Conv/BinaryOp/Pool/...) into isp.* custom ops carrying pre-compiled
+/// SPIR-V. Caller owns the returned `Vec<u8>`.
+#[cfg(feature = "mnn")]
+pub fn convert_mnn_buffer(mnn_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use crate::mnn_sys::{mnn_convert_mnn_buffer, MnnConvertBufferResult, MnnConvert_FreeBuffer};
+
+    if mnn_bytes.is_empty() {
+        return Err("MNN bytes are empty".into());
+    }
+
+    let mut result = MnnConvertBufferResult {
+        success: 0,
+        error_msg: [0 as std::os::raw::c_char; 1024usize],
+        data: std::ptr::null_mut(),
+        size: 0,
+    };
+    unsafe {
+        mnn_convert_mnn_buffer(
+            mnn_bytes.as_ptr() as *const std::ffi::c_void,
+            mnn_bytes.len(),
+            &mut result,
+        );
+    }
+    if result.success != 0 {
+        let err_msg = unsafe { std::ffi::CStr::from_ptr(result.error_msg.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { MnnConvert_FreeBuffer(&mut result) };
+        return Err(format!("MNN→MNN buffer convert failed: {}", err_msg));
+    }
+    if result.data.is_null() || result.size == 0 {
+        unsafe { MnnConvert_FreeBuffer(&mut result) };
+        return Err("MNN→MNN buffer convert returned empty".into());
+    }
+
+    let slice = unsafe { std::slice::from_raw_parts(result.data as *const u8, result.size) };
+    let mnn_out = slice.to_vec();
+    unsafe {
+        MnnConvert_FreeBuffer(&mut result);
+    }
+    Ok(mnn_out)
+}
+
+/// Dump MNN bytes to the flatbuffer-JSON text via MNN::Cli::mnn2json.
+///
+/// The JSON has one object per op with "type" (MNN OpType enum name,
+/// e.g. "Conv", "BinaryOp") and, for custom ops, "main_type": "Extra"
+/// with "main.type" = the isp.* string. The test parses this in Rust
+/// (serde_json) to build an abstract node graph for Pass0/Pass1
+/// comparison and to verify the B-test constraint: Pass1 MNN contains
+/// ONLY isp.* custom opset operations.
+#[cfg(feature = "mnn")]
+pub fn dump_mnn_to_json(mnn_bytes: &[u8]) -> Result<String, String> {
+    use crate::mnn_sys::{
+        mnn_dump_mnn_to_json, MnnConvertBufferResult, MnnConvertJsonResult, MnnConvert_FreeBuffer,
+    };
+
+    if mnn_bytes.is_empty() {
+        return Err("MNN bytes are empty".into());
+    }
+
+    let mut result = MnnConvertJsonResult {
+        success: 0,
+        error_msg: [0 as std::os::raw::c_char; 1024usize],
+        data: std::ptr::null_mut(),
+        size: 0,
+    };
+    unsafe {
+        mnn_dump_mnn_to_json(
+            mnn_bytes.as_ptr() as *const std::ffi::c_void,
+            mnn_bytes.len(),
+            &mut result,
+        );
+    }
+    if result.success != 0 {
+        let err_msg = unsafe { std::ffi::CStr::from_ptr(result.error_msg.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { MnnConvert_FreeBuffer(&mut result as *mut _ as *mut MnnConvertBufferResult) };
+        return Err(format!("MNN→JSON dump failed: {}", err_msg));
+    }
+    if result.data.is_null() || result.size == 0 {
+        unsafe { MnnConvert_FreeBuffer(&mut result as *mut _ as *mut MnnConvertBufferResult) };
+        return Err("MNN→JSON dump returned empty".into());
+    }
+
+    let s = unsafe { std::ffi::CStr::from_ptr(result.data as *const std::os::raw::c_char) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe {
+        MnnConvert_FreeBuffer(&mut result as *mut _ as *mut MnnConvertBufferResult);
+    }
+    Ok(s)
+}
+
 ///
 /// Same as `convert_onnx_buffer` but the converted `.mnn` is written into a
 /// memfd and the fd is returned instead of copying bytes into a `Vec<u8>`.

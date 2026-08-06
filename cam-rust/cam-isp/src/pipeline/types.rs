@@ -479,11 +479,12 @@ impl GraphComposer {
             }
 
             // Graph output: all non-head blocks register outputs to prevent MNN DCE.
+            // A single-block graph (head == tail) must still register its output.
             let is_tail = std::ptr::eq(*blk as *const _, pipeline_tail as *const _);
             let is_head = std::ptr::eq(*blk as *const _, pipeline_head as *const _);
             if let Some(name) = blk.graph_output_name() {
                 if let Some(vi) = blk.output_value_info() {
-                    if is_tail && !is_head {
+                    if is_tail {
                         all_outputs.insert(0, vi);
                     } else if !is_head {
                         all_outputs.push(vi);
