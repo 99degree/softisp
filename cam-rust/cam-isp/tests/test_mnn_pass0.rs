@@ -416,6 +416,74 @@ fn core_blocks() -> Vec<BlockCase> {
         out_name: None,
     });
 
+    // saturation: Mul(scale) [1,3,H,W].
+    cases.push(BlockCase {
+        name: "saturation",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(SaturationBlock::new(1.2)),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // auto_contrast: Add+Sub+Mul S-curve [1,3,H,W].
+    cases.push(BlockCase {
+        name: "auto_contrast",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(AutoContrastBlock::new(1.2)),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // wavelet_denoise: AveragePool [1,3,H,W].
+    cases.push(BlockCase {
+        name: "wavelet_denoise",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(WaveletDenoiseBlock::new()),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // tone: fused tone mapping [1,3,H,W].
+    cases.push(BlockCase {
+        name: "tone",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(ToneBlock::new()),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
     cases
 }
 
