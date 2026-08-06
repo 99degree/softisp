@@ -246,7 +246,31 @@ extern "C" int mnn_run_host_tensors(
 
     // Run inference
     auto run_ok = net->runSession(sess);
-    if (run_ok != 0) return -2;
+    if (run_ok != 0) {
+        fprintf(stderr, "[mnn_host] runSession FAIL code=%d\n", run_ok);
+        fprintf(stderr, "[mnn_host] input shape: [");
+        for (size_t i = 0; i < host_shape.size(); i++)
+            fprintf(stderr, "%s%d", i ? "," : "", host_shape[i]);
+        fprintf(stderr, "]\n");
+        auto* in_s = net->getSessionInput(sess, nullptr);
+        if (in_s) {
+            auto is = in_s->shape();
+            fprintf(stderr, "[mnn_host] session input shape: [");
+            for (size_t i = 0; i < is.size(); i++)
+                fprintf(stderr, "%s%d", i ? "," : "", is[i]);
+            fprintf(stderr, "] type=%d\n", in_s->getType().code);
+        }
+        auto* out_s = net->getSessionOutput(sess, nullptr);
+        if (out_s) {
+            auto os = out_s->shape();
+            fprintf(stderr, "[mnn_host] session output shape: [");
+            for (size_t i = 0; i < os.size(); i++)
+                fprintf(stderr, "%s%d", i ? "," : "", os[i]);
+            fprintf(stderr, "]\n");
+        }
+        delete host_in;
+        return -2;
+    }
 
     // Get output tensor
     auto* out_tensor = net->getSessionOutput(sess, nullptr);
