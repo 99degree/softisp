@@ -79,5 +79,59 @@ test_*.onnx
 # Session files
 pi-session-*.html
 
+# Scratch / debug probe files
+cam-rust/.probe_*.log
+cam-rust/.probe_*.json
+cam-rust/.probe_*.onnx
+cam-rust/.probe_*.mnn
+cam-rust/.mnn_last_pipeline.onnx
+cam-rust/.b1.json
+cam-rust/.dmp.json
+cam-rust/.dump.json
+cam-rust/.m2m.json
+cam-rust/bench_e2e_full.txt
+cam-rust/bench_vk_out.txt
+cam-rust/bench_vk_workgroup.rs
+cam-rust/debug_argb.onnx
+cam-rust/fusedispcontroller.onnx
+cam-rust/heavy_1280.onnx
+cam-rust/lite_1280.onnx
+cam-rust/profile_3840x2160.onnx
+cam-rust/mnn_gdb_pass0.log
+cam-rust/mnn_run_*.log
+cam-rust/warp_test.log
+cam-rust/subagent_progress.log
+cam-rust/layout_probe*
+cam-rust/run_gdb_pass0.sh
+cam-rust/run_lib.sh
+cam-rust/run_pass0_v2.sh
+cam-rust/run_probe_chain.sh
+cam-rust/.cargo/config.toml.bak
+cam-rust/lib_backup/
+cam-rust/cam-isp/build_mnn.log
+cam-rust/cam-isp/clippy_mnn.log
+cam-rust/cam-isp/linkcmd*.log
+cam-rust/cam-isp/test_*.log
+cam-rust/cam-isp/examples/probe_blocks.rs
+cam-rust/cam-isp/examples/probe_chain.rs
+cam-rust/cam-isp/examples/probe_fix.rs
+cam-rust/cam-isp/examples/probe_pass1.rs
+cam-rust/cam-isp/examples/probe_unpack.rs
+cam-rust/cam-isp/examples/check_onnx_sizes.rs
+
 # Android SDK/NDK (outside repo)
 ~/android-sdk/
+
+# Android AOSP build artifacts
+AndroidManifest.xml
+META-INF/
+*.aar
+*.aar.zip
+MNN-Android-3.5.1.aar*
+R.txt
+classes.jar
+jni/
+proguard.txt
+.arch_patch.txt
+docs/architecture/PIPELINE_BLOCKS.md.bak
+.lancedb_agent_index/
