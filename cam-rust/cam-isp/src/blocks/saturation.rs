@@ -87,6 +87,32 @@ impl IspBlock for SaturationBlock {
 
     fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
 
+    fn input_value_info(&self) -> Option<Vec<u8>> {
+        Some(Proto::value_info(
+            self.input_source().unwrap_or("saturation/input"),
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
+    }
+
+    fn output_value_info(&self) -> Option<Vec<u8>> {
+        Some(Proto::value_info(
+            self.frame_tensor().unwrap_or("saturation/output"),
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
+    }
+
     fn nodes(&self) -> Vec<Vec<u8>> {
         let input = if self.input_source.is_empty() {
             "saturation/input"
@@ -103,11 +129,16 @@ impl IspBlock for SaturationBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let scale = vec![self.saturation; 3];
-        vec![Proto::tensor_proto_float("saturation/scale", &[3], &scale)]
+        // Shape [1,3,1,1] for MNN broadcast — [3] causes runSession code=3.
+        vec![Proto::tensor_proto_float(
+            "saturation/scale",
+            &[1, 3, 1, 1],
+            &scale,
+        )]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![("saturation/scale".into(), 1, vec![3])]
+        vec![("saturation/scale".into(), 1, vec![1, 3, 1, 1])]
     }
 }
 
