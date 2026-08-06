@@ -81,6 +81,32 @@ impl IspBlock for BilateralBlock {
 
     fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
 
+    fn input_value_info(&self) -> Option<Vec<u8>> {
+        Some(Proto::value_info(
+            self.input_source().unwrap_or("bilateral/input"),
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
+    }
+
+    fn output_value_info(&self) -> Option<Vec<u8>> {
+        Some(Proto::value_info(
+            self.frame_tensor().unwrap_or("bilateral/output"),
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
+    }
+
     fn nodes(&self) -> Vec<Vec<u8>> {
         // Bilateral filter: Simplified version using standard ONNX ops
         // 1. Box blur (AveragePool) for spatial smoothing

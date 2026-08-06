@@ -288,6 +288,134 @@ fn core_blocks() -> Vec<BlockCase> {
         out_name: None,
     });
 
+    // --- HEAVY profile blocks (not yet individually tested) ---
+
+    // unpack_cfa (PackedInt32 + BLC): INT32 packed → FLOAT [1,4,H/2,W/2].
+    // HEAVY uses use_fused_unpack=true which builds:
+    //   RawInputBlock(elem_type=6, packed_w) → UnpackCfaBlock(blc=true, full_w)
+    cases.push(BlockCase {
+        name: "unpack_cfa",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_elem_type(6) // INT32
+                    .with_concrete_width(8) // packed_w = full_w/2 = 8
+                    .with_concrete_height(16),
+            ),
+            Box::new(
+                UnpackCfaBlock::new()
+                    .with_concrete_width(16) // full_w = 16
+                    .with_blc(true),
+            ),
+        ],
+        shape: vec![1, 1, 16, 8], // INT32 packed: [1,1,H,W/2]
+        dtype_code: 0,            // INT32
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // bayer_wb (non-identity gains): Mul+Clip [1,4,H,W].
+    cases.push(BlockCase {
+        name: "bayer_wb",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(BayerWbBlock::new().with_gains(1.2, 1.0, 1.0, 0.8)),
+        ],
+        shape: vec![1, 4, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // ccm (LSC): Conv 1×1 + Clip [1,3,H,W] (identity matrix).
+    cases.push(BlockCase {
+        name: "ccm",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(CcmBlock::new()),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // bilateral: AvgPool + Sub + Abs + Identity [1,3,H,W].
+    cases.push(BlockCase {
+        name: "bilateral",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(BilateralBlock::new_default()),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // vignetting: Mul(gain_map) [1,3,H,W].
+    cases.push(BlockCase {
+        name: "vignetting",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(VignettingBlock::new(16, 16, 0.5)),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // gamma: Max+Min+Add+Log+Mul+Exp [1,3,H,W].
+    cases.push(BlockCase {
+        name: "gamma",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(GammaBlock::new(2.2)),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
+    // sharpen: AvgPool+Sub+Mul+Add [1,3,H,W].
+    cases.push(BlockCase {
+        name: "sharpen",
+        chain: vec![
+            Box::new(
+                RawInputBlock::new()
+                    .with_concrete_dims(16, 16)
+                    .with_elem_type(1),
+            ),
+            Box::new(SharpenBlock::new(0.5)),
+        ],
+        shape: vec![1, 3, 16, 16],
+        dtype_code: 2, // FLOAT
+        type_bits: 32,
+        out_name: None,
+    });
+
     cases
 }
 
@@ -301,7 +429,10 @@ fn test_pass0_core_blocks_onnx_to_mnn() {
         let nonzero = out.iter().filter(|&&v| v != 0.0).count();
         eprintln!(
             "[pass0:{}]: nonzero={}, total={}, first4={:?}",
-            name, nonzero, out.len(), first4
+            name,
+            nonzero,
+            out.len(),
+            first4
         );
         assert!(
             out.iter().any(|&v| v != 0.0),
