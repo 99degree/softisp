@@ -43,6 +43,7 @@ fn infer_mnn(
     backend: MnnBackendType,
     shape: &[i32],
     dtype_code: i32,
+    type_bits: i32,
     out_name: &str,
 ) -> Vec<f32> {
     let interp = MnnInterpreterSafe::from_buffer(mnn).expect("load mnn");
@@ -88,7 +89,7 @@ fn infer_mnn(
             sess.as_ptr(),
             input_ptr,
             dtype_code,
-            32,
+            type_bits,
             shape.as_ptr(),
             shape.len() as i32,
             out_name_c.as_ptr(),
@@ -165,7 +166,13 @@ fn compare_outputs(name: &str, a: &[f32], b: &[f32]) {
 }
 
 /// Full A/B flow for one block chain.
-fn run_ab(name: &str, chain: Vec<Box<dyn IspBlock>>, shape: &[i32], dtype_code: i32) {
+fn run_ab(
+    name: &str,
+    chain: Vec<Box<dyn IspBlock>>,
+    shape: &[i32],
+    dtype_code: i32,
+    type_bits: i32,
+) {
     let mut chain = chain;
     GraphComposer::wire_blocks(&mut chain);
     let refs: Vec<&dyn IspBlock> = chain.iter().map(|b| b.as_ref()).collect();
@@ -203,14 +210,28 @@ fn run_ab(name: &str, chain: Vec<Box<dyn IspBlock>>, shape: &[i32], dtype_code: 
         .expect("out name");
 
     // Reference: Pass0 on CPU path (exact float32 reference).
-    let ref_out = infer_mnn(&mnn0, MnnBackendType::Cpu, shape, dtype_code, out_name);
+    let ref_out = infer_mnn(
+        &mnn0,
+        MnnBackendType::Cpu,
+        shape,
+        dtype_code,
+        type_bits,
+        out_name,
+    );
     // Candidate: Pass1 on Vulkan with isp.* SPIR-V.
-    let vk_out = infer_mnn(&mnn1, MnnBackendType::Vulkan, shape, dtype_code, out_name);
+    let vk_out = infer_mnn(
+        &mnn1,
+        MnnBackendType::Vulkan,
+        shape,
+        dtype_code,
+        type_bits,
+        out_name,
+    );
 
     compare_outputs(name, &ref_out, &vk_out);
 }
 
-fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
+fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32, i32)> {
     use cam_isp::blocks::*;
     vec![
         // Chains start with RawInputBlock (production topology): a head block
@@ -228,6 +249,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 1, 16, 16],
             5,
+            16,
         ),
         (
             "demosaic",
@@ -241,6 +263,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 4, 16, 16],
             2,
+            32,
         ),
         (
             "fcs",
@@ -254,6 +277,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 3, 16, 16],
             2,
+            32,
         ),
         (
             "ee",
@@ -267,6 +291,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 3, 16, 16],
             2,
+            32,
         ),
         (
             "ldci",
@@ -280,6 +305,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 3, 16, 16],
             2,
+            32,
         ),
         (
             "display",
@@ -293,6 +319,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
             ],
             vec![1, 3, 16, 16],
             2,
+            32,
         ),
     ]
 }
@@ -300,7 +327,7 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32)> {
 #[test]
 #[ignore]
 fn test_ab_core_blocks_pass0_vs_pass1() {
-    for (name, chain, shape, dtype) in core_blocks() {
-        run_ab(name, chain, &shape, dtype);
+    for (name, chain, shape, dtype, bits) in core_blocks() {
+        run_ab(name, chain, &shape, dtype, bits);
     }
 }
