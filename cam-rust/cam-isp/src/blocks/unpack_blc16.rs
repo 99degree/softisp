@@ -1,13 +1,15 @@
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
-/// UnpackBlc16Block -- INT16 Bayer -> FLOAT16 with fused BLC.
+/// UnpackBlc16Block -- INT16 Bayer -> FLOAT32 with fused BLC.
 ///
-/// Treats each Bayer element as INT16, casts through FP32,
-/// applies BLC, then converts to FLOAT16.
+/// MNN upcasts INT16 inputs to FLOAT32 at model-load time, so the graph
+/// operates entirely in FLOAT32: Input(F32) → Sub(BLC) → Clip(0, 65504).
+/// No Cast nodes — MNN handles the INT16→F32 promotion externally.
 ///
-/// Input:  INT16  [1,1,H,W]  (native Bayer)
-/// Output: FLOAT16 [1,1,H,W]  (BLC-corrected)
+/// Input:  INT16  [1,1,H,W]  (native Bayer — ONNX elem_type 5,
+///          but MNN converts to FLOAT32 before inference)
+/// Output: FLOAT32 [1,1,H,W]  (BLC-corrected)
 pub struct UnpackBlc16Block {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -100,23 +102,19 @@ impl IspBlock for UnpackBlc16Block {
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_param("W"),
             ],
-            10, // FLOAT16
+            1, // FLOAT32 — MNN upcasts INT16 to FLOAT32
         ))
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
+        // MNN handles INT16→FLOAT32 promotion at model-load time.
+        // Graph is pure FLOAT32: Input → Sub(BLC) → Clip(0, 65504).
         let ns = self.tensor_ns();
         let inp = self.effective_input();
         vec![
             Proto::node(
-                "Cast",
-                &[&inp],
-                &[&format!("{}/f32", ns)],
-                &[Proto::attribute_int("to", 1)], // FLOAT
-            ),
-            Proto::node(
                 "Sub",
-                &[&format!("{}/f32", ns), &format!("{}/blc_val", ns)],
+                &[&inp, &format!("{}/blc_val", ns)],
                 &[&format!("{}/subbed", ns)],
                 &[],
             ),
@@ -127,14 +125,8 @@ impl IspBlock for UnpackBlc16Block {
                     &format!("{}/clip_min", ns),
                     &format!("{}/clip_max", ns),
                 ],
-                &[&format!("{}/clipped", ns)],
-                &[],
-            ),
-            Proto::node(
-                "Cast",
-                &[&format!("{}/clipped", ns)],
                 &[&self.frame_tensor],
-                &[Proto::attribute_int("to", 10)], // FLOAT16
+                &[],
             ),
         ]
     }
@@ -156,7 +148,7 @@ impl IspBlock for UnpackBlc16Block {
         5 // INT16
     }
     fn output_elem_type(&self) -> i32 {
-        10 // FLOAT16
+        1 // FLOAT32 — MNN upcasts INT16 to FLOAT32
     }
 }
 
@@ -174,14 +166,14 @@ mod tests {
     fn test_unpack_blc16_elem_types() {
         let b = UnpackBlc16Block::new();
         assert_eq!(b.input_elem_type(), 5);
-        assert_eq!(b.output_elem_type(), 10);
+        assert_eq!(b.output_elem_type(), 1);
     }
 
     #[test]
     fn test_unpack_blc16_nodes() {
         let mut b = UnpackBlc16Block::new();
         b.set_input_source("in/bayer");
-        assert_eq!(b.nodes().len(), 4);
+        assert_eq!(b.nodes().len(), 2);
     }
 
     #[test]

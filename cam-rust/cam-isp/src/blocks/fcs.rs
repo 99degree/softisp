@@ -99,7 +99,16 @@ impl IspBlock for FcsBlock {
         ))
     }
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        self.input_value_info()
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+            1,
+        ))
     }
 
     /// Mul(input, gain) + Add(result, bias) → R3b detects → isp.fcs
@@ -125,18 +134,26 @@ impl IspBlock for FcsBlock {
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
-            // Per-channel gain: [R_gain, G_gain, B_gain]
-            // Shape [3] broadcasts over H,W
-            Proto::tensor_proto_float(&format!("{}/gain", ns), &[3], &[1.0, 1.0, 1.0]),
-            // Per-channel bias: [R_bias, G_bias, B_bias]
-            Proto::tensor_proto_float(&format!("{}/bias", ns), &[3], &[0.0, 0.0, 0.0]),
+            // Per-channel gain: [1,3,1,1] — broadcasts trivially over N,H,W
+            // Shape [1,3,1,1] so MNN shape inference can resolve without 1D broadcast
+            Proto::tensor_proto_float(
+                &format!("{}/gain", ns),
+                &[1, 3, 1, 1],
+                &[1.0, 1.0, 1.0],
+            ),
+            // Per-channel bias: [1,3,1,1]
+            Proto::tensor_proto_float(
+                &format!("{}/bias", ns),
+                &[1, 3, 1, 1],
+                &[0.0, 0.0, 0.0],
+            ),
         ]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/gain", ns), 1, vec![3]),
-            (format!("{}/bias", ns), 1, vec![3]),
+            (format!("{}/gain", ns), 1, vec![1, 3, 1, 1]),
+            (format!("{}/bias", ns), 1, vec![1, 3, 1, 1]),
         ]
     }
 }
