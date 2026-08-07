@@ -44,6 +44,7 @@ fn with_convert_lock<T>(f: impl FnOnce() -> T) -> T {
 }
 
 /// A single test block: name, constructor, input shape, output tensor name.
+#[allow(dead_code)]
 struct BlockCase {
     name: &'static str,
     /// Chain of blocks wired by GraphComposer::wire_blocks. Every chain starts
@@ -188,6 +189,7 @@ fn extract_op_types(json: &str) -> Vec<String> {
 ///
 /// Each case is a chain starting with RawInputBlock (matching production
 /// topology) so the head block's input tensor name differs from its output.
+#[allow(clippy::vec_init_then_push)]
 fn core_blocks() -> Vec<BlockCase> {
     use cam_isp::blocks::*;
 

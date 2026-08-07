@@ -5,12 +5,13 @@
 //! pairs (identical op signatures for different blocks) are documented and
 //! disambiguated by bridge position in pipeline context.
 //!
+//! Only HEAVY-profile blocks are covered (saturation, wavelet_denoise,
+//! auto_contrast, unpack_cfa are Identity in HEAVY and excluded).
+//!
 //! # Ambiguous Pairs
 //!
 //! | Block A       | Block B          | Shared Signature                               |
 //! |---------------|------------------|------------------------------------------------|
-//! | vignetting    | saturation       | `Const, BinaryOp`                              |
-//! | bilateral     | wavelet_denoise  | `ConvertTensor, Pooling, ConvertTensor`        |
 //! | ldci          | sharpen          | `ConvertTensor, Pooling, ConvertTensor, BinaryOp, Const, BinaryOp, BinaryOp` |
 //! | demosaic      | ccm              | `ConvertTensor, Convolution, ReLU6, ConvertTensor` |
 //! | unpack_blc16  | bayer_wb         | `Const, BinaryOp, ReLU6`                       |
@@ -24,7 +25,7 @@ pub struct OpPattern {
     pub op_types: &'static [&'static str],
 }
 
-/// The exact matching table — all ISP block op signatures from pass0.
+/// The exact matching table — HEAVY-profile ISP block op signatures from pass0.
 ///
 /// Sorted by pattern length (ascending) to allow longest-match scanning.
 pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
@@ -34,13 +35,8 @@ pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
         op_types: &["ReLU6"],
     },
     // ── Length 2 ───────────────────────────────────────────────────
-    // AMBIGUOUS: vignetting and saturation share the same signature.
     OpPattern {
         block_name: "vignetting",
-        op_types: &["Const", "BinaryOp"],
-    },
-    OpPattern {
-        block_name: "saturation",
         op_types: &["Const", "BinaryOp"],
     },
     // ── Length 3 ───────────────────────────────────────────────────
@@ -53,13 +49,8 @@ pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
         block_name: "bayer_wb",
         op_types: &["Const", "BinaryOp", "ReLU6"],
     },
-    // AMBIGUOUS: bilateral and wavelet_denoise share the same signature.
     OpPattern {
         block_name: "bilateral",
-        op_types: &["ConvertTensor", "Pooling", "ConvertTensor"],
-    },
-    OpPattern {
-        block_name: "wavelet_denoise",
         op_types: &["ConvertTensor", "Pooling", "ConvertTensor"],
     },
     OpPattern {
@@ -83,11 +74,6 @@ pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
     OpPattern {
         block_name: "ccm",
         op_types: &["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"],
-    },
-    // ── Length 5 ───────────────────────────────────────────────────
-    OpPattern {
-        block_name: "auto_contrast",
-        op_types: &["Const", "BinaryOp", "Const", "BinaryOp", "BinaryOp"],
     },
     // ── Length 7 ───────────────────────────────────────────────────
     // AMBIGUOUS: ldci and sharpen share the same signature.
@@ -120,29 +106,6 @@ pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
         block_name: "gamma",
         op_types: &[
             "Const", "BinaryOp", "Const", "BinaryOp", "UnaryOp", "Const", "BinaryOp", "UnaryOp",
-        ],
-    },
-    // ── Length 17 ──────────────────────────────────────────────────
-    OpPattern {
-        block_name: "unpack_cfa",
-        op_types: &[
-            "Const",
-            "BinaryOp",
-            "Cast",
-            "Const",
-            "BinaryOp",
-            "BinaryOp",
-            "Cast",
-            "BinaryOp",
-            "Concat",
-            "ConvertTensor",
-            "Convolution",
-            "Const",
-            "BinaryOp",
-            "ReLU6",
-            "Const",
-            "BinaryOp",
-            "ConvertTensor",
         ],
     },
 ];
@@ -285,12 +248,10 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_vignetting_saturation_ambiguous() {
+    fn test_exact_vignetting_unique() {
         let m = match_exact(&["Const", "BinaryOp"]);
-        assert_eq!(m.len(), 2);
-        let names: Vec<&str> = m.iter().map(|p| p.block_name).collect();
-        assert!(names.contains(&"vignetting"));
-        assert!(names.contains(&"saturation"));
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "vignetting");
     }
 
     #[test]
@@ -303,12 +264,10 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_bilateral_wavelet_ambiguous() {
+    fn test_exact_bilateral_unique() {
         let m = match_exact(&["ConvertTensor", "Pooling", "ConvertTensor"]);
-        assert_eq!(m.len(), 2);
-        let names: Vec<&str> = m.iter().map(|p| p.block_name).collect();
-        assert!(names.contains(&"bilateral"));
-        assert!(names.contains(&"wavelet_denoise"));
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "bilateral");
     }
 
     #[test]
@@ -361,42 +320,10 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_auto_contrast_unique() {
-        let m = match_exact(&["Const", "BinaryOp", "Const", "BinaryOp", "BinaryOp"]);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].block_name, "auto_contrast");
-    }
-
-    #[test]
     fn test_exact_display_unique() {
         let m = match_exact(&["ConvertTensor", "Convolution", "ConvertTensor"]);
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].block_name, "display");
-    }
-
-    #[test]
-    fn test_exact_unpack_cfa_unique() {
-        let m = match_exact(&[
-            "Const",
-            "BinaryOp",
-            "Cast",
-            "Const",
-            "BinaryOp",
-            "BinaryOp",
-            "Cast",
-            "BinaryOp",
-            "Concat",
-            "ConvertTensor",
-            "Convolution",
-            "Const",
-            "BinaryOp",
-            "ReLU6",
-            "Const",
-            "BinaryOp",
-            "ConvertTensor",
-        ]);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].block_name, "unpack_cfa");
     }
 
     #[test]
@@ -444,12 +371,12 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_longest_preferred() {
-        // "Const, BinaryOp, Const, BinaryOp, BinaryOp" is auto_contrast (len 5),
-        // not fcs + leftover (len 4 + 1 unrecognized)
+    fn test_scan_fcs_then_unrecognized() {
+        // After removing auto_contrast, "Const, BinaryOp, Const, BinaryOp, BinaryOp"
+        // matches fcs (len 4) then skips the trailing BinaryOp.
         let ops = vec!["Const", "BinaryOp", "Const", "BinaryOp", "BinaryOp"];
         let names = scan_blocks(&ops);
-        assert_eq!(names, vec!["auto_contrast"]);
+        assert_eq!(names, vec!["fcs"]);
     }
 
     #[test]
@@ -472,8 +399,8 @@ mod tests {
     fn test_scan_unknown_ops_skipped() {
         let ops = vec!["BogusOp", "Const", "BinaryOp", "BogusOp2"];
         let names = scan_blocks(&ops);
-        // BogusOp skipped, then vignetting/saturation matched (second wins via rev)
-        assert_eq!(names, vec!["saturation"]);
+        // BogusOp skipped, then vignetting matched (only entry for this pattern)
+        assert_eq!(names, vec!["vignetting"]);
     }
 
     #[test]
@@ -501,21 +428,17 @@ mod tests {
         let expected = [
             "tone",
             "vignetting",
-            "saturation",
             "unpack_blc16",
             "bayer_wb",
             "bilateral",
-            "wavelet_denoise",
             "ee",
             "display",
             "fcs",
             "demosaic",
             "ccm",
-            "auto_contrast",
             "ldci",
             "sharpen",
             "gamma",
-            "unpack_cfa",
         ];
         for e in &expected {
             assert!(
@@ -528,9 +451,9 @@ mod tests {
 
     #[test]
     fn test_table_entry_count() {
-        // 17 unique block names, but some ambiguous pairs share signatures
+        // 13 HEAVY-profile blocks, some ambiguous pairs share signatures
         // so more entries than unique names
-        assert!(EXACT_MATCH_TABLE.len() >= 17);
+        assert!(EXACT_MATCH_TABLE.len() >= 13);
     }
 
     // ── filter_bridge_ops tests ────────────────────────────────────
@@ -591,10 +514,10 @@ mod tests {
 
     #[test]
     fn test_assert_block_ops_ambiguous_pair() {
-        // vignetting and saturation share Const,BinaryOp
-        let result = assert_block_ops("saturation", &["Const", "BinaryOp"]);
+        // vignetting is now the only entry for Const,BinaryOp
+        let result = assert_block_ops("vignetting", &["Const", "BinaryOp"]);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().block_name, "saturation");
+        assert_eq!(result.unwrap().block_name, "vignetting");
     }
 
     #[test]
