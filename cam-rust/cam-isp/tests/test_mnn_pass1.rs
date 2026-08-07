@@ -165,14 +165,12 @@ fn run_pass1_block(
     // ── Exact matching table verification ─────────────────────────
     let filtered0 = mnn_opset_matcher::filter_bridge_ops(&ops0);
     let filtered1 = mnn_opset_matcher::filter_bridge_ops(&ops1);
-    if let Some(pat) = mnn_opset_matcher::match_first(&filtered0) {
-        println!(
-            "[pass1:{}] pass0 table match: '{}' (pattern {:?})",
-            name, pat.block_name, pat.op_types
-        );
-    } else if !filtered0.is_empty() {
-        println!("[pass1:{}] pass0 ops {:?} not in table", name, filtered0);
-    }
+    let pat = mnn_opset_matcher::assert_block_ops(name, &filtered0)
+        .unwrap_or_else(|e| panic!("[pass1:{}] {}", name, e));
+    println!(
+        "[pass1:{}] pass0 table match: '{}' (pattern {:?})",
+        name, pat.block_name, pat.op_types
+    );
     println!(
         "[pass1:{}] pass1 ops after bridge filter: {:?}",
         name, filtered1

@@ -83,17 +83,12 @@ fn run_pass0_block(mut case: BlockCase) -> (Vec<f32>, usize) {
 
     // ── Exact matching table verification ─────────────────────────
     let filtered = mnn_opset_matcher::filter_bridge_ops(&op_types);
-    if let Some(pat) = mnn_opset_matcher::match_first(&filtered) {
-        println!(
-            "[pass0:{}] table match: '{}' (pattern {:?})",
-            case.name, pat.block_name, pat.op_types
-        );
-    } else if !filtered.is_empty() {
-        println!(
-            "[pass0:{}] ops {:?} not in matching table",
-            case.name, filtered
-        );
-    }
+    let pat = mnn_opset_matcher::assert_block_ops(case.name, &filtered)
+        .unwrap_or_else(|e| panic!("[pass0:{}] {}", case.name, e));
+    println!(
+        "[pass0:{}] table match: '{}' (pattern {:?})",
+        case.name, pat.block_name, pat.op_types
+    );
 
     let interp = MnnInterpreterSafe::from_buffer(&mnn).expect("load MNN from buffer");
     let sess = interp
