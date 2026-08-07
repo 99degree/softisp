@@ -209,7 +209,13 @@ impl PipelineProfile {
             info!("    [{:2}] {}", i, b.id());
         }
 
-        crate::pipeline::GraphComposer::wire_blocks(&mut blocks);
+        let blocks = crate::pipeline::GraphComposer::wire_blocks_with_identities(blocks);
+
+        info!("  blocks + identities: {} total", blocks.len());
+        for (i, b) in blocks.iter().enumerate() {
+            info!("    [{:2}] {}", i, b.id());
+        }
+
         blocks
     }
 

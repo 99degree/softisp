@@ -73,8 +73,8 @@ fn build_pipeline(profile_name: &str, width: u32) -> Result<Vec<u8>, String> {
         "test" => PipelineProfile::TEST,
         _ => return Err(format!("Unknown profile: {}", profile_name)),
     };
-    let mut blocks = profile.build_blocks(width, 2);
-    GraphComposer::wire_blocks(&mut blocks);
+    let blocks = profile.build_blocks(width, 2);
+    // build_blocks already calls wire_blocks_with_identities
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
 
     info!("GraphComposer: Pipeline: {} blocks", blocks.len());

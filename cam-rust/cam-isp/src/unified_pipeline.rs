@@ -211,9 +211,8 @@ impl UnifiedPipeline {
         let profile = config.profile;
         let target_width = config.target_width;
 
-        // Build pipeline blocks
+        // Build pipeline blocks (wire_blocks_with_identities called inside build_blocks)
         let mut blocks = profile.build_blocks(target_width, config.bayer_pattern);
-        crate::pipeline::GraphComposer::wire_blocks(&mut blocks);
 
         let head = blocks.remove(0);
 

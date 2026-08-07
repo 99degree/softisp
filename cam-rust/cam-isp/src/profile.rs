@@ -535,11 +535,11 @@ mod tests {
     #[test]
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 0);
-        // LITE: always has 16 main-chain blocks (identity placeholders for disabled features)
+        // LITE: 24 main blocks + 23 identity bridges = 47
         assert_eq!(
             blocks.len(),
-            24,
-            "LITE (primitive) should have 24 blocks, got {}",
+            47,
+            "LITE (primitive) should have 47 blocks (24 + 23 identities), got {}",
             blocks.len()
         );
     }
@@ -547,11 +547,11 @@ mod tests {
     #[test]
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
-        // HEAVY: all 16 main blocks present (4 new: bilateral, vignetting, saturation, colorspace)
+        // HEAVY: 24 main blocks + 23 identity bridges = 47
         assert_eq!(
             blocks.len(),
-            24,
-            "HEAVY (primitive) should have 24 blocks, got {}",
+            47,
+            "HEAVY (primitive) should have 47 blocks (24 + 23 identities), got {}",
             blocks.len()
         );
     }
@@ -645,29 +645,38 @@ mod tests {
         let blocks = p.build_blocks(128, 0);
         assert_eq!(
             blocks.len(),
-            23,
-            "Legacy should have 23 blocks (all with identity placeholders), got {}",
+            45,
+            "Legacy should have 45 blocks (23 + 22 identities), got {}",
             blocks.len()
         );
         assert_eq!(blocks[0].id(), "raw_input");
+        // With identity bridges, the second block is the identity bridge
+        assert!(
+            blocks[1].id().starts_with("id_raw_input_"),
+            "Second block should be identity bridge, got '{}'",
+            blocks[1].id()
+        );
         assert_eq!(
-            blocks[1].id(),
+            blocks[2].id(),
             "normalize",
-            "Second block should be Normalize (no Unpack)"
+            "Third block should be Normalize (no Unpack)"
         );
     }
 
     #[test]
     fn test_block_count() {
+        // block_count() calls build_blocks() which now includes identity bridges
+        // LITE: 24 main + 23 identities + 3 stats = 50
         assert_eq!(
             PipelineProfile::LITE.block_count(),
-            27,
-            "LITE: 24 main + 3 stats"
+            50,
+            "LITE: 24 main + 23 identities + 3 stats = 50"
         );
+        // HEAVY: 24 main + 23 identities + 5 stats = 52
         assert_eq!(
             PipelineProfile::HEAVY.block_count(),
-            29,
-            "HEAVY: 24 main + 5 stats"
+            52,
+            "HEAVY: 24 main + 23 identities + 5 stats = 52"
         );
     }
 
