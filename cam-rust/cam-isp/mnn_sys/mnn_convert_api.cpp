@@ -276,7 +276,7 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
         config.modelFile = in_template;
         config.MNNModel = out_template;
         config.bizCode = "MNN";
-        config.optimizeLevel = 1;
+        config.optimizeLevel = 2;  // level=1 short-circuits to 3 passes only; level>=2 runs full pipeline including IspChainFusion
         config.weightQuantBits = 0;
         config.saveHalfFloat = false;
 #ifdef MNN_HAS_PRESERVE_INPUT_TYPE
@@ -450,7 +450,7 @@ MNN_PUBLIC int mnn_convert_onnx_memfd(
         config.modelFile = in_path;
         config.MNNModel = out_path;
         config.bizCode = "MNN";
-        config.optimizeLevel = 1;
+        config.optimizeLevel = 2;  // level=1 short-circuits to 3 passes only; level>=2 runs full pipeline including IspChainFusion
         config.weightQuantBits = 0;
         config.saveHalfFloat = false;
 #ifdef MNN_HAS_PRESERVE_INPUT_TYPE
@@ -549,7 +549,7 @@ MNN_PUBLIC void mnn_convert_mnn_buffer(
         config.modelFile = in_guard.path;
         config.MNNModel = out_guard.path;
         config.bizCode = "MNN";
-        config.optimizeLevel = 1;
+        config.optimizeLevel = 2;  // level=1 short-circuits to 3 passes only; level>=2 runs full pipeline including IspChainFusion
         config.weightQuantBits = 0;
         config.saveHalfFloat = false;
 #ifdef MNN_HAS_PRESERVE_INPUT_TYPE
