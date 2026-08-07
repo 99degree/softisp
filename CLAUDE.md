@@ -2,7 +2,7 @@
 
 ## Status: ✅ ALL JAVA PORTED — SIMD + AdaptiveDownscale + pack_rgba default
 
-Workspace: **0 warnings**, **201 unit tests pass** (`cargo test --lib -p cam-isp`).
+Workspace: **0 warnings**, **739 unit tests pass** (`cargo test --lib -p cam-isp`).
 
 ## Output Format — pack_rgba default
 
@@ -21,7 +21,7 @@ RawInput(INT16) → Normalize(F32) → DPC(median) → Gaussian Denoise
 → CalibrationStats → [AF focus] → [EIS gyro] → AWB(controller)
 → BLC/WB → LSC(radial) → Malvar Demosaic(RGB) → [IspController stats]
 → CCM(3×3) → AE(gain) → Tone(gamma+contrast+sat+unsharp)
-→ FCS(chroma desat) → LDCI(local contrast) → Warp(EIS/radial)
+→ FCS(chroma desat) → LDCI(6-op w/ clip) / LDCI_A(4-op no clip) → Warp(EIS/radial)
 → Display(INT32 packed → BGRA)
 ```
 
@@ -45,7 +45,7 @@ display_output   ~3×     batch 4 BGRA
 
 ```bash
 cd cam-rust
-cargo test --lib -p cam-isp              # 201 tests
+cargo test --lib -p cam-isp              # 739 tests
 cargo check --workspace                  # 0 warnings
 RUST_LOG=info cargo run --example pipeline -p cam-isp   # single frame PNG
 bash bench-tests.sh bench 50 64 48       # perf benchmark
@@ -99,6 +99,7 @@ Controller → engine.process(frame, ccm, tone, bayer, awb)
 | pack_rgba INT32 default | Single i32 per pixel = efficient memory + chaining |
 | Debug-level per-frame logs | No info-level noise from frame timing |
 | `mnn_buffer` behind feature flag | Isolates pre-existing compilation errors |
+| LDCI split: `isp.ldci` (6-op, clip) / `isp.ldci_a` (4-op, no clip) | Independent exact patterns → independent SPIR-V shaders → independent tuning |
 
 ## FHD Benchmark — Block Costs
 
@@ -166,9 +167,11 @@ Both are required — loading `libMNN_Vulkan.so` without `libvulkan.so` still fa
 - ONNX `TypeProto` / `TensorShapeProto` encoding fix (proto.rs): correct oneof submessage + Dimension repeat prevents MNN DCE of the ISP graph
 - WarpGridBlock grid + shading LUT moved to runtime `extra_inputs()` (graph inputs, not initializers) — defeats MNN fold-to-identity
 - `synth_bayer` module (5 generators) for stress-test inputs with high spatial frequency
-- Pipeline tests: 732 pass
+- Pipeline tests: 739 pass
 - HEAVY profile 4K→4K MNN stress test: **79.8 FPS** avg (2394 frames / 30s, P99 129.1ms)
 - UNIFIED profile 4K→4K MNN stress test: **141.2 FPS** avg (4236 frames / 30s, P99 8.7ms, tiled 2×2)
+- MNN converter: LDCI split — `isp.ldci` (6-op Pool+Clip) and `isp.ldci_a` (4-op Pool no clip) as independent exact patterns with own SPIR-V shaders
+- MNN converter: removed 40+ dead `try*` helpers (~2500 lines), all ISP matching via exact pattern tables only
 
 ### ⏳ In Progress
 - Numeric agreement ONNX stats ↔ software stats at FHD
