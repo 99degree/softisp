@@ -25,6 +25,7 @@
 #![cfg(feature = "mnn")]
 
 use cam_isp::mnn_converter::{convert_onnx_buffer, dump_mnn_to_json};
+use cam_isp::mnn_opset_matcher;
 use cam_isp::mnn_sys::{MnnBackendType, MnnInterpreterSafe};
 use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::profile::PipelineProfile;
@@ -79,6 +80,20 @@ fn run_pass0_block(mut case: BlockCase) -> (Vec<f32>, usize) {
     let json = with_convert_lock(|| dump_mnn_to_json(&mnn)).expect("mnn→json dump failed");
     let op_types = extract_op_types(&json);
     println!("[pass0:{}] ops: {}", case.name, op_types.join(","));
+
+    // ── Exact matching table verification ─────────────────────────
+    let filtered = mnn_opset_matcher::filter_bridge_ops(&op_types);
+    if let Some(pat) = mnn_opset_matcher::match_first(&filtered) {
+        println!(
+            "[pass0:{}] table match: '{}' (pattern {:?})",
+            case.name, pat.block_name, pat.op_types
+        );
+    } else if !filtered.is_empty() {
+        println!(
+            "[pass0:{}] ops {:?} not in matching table",
+            case.name, filtered
+        );
+    }
 
     let interp = MnnInterpreterSafe::from_buffer(&mnn).expect("load MNN from buffer");
     let sess = interp
@@ -528,6 +543,13 @@ fn test_pass0_lite_pipeline() {
     let json = with_convert_lock(|| dump_mnn_to_json(&mnn)).expect("json dump failed");
     let ops = extract_op_types(&json);
     println!("[pass0:lite] {} ops: {}", ops.len(), ops.join(","));
+
+    // ── Segment attribution via exact matching table ───────────────
+    let filtered = mnn_opset_matcher::filter_bridge_ops(&ops);
+    let attributed = mnn_opset_matcher::scan_blocks(&filtered);
+    println!("[pass0:lite] filtered ({}): {:?}", filtered.len(), filtered);
+    println!("[pass0:lite] attribution: {:?}", attributed);
+
     assert!(!mnn.is_empty());
 }
 
@@ -544,5 +566,16 @@ fn test_pass0_heavy_pipeline() {
     let json = with_convert_lock(|| dump_mnn_to_json(&mnn)).expect("json dump failed");
     let ops = extract_op_types(&json);
     println!("[pass0:heavy] {} ops: {}", ops.len(), ops.join(","));
+
+    // ── Segment attribution via exact matching table ───────────────
+    let filtered = mnn_opset_matcher::filter_bridge_ops(&ops);
+    let attributed = mnn_opset_matcher::scan_blocks(&filtered);
+    println!(
+        "[pass0:heavy] filtered ({}): {:?}",
+        filtered.len(),
+        filtered
+    );
+    println!("[pass0:heavy] attribution: {:?}", attributed);
+
     assert!(!mnn.is_empty());
 }

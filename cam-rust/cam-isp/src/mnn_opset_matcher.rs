@@ -230,6 +230,47 @@ pub fn block_count() -> usize {
     all_block_names().len()
 }
 
+/// Filter out bridge/infrastructure ops that are not part of any ISP block's
+/// actual computation. Returns the remaining op types as `&str` slices.
+///
+/// Stripped ops:
+/// - `Input` — ONNX graph input, not a compute op
+/// - `Permute` — IdentityBridgeBlock transpose (bridge between blocks)
+/// - `Identity` — bare identity passes (MNN optimization artifacts)
+pub fn filter_bridge_ops(ops: &[String]) -> Vec<&str> {
+    ops.iter()
+        .filter(|o| o.as_str() != "Input" && o.as_str() != "Permute" && o.as_str() != "Identity")
+        .map(|s| s.as_str())
+        .collect()
+}
+
+/// Look up a block name in the table and assert the given ops match.
+/// Returns `Ok(matched_block_name)` on match, `Err(description)` on mismatch.
+/// For ambiguous pairs, all candidates are checked — the assertion passes if
+/// the expected name is among them.
+pub fn assert_block_ops(expected_name: &str, ops: &[&str]) -> Result<&'static OpPattern, String> {
+    let candidates = match_exact(ops);
+    if candidates.is_empty() {
+        return Err(format!(
+            "block '{}' no match for ops {:?}",
+            expected_name, ops
+        ));
+    }
+    let matched: Vec<&str> = candidates.iter().map(|p| p.block_name).collect();
+    if matched.contains(&expected_name) {
+        // Return the first candidate that matches
+        Ok(candidates
+            .iter()
+            .find(|p| p.block_name == expected_name)
+            .unwrap())
+    } else {
+        Err(format!(
+            "block '{}' not in candidates {:?} for ops {:?}",
+            expected_name, matched, ops
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +531,81 @@ mod tests {
         // 17 unique block names, but some ambiguous pairs share signatures
         // so more entries than unique names
         assert!(EXACT_MATCH_TABLE.len() >= 17);
+    }
+
+    // ── filter_bridge_ops tests ────────────────────────────────────
+
+    #[test]
+    fn test_filter_removes_input_permute_identity() {
+        let ops = vec![
+            "Input".to_string(),
+            "Permute".to_string(),
+            "Const".to_string(),
+            "BinaryOp".to_string(),
+            "Identity".to_string(),
+        ];
+        let filtered = filter_bridge_ops(&ops);
+        assert_eq!(filtered, vec!["Const", "BinaryOp"]);
+    }
+
+    #[test]
+    fn test_filter_preserves_compute_ops() {
+        let ops = vec![
+            "ConvertTensor".to_string(),
+            "ConvolutionDepthwise".to_string(),
+            "ConvertTensor".to_string(),
+        ];
+        let filtered = filter_bridge_ops(&ops);
+        assert_eq!(
+            filtered,
+            vec!["ConvertTensor", "ConvolutionDepthwise", "ConvertTensor"]
+        );
+    }
+
+    #[test]
+    fn test_filter_empty() {
+        let ops: Vec<String> = vec![];
+        let filtered = filter_bridge_ops(&ops);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_filter_all_bridges() {
+        let ops = vec![
+            "Input".to_string(),
+            "Permute".to_string(),
+            "Identity".to_string(),
+        ];
+        let filtered = filter_bridge_ops(&ops);
+        assert!(filtered.is_empty());
+    }
+
+    // ── assert_block_ops tests ─────────────────────────────────────
+
+    #[test]
+    fn test_assert_block_ops_exact_match() {
+        let result = assert_block_ops("tone", &["ReLU6"]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().block_name, "tone");
+    }
+
+    #[test]
+    fn test_assert_block_ops_ambiguous_pair() {
+        // vignetting and saturation share Const,BinaryOp
+        let result = assert_block_ops("saturation", &["Const", "BinaryOp"]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().block_name, "saturation");
+    }
+
+    #[test]
+    fn test_assert_block_ops_wrong_name() {
+        let result = assert_block_ops("tone", &["Const", "BinaryOp"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_assert_block_ops_no_match() {
+        let result = assert_block_ops("bogus", &["BogusOp"]);
+        assert!(result.is_err());
     }
 }
