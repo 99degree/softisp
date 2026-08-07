@@ -112,7 +112,7 @@ pub use grayscale::GrayscaleBlock;
 pub use hdr_debayer::HdrDebayerBlock;
 pub use hdr_merge::HdrMergeBlock;
 pub use hdr_tone::{HdrToneBlock, ToneOperator};
-pub use identity::{FastDemosaicBlock, IdentityBlock};
+pub use identity::{BridgeIdentityBlock, FastDemosaicBlock, IdentityBlock};
 pub use laplacian_pyramid::LaplacianPyramidBlock;
 pub use ldci::LdciBlock;
 pub use noise_estimate::NoiseEstimateBlock;

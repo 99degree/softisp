@@ -615,6 +615,34 @@ impl GraphComposer {
         }
     }
 
+    /// Insert a BridgeIdentityBlock between every pair of consecutive blocks,
+    /// then wire the expanded chain. Returns the new Vec with identity
+    /// passthroughs bridging each block pair. Bridge blocks emit `Transpose`
+    /// with identity permutation `[0,1,2,3]` — distinct from bare `Identity`
+    /// ops — so bridge boundaries are unambiguous in the MNN opset.
+    ///
+    /// Each bridge block is named `id_{prev_id}_{next_id}` so every
+    /// pipeline position is uniquely identifiable in the ONNX graph.
+    pub fn wire_blocks_with_identities(blocks: Vec<Box<dyn IspBlock>>) -> Vec<Box<dyn IspBlock>> {
+        if blocks.is_empty() {
+            return blocks;
+        }
+        let cap = blocks.len() * 2 - 1;
+        let mut expanded: Vec<Box<dyn IspBlock>> = Vec::with_capacity(cap);
+        for (i, block) in blocks.into_iter().enumerate() {
+            if i > 0 {
+                let prev_id = expanded.last().map(|b| b.id()).unwrap_or("?");
+                let bridge_name = format!("id_{}_{}", prev_id, block.id());
+                expanded.push(Box::new(crate::blocks::BridgeIdentityBlock::new(
+                    &bridge_name,
+                )));
+            }
+            expanded.push(block);
+        }
+        Self::wire_blocks(&mut expanded);
+        expanded
+    }
+
     /// Validate pipeline before ONNX emission.
     /// Returns list of warnings/errors.
     pub fn validate_pipeline(pipeline: &[&dyn IspBlock]) -> Vec<String> {
