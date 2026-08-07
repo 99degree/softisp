@@ -26,6 +26,7 @@ pub mod fused;
 pub mod isp_controller;
 pub mod isp_params;
 pub mod manager;
+pub mod mnn_opset_matcher;
 pub mod neural_controller;
 pub mod pipeline;
 pub mod profile;
