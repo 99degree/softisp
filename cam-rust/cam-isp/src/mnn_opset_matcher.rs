@@ -15,6 +15,9 @@
 //! | ldci          | sharpen          | `ConvertTensor, Pooling, ConvertTensor, BinaryOp, Const, BinaryOp, BinaryOp` |
 //! | demosaic      | ccm              | `ConvertTensor, Convolution, ReLU6, ConvertTensor` |
 //! | unpack_blc16  | bayer_wb         | `Const, BinaryOp, ReLU6`                       |
+//!
+//! Disambiguation is handled by [`DISAMBIG_RULES`] (operator name prefix)
+//! and [`ATTR_DISAMBIG_RULES`] (per-op attributes like BinaryOp.opType).
 
 /// A single pattern entry mapping an MNN op type sequence to an ISP block name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,6 +234,108 @@ pub fn assert_block_ops(expected_name: &str, ops: &[&str]) -> Result<&'static Op
             "block '{}' not in candidates {:?} for ops {:?}",
             expected_name, matched, ops
         ))
+    }
+}
+
+// ── Disambiguation tables ────────────────────────────────────────────
+
+/// Operator name prefix for each block, extracted from MNN JSON dumps.
+///
+/// Each MNN operator has a `name` field like `"DemosaicCcmBlock/conv_out"`.
+/// The prefix before the first `/` identifies the ISP block.  This table
+/// maps block names to their known prefixes — used to resolve ambiguous
+/// op-type pairs.
+///
+/// Source: `dump_blocks/*.json`
+pub const OP_NAME_PREFIXES: &[(&str, &str)] = &[
+    ("demosaic", "DemosaicCcmBlock"),
+    ("display", "DisplayBlock"),
+    ("ee", "EeBlock"),
+    ("fcs", "FcsBlock"),
+    ("ldci", "LdciBlock"),
+    ("unpack_blc16", "UnpackBlc16Block"),
+];
+
+/// Per-op attribute rules for disambiguation of ambiguous pairs.
+///
+/// When op-type matching returns multiple candidates, these rules check
+/// specific operator attributes from the MNN JSON to narrow down to one.
+/// Each rule ties a block name to an expected attribute on a specific op
+/// index within its pattern.
+///
+/// Source: `dump_blocks/*.json` — `main.opType` inside each operator.
+pub const ATTR_DISAMBIG_RULES: &[(&str, usize, &str, &str)] = &[
+    // (block_name, op_index_in_pattern, attr_key, expected_value)
+    //
+    // unpack_blc16 vs bayer_wb — BinaryOp.opType differs:
+    //   unpack_blc16: SUB (subtract black level)
+    //   bayer_wb:     MUL (multiply by white balance gains)
+    ("unpack_blc16", 1, "opType", "SUB"),
+    ("bayer_wb", 1, "opType", "MUL"),
+    //
+    // fcs — scaled=MUL, frame=ADD
+    ("fcs", 1, "opType", "MUL"),
+    ("fcs", 3, "opType", "ADD"),
+    //
+    // ldci — diff=SUB, boost=MUL, frame=ADD
+    ("ldci", 3, "opType", "SUB"),
+    ("ldci", 5, "opType", "MUL"),
+    ("ldci", 6, "opType", "ADD"),
+];
+
+/// Disambiguate among multiple candidates using operator name prefixes.
+///
+/// Given a list of candidate patterns (from [`match_exact`]) and an operator
+/// name string from the MNN JSON, returns the single candidate whose name
+/// prefix matches.  Returns `None` if no prefix matches or the list is
+/// ambiguous after filtering.
+pub fn disambiguate_by_name<'a>(
+    candidates: &[&'a OpPattern],
+    op_name: &str,
+) -> Option<&'a OpPattern> {
+    let prefix = op_name.split('/').next().unwrap_or(op_name);
+    let matches: Vec<&OpPattern> = candidates
+        .iter()
+        .copied()
+        .filter(|p| {
+            OP_NAME_PREFIXES
+                .iter()
+                .any(|(name, pre)| *name == p.block_name && prefix.starts_with(pre))
+        })
+        .collect();
+    if matches.len() == 1 {
+        Some(matches[0])
+    } else {
+        None
+    }
+}
+
+/// Disambiguate among multiple candidates using per-op attributes.
+///
+/// `per_op_attrs` maps op_index → (attr_key → attr_value) as extracted from
+/// the MNN JSON.  Each candidate is checked against [`ATTR_DISAMBIG_RULES`];
+/// candidates whose rules don't match are eliminated.  Returns the single
+/// surviving candidate, or `None` if disambiguation fails.
+pub fn disambiguate_by_attrs<'a>(
+    candidates: &[&'a OpPattern],
+    per_op_attrs: &[(usize, &str, &str)], // [(op_index, attr_key, value)]
+) -> Option<&'a OpPattern> {
+    let surviving: Vec<&OpPattern> = candidates
+        .iter()
+        .copied()
+        .filter(|p| {
+            ATTR_DISAMBIG_RULES.iter().any(|(name, idx, key, val)| {
+                *name == p.block_name
+                    && per_op_attrs
+                        .iter()
+                        .any(|(oi, ak, av)| *oi == *idx && *ak == *key && *av == *val)
+            })
+        })
+        .collect();
+    if surviving.len() == 1 {
+        Some(surviving[0])
+    } else {
+        None
     }
 }
 
@@ -530,5 +635,105 @@ mod tests {
     fn test_assert_block_ops_no_match() {
         let result = assert_block_ops("bogus", &["BogusOp"]);
         assert!(result.is_err());
+    }
+
+    // ── Disambiguation tests ───────────────────────────────────────
+
+    #[test]
+    fn test_disambiguate_by_name_demosaic() {
+        let candidates = match_exact(&["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"]);
+        assert_eq!(candidates.len(), 2); // demosaic + ccm
+        let result = disambiguate_by_name(&candidates, "DemosaicCcmBlock/conv_out");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().block_name, "demosaic");
+    }
+
+    #[test]
+    fn test_disambiguate_by_name_ldci() {
+        let candidates = match_exact(&[
+            "ConvertTensor",
+            "Pooling",
+            "ConvertTensor",
+            "BinaryOp",
+            "Const",
+            "BinaryOp",
+            "BinaryOp",
+        ]);
+        assert_eq!(candidates.len(), 2); // ldci + sharpen
+        let result = disambiguate_by_name(&candidates, "LdciBlock/local_mean");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().block_name, "ldci");
+    }
+
+    #[test]
+    fn test_disambiguate_by_name_no_prefix_match() {
+        let candidates = match_exact(&["Const", "BinaryOp", "ReLU6"]);
+        assert_eq!(candidates.len(), 2);
+        // Unknown prefix — disambiguation fails
+        let result = disambiguate_by_name(&candidates, "UnknownBlock/x");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_disambiguate_by_attrs_unpack_blc16() {
+        let candidates = match_exact(&["Const", "BinaryOp", "ReLU6"]);
+        assert_eq!(candidates.len(), 2); // unpack_blc16 + bayer_wb
+                                         // unpack_blc16 has BinaryOp(opType=SUB)
+        let attrs = vec![(1, "opType", "SUB")];
+        let result = disambiguate_by_attrs(&candidates, &attrs);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().block_name, "unpack_blc16");
+    }
+
+    #[test]
+    fn test_disambiguate_by_attrs_bayer_wb() {
+        let candidates = match_exact(&["Const", "BinaryOp", "ReLU6"]);
+        assert_eq!(candidates.len(), 2);
+        // bayer_wb has BinaryOp(opType=MUL)
+        let attrs = vec![(1, "opType", "MUL")];
+        let result = disambiguate_by_attrs(&candidates, &attrs);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().block_name, "bayer_wb");
+    }
+
+    #[test]
+    fn test_disambiguate_by_attrs_no_rule() {
+        // demosaic/ccm have no ATTR_DISAMBIG_RULES — disambiguation fails
+        let candidates = match_exact(&["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"]);
+        assert_eq!(candidates.len(), 2);
+        let attrs = vec![(1, "kernelX", "1")];
+        let result = disambiguate_by_attrs(&candidates, &attrs);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_attrs_fcs_scaled_mul() {
+        let candidates = match_exact(&["Const", "BinaryOp", "Const", "BinaryOp"]);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].block_name, "fcs");
+        // fcs op[1] (scaled) is MUL
+        let attrs = vec![(1, "opType", "MUL")];
+        let result = disambiguate_by_attrs(&candidates, &attrs);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().block_name, "fcs");
+    }
+
+    #[test]
+    fn test_attrs_ldci_diff_sub() {
+        let candidates = match_exact(&[
+            "ConvertTensor",
+            "Pooling",
+            "ConvertTensor",
+            "BinaryOp",
+            "Const",
+            "BinaryOp",
+            "BinaryOp",
+        ]);
+        assert_eq!(candidates.len(), 2); // ldci + sharpen
+                                         // ldci op[3] (diff) is SUB
+        let attrs = vec![(3, "opType", "SUB")];
+        let result = disambiguate_by_attrs(&candidates, &attrs);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().block_name, "ldci");
     }
 }
