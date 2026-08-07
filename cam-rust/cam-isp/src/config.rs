@@ -168,13 +168,7 @@ impl PipelineConfig {
 
     /// Number of blocks in this config.
     pub fn block_count(&self) -> usize {
-        let mut count: usize = if self.profile.use_fused_unpack && self.profile.use_unpack {
-            10
-        } else if self.profile.use_unpack {
-            12
-        } else {
-            11
-        };
+        let mut count: usize = if self.profile.use_unpack { 12 } else { 11 };
         if self.use_fcs {
             count += 1;
         }
@@ -184,8 +178,7 @@ impl PipelineConfig {
         if self.use_ee {
             count += 1;
         }
-        // bad_pixel skipped in fused path
-        if self.use_bad_pixel && !(self.profile.use_fused_unpack && self.profile.use_unpack) {
+        if self.use_bad_pixel {
             count += 1;
         }
         if self.use_lsc {
@@ -326,8 +319,8 @@ mod tests {
     fn test_block_count() {
         let lite = PipelineConfig::from_profile(PipelineProfile::LITE);
         let heavy = PipelineConfig::from_profile(PipelineProfile::HEAVY);
-        // LITE (fused): 10 base, HEAVY (fused): 10 + fcs + ldci + ee + lsc = 14
-        assert_eq!(lite.block_count(), 10);
-        assert_eq!(heavy.block_count(), 14);
+        // LITE (primitive): 12 base, HEAVY (primitive): 12 + fcs + ldci + ee + bad_pixel + lsc = 17
+        assert_eq!(lite.block_count(), 12);
+        assert_eq!(heavy.block_count(), 17);
     }
 }
