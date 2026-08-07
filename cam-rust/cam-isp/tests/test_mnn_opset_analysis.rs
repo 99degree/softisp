@@ -7,6 +7,7 @@
 #![cfg(feature = "mnn")]
 
 use cam_isp::mnn_converter::{convert_onnx_buffer, dump_mnn_to_json};
+use cam_isp::mnn_opset_matcher;
 use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::profile::PipelineProfile;
 use std::sync::Mutex;
@@ -219,5 +220,38 @@ fn test_pass0_heavy_opset_analysis() {
             format!("← single Identity bridge")
         };
         println!("  Identity[{}..{}]: {}", start, end, label);
+    }
+
+    // 7) Segment-to-block attribution using exact matching table
+    println!("\n=== SEGMENT → BLOCK ATTRIBUTION (exact matching table) ===");
+    for (i, (start, end, ops_in_seg)) in segments.iter().enumerate() {
+        let op_refs: Vec<&str> = ops_in_seg.iter().map(|s| s.as_str()).collect();
+        let matched = mnn_opset_matcher::scan_blocks(&op_refs);
+        let range = if *end == 999 {
+            format!("{}..end", start)
+        } else {
+            format!("{}..{}", start, end)
+        };
+        println!(
+            "  seg {:2}: ops {:>3}  ({:>2} ops): matched → {:?}",
+            i,
+            range,
+            ops_in_seg.len(),
+            matched
+        );
+        // Also show exact match candidates for disambiguation
+        for prefix_len in (1..=ops_in_seg.len()).rev() {
+            let candidates = mnn_opset_matcher::match_exact(&op_refs[..prefix_len]);
+            if !candidates.is_empty() {
+                let names: Vec<&str> = candidates.iter().map(|p| p.block_name).collect();
+                if names.len() > 1 {
+                    println!(
+                        "         prefix[0..{}]: ambiguous candidates → {:?}",
+                        prefix_len, names
+                    );
+                }
+                break;
+            }
+        }
     }
 }
