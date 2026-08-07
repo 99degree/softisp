@@ -471,18 +471,20 @@ fn test_pass1_lite_pipeline_round_trip() {
     println!("[pass1:lite] pass0 ops ({}): {:?}", ops0.len(), ops0);
     println!("[pass1:lite] pass1 ops ({}): {:?}", ops1.len(), ops1);
 
-    // Graph-only: verify MNN→MNN round-trip preserves op structure.
-    assert_eq!(
-        ops0.len(),
-        ops1.len(),
-        "[pass1:lite] op count mismatch: pass0={} pass1={}",
+    // Fusion: pass1 should have fewer ops (primitives → ISP custom ops).
+    assert!(
+        ops1.len() <= ops0.len(),
+        "[pass1:lite] pass1 should have ≤ pass0 ops, got pass0={} pass1={}",
         ops0.len(),
         ops1.len()
     );
-    assert_eq!(ops0, ops1, "[pass1:lite] op types differ after round-trip");
+    // Verify expected ISP ops were fused.
+    let has_isp = ops1.iter().any(|o| o.starts_with("isp."));
+    assert!(has_isp, "[pass1:lite] no ISP ops fused");
     println!(
-        "[pass1:lite] ✓ graph round-trip ok ({} ops preserved)",
-        ops0.len()
+        "[pass1:lite] ✓ fusion ok ({} → {} ops)",
+        ops0.len(),
+        ops1.len()
     );
 }
 
@@ -510,16 +512,19 @@ fn test_pass1_heavy_pipeline_round_trip() {
     println!("[pass1:heavy] pass0 ops ({}): {:?}", ops0.len(), ops0);
     println!("[pass1:heavy] pass1 ops ({}): {:?}", ops1.len(), ops1);
 
-    assert_eq!(
-        ops0.len(),
-        ops1.len(),
-        "[pass1:heavy] op count mismatch: pass0={} pass1={}",
+    // Fusion: pass1 should have fewer ops (primitives → ISP custom ops).
+    assert!(
+        ops1.len() <= ops0.len(),
+        "[pass1:heavy] pass1 should have ≤ pass0 ops, got pass0={} pass1={}",
         ops0.len(),
         ops1.len()
     );
-    assert_eq!(ops0, ops1, "[pass1:heavy] op types differ after round-trip");
+    // Verify expected ISP ops were fused.
+    let has_isp = ops1.iter().any(|o| o.starts_with("isp."));
+    assert!(has_isp, "[pass1:heavy] no ISP ops fused");
     println!(
-        "[pass1:heavy] ✓ graph round-trip ok ({} ops preserved)",
-        ops0.len()
+        "[pass1:heavy] ✓ fusion ok ({} → {} ops)",
+        ops0.len(),
+        ops1.len()
     );
 }
