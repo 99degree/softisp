@@ -35,28 +35,16 @@ impl PipelineProfile {
             packed_w,
             target_width
         );
-        if self.use_unpack || self.use_fused_unpack {
+        if self.use_unpack {
             blocks.push(Box::new(
                 RawInputBlock::new()
                     .with_elem_type(6)
                     .with_concrete_width(packed_w)
                     .with_concrete_height(concrete_h),
             ));
-
-            if self.use_fused_unpack {
-                blocks.push(Box::new(
-                    UnpackCfaBlock::new()
-                        .with_concrete_width(full_w)
-                        .with_blc(true),
-                ));
-            } else {
-                blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
-                blocks.push(Box::new(NormalizeBlock::new()));
-                if self.use_bad_pixel {
-                    blocks.push(Box::new(BlcBlock::new()));
-                }
-                blocks.push(Box::new(CfaBlock::new()));
-            }
+            blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
+            blocks.push(Box::new(NormalizeBlock::new()));
+            blocks.push(Box::new(CfaBlock::new()));
         } else {
             blocks.push(Box::new(
                 RawInputBlock::new()
@@ -64,15 +52,10 @@ impl PipelineProfile {
                     .with_concrete_height(concrete_h),
             ));
             blocks.push(Box::new(NormalizeBlock::new()));
-            if self.use_bad_pixel {
-                blocks.push(Box::new(BlcBlock::new()));
-            }
             blocks.push(Box::new(CfaBlock::new()));
         }
 
-        if !self.use_fused_unpack {
-            blocks.push(Box::new(BlcBlock::new()));
-        }
+        blocks.push(Box::new(BlcBlock::new()));
 
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_src")));
 
@@ -113,24 +96,14 @@ impl PipelineProfile {
 
         blocks.push(Box::new(BayerWbBlock::new()));
 
-        if self.use_demosaic_ccm {
-            blocks.push(Box::new(DemosaicCcmBlock::new(bayer_pattern)));
-        } else {
-            blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
-            blocks.push(Box::new(CcmBlock::new()));
-        }
+        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
+        blocks.push(Box::new(CcmBlock::new()));
 
         if self.use_warp {
             blocks.push(Box::new(CcmBlock::new()));
         }
 
-        if self.use_fused_tone {
-            info!("  tone: IDENTITY (fused into DemosaicCcmBlock)");
-            blocks.push(Box::new(crate::blocks::IdentityBlock::new("tone")));
-        } else {
-            info!("  tone: ToneBlock");
-            blocks.push(Box::new(ToneBlock::new()));
-        }
+        blocks.push(Box::new(ToneBlock::new()));
 
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_out")));
 

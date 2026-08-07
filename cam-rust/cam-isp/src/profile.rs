@@ -68,13 +68,6 @@ pub struct PipelineProfile {
     pub use_warp: bool,
     /// Enable HDR merge.
     pub use_hdr: bool,
-    /// Fuse unpack+norm+CFA into a single block (faster, fewer sessions).
-    pub use_fused_unpack: bool,
-    /// Fuse demosaic+CCM into a single block (saves 1 session).
-    pub use_demosaic_ccm: bool,
-    /// Fuse tone (contrast × brightness) into DemosaicCcmBlock Conv.
-    /// Saves one full-frame Mul+Add pass.
-    pub use_fused_tone: bool,
     /// Orientation transform: 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip.
     pub rotate_mode: i32,
     /// Enable per-zone RGB means (AveragePool) for multi-illuminant AWB.
@@ -152,9 +145,6 @@ impl PipelineProfile {
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
-        use_fused_unpack: true,
-        use_demosaic_ccm: true,
-        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,    // zone RGB means for basic AWB
         use_channel_means: true, // channel means for grey-world AWB
@@ -194,9 +184,6 @@ impl PipelineProfile {
         use_lsc: false,
         use_warp: false,
         use_hdr: false,
-        use_fused_unpack: true,
-        use_demosaic_ccm: true,
-        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,    // zone stats for multi-illuminant AWB
         use_channel_means: true, // channel means for grey-world AWB
@@ -236,9 +223,6 @@ impl PipelineProfile {
         use_lsc: true,
         use_warp: false,
         use_hdr: false,
-        use_fused_unpack: true,
-        use_demosaic_ccm: true,
-        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,
         use_channel_means: true,
@@ -278,9 +262,6 @@ impl PipelineProfile {
         use_lsc: true,
         use_warp: true,
         use_hdr: true,
-        use_fused_unpack: true,
-        use_demosaic_ccm: true,
-        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,    // zone stats for multi-illuminant AWB
         use_channel_means: true, // channel means for grey-world AWB
@@ -321,9 +302,6 @@ impl PipelineProfile {
         use_hdr: false,
         use_local_contrast: false,
         use_unsharp: false,
-        use_fused_unpack: true,
-        use_demosaic_ccm: true,
-        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,     // zone stats for AWB (single block test)
         use_channel_means: false, // skip channel means
@@ -366,9 +344,6 @@ impl PipelineProfile {
         use_lsc: true,
         use_warp: false,
         use_hdr: false,
-        use_fused_unpack: true,
-        use_demosaic_ccm: true,
-        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,
         use_channel_means: true,
@@ -419,9 +394,6 @@ impl PipelineProfile {
         use_lsc: true,
         use_warp: true, // EIS alignment between exposures
         use_hdr: true,
-        use_fused_unpack: true,
-        use_demosaic_ccm: true,
-        use_fused_tone: true,
         rotate_mode: 0,
         use_zone_stats: true,
         use_channel_means: true,
@@ -472,9 +444,6 @@ impl PipelineProfile {
         use_lsc: bool,
         use_warp: bool,
         use_hdr: bool,
-        use_fused_unpack: bool,
-        use_demosaic_ccm: bool,
-        use_fused_tone: bool,
         rotate_mode: i32, // 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip
         use_zone_stats: bool, // per-zone RGB means (AveragePool) for multi-illuminant AWB
         use_channel_means: bool, // global channel means (ReduceMean) for grey-world AWB
@@ -511,9 +480,6 @@ impl PipelineProfile {
             use_lsc,
             use_warp,
             use_hdr,
-            use_fused_unpack,
-            use_demosaic_ccm,
-            use_fused_tone,
             rotate_mode,
             use_zone_stats,            // per-zone RGB means (AWB multi-illuminant)
             use_channel_means,         // global channel means (grey-world AWB)
@@ -570,7 +536,12 @@ mod tests {
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 0);
         // LITE: always has 16 main-chain blocks (identity placeholders for disabled features)
-        assert_eq!(blocks.len(), 20, "LITE (fused, demosaic_ccm) should have 20 blocks (15 main + 5 postproc identity), got {}", blocks.len());
+        assert_eq!(
+            blocks.len(),
+            24,
+            "LITE (primitive) should have 24 blocks, got {}",
+            blocks.len()
+        );
     }
 
     #[test]
@@ -579,8 +550,8 @@ mod tests {
         // HEAVY: all 16 main blocks present (4 new: bilateral, vignetting, saturation, colorspace)
         assert_eq!(
             blocks.len(),
-            20,
-            "HEAVY (fused, demosaic_ccm) should have 20 blocks (15 main + 5 postproc), got {}",
+            24,
+            "HEAVY (primitive) should have 24 blocks, got {}",
             blocks.len()
         );
     }
@@ -601,9 +572,6 @@ mod tests {
             true,
             true,
             false,
-            false,
-            true,  // use_demosaic_ccm
-            true,  // use_fused_tone
             0,     // rotate_mode: none
             true,  // use_zone_stats
             false, // use_channel_means
@@ -652,9 +620,6 @@ mod tests {
             false,
             false,
             false,
-            false,
-            false, // use_demosaic_ccm
-            false, // use_fused_tone
             0,     // rotate_mode: none
             false, // use_zone_stats
             false, // use_channel_means
@@ -696,13 +661,13 @@ mod tests {
     fn test_block_count() {
         assert_eq!(
             PipelineProfile::LITE.block_count(),
-            23,
-            "LITE: 20 main + 3 stats"
+            27,
+            "LITE: 24 main + 3 stats"
         );
         assert_eq!(
             PipelineProfile::HEAVY.block_count(),
-            25,
-            "HEAVY: 20 main + 5 stats"
+            29,
+            "HEAVY: 24 main + 5 stats"
         );
     }
 
