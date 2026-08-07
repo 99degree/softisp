@@ -20,6 +20,7 @@
 #![cfg(feature = "mnn")]
 
 use cam_isp::mnn_converter::{convert_mnn_buffer, convert_onnx_buffer, dump_mnn_to_json};
+use cam_isp::mnn_opset_matcher;
 use cam_isp::mnn_sys::{MnnBackendType, MnnInterpreterSafe};
 use cam_isp::pipeline::{GraphComposer, IspBlock};
 
@@ -161,6 +162,22 @@ fn run_pass1_block(
     println!("[pass1:{}] pass0 ops ({})", name, ops0.len());
     println!("[pass1:{}] pass1 ops ({})", name, ops1.len());
 
+    // ── Exact matching table verification ─────────────────────────
+    let filtered0 = mnn_opset_matcher::filter_bridge_ops(&ops0);
+    let filtered1 = mnn_opset_matcher::filter_bridge_ops(&ops1);
+    if let Some(pat) = mnn_opset_matcher::match_first(&filtered0) {
+        println!(
+            "[pass1:{}] pass0 table match: '{}' (pattern {:?})",
+            name, pat.block_name, pat.op_types
+        );
+    } else if !filtered0.is_empty() {
+        println!("[pass1:{}] pass0 ops {:?} not in table", name, filtered0);
+    }
+    println!(
+        "[pass1:{}] pass1 ops after bridge filter: {:?}",
+        name, filtered1
+    );
+
     // Generate input and run inference on Vulkan for both pass0 and pass1.
     let input = make_input(shape, raw_range);
     let out0 = infer_mnn_with_input(name, &mnn0, MnnBackendType::Vulkan, shape, &input);
@@ -201,6 +218,7 @@ fn run_pass1_block(
 }
 
 /// All 17 blocks: (name, chain, shape, raw_range).
+#[allow(clippy::type_complexity)]
 fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, bool)> {
     use cam_isp::blocks::*;
     vec![
@@ -448,6 +466,7 @@ fn test_pass1_all_blocks_round_trip() {
 /// Pass1 round-trip for the full LITE pipeline.
 /// Graph-only verification (ops count/type preserved); multi-output
 /// pipeline graphs are not supported by mnn_run_host_tensors.
+/// Also verifies pass0 opset against the exact matching table.
 #[test]
 #[ignore]
 fn test_pass1_lite_pipeline_round_trip() {
@@ -468,7 +487,16 @@ fn test_pass1_lite_pipeline_round_trip() {
     let json1 = with_convert_lock(|| dump_mnn_to_json(&mnn1)).expect("json1 failed");
     let ops1 = extract_op_types(&json1);
 
+    // ── Segment attribution via exact matching table ───────────────
+    let filtered0 = mnn_opset_matcher::filter_bridge_ops(&ops0);
+    let attributed = mnn_opset_matcher::scan_blocks(&filtered0);
     println!("[pass1:lite] pass0 ops ({}): {:?}", ops0.len(), ops0);
+    println!(
+        "[pass1:lite] pass0 filtered ({}): {:?}",
+        filtered0.len(),
+        filtered0
+    );
+    println!("[pass1:lite] pass0 attribution: {:?}", attributed);
     println!("[pass1:lite] pass1 ops ({}): {:?}", ops1.len(), ops1);
 
     // Fusion: pass1 should have fewer ops (primitives → ISP custom ops).
@@ -489,6 +517,7 @@ fn test_pass1_lite_pipeline_round_trip() {
 }
 
 /// Pass1 round-trip for the full HEAVY pipeline.
+/// Also verifies pass0 opset against the exact matching table.
 #[test]
 #[ignore]
 fn test_pass1_heavy_pipeline_round_trip() {
@@ -509,7 +538,16 @@ fn test_pass1_heavy_pipeline_round_trip() {
     let json1 = with_convert_lock(|| dump_mnn_to_json(&mnn1)).expect("json1 failed");
     let ops1 = extract_op_types(&json1);
 
+    // ── Segment attribution via exact matching table ───────────────
+    let filtered0 = mnn_opset_matcher::filter_bridge_ops(&ops0);
+    let attributed = mnn_opset_matcher::scan_blocks(&filtered0);
     println!("[pass1:heavy] pass0 ops ({}): {:?}", ops0.len(), ops0);
+    println!(
+        "[pass1:heavy] pass0 filtered ({}): {:?}",
+        filtered0.len(),
+        filtered0
+    );
+    println!("[pass1:heavy] pass0 attribution: {:?}", attributed);
     println!("[pass1:heavy] pass1 ops ({}): {:?}", ops1.len(), ops1);
 
     // Fusion: pass1 should have fewer ops (primitives → ISP custom ops).
