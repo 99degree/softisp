@@ -1,0 +1,30 @@
+#version 450
+// shader_lsc — Lens Shading Correction: radial gain multiplication
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) readonly uniform image2D input_img;
+layout(set = 0, binding = 1, rgba32f) writeonly uniform image2D output_img;
+
+layout(set = 0, binding = 2) uniform Params {
+    float width;
+    float height;
+    float strength;
+    float pad0;
+} params;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_img);
+    if (pos.x >= size.x || pos.y >= size.y) return;
+
+    // Normalized distance from center
+    vec2 center = vec2(params.width, params.height) * 0.5;
+    vec2 diff = (vec2(pos) - center) / center;
+    float dist2 = dot(diff, diff); // squared distance, 0 at center, ~2 at corner
+
+    // Radial gain: brighter toward edges to compensate lens falloff
+    float gain = 1.0 + params.strength * dist2;
+
+    vec3 c = imageLoad(input_img, pos).rgb * gain;
+    imageStore(output_img, pos, vec4(clamp(c, 0.0, 1.0), 1.0));
+}
