@@ -91,14 +91,12 @@ static const ExactPattern kExactFusionTablesPass1[] = {
     ExactPattern({MNN::OpType_BinaryOp}, 1, 1, "isp.fcs", "isp.fcs", nullptr, MNN::BinaryOpOperation_REALDIV, true),
 };
 
-// ── Profile: structural-only matching (24 entries) ─────────
+// ── Profile: structural-only matching (25 entries) ─────────
 static const ExactPattern kExactProfileVariants[] = {
-    // calibration_block (chain=21)
-    ExactPattern({MNN::OpType_Reduction, MNN::OpType_UnaryOp, MNN::OpType_Reduction, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_BinaryOp, MNN::OpType_Const, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Concat, MNN::OpType_Const, MNN::OpType_Reshape, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.calib_stats", "isp.calib_stats", "calib_stats"),
-    // unified_stats_block (chain=19)
-    ExactPattern({MNN::OpType_Reduction, MNN::OpType_UnaryOp, MNN::OpType_Reduction, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_BinaryOp, MNN::OpType_Const, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Concat, MNN::OpType_Const, MNN::OpType_Reshape, MNN::OpType_BinaryOp}, -1, -1, "isp.ispc_stats", "isp.ispc_stats", "ispc_stats"),
-    // display_block (chain=16)
-    ExactPattern({MNN::OpType_Permute, MNN::OpType_Padding, MNN::OpType_Shape, MNN::OpType_Rank, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_Unsqueeze, MNN::OpType_BinaryOp, MNN::OpType_Unsqueeze, MNN::OpType_StridedSlice, MNN::OpType_Squeeze, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_GatherV2, MNN::OpType_BinaryOp, MNN::OpType_Cast}, -1, -1, "isp.display", "isp.display", nullptr),
+    // calibration_block (chain=18)
+    ExactPattern({MNN::OpType_Reduction, MNN::OpType_UnaryOp, MNN::OpType_Reduction, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_BinaryOp, MNN::OpType_Const, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Concat, MNN::OpType_Const, MNN::OpType_Reshape}, -1, -1, "isp.calibration", "isp.calibration", "calibration", nullptr, -1, false),
+    // tone_stats_block (chain=16)
+    ExactPattern({MNN::OpType_ConvertTensor, MNN::OpType_Convolution, MNN::OpType_ConvertTensor, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Reduction, MNN::OpType_Const, MNN::OpType_BinaryOp, MNN::OpType_ConvertTensor, MNN::OpType_Reduction, MNN::OpType_Const, MNN::OpType_BinaryOp, MNN::OpType_ConvertTensor, MNN::OpType_Reduction, MNN::OpType_Size, MNN::OpType_Concat}, -1, -1, "isp.tone_stats", "isp.tone_stats", "tone_stats", nullptr, -1, false),
     // fcs_block (chain=13)
     ExactPattern({MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ConvolutionDepthwise, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.fcs", "isp.fcs", nullptr),
     // tone_block (chain=12)
@@ -111,7 +109,7 @@ static const ExactPattern kExactProfileVariants[] = {
     ExactPattern({MNN::OpType_Convolution, MNN::OpType_Convolution, MNN::OpType_UnaryOp, MNN::OpType_Convolution, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_Reduction, MNN::OpType_Squeeze}, -1, -1, "isp.af_focus", "isp.af_focus", nullptr),
     // ldci_block (chain=6)
     ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.ldci", "isp.ldci", nullptr),
-    // ee_block (chain=6)
+    // ee_block_legacy (chain=6)
     ExactPattern({MNN::OpType_ConvolutionDepthwise, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6, MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.ee", "isp.ee", nullptr),
     // auto_contrast_block (chain=6)
     ExactPattern({MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.auto_contrast", "isp.auto_contrast", nullptr),
@@ -131,6 +129,10 @@ static const ExactPattern kExactProfileVariants[] = {
     ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.ldci_a", "isp.ldci_a", nullptr),
     // ref_tone_block (chain=4)
     ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.tone", "isp.tone", nullptr),
+    // display_block (chain=3)
+    ExactPattern({MNN::OpType_ConvertTensor, MNN::OpType_Convolution, MNN::OpType_ConvertTensor}, -1, -1, "isp.display", "isp.display", nullptr),
+    // ee_block (chain=3)
+    ExactPattern({MNN::OpType_ConvertTensor, MNN::OpType_ConvolutionDepthwise, MNN::OpType_ConvertTensor}, -1, -1, "isp.ee", "isp.ee", nullptr),
     // unpack_blc_3op (chain=3)
     ExactPattern({MNN::OpType_Reshape, MNN::OpType_ReLU6, MNN::OpType_BinaryOp}, -1, -1, "isp.unpack_blc", "isp.unpack_blc", nullptr),
     // unpack_blc_2op (chain=2)
