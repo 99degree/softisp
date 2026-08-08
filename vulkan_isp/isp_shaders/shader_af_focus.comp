@@ -1,0 +1,36 @@
+#version 450
+// shader_af_focus — AF focus measure: 3x3 Laplacian on luminance
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) readonly uniform image2D input_img;
+layout(set = 0, binding = 1, rgba32f) writeonly uniform image2D output_img;
+
+layout(set = 0, binding = 2) uniform Params {
+    float width;
+    float height;
+    float threshold;
+    float pad0;
+} params;
+
+float luma(vec3 c) {
+    return dot(c, vec3(0.299, 0.587, 0.114));
+}
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_img);
+    if (pos.x < 1 || pos.y < 1 || pos.x >= size.x - 1 || pos.y >= size.y - 1) return;
+
+    // 3x3 Laplacian: center * 4 - neighbors
+    float c  = luma(imageLoad(input_img, pos).rgb);
+    float n  = luma(imageLoad(input_img, pos + ivec2( 0,  1)).rgb);
+    float s  = luma(imageLoad(input_img, pos + ivec2( 0, -1)).rgb);
+    float e  = luma(imageLoad(input_img, pos + ivec2( 1,  0)).rgb);
+    float w  = luma(imageLoad(input_img, pos + ivec2(-1,  0)).rgb);
+
+    float laplacian = abs(4.0 * c - n - s - e - w);
+    float focus = (laplacian > params.threshold) ? laplacian : 0.0;
+
+    vec3 color = imageLoad(input_img, pos).rgb * focus;
+    imageStore(output_img, pos, vec4(clamp(color, 0.0, 1.0), 1.0));
+}

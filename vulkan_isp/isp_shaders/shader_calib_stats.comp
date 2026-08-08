@@ -1,0 +1,37 @@
+#version 450
+// shader_calib_stats — Calibration statistics: per-pixel min/max accumulator
+// Accumulates per-channel min/max into a 6-element uint buffer.
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer InputBuf { float data[]; } inp;
+layout(set = 0, binding = 1) buffer OutputBuf { uint data[6]; } outp;
+
+layout(set = 0, binding = 2) uniform Params {
+    float width;
+    float height;
+    float pad0;
+    float pad1;
+} params;
+
+void main() {
+    uint W = uint(params.width);
+    uint H = uint(params.height);
+    uint total = W * H;
+    uint idx = gl_GlobalInvocationID.x;
+
+    if (idx >= total) return;
+
+    float r = inp.data[idx * 3 + 0];
+    float g = inp.data[idx * 3 + 1];
+    float b = inp.data[idx * 3 + 2];
+    uint ur = floatBitsToUint(max(r, 0.0));
+    uint ug = floatBitsToUint(max(g, 0.0));
+    uint ub = floatBitsToUint(max(b, 0.0));
+
+    atomicMin(outp.data[0], ur);
+    atomicMax(outp.data[1], ur);
+    atomicMin(outp.data[2], ug);
+    atomicMax(outp.data[3], ug);
+    atomicMin(outp.data[4], ub);
+    atomicMax(outp.data[5], ub);
+}
