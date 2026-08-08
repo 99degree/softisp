@@ -420,23 +420,54 @@ All ISP pipeline blocks implement the `IspBlock` trait and contribute ONNX graph
 | **Output** | `{ns}/out` — same tensor |
 | **ONNX ops** | None (wired directly) |
 
+#### `ToneStatsBlock` (stats)
+| | |
+|---|---|
+| **ID** | `tone_stats` |
+| **Role** | Luminance statistics for tone mapping feedback |
+| **Input** | `{aux_hook}/out` → `[1, 1, H, W]` FLOAT (luma) |
+| **Output** | `{ns}/out` → `[1, 1, 16]` FLOAT (mean/min/max/clip/shadow stats) |
+| **ONNX ops** | `ConvertTensor → Conv(1×1) → ConvertTensor → ReduceMean → ReduceMin → ReduceMax → Const → BinaryOp → ConvertTensor → ReduceSum → Const → BinaryOp → ConvertTensor → ReduceSum → Size → Concat` (16 ops) |
+| **Matcher** | `isp.tone_stats` exact pattern |
+
+#### `CoarseHistogramBlock` (stats)
+| | |
+|---|---|
+| **ID** | `histogram` |
+| **Role** | Coarse luminance histogram for AE exposure estimation |
+| **Input** | `{aux_hook}/out` → `[1, 1, H, W]` FLOAT (luma) |
+| **Output** | `{ns}/out` → `[1, 1, N]` FLOAT (N-bin histogram) |
+| **ONNX ops** | Variable-length: `ConvertTensor → Conv(1×1) → [Const → BinaryOp → ConvertTensor → Reduction] × N` → `Const → Concat` |
+| **Matcher** | `isp.histogram` prefix-match (6-ops prefix + bin pattern + 5-ops tail) |
+| **Notes** | Default N=16 bins → 95 ops. Bin count is configurable at build time. |
+
 #### `CalibrationBlock` (stats)
 | | |
 |---|---|
 | **ID** | `calibration` |
-| **Role** | Zone statistics for AWB/AE |
+| **Role** | Sensor calibration statistics for AWB/AE/AF |
 | **Input** | `{aux_hook}/out` → `[1, 4, H, W]` FLOAT (Bayer) |
-| **Output** | `{ns}/zone_means` → `[1, 4, Z]` FLOAT (per-zone means) |
-| **ONNX ops** | `Reshape → AveragePool → Reshape` |
+| **Output** | `{ns}/out` → `[1, 16]` FLOAT (variance/range/lum/noise stats) |
+| **ONNX ops** | `ReduceMean → UnaryOp(Square) → ReduceMean → UnaryOp → BinaryOp(Sub) → ReduceMin → ReduceMax → BinaryOp → Const → BinaryOp → BinaryOp → ReduceMean × 4 → Concat → Const → Reshape` (18 ops) |
+| **Matcher** | `isp.calibration` exact pattern |
 
-#### `StatsBlock`
+#### `ZoneStatsBlock` (stats)
 | | |
 |---|---|
-| **ID** | `stats` |
-| **Role** | Global statistics (mean, min, max, histogram) |
-| **Input** | `{prev}/out` → `[1, 3, H, W]` FLOAT |
-| **Output** | Various stats tensors |
-| **ONNX ops** | `ReduceMean, ReduceMin, ReduceMax, Clip →直方图` |
+| **ID** | `zone_stats` |
+| **Role** | Spatial zone statistics for AF/AE |
+| **Input** | `{aux_hook}/out` → `[1, 1, H, W]` FLOAT (luma) |
+| **Output** | `{ns}/out` → `[1, 1, Z]` FLOAT (per-zone means) |
+| **ONNX ops** | `AveragePool` (single op, zone-based pooling) |
+
+#### `ChannelMeansBlock` (stats)
+| | |
+|---|---|
+| **ID** | `channel_means` |
+| **Role** | Per-channel mean values for AWB |
+| **Input** | `{aux_hook}/out` → `[1, 4, H, W]` FLOAT (Bayer) |
+| **Output** | `{ns}/out` → `[1, 4]` FLOAT (per-channel means) |
+| **ONNX ops** | `ReduceMean` (single op, global reduce) |
 
 ---
 
@@ -496,6 +527,26 @@ All ISP pipeline blocks implement the `IspBlock` trait and contribute ONNX graph
 | R7c | Conv+Reshape+Mul+Add | `isp.yuv420_convert` |
 | R8 | GridSample | Warp |
 | R7d | Max+Min+Add+Log+Mul+Exp | `isp.gamma` (disabled) |
+
+## Opset Matcher (Pass 0)
+
+The opset matcher in `mnn_opset_matcher.rs` maps MNN op type sequences to ISP block names for pipeline analysis. Three matching mechanisms:
+
+1. **Exact pattern** (`EXACT_MATCH_TABLE`): Maps fixed op-type sequences to block names. Used for most blocks.
+2. **Prefix match** (`match_isp_histogram_prefix`): Handles variable-length patterns (e.g., `CoarseHistogramBlock` with N bins).
+3. **Disambiguation**: When multiple blocks share the same op signature (ambiguous pairs), resolve by:
+   - `OP_NAME_PREFIXES`: MNN operator name prefix → block name
+   - `ATTR_DISAMBIG_RULES`: Per-op attribute values (e.g., `BinaryOp.opType=SUB` vs `MUL`)
+
+### ISP Extra Opset Entries
+
+Complex HEAVY-profile blocks (>3 ops) use the `isp.*` naming convention:
+
+| Block | Pattern | Length | Matcher |
+|---|---|---|---|
+| `isp.tone_stats` | ConvertTensor→Conv→ConvertTensor→Reduction×3→Const→BinaryOp→ConvertTensor→Reduction→Const→BinaryOp→ConvertTensor→Reduction→Size→Concat | 16 | Exact |
+| `isp.calibration` | Reduction→UnaryOp→Reduction→UnaryOp→BinaryOp→Reduction×2→BinaryOp→Const→BinaryOp×2→Reduction×4→Concat→Const→Reshape | 18 | Exact |
+| `isp.histogram` | ConvertTensor→Conv→Const→BinaryOp→ConvertTensor→Reduction → [bins] → Const→Concat | 23–95 | Prefix |
 
 ---
 
