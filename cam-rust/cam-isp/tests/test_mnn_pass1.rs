@@ -473,8 +473,14 @@ fn test_pass1_lite_pipeline_round_trip() {
     let mut blocks = PipelineProfile::LITE.build_blocks(16, 0);
     blocks.push(Box::new(cam_isp::blocks::DisplayBlock::new(16)));
     GraphComposer::wire_blocks(&mut blocks);
+
+    // Build aux blocks (stats) so their ops appear in the MNN graph.
+    let concrete_h = (16.0_f64 / 16.0 * 9.0).round() as i64;
+    let aux = PipelineProfile::LITE.build_aux_blocks(concrete_h, 16);
+
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-    let onnx = GraphComposer::compose_from_vec(&refs, &[], 16).expect("compose failed");
+    let aux_refs: Vec<&dyn IspBlock> = aux.iter().map(|b| b.as_ref()).collect();
+    let onnx = GraphComposer::compose_from_vec(&refs, &aux_refs, 16).expect("compose failed");
 
     let mnn0 = with_convert_lock(|| convert_onnx_buffer(&onnx)).expect("pass0 failed");
     let json0 = with_convert_lock(|| dump_mnn_to_json(&mnn0)).expect("json0 failed");
@@ -524,8 +530,14 @@ fn test_pass1_heavy_pipeline_round_trip() {
     let mut blocks = PipelineProfile::HEAVY.build_blocks(16, 0);
     blocks.push(Box::new(cam_isp::blocks::DisplayBlock::new(16)));
     GraphComposer::wire_blocks(&mut blocks);
+
+    // Build aux blocks (stats) so their ops appear in the MNN graph.
+    let concrete_h = (16.0_f64 / 16.0 * 9.0).round() as i64;
+    let aux = PipelineProfile::HEAVY.build_aux_blocks(concrete_h, 16);
+
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-    let onnx = GraphComposer::compose_from_vec(&refs, &[], 16).expect("compose failed");
+    let aux_refs: Vec<&dyn IspBlock> = aux.iter().map(|b| b.as_ref()).collect();
+    let onnx = GraphComposer::compose_from_vec(&refs, &aux_refs, 16).expect("compose failed");
 
     let mnn0 = with_convert_lock(|| convert_onnx_buffer(&onnx)).expect("pass0 failed");
     let json0 = with_convert_lock(|| dump_mnn_to_json(&mnn0)).expect("json0 failed");
