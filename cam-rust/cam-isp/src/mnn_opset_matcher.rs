@@ -1,23 +1,21 @@
 //! Exact matching table: MNN op type sequences → ISP block names.
 //!
-//! Built from pass0 per-block ONNX→MNN conversion dumps. Each entry maps
-//! an op sequence (excluding leading `Input`) to a block name. Ambiguous
-//! pairs (identical op signatures for different blocks) are documented and
-//! disambiguated by bridge position in pipeline context.
+//! Built from full-pipeline HEAVY profile ONNX→MNN conversion. Each entry
+//! maps an op sequence (excluding leading `Input` and bridge `Permute` ops)
+//! to a block name. Patterns are extracted from the actual opset produced
+//! when all blocks are fused into a single MNN graph.
 //!
-//! Only HEAVY-profile blocks are covered (saturation, wavelet_denoise,
-//! auto_contrast, unpack_cfa are Identity in HEAVY and excluded).
+//! # Ambiguous Groups
 //!
-//! # Ambiguous Pairs
+//! MNN cross-block optimization fuses/eliminates ops, making some blocks
+//! produce identical short op sequences:
 //!
-//! | Block A       | Block B          | Shared Signature                               |
-//! |---------------|------------------|------------------------------------------------|
-//! | ldci          | sharpen          | `ConvertTensor, Pooling, ConvertTensor, BinaryOp, Const, BinaryOp, BinaryOp` |
-//! | demosaic      | ccm              | `ConvertTensor, Convolution, ReLU6, ConvertTensor` |
-//! | unpack_blc16  | bayer_wb         | `Const, BinaryOp, ReLU6`                       |
+//! | Group | Shared Signature | Blocks |
+//! |-------|-----------------|--------|
+//! | ct_identity | `ConvertTensor, Identity` | demosaic, ee, sharpen, aux_hook_src |
+//! | ct_conv     | `ConvertTensor, Convolution` | cfa, wavelet_denoise |
 //!
-//! Disambiguation is handled by [`DISAMBIG_RULES`] (operator name prefix)
-//! and [`ATTR_DISAMBIG_RULES`] (per-op attributes like BinaryOp.opType).
+//! These require positional disambiguation (pipeline block order).
 
 /// A single pattern entry mapping an MNN op type sequence to an ISP block name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,75 +26,107 @@ pub struct OpPattern {
     pub op_types: &'static [&'static str],
 }
 
-/// The exact matching table — HEAVY-profile ISP block op signatures from pass0.
+/// The exact matching table — full-pipeline HEAVY-profile ISP block op signatures.
 ///
-/// Sorted by pattern length (ascending) to allow longest-match scanning.
+/// Patterns extracted from the actual MNN opset when all blocks are fused
+/// into a single graph. MNN cross-block optimization significantly changes
+/// op sequences vs per-block conversion (e.g., `bilateral` becomes `Identity`,
+/// `tone` becomes `ConvertTensor, Pooling, ...`).
 ///
-/// Blocks with >3 ONNX ops use the `isp.*` naming convention to denote
-/// custom ISP opset patterns that exceed simple elementwise signatures.
+/// Sorted by pattern length (ascending) so `scan_blocks` tries longest
+/// patterns first (reverse iteration).
 pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
     // ── Length 1 ───────────────────────────────────────────────────
     OpPattern {
-        block_name: "tone",
-        op_types: &["ReLU6"],
-    },
-    // ── Length 2 ───────────────────────────────────────────────────
-    OpPattern {
-        block_name: "vignetting",
-        op_types: &["Const", "BinaryOp"],
-    },
-    // ── Length 3 ───────────────────────────────────────────────────
-    // AMBIGUOUS: unpack_blc16 and bayer_wb share the same signature.
-    OpPattern {
-        block_name: "unpack_blc16",
-        op_types: &["Const", "BinaryOp", "ReLU6"],
+        block_name: "raw_input",
+        op_types: &["Input"],
     },
     OpPattern {
         block_name: "bayer_wb",
-        op_types: &["Const", "BinaryOp", "ReLU6"],
+        op_types: &["ReLU6"],
     },
     OpPattern {
         block_name: "bilateral",
-        op_types: &["ConvertTensor", "Pooling", "ConvertTensor"],
+        op_types: &["Identity"],
     },
-    OpPattern {
-        block_name: "ee",
-        op_types: &["ConvertTensor", "ConvolutionDepthwise", "ConvertTensor"],
-    },
-    OpPattern {
-        block_name: "display",
-        op_types: &["ConvertTensor", "Convolution", "ConvertTensor"],
-    },
-    // ── Length 4 ───────────────────────────────────────────────────
     OpPattern {
         block_name: "fcs",
-        op_types: &["Const", "BinaryOp", "Const", "BinaryOp"],
+        op_types: &["Pooling"],
     },
-    // AMBIGUOUS: demosaic and ccm share the same signature.
     OpPattern {
-        block_name: "demosaic",
-        op_types: &["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"],
+        block_name: "gamma",
+        op_types: &["ConvertTensor"],
+    },
+    // ── Length 2 ───────────────────────────────────���───────���───────
+    OpPattern {
+        block_name: "aux_hook_out",
+        op_types: &["ConvertTensor", "ConvolutionDepthwise"],
+    },
+    OpPattern {
+        block_name: "colorspace",
+        op_types: &["Identity", "ConvertTensor"],
+    },
+    OpPattern {
+        block_name: "ldci",
+        op_types: &["Const", "BinaryOp"],
+    },
+    // AMBIGUOUS GROUP ct_identity: demosaic, ee, sharpen, aux_hook_src
+    // all produce ConvertTensor,Identity in the full pipeline.
+    OpPattern {
+        block_name: "isp.ct_identity",
+        op_types: &["ConvertTensor", "Identity"],
+    },
+    // AMBIGUOUS GROUP ct_conv: cfa, wavelet_denoise
+    // both produce ConvertTensor,Convolution in the full pipeline.
+    OpPattern {
+        block_name: "isp.ct_conv",
+        op_types: &["ConvertTensor", "Convolution"],
+    },
+    // ── Length 3 ───────────────────────────────────────────────────
+    OpPattern {
+        block_name: "normalize",
+        op_types: &["Cast", "Const", "BinaryOp"],
+    },
+    OpPattern {
+        block_name: "blc",
+        op_types: &["Const", "BinaryOp", "ReLU6"],
     },
     OpPattern {
         block_name: "ccm",
-        op_types: &["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"],
+        op_types: &["ConvertTensor", "Convolution", "ReLU6"],
     },
-    // ── Length 7 ───────────────────────────────────────────────────
-    // AMBIGUOUS: ldci and sharpen share the same signature.
+    // ── Length 4 ───────────────────────────────────────────────────
+    // Second CCM application (post-demosaic RGB domain).
     OpPattern {
-        block_name: "ldci",
+        block_name: "ccm_post",
+        op_types: &["Const", "BinaryOp", "Const", "BinaryOp"],
+    },
+    // ── Length 5 ───────────────────────────────────────────────────
+    OpPattern {
+        block_name: "auto_contrast",
+        op_types: &[
+            "ConvertTensor",
+            "ConvertTensor",
+            "ConvertTensor",
+            "ConvertTensor",
+            "Identity",
+        ],
+    },
+    // ── Length 6 ───────────────────────────────────────────────────
+    OpPattern {
+        block_name: "saturation",
         op_types: &[
             "ConvertTensor",
             "Pooling",
             "ConvertTensor",
             "BinaryOp",
-            "Const",
             "BinaryOp",
             "BinaryOp",
         ],
     },
+    // ── Length 7 ───────────────────────────────────────────────────
     OpPattern {
-        block_name: "sharpen",
+        block_name: "tone",
         op_types: &[
             "ConvertTensor",
             "Pooling",
@@ -109,16 +139,21 @@ pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
     },
     // ── Length 8 ───────────────────────────────────────────────────
     OpPattern {
-        block_name: "gamma",
+        block_name: "vignetting",
         op_types: &[
             "Const", "BinaryOp", "Const", "BinaryOp", "UnaryOp", "Const", "BinaryOp", "UnaryOp",
         ],
     },
-    // ── isp.* opset entries (blocks with >3 ops) ───────────────────
+    // ── Length 10 ──────────────────────────────────────────────────
+    OpPattern {
+        block_name: "unpack",
+        op_types: &[
+            "Cast", "Cast", "Const", "Reshape", "Const", "BinaryOp", "Reshape", "Concat", "Const",
+            "Reshape",
+        ],
+    },
+    // ── isp.* sub-patterns (within display mega-segment) ──────────
     // ToneStatsBlock: luma conv → mean/min/max → clip/shadow masks → concat.
-    // 16 ops: ConvertTensor, Convolution, ConvertTensor, Reduction×3,
-    //         Const, BinaryOp, ConvertTensor, Reduction, Const, BinaryOp,
-    //         ConvertTensor, Reduction, Size, Concat
     OpPattern {
         block_name: "isp.tone_stats",
         op_types: &[
@@ -141,9 +176,6 @@ pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
         ],
     },
     // CalibrationBlock: variance → min/max range → lum/noise stats → concat+reshape.
-    // 18 ops: Reduction, UnaryOp, Reduction, UnaryOp, BinaryOp,
-    //         Reduction, Reduction, BinaryOp, Const, BinaryOp, BinaryOp,
-    //         Reduction×4, Concat, Const, Reshape
     OpPattern {
         block_name: "isp.calibration",
         op_types: &[
@@ -179,7 +211,7 @@ pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
 /// ```
 /// use cam_isp::mnn_opset_matcher::{match_exact, EXACT_MATCH_TABLE};
 /// let matches = match_exact(&["ReLU6"]);
-/// assert!(matches.iter().any(|p| p.block_name == "tone"));
+/// assert!(matches.iter().any(|p| p.block_name == "bayer_wb"));
 /// ```
 pub fn match_exact<'a>(ops: &[&str]) -> Vec<&'a OpPattern> {
     EXACT_MATCH_TABLE
@@ -192,13 +224,13 @@ pub fn match_exact<'a>(ops: &[&str]) -> Vec<&'a OpPattern> {
 /// is not needed here because the table is exact — every entry has a distinct
 /// length or content). Returns `None` if no pattern matches.
 ///
-/// When multiple patterns match (ambiguous pair), the first entry in the
+/// When multiple patterns match (ambiguous group), the first entry in the
 /// table wins. Callers needing all candidates should use [`match_exact`].
 ///
 /// ```
 /// use cam_isp::mnn_opset_matcher::match_first;
-/// let m = match_first(&["ConvertTensor", "ConvolutionDepthwise", "ConvertTensor"]);
-/// assert_eq!(m.map(|p| p.block_name), Some("ee"));
+/// let m = match_first(&["ConvertTensor", "ConvolutionDepthwise"]);
+/// assert_eq!(m.map(|p| p.block_name), Some("aux_hook_out"));
 /// ```
 pub fn match_first(ops: &[&str]) -> Option<&'static OpPattern> {
     EXACT_MATCH_TABLE.iter().find(|p| p.op_types == ops)
@@ -272,24 +304,33 @@ pub fn match_isp_histogram_prefix(ops: &[&str]) -> Option<usize> {
 /// position, advancing past matched ops. Returns matched block names in order.
 ///
 /// This is the primary entry point for attributing pipeline opset segments
-/// to real ISP blocks. It walks the op list left-to-right, trying the
-/// longest table entry first at each position.  After exact-table scanning,
-/// variable-length ISP patterns (e.g., `isp.histogram`) are tried.
+/// to real ISP blocks. It walks the op list left-to-right, trying variable-
+/// length ISP prefix patterns (e.g., `isp.histogram`) first at each position
+/// (since their 6-op prefix overlaps with short exact patterns), then falling
+/// back to longest-match-first exact table scanning.
 ///
 /// ```
 /// use cam_isp::mnn_opset_matcher::scan_blocks;
-/// let ops = vec!["ConvertTensor", "ConvolutionDepthwise", "ConvertTensor",
-///                "Const", "BinaryOp", "Const", "BinaryOp"];
+/// let ops = vec!["ConvertTensor", "Identity",
+///                "Const", "BinaryOp"];
 /// let names = scan_blocks(&ops);
-/// // Should find "ee" (length 3) then "fcs" (length 4)
-/// assert_eq!(names, vec!["ee", "fcs"]);
+/// // "ConvertTensor,Identity" → isp.ct_identity, "Const,BinaryOp" → ldci
+/// assert_eq!(names, vec!["isp.ct_identity", "ldci"]);
 /// ```
 pub fn scan_blocks(ops: &[&str]) -> Vec<&'static str> {
     let mut result = Vec::new();
     let mut pos = 0;
     while pos < ops.len() {
         let remaining = &ops[pos..];
-        // Try longest patterns first (table sorted by length ascending,
+        // Try variable-length ISP prefix patterns first — histogram is
+        // variable-length and its 6-op prefix overlaps with short exact
+        // patterns (e.g., ConvertTensor,Convolution → isp.ct_conv).
+        if let Some(hist_len) = match_isp_histogram_prefix(remaining) {
+            result.push("isp.histogram");
+            pos += hist_len;
+            continue;
+        }
+        // Try longest exact patterns first (table sorted by length ascending,
         // so iterate in reverse for longest-match)
         let mut found = false;
         for p in EXACT_MATCH_TABLE.iter().rev() {
@@ -302,12 +343,6 @@ pub fn scan_blocks(ops: &[&str]) -> Vec<&'static str> {
             }
         }
         if found {
-            continue;
-        }
-        // Try variable-length ISP prefix patterns
-        if let Some(hist_len) = match_isp_histogram_prefix(remaining) {
-            result.push("isp.histogram");
-            pos += hist_len;
             continue;
         }
         // Skip unrecognized op
@@ -374,43 +409,50 @@ pub fn assert_block_ops(expected_name: &str, ops: &[&str]) -> Result<&'static Op
 /// Each MNN operator has a `name` field like `"DemosaicCcmBlock/conv_out"`.
 /// The prefix before the first `/` identifies the ISP block.  This table
 /// maps block names to their known prefixes — used to resolve ambiguous
-/// op-type pairs.
+/// op-type groups (e.g., `isp.ct_identity` → demosaic/ee/sharpen/aux_hook_src).
 ///
-/// Source: `dump_blocks/*.json`
+/// Source: MNN JSON dumps from full HEAVY pipeline conversion.
 pub const OP_NAME_PREFIXES: &[(&str, &str)] = &[
+    // ct_identity group: ConvertTensor,Identity
+    // Group entry maps the aggregate pattern to ALL constituent block prefixes.
+    ("isp.ct_identity", "DemosaicCcmBlock"),
+    ("isp.ct_identity", "EeBlock"),
+    ("isp.ct_identity", "SharpenBlock"),
+    ("isp.ct_identity", "AuxHook"),
+    // ct_conv group: ConvertTensor,Convolution
+    ("isp.ct_conv", "CfaBlock"),
+    ("isp.ct_conv", "WaveletBlock"),
+    // Individual block prefixes for finer-grained disambiguation
     ("demosaic", "DemosaicCcmBlock"),
-    ("display", "DisplayBlock"),
     ("ee", "EeBlock"),
-    ("fcs", "FcsBlock"),
-    ("ldci", "LdciBlock"),
-    ("unpack_blc16", "UnpackBlc16Block"),
+    ("sharpen", "SharpenBlock"),
+    ("aux_hook_src", "AuxHook"),
+    ("cfa", "CfaBlock"),
+    ("wavelet_denoise", "WaveletBlock"),
+    // Other blocks with unique patterns
+    ("unpack", "UnpackBlock"),
+    ("blc", "BlcBlock"),
+    ("ccm", "CcmBlock"),
+    ("tone", "ToneBlock"),
+    ("vignetting", "VignettingBlock"),
 ];
 
-/// Per-op attribute rules for disambiguation of ambiguous pairs.
+/// Per-op attribute rules for disambiguation of ambiguous groups.
 ///
 /// When op-type matching returns multiple candidates, these rules check
 /// specific operator attributes from the MNN JSON to narrow down to one.
 /// Each rule ties a block name to an expected attribute on a specific op
 /// index within its pattern.
 ///
-/// Source: `dump_blocks/*.json` — `main.opType` inside each operator.
+/// With the full-pipeline table, most per-block ambiguity is resolved by
+/// op-type sequences. The remaining ambiguous groups (`isp.ct_identity`,
+/// `isp.ct_conv`) are disambiguated by pipeline position or name prefixes.
 pub const ATTR_DISAMBIG_RULES: &[(&str, usize, &str, &str)] = &[
     // (block_name, op_index_in_pattern, attr_key, expected_value)
     //
-    // unpack_blc16 vs bayer_wb — BinaryOp.opType differs:
-    //   unpack_blc16: SUB (subtract black level)
-    //   bayer_wb:     MUL (multiply by white balance gains)
-    ("unpack_blc16", 1, "opType", "SUB"),
-    ("bayer_wb", 1, "opType", "MUL"),
-    //
-    // fcs — scaled=MUL, frame=ADD
-    ("fcs", 1, "opType", "MUL"),
-    ("fcs", 3, "opType", "ADD"),
-    //
-    // ldci — diff=SUB, boost=MUL, frame=ADD
-    ("ldci", 3, "opType", "SUB"),
-    ("ldci", 5, "opType", "MUL"),
-    ("ldci", 6, "opType", "ADD"),
+    // No attribute-based disambiguation needed for current ambiguous groups.
+    // ct_identity (4-way) and ct_conv (2-way) are resolved by positional
+    // pipeline order, not by operator attributes.
 ];
 
 /// Disambiguate among multiple candidates using operator name prefixes.
@@ -476,89 +518,84 @@ mod tests {
     // ── match_exact tests ──────────────────────────────────────────
 
     #[test]
-    fn test_exact_tone() {
+    fn test_exact_bayer_wb() {
         let m = match_exact(&["ReLU6"]);
         assert_eq!(m.len(), 1);
-        assert_eq!(m[0].block_name, "tone");
+        assert_eq!(m[0].block_name, "bayer_wb");
     }
 
     #[test]
-    fn test_exact_vignetting_unique() {
+    fn test_exact_ldci_unique() {
         let m = match_exact(&["Const", "BinaryOp"]);
         assert_eq!(m.len(), 1);
-        assert_eq!(m[0].block_name, "vignetting");
+        assert_eq!(m[0].block_name, "ldci");
     }
 
     #[test]
-    fn test_exact_bayer_wb_unpack_blc16_ambiguous() {
-        let m = match_exact(&["Const", "BinaryOp", "ReLU6"]);
-        assert_eq!(m.len(), 2);
-        let names: Vec<&str> = m.iter().map(|p| p.block_name).collect();
-        assert!(names.contains(&"bayer_wb"));
-        assert!(names.contains(&"unpack_blc16"));
+    fn test_exact_ct_identity_ambiguous() {
+        // ConvertTensor,Identity matches 4 blocks: ct_identity group
+        let m = match_exact(&["ConvertTensor", "Identity"]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "isp.ct_identity");
     }
 
     #[test]
     fn test_exact_bilateral_unique() {
-        let m = match_exact(&["ConvertTensor", "Pooling", "ConvertTensor"]);
+        let m = match_exact(&["Identity"]);
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].block_name, "bilateral");
     }
 
     #[test]
-    fn test_exact_demosaic_ccm_ambiguous() {
-        let m = match_exact(&["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"]);
-        assert_eq!(m.len(), 2);
-        let names: Vec<&str> = m.iter().map(|p| p.block_name).collect();
-        assert!(names.contains(&"demosaic"));
-        assert!(names.contains(&"ccm"));
+    fn test_exact_ct_conv_ambiguous() {
+        // ConvertTensor,Convolution matches 2 blocks: ct_conv group
+        let m = match_exact(&["ConvertTensor", "Convolution"]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "isp.ct_conv");
     }
 
     #[test]
-    fn test_exact_ldci_sharpen_ambiguous() {
+    fn test_exact_blc_unique() {
+        let m = match_exact(&["Const", "BinaryOp", "ReLU6"]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "blc");
+    }
+
+    #[test]
+    fn test_exact_aux_hook_out_unique() {
+        let m = match_exact(&["ConvertTensor", "ConvolutionDepthwise"]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "aux_hook_out");
+    }
+
+    #[test]
+    fn test_exact_ccm_post_unique() {
+        let m = match_exact(&["Const", "BinaryOp", "Const", "BinaryOp"]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "ccm_post");
+    }
+
+    #[test]
+    fn test_exact_vignetting_unique() {
+        let m = match_exact(&[
+            "Const", "BinaryOp", "Const", "BinaryOp", "UnaryOp", "Const", "BinaryOp", "UnaryOp",
+        ]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "vignetting");
+    }
+
+    #[test]
+    fn test_exact_saturation_unique() {
         let m = match_exact(&[
             "ConvertTensor",
             "Pooling",
             "ConvertTensor",
             "BinaryOp",
-            "Const",
             "BinaryOp",
             "BinaryOp",
         ]);
-        assert_eq!(m.len(), 2);
-        let names: Vec<&str> = m.iter().map(|p| p.block_name).collect();
-        assert!(names.contains(&"ldci"));
-        assert!(names.contains(&"sharpen"));
-    }
-
-    #[test]
-    fn test_exact_ee_unique() {
-        let m = match_exact(&["ConvertTensor", "ConvolutionDepthwise", "ConvertTensor"]);
         assert_eq!(m.len(), 1);
-        assert_eq!(m[0].block_name, "ee");
-    }
-
-    #[test]
-    fn test_exact_fcs_unique() {
-        let m = match_exact(&["Const", "BinaryOp", "Const", "BinaryOp"]);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].block_name, "fcs");
-    }
-
-    #[test]
-    fn test_exact_gamma_unique() {
-        let m = match_exact(&[
-            "Const", "BinaryOp", "Const", "BinaryOp", "UnaryOp", "Const", "BinaryOp", "UnaryOp",
-        ]);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].block_name, "gamma");
-    }
-
-    #[test]
-    fn test_exact_display_unique() {
-        let m = match_exact(&["ConvertTensor", "Convolution", "ConvertTensor"]);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].block_name, "display");
+        assert_eq!(m[0].block_name, "saturation");
     }
 
     #[test]
@@ -576,11 +613,10 @@ mod tests {
     // ── match_first tests ──────────────────────────────────────────
 
     #[test]
-    fn test_first_returns_first_ambiguous() {
+    fn test_first_returns_unique_match() {
         let m = match_first(&["Const", "BinaryOp"]);
         assert!(m.is_some());
-        // First entry for this signature is vignetting
-        assert_eq!(m.unwrap().block_name, "vignetting");
+        assert_eq!(m.unwrap().block_name, "ldci");
     }
 
     #[test]
@@ -588,40 +624,28 @@ mod tests {
         assert!(match_first(&["Bogus"]).is_none());
     }
 
-    // ── scan_blocks tests ──────────────────────────────────────────
+    // ── scan_blocks tests ───────────────────────────────────���──────
 
     #[test]
-    fn test_scan_ee_fcs() {
-        let ops = vec![
-            "ConvertTensor",
-            "ConvolutionDepthwise",
-            "ConvertTensor",
-            "Const",
-            "BinaryOp",
-            "Const",
-            "BinaryOp",
-        ];
+    fn test_scan_aux_hook_out_then_ldci() {
+        let ops = vec!["ConvertTensor", "ConvolutionDepthwise", "Const", "BinaryOp"];
         let names = scan_blocks(&ops);
-        assert_eq!(names, vec!["ee", "fcs"]);
+        assert_eq!(names, vec!["aux_hook_out", "ldci"]);
     }
 
     #[test]
-    fn test_scan_fcs_then_unrecognized() {
-        // After removing auto_contrast, "Const, BinaryOp, Const, BinaryOp, BinaryOp"
-        // matches fcs (len 4) then skips the trailing BinaryOp.
+    fn test_scan_ccm_post_then_unrecognized() {
+        // ccm_post (len 4) consumes Const,BO,Const,BO; trailing BO is skipped.
         let ops = vec!["Const", "BinaryOp", "Const", "BinaryOp", "BinaryOp"];
         let names = scan_blocks(&ops);
-        assert_eq!(names, vec!["fcs"]);
+        assert_eq!(names, vec!["ccm_post"]);
     }
 
     #[test]
-    fn test_scan_subsumption() {
-        // "ConvertTensor, Convolution, ReLU6, ConvertTensor" is demosaic/ccm (len 4),
-        // which does NOT subsume bilateral's "ConvertTensor, Pooling, ConvertTensor" (len 3)
-        // because the ops differ at position 1 (Convolution vs Pooling).
-        let ops = vec!["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"];
+    fn test_scan_ct_conv_is_not_ct_identity() {
+        // ConvertTensor,Convolution,ReLU6 matches ccm (len 3), not ct_identity (len 2)
+        let ops = vec!["ConvertTensor", "Convolution", "ReLU6"];
         let names = scan_blocks(&ops);
-        // demosaic or ccm (ambiguous pair, second wins via rev iteration)
         assert_eq!(names, vec!["ccm"]);
     }
 
@@ -634,13 +658,28 @@ mod tests {
     fn test_scan_unknown_ops_skipped() {
         let ops = vec!["BogusOp", "Const", "BinaryOp", "BogusOp2"];
         let names = scan_blocks(&ops);
-        // BogusOp skipped, then vignetting matched (only entry for this pattern)
-        assert_eq!(names, vec!["vignetting"]);
+        // BogusOp skipped, then ldci matched (Const,BinaryOp)
+        assert_eq!(names, vec!["ldci"]);
     }
 
     #[test]
-    fn test_scan_ldci_preferred_over_bilateral() {
-        // Longer pattern (ldci/sharpen, len 7) should be matched before bilateral (len 3)
+    fn test_scan_saturation_longer_than_ct() {
+        // saturation (len 6) should be matched before ct_identity (len 2)
+        let ops = vec![
+            "ConvertTensor",
+            "Pooling",
+            "ConvertTensor",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+        ];
+        let names = scan_blocks(&ops);
+        assert_eq!(names, vec!["saturation"]);
+    }
+
+    #[test]
+    fn test_scan_tone_longer_than_saturation() {
+        // tone (len 7) matches before saturation (len 6) due to Const at position 4
         let ops = vec![
             "ConvertTensor",
             "Pooling",
@@ -651,8 +690,7 @@ mod tests {
             "BinaryOp",
         ];
         let names = scan_blocks(&ops);
-        // Longest match wins (ldci or sharpen — both have len 7, second in table wins via rev)
-        assert_eq!(names, vec!["sharpen"]); // longest match wins over bilateral
+        assert_eq!(names, vec!["tone"]);
     }
 
     // ── Table integrity tests ──────────────────────────────────────
@@ -661,19 +699,25 @@ mod tests {
     fn test_table_has_all_expected_blocks() {
         let names = all_block_names();
         let expected = [
-            "tone",
-            "vignetting",
-            "unpack_blc16",
+            "raw_input",
             "bayer_wb",
             "bilateral",
-            "ee",
-            "display",
             "fcs",
-            "demosaic",
-            "ccm",
-            "ldci",
-            "sharpen",
             "gamma",
+            "aux_hook_out",
+            "colorspace",
+            "ldci",
+            "isp.ct_identity",
+            "isp.ct_conv",
+            "normalize",
+            "blc",
+            "ccm",
+            "ccm_post",
+            "auto_contrast",
+            "saturation",
+            "tone",
+            "vignetting",
+            "unpack",
             "isp.tone_stats",
             "isp.calibration",
         ];
@@ -688,9 +732,8 @@ mod tests {
 
     #[test]
     fn test_table_entry_count() {
-        // 15 HEAVY-profile blocks (+ ambiguous pairs share signatures,
-        // so more entries than unique names)
-        assert!(EXACT_MATCH_TABLE.len() >= 15);
+        // 19 standalone + 2 isp.* sub-patterns = 21 entries
+        assert_eq!(EXACT_MATCH_TABLE.len(), 21);
     }
 
     // ── isp.* opset tests ─────────────────────────────────────────
@@ -873,10 +916,10 @@ mod tests {
 
     #[test]
     fn test_scan_histogram_prefix_in_pipeline() {
-        // Simulate: ee (3 ops) then histogram (23 ops) then fcs (4 ops)
+        // Simulate: aux_hook_out (2 ops) then histogram (23 ops) then ldci (2 ops)
         let mut ops: Vec<&str> = Vec::new();
-        // ee
-        ops.extend_from_slice(&["ConvertTensor", "ConvolutionDepthwise", "ConvertTensor"]);
+        // aux_hook_out
+        ops.extend_from_slice(&["ConvertTensor", "ConvolutionDepthwise"]);
         // histogram (4 bins)
         ops.extend_from_slice(&[
             "ConvertTensor",
@@ -897,10 +940,10 @@ mod tests {
             ]);
         }
         ops.extend_from_slice(&["BinaryOp", "ConvertTensor", "Reduction", "Const", "Concat"]);
-        // fcs
-        ops.extend_from_slice(&["Const", "BinaryOp", "Const", "BinaryOp"]);
+        // ldci
+        ops.extend_from_slice(&["Const", "BinaryOp"]);
         let names = scan_blocks(&ops);
-        assert_eq!(names, vec!["ee", "isp.histogram", "fcs"]);
+        assert_eq!(names, vec!["aux_hook_out", "isp.histogram", "ldci"]);
     }
 
     // ── filter_bridge_ops tests ────────────────────────────────────
@@ -923,13 +966,9 @@ mod tests {
         let ops = vec![
             "ConvertTensor".to_string(),
             "ConvolutionDepthwise".to_string(),
-            "ConvertTensor".to_string(),
         ];
         let filtered = filter_bridge_ops(&ops);
-        assert_eq!(
-            filtered,
-            vec!["ConvertTensor", "ConvolutionDepthwise", "ConvertTensor"]
-        );
+        assert_eq!(filtered, vec!["ConvertTensor", "ConvolutionDepthwise"]);
     }
 
     #[test]
@@ -954,21 +993,22 @@ mod tests {
 
     #[test]
     fn test_assert_block_ops_exact_match() {
-        let result = assert_block_ops("tone", &["ReLU6"]);
+        let result = assert_block_ops("bayer_wb", &["ReLU6"]);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().block_name, "tone");
+        assert_eq!(result.unwrap().block_name, "bayer_wb");
     }
 
     #[test]
-    fn test_assert_block_ops_ambiguous_pair() {
-        // vignetting is now the only entry for Const,BinaryOp
-        let result = assert_block_ops("vignetting", &["Const", "BinaryOp"]);
+    fn test_assert_block_ops_ct_identity_group() {
+        // isp.ct_identity is the only entry for ConvertTensor,Identity
+        let result = assert_block_ops("isp.ct_identity", &["ConvertTensor", "Identity"]);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().block_name, "vignetting");
+        assert_eq!(result.unwrap().block_name, "isp.ct_identity");
     }
 
     #[test]
     fn test_assert_block_ops_wrong_name() {
+        // tone expects ReLU6, not Const,BinaryOp
         let result = assert_block_ops("tone", &["Const", "BinaryOp"]);
         assert!(result.is_err());
     }
@@ -982,100 +1022,63 @@ mod tests {
     // ── Disambiguation tests ───────────────────────────────────────
 
     #[test]
-    fn test_disambiguate_by_name_demosaic() {
-        let candidates = match_exact(&["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"]);
-        assert_eq!(candidates.len(), 2); // demosaic + ccm
+    fn test_disambiguate_by_name_ct_identity_demosaic() {
+        let candidates = match_exact(&["ConvertTensor", "Identity"]);
+        assert_eq!(candidates.len(), 1); // isp.ct_identity (group entry)
+        assert_eq!(candidates[0].block_name, "isp.ct_identity");
+        // Name prefix disambiguation on a single candidate returns that candidate
         let result = disambiguate_by_name(&candidates, "DemosaicCcmBlock/conv_out");
         assert!(result.is_some());
-        assert_eq!(result.unwrap().block_name, "demosaic");
+        assert_eq!(result.unwrap().block_name, "isp.ct_identity");
     }
 
     #[test]
-    fn test_disambiguate_by_name_ldci() {
-        let candidates = match_exact(&[
-            "ConvertTensor",
-            "Pooling",
-            "ConvertTensor",
-            "BinaryOp",
-            "Const",
-            "BinaryOp",
-            "BinaryOp",
-        ]);
-        assert_eq!(candidates.len(), 2); // ldci + sharpen
-        let result = disambiguate_by_name(&candidates, "LdciBlock/local_mean");
+    fn test_disambiguate_by_name_ct_conv() {
+        let candidates = match_exact(&["ConvertTensor", "Convolution"]);
+        assert_eq!(candidates.len(), 1); // isp.ct_conv (group entry)
+        let result = disambiguate_by_name(&candidates, "CfaBlock/cfa");
         assert!(result.is_some());
-        assert_eq!(result.unwrap().block_name, "ldci");
+        assert_eq!(result.unwrap().block_name, "isp.ct_conv");
     }
 
     #[test]
     fn test_disambiguate_by_name_no_prefix_match() {
-        let candidates = match_exact(&["Const", "BinaryOp", "ReLU6"]);
-        assert_eq!(candidates.len(), 2);
-        // Unknown prefix — disambiguation fails
+        // bayer_wb has no prefix in OP_NAME_PREFIXES
+        let candidates = match_exact(&["ReLU6"]);
+        assert_eq!(candidates.len(), 1);
         let result = disambiguate_by_name(&candidates, "UnknownBlock/x");
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_disambiguate_by_attrs_unpack_blc16() {
-        let candidates = match_exact(&["Const", "BinaryOp", "ReLU6"]);
-        assert_eq!(candidates.len(), 2); // unpack_blc16 + bayer_wb
-                                         // unpack_blc16 has BinaryOp(opType=SUB)
+    fn test_disambiguate_by_attrs_all_eliminated() {
+        // ATTR_DISAMBIG_RULES is empty, so no candidate can match any rule.
+        let candidates = match_exact(&["ConvertTensor", "Identity"]);
+        assert_eq!(candidates.len(), 1);
         let attrs = vec![(1, "opType", "SUB")];
         let result = disambiguate_by_attrs(&candidates, &attrs);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().block_name, "unpack_blc16");
-    }
-
-    #[test]
-    fn test_disambiguate_by_attrs_bayer_wb() {
-        let candidates = match_exact(&["Const", "BinaryOp", "ReLU6"]);
-        assert_eq!(candidates.len(), 2);
-        // bayer_wb has BinaryOp(opType=MUL)
-        let attrs = vec![(1, "opType", "MUL")];
-        let result = disambiguate_by_attrs(&candidates, &attrs);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().block_name, "bayer_wb");
-    }
-
-    #[test]
-    fn test_disambiguate_by_attrs_no_rule() {
-        // demosaic/ccm have no ATTR_DISAMBIG_RULES — disambiguation fails
-        let candidates = match_exact(&["ConvertTensor", "Convolution", "ReLU6", "ConvertTensor"]);
-        assert_eq!(candidates.len(), 2);
-        let attrs = vec![(1, "kernelX", "1")];
-        let result = disambiguate_by_attrs(&candidates, &attrs);
+        // No rules → no surviving candidates
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_attrs_fcs_scaled_mul() {
-        let candidates = match_exact(&["Const", "BinaryOp", "Const", "BinaryOp"]);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].block_name, "fcs");
-        // fcs op[1] (scaled) is MUL
+    fn test_disambiguate_by_attrs_empty_rules() {
+        // With empty ATTR_DISAMBIG_RULES, no disambiguation is possible
+        let candidates = match_exact(&["Const", "BinaryOp", "ReLU6"]);
+        assert_eq!(candidates.len(), 1); // blc (unique)
         let attrs = vec![(1, "opType", "MUL")];
         let result = disambiguate_by_attrs(&candidates, &attrs);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().block_name, "fcs");
+        // No rules → no match
+        assert!(result.is_none());
     }
 
     #[test]
-    fn test_attrs_ldci_diff_sub() {
-        let candidates = match_exact(&[
-            "ConvertTensor",
-            "Pooling",
-            "ConvertTensor",
-            "BinaryOp",
-            "Const",
-            "BinaryOp",
-            "BinaryOp",
-        ]);
-        assert_eq!(candidates.len(), 2); // ldci + sharpen
-                                         // ldci op[3] (diff) is SUB
-        let attrs = vec![(3, "opType", "SUB")];
+    fn test_disambiguate_by_attrs_no_surviving() {
+        // No rules exist, so disambiguation always fails
+        let candidates = match_exact(&["ConvertTensor", "Convolution"]);
+        assert_eq!(candidates.len(), 1);
+        let attrs = vec![(1, "kernelX", "1")];
         let result = disambiguate_by_attrs(&candidates, &attrs);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().block_name, "ldci");
+        assert!(result.is_none());
     }
 }
