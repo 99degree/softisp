@@ -13,6 +13,7 @@ libloading = "0.8"
 libc = "0.2"
 tempfile = "3.8"
 isp-rectifier = { path = "../../isp-rectifier", optional = true }
+serde_json = "1"
 
 [build-dependencies]
 cc = "1"
@@ -74,6 +75,7 @@ required-features = ["mnn"]
 
 [features]
 default = []
+legacy_exact_table = []
 mnn_buffer = []
 ort = ["dep:ort"]
 mnn = ["mnn_buffer"]

@@ -61,6 +61,10 @@ struct Args {
     /// Optimization level for MNN conversion (0=none, 1=safe, 2=aggressive).
     #[arg(long, default_value_t = 1)]
     mnn_optimize: u8,
+
+    /// Generate ISP fusion pattern header file for MNN IspChainFusion.cpp.
+    #[arg(long, value_name = "OUTPUT_PATH")]
+    gen_isp_patterns: Option<String>,
 }
 
 /// Build the ISP pipeline for the given profile and compose the ONNX model.
@@ -143,6 +147,24 @@ fn main() {
     info!("Backend: {}", args.backend);
     info!("Profile: {}", args.profile);
     info!("Building pipeline with width={}", args.width);
+
+    // Generate ISP fusion pattern header if requested
+    if let Some(ref path) = args.gen_isp_patterns {
+        info!("Generating ISP fusion patterns header to {}", path);
+        match cam_isp::mnn_opset_matcher::save_cpp_header(path) {
+            Ok(()) => {
+                let content = std::fs::read_to_string(path).unwrap();
+                let entries = content.matches("ExactPattern(").count();
+                info!("Generated header: {} ExactPattern entries", entries);
+                println!("Generated {} ({} ExactPattern entries)", path, entries);
+            }
+            Err(e) => {
+                error!("Failed to generate header: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
 
     // Register engines based on backend selection
     register_engines(&args.backend);
