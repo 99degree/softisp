@@ -1805,7 +1805,7 @@ pub fn generate_cpp_table(name: &str, entries: &[OpPattern]) -> String {
     for p in entries {
         let entry = generate_cpp_entry(p);
         out.push_str(&entry);
-        out.push_str(";\n");
+        out.push_str(",\n");
     }
     out.push_str("};\n");
     out
@@ -1886,10 +1886,10 @@ pub fn generate_cpp_header() -> String {
     h.push_str("#pragma once\n");
     h.push('\n');
 
-    // Includes
-    h.push_str("#include <MNN/Define.hpp>\n");
-    h.push_str("#include <MNN/expr/Expr.hpp>\n");
-    h.push_str("#include <MNN/optimizer/Optimizer.hpp>\n");
+    // Includes — only MNNDefine is needed for MNN_PUBLIC / MNN_VERSION;
+    // the schema types (OpType, BinaryOpOperation) come from ExactPattern.h
+    // which already includes MNN_generated.h.
+    h.push_str("#include <MNN/MNNDefine.h>\n");
     h.push('\n');
     h.push_str("// ExactPattern struct — defines the five constructor overloads\n");
     h.push_str("// used by the static tables below (6-arg base, 7a/7b, 8a/8b).\n");
@@ -2661,7 +2661,7 @@ mod tests {
     #[test]
     fn test_generate_cpp_table_count() {
         let table = generate_cpp_table("TestTable", &CPP_FUSION_TABLE);
-        // Count entry lines: each entry ends with "ExactPattern(...);\n"
+        // Count entry lines: each entry starts with "ExactPattern("
         let entry_count = table
             .lines()
             .filter(|l| l.trim().starts_with("ExactPattern("))
@@ -2685,7 +2685,7 @@ mod tests {
         let header = generate_cpp_header();
         assert!(header.contains("#pragma once"));
         assert!(header.contains("Auto-generated"));
-        assert!(header.contains("#include <MNN/Define.hpp>"));
+        assert!(header.contains("#include <MNN/MNNDefine.h>"));
         assert!(header.contains("namespace MNN {"));
         assert!(header.contains("kExactFusionTablesPass0"));
         assert!(header.contains("kExactFusionTablesPass1"));
