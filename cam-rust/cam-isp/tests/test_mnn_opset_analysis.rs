@@ -78,13 +78,19 @@ fn extract_ops_detailed(json: &str) -> Vec<OpInfo> {
 #[ignore]
 fn test_pass0_heavy_opset_analysis() {
     let blocks = PipelineProfile::HEAVY.build_blocks(16, 0);
-    let block_ids: Vec<String> = blocks.iter().map(|b| b.id().to_string()).collect();
     let mut pipeline: Vec<Box<dyn IspBlock>> = blocks;
     pipeline.push(Box::new(cam_isp::blocks::DisplayBlock::new(16)));
 
     let pipeline_ids: Vec<String> = pipeline.iter().map(|b| b.id().to_string()).collect();
+    GraphComposer::wire_blocks(&mut pipeline);
+
+    // Build aux blocks (stats) so their ops appear in the MNN graph.
+    let concrete_h = (16.0_f64 / 16.0 * 9.0).round() as i64;
+    let aux = PipelineProfile::HEAVY.build_aux_blocks(concrete_h, 16);
+
     let refs: Vec<&dyn IspBlock> = pipeline.iter().map(|b| b.as_ref()).collect();
-    let onnx = GraphComposer::compose_from_vec(&refs, &[], 16).expect("compose failed");
+    let aux_refs: Vec<&dyn IspBlock> = aux.iter().map(|b| b.as_ref()).collect();
+    let onnx = GraphComposer::compose_from_vec(&refs, &aux_refs, 16).expect("compose failed");
     let mnn = with_convert_lock(|| convert_onnx_buffer(&onnx)).expect("convert failed");
     let json = with_convert_lock(|| dump_mnn_to_json(&mnn)).expect("json dump failed");
 
@@ -150,7 +156,7 @@ fn test_pass0_heavy_opset_analysis() {
     };
     println!("\n=== OP TYPE COUNTS ===");
     let mut sorted: Vec<_> = op_type_counts.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
     for (ty, count) in &sorted {
         println!("  {:30}: {}", ty, count);
     }
@@ -217,7 +223,7 @@ fn test_pass0_heavy_opset_analysis() {
                 len
             )
         } else {
-            format!("← single Identity bridge")
+            "← single Identity bridge".to_string()
         };
         println!("  Identity[{}..{}]: {}", start, end, label);
     }
