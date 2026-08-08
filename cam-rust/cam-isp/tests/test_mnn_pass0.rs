@@ -534,8 +534,14 @@ fn test_pass0_lite_pipeline() {
     let mut pipeline: Vec<Box<dyn IspBlock>> = blocks;
     pipeline.push(Box::new(cam_isp::blocks::DisplayBlock::new(16)));
     cam_isp::pipeline::GraphComposer::wire_blocks(&mut pipeline);
+
+    // Build aux blocks (stats) so their ops appear in the MNN graph.
+    let concrete_h = (16.0_f64 / 16.0 * 9.0).round() as i64;
+    let aux = PipelineProfile::LITE.build_aux_blocks(concrete_h, 16);
+
     let refs: Vec<&dyn IspBlock> = pipeline.iter().map(|b| b.as_ref()).collect();
-    let onnx = GraphComposer::compose_from_vec(&refs, &[], 16).expect("compose failed");
+    let aux_refs: Vec<&dyn IspBlock> = aux.iter().map(|b| b.as_ref()).collect();
+    let onnx = GraphComposer::compose_from_vec(&refs, &aux_refs, 16).expect("compose failed");
     let mnn = with_convert_lock(|| convert_onnx_buffer(&onnx)).expect("convert failed");
     let json = with_convert_lock(|| dump_mnn_to_json(&mnn)).expect("json dump failed");
     let ops = extract_op_types(&json);
@@ -557,8 +563,14 @@ fn test_pass0_heavy_pipeline() {
     let mut pipeline: Vec<Box<dyn IspBlock>> = blocks;
     pipeline.push(Box::new(cam_isp::blocks::DisplayBlock::new(16)));
     cam_isp::pipeline::GraphComposer::wire_blocks(&mut pipeline);
+
+    // Build aux blocks (stats) so their ops appear in the MNN graph.
+    let concrete_h = (16.0_f64 / 16.0 * 9.0).round() as i64;
+    let aux = PipelineProfile::HEAVY.build_aux_blocks(concrete_h, 16);
+
     let refs: Vec<&dyn IspBlock> = pipeline.iter().map(|b| b.as_ref()).collect();
-    let onnx = GraphComposer::compose_from_vec(&refs, &[], 16).expect("compose failed");
+    let aux_refs: Vec<&dyn IspBlock> = aux.iter().map(|b| b.as_ref()).collect();
+    let onnx = GraphComposer::compose_from_vec(&refs, &aux_refs, 16).expect("compose failed");
     let mnn = with_convert_lock(|| convert_onnx_buffer(&onnx)).expect("convert failed");
     let json = with_convert_lock(|| dump_mnn_to_json(&mnn)).expect("json dump failed");
     let ops = extract_op_types(&json);
