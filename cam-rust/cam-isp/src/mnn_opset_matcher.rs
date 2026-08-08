@@ -584,11 +584,13 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
     // ── Guard / noFuse patterns (consumed but kept primitive) ────────────
 
     // AlgoGammaChain (8-op): guard — realign gamma to ISP block boundaries.
+    // Add(ag,eps)→Log→Div(ln10)→Mul(k1)→Add(base_gamma)→Mul(k2)→Sub→Clip
+    // MNN folds Div(x,const) into Mul(x,1/const), so op[4] is BinaryOp not UnaryOp.
     OpPattern {
         block_name: "algo_gamma",
         op_types: &[
-            "BinaryOp", "UnaryOp", "BinaryOp", "BinaryOp", "UnaryOp", "BinaryOp", "BinaryOp",
-            "BinaryOp",
+            "BinaryOp", "UnaryOp", "BinaryOp", "BinaryOp", "BinaryOp", "BinaryOp", "BinaryOp",
+            "ReLU6",
         ],
         fusion: Some(FusionSpec {
             isp_type: "isp.noop_gamma",
@@ -603,12 +605,31 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
         }),
     },
     // AlgoCctChain (21-op): guard — realign CCT to ISP block boundaries.
+    // MNN topological order: Slice×3→Add×2→Div→Add→Sub×2→Add×2→UnaryOp→Add×6→Clip
     OpPattern {
         block_name: "algo_cct",
         op_types: &[
-            "BinaryOp", "UnaryOp", "BinaryOp", "BinaryOp", "UnaryOp", "BinaryOp", "BinaryOp",
-            "UnaryOp", "BinaryOp", "UnaryOp", "BinaryOp", "BinaryOp", "BinaryOp", "BinaryOp",
-            "UnaryOp", "BinaryOp", "UnaryOp", "BinaryOp", "UnaryOp", "BinaryOp", "BinaryOp",
+            "StridedSlice",
+            "StridedSlice",
+            "BinaryOp",
+            "StridedSlice",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "UnaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "BinaryOp",
+            "ReLU6",
         ],
         fusion: Some(FusionSpec {
             isp_type: "isp.noop_cct",
@@ -624,29 +645,34 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
     },
     // ── Long multi-op patterns (8-21 ops) ───────────────────────────────
 
-    // CalibrationBlock (18-op): variance → min/max range → lum/noise stats.
+    // CalibrationBlock (21-op): Reduction→Squeeze→BinOp→Reduction→Squeeze→
+    // Reduction→Squeeze→Reduction→Squeeze→BinOp→BinOp→Squeeze→Reduction→
+    // Reshape→Reduction→Reshape→Reduction→Reshape→Reduction→Reshape→Concat.
     // Tree-shaped DAG — requireConnectivity=false.
     OpPattern {
         block_name: "calibration_block",
         op_types: &[
             "Reduction",
-            "UnaryOp",
-            "Reduction",
-            "UnaryOp",
+            "Squeeze",
             "BinaryOp",
             "Reduction",
+            "Squeeze",
             "Reduction",
+            "Squeeze",
+            "Reduction",
+            "Squeeze",
             "BinaryOp",
-            "Const",
             "BinaryOp",
-            "BinaryOp",
+            "Squeeze",
             "Reduction",
-            "Reduction",
-            "Reduction",
-            "Reduction",
-            "Concat",
-            "Const",
             "Reshape",
+            "Reduction",
+            "Reshape",
+            "Reduction",
+            "Reshape",
+            "Reduction",
+            "Reshape",
+            "Concat",
         ],
         fusion: Some(FusionSpec {
             isp_type: "isp.calibration",
@@ -694,10 +720,28 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             require_connectivity: false,
         }),
     },
-    // DisplayBlock (3-op): ConvertTensor → Conv → ConvertTensor.
+    // DisplayBlock (16-op): Permute→Padding→Shape→Rank→BinOp×2→Unsqueeze→BinOp→
+    // Unsqueeze→StridedSlice→Squeeze→BinOp×2→GatherV2→BinOp→Cast.
     OpPattern {
         block_name: "display_block",
-        op_types: &["ConvertTensor", "Convolution", "ConvertTensor"],
+        op_types: &[
+            "Permute",
+            "Padding",
+            "Shape",
+            "Rank",
+            "BinaryOp",
+            "BinaryOp",
+            "Unsqueeze",
+            "BinaryOp",
+            "Unsqueeze",
+            "StridedSlice",
+            "Squeeze",
+            "BinaryOp",
+            "BinaryOp",
+            "GatherV2",
+            "BinaryOp",
+            "Cast",
+        ],
         fusion: Some(FusionSpec {
             isp_type: "isp.display",
             named_key: None,
@@ -731,9 +775,9 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
         fusion: Some(FusionSpec {
             isp_type: "isp.fcs",
             named_key: None,
-            const_elems: -1,
-            const_index: -1,
-            bin_op_type: -1,
+            const_elems: 1,
+            const_index: 1,
+            bin_op_type: 1, // BinaryOpOperation_SUB
             conv_weight_elems: -1,
             no_fuse: false,
             next_op_type: -1,
@@ -750,9 +794,9 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
         fusion: Some(FusionSpec {
             isp_type: "isp.tone",
             named_key: None,
-            const_elems: -1,
-            const_index: -1,
-            bin_op_type: -1,
+            const_elems: 1,
+            const_index: 0,
+            bin_op_type: 1, // BinaryOpOperation_SUB
             conv_weight_elems: -1,
             no_fuse: false,
             next_op_type: -1,
@@ -788,10 +832,10 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
         }),
     },
     // AlgoAeBlock (9-op): AE with clamp/saturation.
+    // StridedSlice→BinaryOp→BinaryOp→UnaryOp→BinaryOp→ReLU6→BinaryOp→UnaryOp→ReLU6
     OpPattern {
         block_name: "algo_ae_block",
         op_types: &[
-            "StridedSlice",
             "StridedSlice",
             "BinaryOp",
             "BinaryOp",
@@ -800,6 +844,7 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             "ReLU6",
             "BinaryOp",
             "UnaryOp",
+            "ReLU6",
         ],
         fusion: Some(FusionSpec {
             isp_type: "isp.ae",
@@ -832,7 +877,7 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             const_elems: -1,
             const_index: -1,
             bin_op_type: -1,
-            conv_weight_elems: -1,
+            conv_weight_elems: 3,
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
