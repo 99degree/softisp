@@ -81,10 +81,6 @@ public:
     bool splitQuantBlock = false;
     // Enable verbose output for each optimization pass (like LLVM's -debug-pass)
     bool dumpPass = false;
-    // ISP chain fusion: "enable" to run IspChainFusion postconvert pass
-    std::string ispFusionMeta = "disable";
-    // 0 = Pass0 only, 1 = +Pass1, 999 = +Profile
-    int ispFusionThreshold = 0;
 };
 
 #endif // CONFIG_HPP

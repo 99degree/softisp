@@ -131,10 +131,9 @@ int main(int argc, char** argv) {
         int extras_before = count_extras(*net);
         printf("  ops: %d  extras: %d\n", ops_before, extras_before);
 
-        // Run ISP chain fusion with max threshold (all 3 passes)
+        // Run ISP chain fusion — triggered by config.model == MNN (MNN→MNN)
         modelConfig config;
-        config.ispFusionMeta = "enable";
-        config.ispFusionThreshold = 999;
+        config.model = modelConfig::MNN;
 
         int consumed = optimizeIspChain(net.get(), config);
         printf("  consumed by ISP fusion: %d\n", consumed);

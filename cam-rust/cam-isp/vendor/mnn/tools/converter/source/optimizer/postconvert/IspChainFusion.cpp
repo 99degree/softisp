@@ -267,23 +267,23 @@ static int runPass(NetT* net, const ExactPattern* table, int tableSize,
 
 // =====================================================================
 // Public entry point — called from optimizeNet() in the postconvert
-// pipeline when config.ispFusionMeta == "enable".
+// pipeline.  Runs Pass0 + Pass1 when input is ONNX and output is MNN.
 // =====================================================================
 
-int optimizeIspChain(NetT* net, modelConfig& config) {
+int optimizeIspChain(NetT* net, const modelConfig& config) {
     if (!net) return 0;
-    if (config.ispFusionMeta != "enable") return 0;
 
-    int threshold = config.ispFusionThreshold;
+    // ISP fusion applies when input is already MNN (MNN→MNN re-optimization).
+    // Output is always MNN; only run when input source is also MNN.
+    if (config.model != modelConfig::MNN) return 0;
+
     auto producer = buildProducerMap(net);
     int totalFused = 0;
 
     // Pass 0: first-match fusion (concrete const/weight checks)
-    if (threshold >= 0) {
-        totalFused += runPass(net, kExactFusionTablesPass0,
-                              sizeof(kExactFusionTablesPass0) / sizeof(ExactPattern),
-                              producer);
-    }
+    totalFused += runPass(net, kExactFusionTablesPass0,
+                          sizeof(kExactFusionTablesPass0) / sizeof(ExactPattern),
+                          producer);
 
     // Rebuild producer map after mutations
     if (totalFused > 0) {
@@ -291,23 +291,9 @@ int optimizeIspChain(NetT* net, modelConfig& config) {
     }
 
     // Pass 1: guard chains (consumed but kept primitive)
-    if (threshold >= 1) {
-        totalFused += runPass(net, kExactFusionTablesPass1,
-                              sizeof(kExactFusionTablesPass1) / sizeof(ExactPattern),
-                              producer);
-    }
-
-    // Rebuild producer map after mutations
-    if (totalFused > 0) {
-        producer = buildProducerMap(net);
-    }
-
-    // Profile: structural-only matching (relaxed const checks)
-    if (threshold >= 999) {
-        totalFused += runPass(net, kExactProfileVariants,
-                              sizeof(kExactProfileVariants) / sizeof(ExactPattern),
-                              producer);
-    }
+    totalFused += runPass(net, kExactFusionTablesPass1,
+                          sizeof(kExactFusionTablesPass1) / sizeof(ExactPattern),
+                          producer);
 
     return totalFused;
 }
