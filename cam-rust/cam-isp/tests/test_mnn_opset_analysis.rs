@@ -268,7 +268,11 @@ fn test_pass0_heavy_opset_analysis() {
         let ops_display = if ops_in_seg.len() <= 8 {
             ops_in_seg.join(", ")
         } else {
-            format!("{}…{}", ops_in_seg[..4].join(", "), ops_in_seg.last().unwrap())
+            format!(
+                "{}…{}",
+                ops_in_seg[..4].join(", "),
+                ops_in_seg.last().unwrap()
+            )
         };
         println!(
             "  {:2}: {:<22} {:>3} ops  {:5}  scan={:?}  {}",
@@ -285,10 +289,15 @@ fn test_pass0_heavy_opset_analysis() {
     // 8) SUMMARY
     // ───────────────────────────────────────────────────────────────────
     println!("\n=== ATTRIBUTION SUMMARY ===");
-    println!("  Positional attribution: {}/{} segments (by construction)",
-             real_block_ids.len(), segments.len());
-    println!("  Pattern coverage:       {}/{} segments recognized by matcher",
-             pattern_matched, pattern_total);
+    println!(
+        "  Positional attribution: {}/{} segments (by construction)",
+        real_block_ids.len(),
+        segments.len()
+    );
+    println!(
+        "  Pattern coverage:       {}/{} segments recognized by matcher",
+        pattern_matched, pattern_total
+    );
     println!("  Note: pattern coverage < 100% is expected — MNN cross-block");
     println!("  optimization shifts ops across Permute boundaries, breaking");
     println!("  per-block EXACT_MATCH_TABLE patterns in the full pipeline.");
@@ -296,7 +305,11 @@ fn test_pass0_heavy_opset_analysis() {
     // Report per-block op counts for profiling
     println!("\n=== PER-BLOCK OP COUNTS ===");
     let total_ops: usize = ops_per_block.iter().map(|(_, n)| n).sum();
-    println!("  Total ops across {} blocks: {}", ops_per_block.len(), total_ops);
+    println!(
+        "  Total ops across {} blocks: {}",
+        ops_per_block.len(),
+        total_ops
+    );
     for (name, count) in &ops_per_block {
         if *count > 0 {
             println!("  {:>24}: {:>3} ops", name, count);
