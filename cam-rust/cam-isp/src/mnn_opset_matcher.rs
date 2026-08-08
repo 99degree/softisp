@@ -31,6 +31,9 @@ pub struct OpPattern {
 /// The exact matching table — HEAVY-profile ISP block op signatures from pass0.
 ///
 /// Sorted by pattern length (ascending) to allow longest-match scanning.
+///
+/// Blocks with >3 ONNX ops use the `isp.*` naming convention to denote
+/// custom ISP opset patterns that exceed simple elementwise signatures.
 pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
     // ── Length 1 ───────────────────────────────────────────────────
     OpPattern {
@@ -111,6 +114,61 @@ pub const EXACT_MATCH_TABLE: &[OpPattern] = &[
             "Const", "BinaryOp", "Const", "BinaryOp", "UnaryOp", "Const", "BinaryOp", "UnaryOp",
         ],
     },
+    // ── isp.* opset entries (blocks with >3 ops) ───────────────────
+    // ToneStatsBlock: luma conv → mean/min/max → clip/shadow masks → concat.
+    // 16 ops: ConvertTensor, Convolution, ConvertTensor, Reduction×3,
+    //         Const, BinaryOp, ConvertTensor, Reduction, Const, BinaryOp,
+    //         ConvertTensor, Reduction, Size, Concat
+    OpPattern {
+        block_name: "isp.tone_stats",
+        op_types: &[
+            "ConvertTensor",
+            "Convolution",
+            "ConvertTensor",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+            "Size",
+            "Concat",
+        ],
+    },
+    // CalibrationBlock: variance → min/max range → lum/noise stats → concat+reshape.
+    // 18 ops: Reduction, UnaryOp, Reduction, UnaryOp, BinaryOp,
+    //         Reduction, Reduction, BinaryOp, Const, BinaryOp, BinaryOp,
+    //         Reduction×4, Concat, Const, Reshape
+    OpPattern {
+        block_name: "isp.calibration",
+        op_types: &[
+            "Reduction",
+            "UnaryOp",
+            "Reduction",
+            "UnaryOp",
+            "BinaryOp",
+            "Reduction",
+            "Reduction",
+            "BinaryOp",
+            "Const",
+            "BinaryOp",
+            "BinaryOp",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Concat",
+            "Const",
+            "Reshape",
+        ],
+    },
+    // isp.histogram is variable-length (N bins → 2+4+6(N-2)+3+2 ops).
+    // Matched via [`match_isp_histogram_prefix`] in scan_blocks.
 ];
 
 /// Return all patterns whose `op_types` exactly match the given op slice.
@@ -146,12 +204,77 @@ pub fn match_first(ops: &[&str]) -> Option<&'static OpPattern> {
     EXACT_MATCH_TABLE.iter().find(|p| p.op_types == ops)
 }
 
+/// Histogram opset prefix — the unique leading ops of CoarseHistogramBlock.
+///
+/// Histograms are variable-length (N bins → 2+4+6(N-2)+3+2 ops), so exact
+/// matching is impractical.  Instead, `scan_blocks` checks this prefix to
+/// identify histogram segments and consumes ops up to the trailing Concat.
+const HISTOGRAM_OPS_PREFIX: &[&str] = &[
+    "ConvertTensor",
+    "Convolution",
+    "Const",
+    "BinaryOp",
+    "ConvertTensor",
+    "Reduction",
+];
+
+/// Check whether `ops` begin with the histogram prefix and return the total
+/// op count for the segment (including the trailing `Const, Concat`).
+///
+/// Returns `None` if the prefix doesn't match.  The bin count is detected
+/// by counting how many `BinaryOp, Const, BinaryOp, BinaryOp, ConvertTensor,
+/// Reduction`6-tuples appear between the first bin and the final
+/// `BinaryOp, ConvertTensor, Reduction, Const, Concat` tail.
+pub fn match_isp_histogram_prefix(ops: &[&str]) -> Option<usize> {
+    let prefix_len = HISTOGRAM_OPS_PREFIX.len();
+    if ops.len() < prefix_len || ops[..prefix_len] != *HISTOGRAM_OPS_PREFIX {
+        return None;
+    }
+    // Walk the repeating bin structure after the prefix.
+    // Bin0 tail: BinaryOp, Const, BinaryOp, BinaryOp, ConvertTensor, Reduction (6 ops)
+    // ... repeated for bins 1..N-1
+    // Final tail: BinaryOp, ConvertTensor, Reduction, Const, Concat (5 ops)
+    let mut pos = prefix_len;
+    // First bin inner (after prefix already consumed Const,BinaryOp,ConvertTensor,Reduction): none
+    // Actually the prefix is ConvertTensor,Convolution,Const,BinaryOp,ConvertTensor,Reduction
+    // which is bin0's Const + b0 + ConvertTensor + Reduction.
+    // After prefix: BinaryOp(lo), Const, BinaryOp(hi), BinaryOp(and), ConvertTensor, Reduction × (N-2)
+    //              then BinaryOp(last), ConvertTensor, Reduction, Const, Concat
+    while pos < ops.len() {
+        // Check for final tail: BinaryOp, ConvertTensor, Reduction, Const, Concat
+        if pos + 5 <= ops.len()
+            && ops[pos] == "BinaryOp"
+            && ops[pos + 1] == "ConvertTensor"
+            && ops[pos + 2] == "Reduction"
+            && ops[pos + 3] == "Const"
+            && ops[pos + 4] == "Concat"
+        {
+            return Some(pos + 5);
+        }
+        // Check for inner bin: BinaryOp, Const, BinaryOp, BinaryOp, ConvertTensor, Reduction
+        if pos + 6 <= ops.len()
+            && ops[pos] == "BinaryOp"
+            && ops[pos + 1] == "Const"
+            && ops[pos + 2] == "BinaryOp"
+            && ops[pos + 3] == "BinaryOp"
+            && ops[pos + 4] == "ConvertTensor"
+            && ops[pos + 5] == "Reduction"
+        {
+            pos += 6;
+            continue;
+        }
+        break;
+    }
+    None
+}
+
 /// Scan an op list and greedily match the longest pattern at the current
 /// position, advancing past matched ops. Returns matched block names in order.
 ///
 /// This is the primary entry point for attributing pipeline opset segments
 /// to real ISP blocks. It walks the op list left-to-right, trying the
-/// longest table entry first at each position.
+/// longest table entry first at each position.  After exact-table scanning,
+/// variable-length ISP patterns (e.g., `isp.histogram`) are tried.
 ///
 /// ```
 /// use cam_isp::mnn_opset_matcher::scan_blocks;
@@ -178,10 +301,17 @@ pub fn scan_blocks(ops: &[&str]) -> Vec<&'static str> {
                 break;
             }
         }
-        if !found {
-            // Skip unrecognized op
-            pos += 1;
+        if found {
+            continue;
         }
+        // Try variable-length ISP prefix patterns
+        if let Some(hist_len) = match_isp_histogram_prefix(remaining) {
+            result.push("isp.histogram");
+            pos += hist_len;
+            continue;
+        }
+        // Skip unrecognized op
+        pos += 1;
     }
     result
 }
@@ -544,6 +674,8 @@ mod tests {
             "ldci",
             "sharpen",
             "gamma",
+            "isp.tone_stats",
+            "isp.calibration",
         ];
         for e in &expected {
             assert!(
@@ -556,9 +688,219 @@ mod tests {
 
     #[test]
     fn test_table_entry_count() {
-        // 13 HEAVY-profile blocks, some ambiguous pairs share signatures
-        // so more entries than unique names
-        assert!(EXACT_MATCH_TABLE.len() >= 13);
+        // 15 HEAVY-profile blocks (+ ambiguous pairs share signatures,
+        // so more entries than unique names)
+        assert!(EXACT_MATCH_TABLE.len() >= 15);
+    }
+
+    // ── isp.* opset tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_exact_isp_tone_stats() {
+        let m = match_exact(&[
+            "ConvertTensor",
+            "Convolution",
+            "ConvertTensor",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+            "Size",
+            "Concat",
+        ]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "isp.tone_stats");
+    }
+
+    #[test]
+    fn test_exact_isp_calibration() {
+        let m = match_exact(&[
+            "Reduction",
+            "UnaryOp",
+            "Reduction",
+            "UnaryOp",
+            "BinaryOp",
+            "Reduction",
+            "Reduction",
+            "BinaryOp",
+            "Const",
+            "BinaryOp",
+            "BinaryOp",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Concat",
+            "Const",
+            "Reshape",
+        ]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].block_name, "isp.calibration");
+    }
+
+    #[test]
+    fn test_scan_isp_tone_stats() {
+        let ops = vec![
+            "ConvertTensor",
+            "Convolution",
+            "ConvertTensor",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+            "Size",
+            "Concat",
+        ];
+        let names = scan_blocks(&ops);
+        assert_eq!(names, vec!["isp.tone_stats"]);
+    }
+
+    #[test]
+    fn test_scan_isp_calibration() {
+        let ops = vec![
+            "Reduction",
+            "UnaryOp",
+            "Reduction",
+            "UnaryOp",
+            "BinaryOp",
+            "Reduction",
+            "Reduction",
+            "BinaryOp",
+            "Const",
+            "BinaryOp",
+            "BinaryOp",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Reduction",
+            "Concat",
+            "Const",
+            "Reshape",
+        ];
+        let names = scan_blocks(&ops);
+        assert_eq!(names, vec!["isp.calibration"]);
+    }
+
+    #[test]
+    fn test_histogram_prefix_16_bins() {
+        // CoarseHistogramBlock with 16 bins: 6 + 14*6 + 5 = 95 ops
+        let mut ops: Vec<&str> = Vec::new();
+        // Prefix (bin0)
+        ops.extend_from_slice(&[
+            "ConvertTensor",
+            "Convolution",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+        ]);
+        // 14 inner bins
+        for _ in 0..14 {
+            ops.extend_from_slice(&[
+                "BinaryOp",
+                "Const",
+                "BinaryOp",
+                "BinaryOp",
+                "ConvertTensor",
+                "Reduction",
+            ]);
+        }
+        // Final tail
+        ops.extend_from_slice(&["BinaryOp", "ConvertTensor", "Reduction", "Const", "Concat"]);
+        assert_eq!(ops.len(), 95);
+        assert_eq!(match_isp_histogram_prefix(&ops), Some(95));
+    }
+
+    #[test]
+    fn test_histogram_prefix_4_bins() {
+        // CoarseHistogramBlock with 4 bins: 6 + 2*6 + 5 = 23 ops
+        let mut ops: Vec<&str> = Vec::new();
+        ops.extend_from_slice(&[
+            "ConvertTensor",
+            "Convolution",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+        ]);
+        for _ in 0..2 {
+            ops.extend_from_slice(&[
+                "BinaryOp",
+                "Const",
+                "BinaryOp",
+                "BinaryOp",
+                "ConvertTensor",
+                "Reduction",
+            ]);
+        }
+        ops.extend_from_slice(&["BinaryOp", "ConvertTensor", "Reduction", "Const", "Concat"]);
+        assert_eq!(ops.len(), 23);
+        assert_eq!(match_isp_histogram_prefix(&ops), Some(23));
+    }
+
+    #[test]
+    fn test_histogram_prefix_no_match() {
+        let ops = vec!["ConvertTensor", "Convolution", "Const", "BinaryOp"];
+        assert_eq!(match_isp_histogram_prefix(&ops), None);
+    }
+
+    #[test]
+    fn test_histogram_prefix_wrong_start() {
+        let ops = vec![
+            "Const",
+            "BinaryOp",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+        ];
+        assert_eq!(match_isp_histogram_prefix(&ops), None);
+    }
+
+    #[test]
+    fn test_scan_histogram_prefix_in_pipeline() {
+        // Simulate: ee (3 ops) then histogram (23 ops) then fcs (4 ops)
+        let mut ops: Vec<&str> = Vec::new();
+        // ee
+        ops.extend_from_slice(&["ConvertTensor", "ConvolutionDepthwise", "ConvertTensor"]);
+        // histogram (4 bins)
+        ops.extend_from_slice(&[
+            "ConvertTensor",
+            "Convolution",
+            "Const",
+            "BinaryOp",
+            "ConvertTensor",
+            "Reduction",
+        ]);
+        for _ in 0..2 {
+            ops.extend_from_slice(&[
+                "BinaryOp",
+                "Const",
+                "BinaryOp",
+                "BinaryOp",
+                "ConvertTensor",
+                "Reduction",
+            ]);
+        }
+        ops.extend_from_slice(&["BinaryOp", "ConvertTensor", "Reduction", "Const", "Concat"]);
+        // fcs
+        ops.extend_from_slice(&["Const", "BinaryOp", "Const", "BinaryOp"]);
+        let names = scan_blocks(&ops);
+        assert_eq!(names, vec!["ee", "isp.histogram", "fcs"]);
     }
 
     // ── filter_bridge_ops tests ────────────────────────────────────
