@@ -151,8 +151,8 @@ static int tryMatch(const NetT* net, int opIndex, const ExactPattern& pat,
         if (!op) return 0;
         if (op->type != pat.chain[j]) return 0;
 
-        // Verify connectivity to previous op in chain
-        if (j > 0 && !isConnected(net, opIndex + j - 1, opIndex + j)) {
+        // Verify connectivity to previous op in chain (skipped for tree-shaped DAGs)
+        if (j > 0 && pat.requireConnectivity && !isConnected(net, opIndex + j - 1, opIndex + j)) {
             return 0;
         }
     }
@@ -186,6 +186,60 @@ static int tryMatch(const NetT* net, int opIndex, const ExactPattern& pat,
     }
 
     return n;
+}
+
+// =====================================================================
+// Histogram variable-length matching
+// =====================================================================
+
+// Match the histogram prefix: ConvertTensor, Convolution, Const, BinaryOp,
+// ConvertTensor, Reduction (6 ops). Then walk bin structure.
+// Returns total op count if matched, 0 otherwise.
+static int matchHistogramPrefix(const NetT* net, int opIndex) {
+    static const OpType kPrefix[] = {
+        OpType_ConvertTensor, OpType_Convolution, OpType_Const,
+        OpType_BinaryOp, OpType_ConvertTensor, OpType_Reduction
+    };
+    static const int prefixLen = 6;
+    int n = static_cast<int>(net->oplists.size());
+    if (opIndex + prefixLen > n) return 0;
+    for (int j = 0; j < prefixLen; j++) {
+        if (!net->oplists[opIndex + j]) return 0;
+        if (net->oplists[opIndex + j]->type != kPrefix[j]) return 0;
+    }
+    int pos = opIndex + prefixLen;
+    while (pos < n) {
+        // Check for final tail: BinaryOp, ConvertTensor, Reduction, Const, Concat
+        if (pos + 5 <= n) {
+            bool tail = true;
+            static const OpType kTail[] = {
+                OpType_BinaryOp, OpType_ConvertTensor, OpType_Reduction,
+                OpType_Const, OpType_Concat
+            };
+            for (int j = 0; j < 5; j++) {
+                if (!net->oplists[pos + j] || net->oplists[pos + j]->type != kTail[j]) {
+                    tail = false; break;
+                }
+            }
+            if (tail) return pos + 5 - opIndex;
+        }
+        // Check for inner bin: BinaryOp, Const, BinaryOp, BinaryOp, ConvertTensor, Reduction
+        if (pos + 6 <= n) {
+            bool bin = true;
+            static const OpType kBin[] = {
+                OpType_BinaryOp, OpType_Const, OpType_BinaryOp,
+                OpType_BinaryOp, OpType_ConvertTensor, OpType_Reduction
+            };
+            for (int j = 0; j < 6; j++) {
+                if (!net->oplists[pos + j] || net->oplists[pos + j]->type != kBin[j]) {
+                    bin = false; break;
+                }
+            }
+            if (bin) { pos += 6; continue; }
+        }
+        break;
+    }
+    return 0;
 }
 
 // =====================================================================
@@ -232,6 +286,34 @@ static int runPass(NetT* net, const ExactPattern* table, int tableSize,
     for (int i = 0; i < static_cast<int>(net->oplists.size()); i++) {
         if (seen.count(i)) continue;
         if (!net->oplists[i]) continue;
+
+        // Try variable-length histogram match first
+        int histLen = matchHistogramPrefix(net, i);
+        if (histLen > 0) {
+            for (int j = 0; j < histLen; j++) {
+                seen.insert(i + j);
+            }
+            // Replace chain with Extra op
+            const auto& firstOp = net->oplists[i];
+            const auto& lastOp = net->oplists[i + histLen - 1];
+            auto extra = std::unique_ptr<OpT>(new OpT());
+            extra->type = OpType_Extra;
+            extra->name = "isp.histogram";
+            extra->inputIndexes = firstOp->inputIndexes;
+            extra->outputIndexes = lastOp->outputIndexes;
+            auto* extraParam = new ExtraT();
+            extraParam->type = "isp.histogram";
+            extraParam->engine = "isp.histogram";
+            extraParam->vector = false;
+            extra->main.type = OpParameter_Extra;
+            extra->main.value = extraParam;
+            for (int j = 1; j < histLen; j++) {
+                net->oplists[i + j].reset();
+            }
+            net->oplists[i] = std::move(extra);
+            consumed += histLen;
+            continue;
+        }
 
         for (int p = 0; p < tableSize; p++) {
             const auto& pat = table[p];

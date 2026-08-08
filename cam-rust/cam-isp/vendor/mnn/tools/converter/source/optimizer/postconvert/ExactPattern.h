@@ -25,6 +25,7 @@ namespace MNN {
 //   7b args : (chain, ce, ci, type, key, namedKey, bool)               — noFuse
 //   8a args : (chain, ce, ci, type, key, namedKey, nullptr_t, int)     — cw only
 //   8b args : (chain, ce, ci, type, key, namedKey, BinaryOpOperation, bool) — binOp+noFuse
+//   9  args : (chain, ce, ci, type, key, namedKey, nullptr_t, int, bool) — cw + reqConn
 // =====================================================================
 
 struct ExactPattern {
@@ -37,13 +38,14 @@ struct ExactPattern {
     int binOp;             // BinaryOpOperation value, -1 = any
     int convWeightElems;   // -1 = any
     bool noFuse;           // guard: consumed but not replaced
+    bool requireConnectivity; // false for tree-shaped DAGs (calibration, histogram, tone_stats)
 
     // 6-arg base
     ExactPattern(std::vector<OpType> ch, int ce, int ci,
                  const char* t, const char* k, const char* nk)
         : chain(std::move(ch)), constElems(ce), constIndex(ci),
           ispType(t), typeKey(k), namedKey(nk),
-          binOp(-1), convWeightElems(-1), noFuse(false) {}
+          binOp(-1), convWeightElems(-1), noFuse(false), requireConnectivity(true) {}
 
     // 7-arg with BinaryOpOperation
     ExactPattern(std::vector<OpType> ch, int ce, int ci,
@@ -51,7 +53,8 @@ struct ExactPattern {
                  BinaryOpOperation bo)
         : chain(std::move(ch)), constElems(ce), constIndex(ci),
           ispType(t), typeKey(k), namedKey(nk),
-          binOp(static_cast<int>(bo)), convWeightElems(-1), noFuse(false) {}
+          binOp(static_cast<int>(bo)), convWeightElems(-1), noFuse(false),
+          requireConnectivity(true) {}
 
     // 7-arg with noFuse bool (algo_cct guard pattern)
     ExactPattern(std::vector<OpType> ch, int ce, int ci,
@@ -59,7 +62,7 @@ struct ExactPattern {
                  bool nf)
         : chain(std::move(ch)), constElems(ce), constIndex(ci),
           ispType(t), typeKey(k), namedKey(nk),
-          binOp(-1), convWeightElems(-1), noFuse(nf) {}
+          binOp(-1), convWeightElems(-1), noFuse(nf), requireConnectivity(true) {}
 
     // 8-arg nullptr_t + convWeightElems
     ExactPattern(std::vector<OpType> ch, int ce, int ci,
@@ -67,7 +70,7 @@ struct ExactPattern {
                  std::nullptr_t, int cw)
         : chain(std::move(ch)), constElems(ce), constIndex(ci),
           ispType(t), typeKey(k), namedKey(nk),
-          binOp(-1), convWeightElems(cw), noFuse(false) {}
+          binOp(-1), convWeightElems(cw), noFuse(false), requireConnectivity(true) {}
 
     // 8-arg BinaryOpOperation + noFuse
     ExactPattern(std::vector<OpType> ch, int ce, int ci,
@@ -75,7 +78,17 @@ struct ExactPattern {
                  BinaryOpOperation bo, bool nf)
         : chain(std::move(ch)), constElems(ce), constIndex(ci),
           ispType(t), typeKey(k), namedKey(nk),
-          binOp(static_cast<int>(bo)), convWeightElems(-1), noFuse(nf) {}
+          binOp(static_cast<int>(bo)), convWeightElems(-1), noFuse(nf),
+          requireConnectivity(true) {}
+
+    // 9-arg: nullptr_t + convWeightElems + requireConnectivity
+    ExactPattern(std::vector<OpType> ch, int ce, int ci,
+                 const char* t, const char* k, const char* nk,
+                 std::nullptr_t, int cw, bool rc)
+        : chain(std::move(ch)), constElems(ce), constIndex(ci),
+          ispType(t), typeKey(k), namedKey(nk),
+          binOp(-1), convWeightElems(cw), noFuse(false),
+          requireConnectivity(rc) {}
 };
 
 } // namespace MNN
