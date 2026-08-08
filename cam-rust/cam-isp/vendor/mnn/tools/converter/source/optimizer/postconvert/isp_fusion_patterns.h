@@ -19,10 +19,10 @@ namespace MNN {
 
 // ── Pass0: first-match fusion (29 entries) ─────────────────
 static const ExactPattern kExactFusionTablesPass0[] = {
-    // ref_yuv_sat_block (chain=6)
-    ExactPattern({MNN::OpType_StridedSlice, MNN::OpType_StridedSlice, MNN::OpType_BinaryOp, MNN::OpType_Convolution, MNN::OpType_ReLU6, MNN::OpType_Concat}, -1, -1, "isp.fcs", "isp.fcs", nullptr, nullptr, 9);
     // yuv_sat_block (chain=7)
     ExactPattern({MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, 1, 1, "isp.fcs", "isp.fcs", nullptr, MNN::BinaryOpOperation_SUB);
+    // ref_yuv_sat_block (chain=6)
+    ExactPattern({MNN::OpType_StridedSlice, MNN::OpType_StridedSlice, MNN::OpType_BinaryOp, MNN::OpType_Convolution, MNN::OpType_ReLU6, MNN::OpType_Concat}, -1, -1, "isp.fcs", "isp.fcs", nullptr, nullptr, 9);
     // display_conv (chain=6)
     ExactPattern({MNN::OpType_Convolution, MNN::OpType_Permute, MNN::OpType_Padding, MNN::OpType_GatherV2, MNN::OpType_BinaryOp, MNN::OpType_Cast}, -1, -1, "isp.display", "isp.display", "display", nullptr, 9);
     // demosaic_ccm_2op (chain=2)
@@ -81,10 +81,10 @@ static const ExactPattern kExactFusionTablesPass0[] = {
 
 // ── Pass1: guard chains (5 entries) ──────────────────────
 static const ExactPattern kExactFusionTablesPass1[] = {
-    // algo_gamma (chain=8)
-    ExactPattern({MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.noop_gamma", "isp.noop_gamma", nullptr, MNN::BinaryOpOperation_MUL, true);
     // algo_cct (chain=21)
     ExactPattern({MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.noop_cct", "isp.noop_cct", nullptr, true);
+    // algo_gamma (chain=8)
+    ExactPattern({MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.noop_gamma", "isp.noop_gamma", nullptr, MNN::BinaryOpOperation_MUL, true);
     // raw_blc_2op (chain=2)
     ExactPattern({MNN::OpType_Cast, MNN::OpType_BinaryOp}, -1, -1, "isp.unpack_blc", "isp.unpack_blc", nullptr, MNN::BinaryOpOperation_SUB, true);
     // normalize_guard (chain=2)
@@ -113,10 +113,12 @@ static const ExactPattern kExactProfileVariants[] = {
     ExactPattern({MNN::OpType_Convolution, MNN::OpType_Convolution, MNN::OpType_UnaryOp, MNN::OpType_Convolution, MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_Reduction, MNN::OpType_Squeeze}, -1, -1, "isp.af_focus", "isp.af_focus", nullptr);
     // ldci_block (chain=6)
     ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.ldci", "isp.ldci", nullptr);
-    // ldci_a_block (chain=4)
-    ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.ldci_a", "isp.ldci_a", nullptr);
     // ee_block (chain=6)
     ExactPattern({MNN::OpType_ConvolutionDepthwise, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6, MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.ee", "isp.ee", nullptr);
+    // auto_contrast_block (chain=6)
+    ExactPattern({MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.auto_contrast", "isp.auto_contrast", nullptr);
+    // warp_block (chain=6)
+    ExactPattern({MNN::OpType_StridedSlice, MNN::OpType_GridSample, MNN::OpType_StridedSlice, MNN::OpType_StridedSlice, MNN::OpType_GridSample, MNN::OpType_Concat}, -1, -1, "isp.warp", "isp.warp", nullptr);
     // bilateral_block (chain=5)
     ExactPattern({MNN::OpType_ConvolutionDepthwise, MNN::OpType_ConvolutionDepthwise, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.bilateral", "isp.bilateral", nullptr);
     // local_contrast_block (chain=5)
@@ -125,18 +127,16 @@ static const ExactPattern kExactProfileVariants[] = {
     ExactPattern({MNN::OpType_Reduction, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.fcs", "isp.fcs", nullptr);
     // unsharp_block (chain=5)
     ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.fcs", "isp.fcs", nullptr);
-    // ref_tone_block (chain=4)
-    ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.tone", "isp.tone", nullptr);
-    // auto_contrast_block (chain=6)
-    ExactPattern({MNN::OpType_UnaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.auto_contrast", "isp.auto_contrast", nullptr);
-    // warp_block (chain=6)
-    ExactPattern({MNN::OpType_StridedSlice, MNN::OpType_GridSample, MNN::OpType_StridedSlice, MNN::OpType_StridedSlice, MNN::OpType_GridSample, MNN::OpType_Concat}, -1, -1, "isp.warp", "isp.warp", nullptr);
     // display_short (chain=5)
     ExactPattern({MNN::OpType_Permute, MNN::OpType_Padding, MNN::OpType_GatherV2, MNN::OpType_BinaryOp, MNN::OpType_Cast}, -1, -1, "isp.display", "isp.display", "display");
-    // unpack_blc_2op (chain=2)
-    ExactPattern({MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.unpack_blc", "isp.unpack_blc", nullptr, MNN::BinaryOpOperation_SUB);
+    // ldci_a_block (chain=4)
+    ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.ldci_a", "isp.ldci_a", nullptr);
+    // ref_tone_block (chain=4)
+    ExactPattern({MNN::OpType_Pooling, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp, MNN::OpType_BinaryOp}, -1, -1, "isp.tone", "isp.tone", nullptr);
     // unpack_blc_3op (chain=3)
     ExactPattern({MNN::OpType_Reshape, MNN::OpType_ReLU6, MNN::OpType_BinaryOp}, -1, -1, "isp.unpack_blc", "isp.unpack_blc", nullptr);
+    // unpack_blc_2op (chain=2)
+    ExactPattern({MNN::OpType_BinaryOp, MNN::OpType_ReLU6}, -1, -1, "isp.unpack_blc", "isp.unpack_blc", nullptr, MNN::BinaryOpOperation_SUB);
     // colorspace_matmul (chain=1)
     ExactPattern({MNN::OpType_MatMul}, -1, -1, "isp.colorspace", "isp.colorspace", nullptr);
     // downscale_interp (chain=1)
