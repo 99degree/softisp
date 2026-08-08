@@ -349,7 +349,8 @@ static int runPass(NetT* net, const ExactPattern* table, int tableSize,
 
 // =====================================================================
 // Public entry point — called from optimizeNet() in the postconvert
-// pipeline.  Runs Pass0 + Pass1 when input is ONNX and output is MNN.
+// pipeline.  Runs Pass0 + Pass1 + Profile when input is ONNX and output
+// is MNN.
 // =====================================================================
 
 int optimizeIspChain(NetT* net, const modelConfig& config) {
@@ -375,6 +376,16 @@ int optimizeIspChain(NetT* net, const modelConfig& config) {
     // Pass 1: guard chains (consumed but kept primitive)
     totalFused += runPass(net, kExactFusionTablesPass1,
                           sizeof(kExactFusionTablesPass1) / sizeof(ExactPattern),
+                          producer);
+
+    // Rebuild producer map after mutations
+    if (totalFused > 0) {
+        producer = buildProducerMap(net);
+    }
+
+    // Pass 2: profile — structural-only matching (relaxed const checks)
+    totalFused += runPass(net, kExactProfileVariants,
+                          sizeof(kExactProfileVariants) / sizeof(ExactPattern),
                           producer);
 
     return totalFused;
