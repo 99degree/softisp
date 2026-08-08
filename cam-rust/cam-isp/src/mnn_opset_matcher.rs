@@ -1849,21 +1849,29 @@ pub fn classify_pass(p: &OpPattern) -> CppPass {
 /// - `#include` directives for MNN types
 /// - Three `static const ExactPattern[]` tables: Pass0, Pass1, Profile
 pub fn generate_cpp_header() -> String {
-    let pass0: Vec<OpPattern> = CPP_FUSION_TABLE
+    let mut pass0: Vec<OpPattern> = CPP_FUSION_TABLE
         .iter()
         .filter(|p| classify_pass(p) == CppPass::Pass0)
         .cloned()
         .collect();
-    let pass1: Vec<OpPattern> = CPP_FUSION_TABLE
+    let mut pass1: Vec<OpPattern> = CPP_FUSION_TABLE
         .iter()
         .filter(|p| classify_pass(p) == CppPass::Pass1)
         .cloned()
         .collect();
-    let profile: Vec<OpPattern> = CPP_FUSION_TABLE
+    let mut profile: Vec<OpPattern> = CPP_FUSION_TABLE
         .iter()
         .filter(|p| classify_pass(p) == CppPass::Profile)
         .cloned()
         .collect();
+
+    // Sort each table by chain length descending (longest first) so the
+    // first-match-wins scan in runPass() tries the most specific pattern
+    // before shorter ones that could shadow it.
+    let chain_len = |p: &OpPattern| std::cmp::Reverse(p.op_types.len());
+    pass0.sort_by_key(chain_len);
+    pass1.sort_by_key(chain_len);
+    profile.sort_by_key(chain_len);
 
     let mut h = String::with_capacity(16384);
 
