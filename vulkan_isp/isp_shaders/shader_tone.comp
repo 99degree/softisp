@@ -1,0 +1,37 @@
+#version 450
+// shader_tone — Tone mapping: brightness/contrast/saturation + gamma
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) readonly uniform image2D input_img;
+layout(set = 0, binding = 1, rgba32f) writeonly uniform image2D output_img;
+
+layout(set = 0, binding = 2) uniform Params {
+    float gamma;
+    float contrast;
+    float brightness;
+    float saturation;
+} params;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_img);
+    if (pos.x >= size.x || pos.y >= size.y) return;
+
+    vec3 c = imageLoad(input_img, pos).rgb;
+
+    // Brightness
+    c += params.brightness;
+
+    // Contrast
+    c = (c - 0.5) * params.contrast + 0.5;
+
+    // Saturation
+    float luma = dot(c, vec3(0.299, 0.587, 0.114));
+    c = mix(vec3(luma), c, params.saturation);
+
+    // Gamma
+    c = clamp(c, 0.0, 1.0);
+    c = pow(c + 1e-6, vec3(1.0 / params.gamma));
+
+    imageStore(output_img, pos, vec4(clamp(c, 0.0, 1.0), 1.0));
+}

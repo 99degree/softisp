@@ -1,0 +1,48 @@
+#version 450
+// shader_ispc_stats — ISP controller zone stats: 16x16 zone means
+// Each workgroup processes one 16×16 zone, accumulates mean luminance.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) readonly uniform image2D input_img;
+layout(set = 0, binding = 1) buffer ZoneBuf { float data[256]; } zones;
+
+layout(set = 0, binding = 2) uniform Params {
+    float width;
+    float height;
+    float zones_x;
+    float zones_y;
+} params;
+
+shared float s_vals[256]; // one slot per thread
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_img);
+    uint tid = gl_LocalInvocationIndex;
+
+    float luma = 0.0;
+    if (pos.x < size.x && pos.y < size.y) {
+        vec3 c = imageLoad(input_img, pos).rgb;
+        luma = dot(c, vec3(0.299, 0.587, 0.114));
+    }
+    s_vals[tid] = luma;
+    barrier();
+
+    // Parallel reduction in shared memory
+    for (uint stride = 128u; stride > 0u; stride >>= 1u) {
+        if (tid < stride) {
+            s_vals[tid] += s_vals[tid + stride];
+        }
+        barrier();
+    }
+
+    // Thread 0 writes zone mean
+    if (tid == 0u) {
+        uint zone_x = gl_WorkGroupID.x;
+        uint zone_y = gl_WorkGroupID.y;
+        uint zone_idx = zone_y * 16 + zone_x;
+        if (zone_idx < 256u) {
+            zones.data[zone_idx] = s_vals[0] / 256.0;
+        }
+    }
+}
