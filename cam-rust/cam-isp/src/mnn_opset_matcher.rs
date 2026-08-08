@@ -1883,6 +1883,10 @@ pub fn generate_cpp_header() -> String {
     h.push_str("#include <MNN/expr/Expr.hpp>\n");
     h.push_str("#include <MNN/optimizer/Optimizer.hpp>\n");
     h.push('\n');
+    h.push_str("// ExactPattern struct — defines the five constructor overloads\n");
+    h.push_str("// used by the static tables below (6-arg base, 7a/7b, 8a/8b).\n");
+    h.push_str("#include \"ExactPattern.h\"\n");
+    h.push('\n');
     h.push_str("namespace MNN {\n");
     h.push('\n');
 
