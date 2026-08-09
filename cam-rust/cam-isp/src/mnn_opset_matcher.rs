@@ -22,7 +22,7 @@
 /// When present, the codegen binary (`cargo run -p cam-app -- gen-isp-patterns`)
 /// emits a C++ `ExactPattern` entry for this pattern. When `None`, the block has
 /// no auto-generated fusion rule (e.g., `raw_input`, stats blocks).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FusionSpec {
     /// The Extra op type name emitted by the C++ converter (e.g., `"isp.fcs"`).
     pub isp_type: &'static str,
@@ -44,10 +44,21 @@ pub struct FusionSpec {
     /// tree-shaped DAGs like calibration, histogram, tone_stats where consecutive
     /// ops in the pattern don't share output→input edges.
     pub require_connectivity: bool,
+    // ── Ctor4 profile-variant fields ──────────────────────────────────────
+    /// Producer op type traced through ConvertTensor for each input (`-1` = any).
+    pub input_trace: &'static [i32],
+    /// Input indices that must be fed directly by a graph Input op.
+    pub input_must_be_input: &'static [usize],
+    /// Required BinaryOp sub-type of the next op after the chain (`-1` = any).
+    pub next_bin_op: i32,
+    /// Per-chain-position BinaryOp sub-type requirements: `[(chainPos, binOp)]`.
+    pub chain_bin_ops: &'static [(i32, i32)],
+    /// Expected const blob float values (1e-4 tolerance) for const match.
+    pub const_vals: &'static [f32],
 }
 
 /// A single pattern entry mapping an MNN op type sequence to an ISP block name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpPattern {
     /// ISP block name (e.g., `"demosaic"`, `"ccm"`).
     pub block_name: &'static str,
@@ -602,6 +613,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: true,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // AlgoCctChain (21-op): guard — realign CCT to ISP block boundaries.
@@ -641,6 +657,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: true,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ── Long multi-op patterns (8-21 ops) ───────────────────────────────
@@ -684,6 +705,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: false,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ToneStatsBlock (16-op): luma conv → mean/min/max → clip/shadow masks → concat.
@@ -718,6 +744,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: false,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // DisplayBlock (16-op): Permute→Padding→Shape→Rank→BinOp×2→Unsqueeze→BinOp→
@@ -752,6 +783,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // FcsBlock (13-op): complex FCS chain (blur+sharp+denoise).
@@ -782,6 +818,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ToneBlock (12-op): tone curve with saturation/contrast.
@@ -801,6 +842,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // AlgoAwbBlock (11-op): AWB stats with reshape.
@@ -829,6 +875,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // AlgoAeBlock (9-op): AE with clamp/saturation.
@@ -856,6 +907,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // FocusBlock (8-op): AF focus with laplacian conv chain.
@@ -881,6 +937,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ── Mid-length patterns (4-7 ops) ───────────────────────────────────
@@ -901,6 +962,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // LdciABlock (4-op): LDCI_A Pool no clip.
@@ -917,6 +983,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // EeBlock (3-op): ConvertTensor → ConvDW → ConvertTensor.
@@ -933,6 +1004,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // EeBlock legacy (6-op): edge enhancement with depthwise conv.
@@ -956,6 +1032,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // BilateralBlock (5-op): bilateral denoise.
@@ -978,6 +1059,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // RefYuvSatBlock (6-op): YUV saturation reference path.
@@ -1001,6 +1087,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // LocalContrastBlock (5-op): local contrast via pooling.
@@ -1017,6 +1108,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // SaturationBlock (5-op): saturation via reduction.
@@ -1033,6 +1129,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // UnsharpBlock (5-op): unsharp mask via pooling.
@@ -1049,6 +1150,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // RefToneBlock (4-op): tone reference (profile variant).
@@ -1065,6 +1171,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // YuvSatBlock (7-op): YUV saturation with 6 BinaryOps + ReLU6.
@@ -1083,6 +1194,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // AutoContrastBlock (6-op): auto contrast with unary + 5 BinaryOps.
@@ -1101,6 +1217,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // WarpBlock (6-op): chromatic aberration / grid sample.
@@ -1124,6 +1245,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ── Display variants (4-6 ops) ──────────────────────────────────────
@@ -1149,6 +1275,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // Display short (5-op): Permute+Padding+GatherV2+BO+Cast.
@@ -1165,6 +1296,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ── Unpack / Blc variants (2-3 ops) ─────────────────────────────────
@@ -1183,6 +1319,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // UnpackBlc (3-op): Reshape + ReLU6 + BinaryOp.
@@ -1199,6 +1340,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // RawBlcBlock (2-op): Cast → SUB (new lib, noFuse).
@@ -1215,6 +1361,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: true,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ── Normalize 2-op guard ────────────────────────────────────────────
@@ -1233,6 +1384,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: true,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ── Demosaic 2-op variants ──────────────────────────────────────────
@@ -1251,6 +1407,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // RefCcmBlock (2-op): Conv(9) + BinaryOp.
@@ -1267,6 +1428,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // VignettingBlock (2-op): MUL(1024) + ReLU6.
@@ -1283,6 +1449,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ── 1-op patterns (standalone blocks, profile pass0) ─────────────────
@@ -1301,6 +1472,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // FcsWbGains (1-op): MUL(3,1) → isp.fcs.
@@ -1317,6 +1493,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // FcsBayerWb (1-op): MUL(4,1) → isp.fcs.
@@ -1333,6 +1514,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // DemosaicConv300 (1-op): Conv(300) → isp.demosaic_ccm.
@@ -1349,6 +1535,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // DemosaicConv36 (1-op): Conv(36) → isp.demosaic_ccm.
@@ -1365,6 +1556,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ColorspaceConv (1-op): Conv(9) → isp.colorspace with named_key.
@@ -1381,6 +1577,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // AeMul (1-op): MUL(3,1) → isp.ae.
@@ -1397,6 +1598,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // AfFocusConv (1-op): Conv(9) → isp.af_focus.
@@ -1413,6 +1619,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // PyramidConv16 (1-op): Conv(16) → isp.pyramid.
@@ -1429,6 +1640,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ── Profile variant 1-op tables (no named_key, dynamic weights) ─────
@@ -1447,6 +1663,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // CfaBlock (1-op): Conv(16) → isp.pyramid.
@@ -1463,6 +1684,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // ColorSpaceMatMul (1-op): MatMul → isp.colorspace.
@@ -1479,6 +1705,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // CscBlock (1-op): Conv(9) → isp.colorspace.
@@ -1495,6 +1726,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // DebayerBlock (1-op): Conv(300) → isp.demosaic_debayer.
@@ -1511,6 +1747,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // DemosaicABlock (1-op): Conv(12) → isp.demosaic_a.
@@ -1527,6 +1768,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // EdgeDemosaicBlock (1-op): Conv(108) → isp.demosaic_edge.
@@ -1543,6 +1789,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // GammaBlock (1-op): POW(1,1) → isp.gamma.
@@ -1559,6 +1810,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // LscBlock (1-op): MUL(1024,1) → isp.lsc.
@@ -1575,6 +1831,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // NormalizeBlock (1-op): MUL(1,1) → isp.fcs.
@@ -1591,6 +1852,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // NormalizeBlockNoFuse (1-op): REALDIV(1,1) → isp.fcs (guard).
@@ -1607,6 +1873,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: true,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // RawBlcBlock (1-op): SUB(1,1) → isp.unpack_blc.
@@ -1623,6 +1894,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // BayerWbBlock (1-op): MUL(4,1) → isp.fcs.
@@ -1639,6 +1915,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // BlcBlock (1-op): SUB(4,1) → isp.fcs.
@@ -1655,6 +1936,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // WbGainsBlock (1-op): MUL(3,1) → isp.awb.
@@ -1671,6 +1957,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // EeAtomicBlock (1-op): ConvDW(27) → isp.ee.
@@ -1687,6 +1978,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // DownscaleInterp (1-op): Interp → isp.interp.
@@ -1703,6 +1999,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
     // CropStridedSlice (1-op): StridedSlice → isp.fcs.
@@ -1719,6 +2020,11 @@ pub const CPP_FUSION_TABLE: &[OpPattern] = &[
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         }),
     },
 ];
@@ -1748,6 +2054,16 @@ pub struct FusionSpecJson {
     pub no_fuse: bool,
     #[serde(default)]
     pub next_op_type: i32,
+    #[serde(default)]
+    pub input_trace: Vec<i32>,
+    #[serde(default)]
+    pub input_must_be_input: Vec<usize>,
+    #[serde(default)]
+    pub next_bin_op: i32,
+    #[serde(default)]
+    pub chain_bin_ops: Vec<(i32, i32)>,
+    #[serde(default)]
+    pub const_vals: Vec<f32>,
 }
 
 impl From<&FusionSpec> for FusionSpecJson {
@@ -1761,6 +2077,11 @@ impl From<&FusionSpec> for FusionSpecJson {
             conv_weight_elems: f.conv_weight_elems,
             no_fuse: f.no_fuse,
             next_op_type: f.next_op_type,
+            input_trace: f.input_trace.to_vec(),
+            input_must_be_input: f.input_must_be_input.to_vec(),
+            next_bin_op: f.next_bin_op,
+            chain_bin_ops: f.chain_bin_ops.to_vec(),
+            const_vals: f.const_vals.to_vec(),
         }
     }
 }
@@ -1800,6 +2121,40 @@ pub fn load_patterns_json(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Map MNN op type string to C++ `MNN::OpType_*` enum name.
+/// Map an MNN OpType integer ID to its C++ enum name.
+fn cpp_mnn_op_type_by_id(id: i32) -> &'static str {
+    match id {
+        0 => "MNN::OpType_AbsVal",
+        7 => "MNN::OpType_BinaryOp",
+        9 => "MNN::OpType_Cast",
+        10 => "MNN::OpType_Concat",
+        11 => "MNN::OpType_Const",
+        12 => "MNN::OpType_Convolution",
+        13 => "MNN::OpType_ConvolutionDepthwise",
+        30 => "MNN::OpType_Gather",
+        31 => "MNN::OpType_GatherV2",
+        34 => "MNN::OpType_Input",
+        35 => "MNN::OpType_Interp",
+        39 => "MNN::OpType_MatMul",
+        45 => "MNN::OpType_Padding",
+        46 => "MNN::OpType_Permute",
+        47 => "MNN::OpType_Pooling",
+        66 => "MNN::OpType_Rank",
+        68 => "MNN::OpType_Reduction",
+        69 => "MNN::OpType_ReLU",
+        70 => "MNN::OpType_ReLU6",
+        73 => "MNN::OpType_Reshape",
+        80 => "MNN::OpType_Shape",
+        82 => "MNN::OpType_Size",
+        90 => "MNN::OpType_Squeeze",
+        91 => "MNN::OpType_StridedSlice",
+        101 => "MNN::OpType_UnaryOp",
+        107 => "MNN::OpType_Unsqueeze",
+        129 => "MNN::OpType_ConvertTensor",
+        _ => "MNN::OpType_Unknown",
+    }
+}
+
 fn cpp_mnn_op_type(op: &str) -> &'static str {
     match op {
         "BinaryOp" => "MNN::OpType_BinaryOp",
@@ -1871,38 +2226,142 @@ pub fn generate_cpp_entry(p: &OpPattern) -> String {
         f.isp_type,
     );
 
-    // 6th positional: namedKey or nullptr
-    match f.named_key {
-        Some(k) => line.push_str(&format!(", \"{}\"", k)),
-        None => line.push_str(", nullptr"),
-    }
+    // ── Ctor4 profile variant: inputTrace / inputMustBeInput / chainBinOps / nextBinOp / constVals ──
+    let has_ctor4 = !f.input_trace.is_empty()
+        || !f.input_must_be_input.is_empty()
+        || !f.chain_bin_ops.is_empty()
+        || f.next_bin_op >= 0
+        || !f.const_vals.is_empty();
 
-    // 7th positional: binOp (omit if INVALID = -1)
-    if f.bin_op_type >= 0 {
-        line.push_str(&format!(", {}", cpp_bin_op(f.bin_op_type)));
-    }
-
-    // 8th positional: convWeightElems (omit if -1)
-    if f.conv_weight_elems >= 0 {
-        if f.bin_op_type < 0 {
+    if has_ctor4 {
+        // Ctor4 signature:
+        //   ExactPattern({chain}, ce, ci, type, key, namedKey, bot, true,
+        //                 {inputTrace}, {inputMustBeInput}, nextOpType,
+        //                 {{chainPos, binOp}, ...}, nextBinOp, {constVals})
+        // Without binOp (nullptr):
+        //   ExactPattern({chain}, ce, ci, type, key, namedKey, nullptr,
+        //                 {inputTrace}, {inputMustBeInput}, nextOpType,
+        //                 {{chainPos, binOp}, ...}, nextBinOp, {constVals})
+        match f.named_key {
+            Some(k) => line.push_str(&format!(", \"{}\"", k)),
+            None => line.push_str(", nullptr"),
+        }
+        if f.bin_op_type >= 0 {
+            line.push_str(&format!(", {}", cpp_bin_op(f.bin_op_type)));
+        } else {
             line.push_str(", nullptr");
         }
-        line.push_str(&format!(", {}", f.conv_weight_elems));
-    }
-
-    // noFuse flag
-    if f.no_fuse {
         line.push_str(", true");
-    }
 
-    // requireConnectivity flag (9-arg constructor)
-    // When false, we need the 9-arg form: (..., nullptr_t, cw, bool)
-    if !f.require_connectivity {
-        if f.conv_weight_elems >= 0 {
-            // convWeightElems already emitted as ", nullptr, cw"
-            line.push_str(", false");
+        // inputTrace vector
+        line.push_str(", {");
+        for (i, v) in f.input_trace.iter().enumerate() {
+            if i > 0 {
+                line.push_str(", ");
+            }
+            if *v < 0 {
+                line.push_str("-1");
+            } else {
+                line.push_str(cpp_mnn_op_type_by_id(*v));
+            }
+        }
+        line.push('}');
+
+        // inputMustBeInput vector
+        line.push_str(", {");
+        for (i, v) in f.input_must_be_input.iter().enumerate() {
+            if i > 0 {
+                line.push_str(", ");
+            }
+            line.push_str(&format!("{}", v));
+        }
+        line.push('}');
+
+        // nextOpType
+        if f.next_op_type >= 0 {
+            line.push_str(&format!(", {}", cpp_mnn_op_type_by_id(f.next_op_type)));
         } else {
-            // No convWeightElems — emit full9-arg form: nullptr, -1, false
+            line.push_str(", -1");
+        }
+
+        // chainBinOps vector of {chainPos, binOp} pairs
+        line.push_str(", {");
+        for (i, (pos, bo)) in f.chain_bin_ops.iter().enumerate() {
+            if i > 0 {
+                line.push_str(", ");
+            }
+            line.push_str(&format!("{{{}, {}}}", pos, cpp_bin_op(*bo)));
+        }
+        line.push('}');
+
+        // nextBinOp
+        if f.next_bin_op >= 0 {
+            line.push_str(&format!(", {}", cpp_bin_op(f.next_bin_op)));
+        } else {
+            line.push_str(", -1");
+        }
+
+        // constVals vector
+        line.push_str(", {");
+        for (i, v) in f.const_vals.iter().enumerate() {
+            if i > 0 {
+                line.push_str(", ");
+            }
+            line.push_str(&format!("{}f", v));
+        }
+        line.push('}');
+    } else if f.no_fuse {
+        // Guard chains: use Ctor7/Ctor8/Ctor9.
+        // Ctor8: (nk, bot, nf) — namedKey first, then binOp, then true.
+        // Ctor9: (bot, nf)     — no namedKey, binOp first.
+        // Ctor7: (nk, nf)      — no binOp, namedKey first.
+        if f.bin_op_type >= 0 {
+            if f.named_key.is_some() {
+                // Ctor8: (nk, bot, nf)
+                match f.named_key {
+                    Some(k) => line.push_str(&format!(", \"{}\"", k)),
+                    None => line.push_str(", nullptr"),
+                }
+                line.push_str(&format!(", {}", cpp_bin_op(f.bin_op_type)));
+            } else {
+                // Ctor9: (bot, nf) — skip nullptr, emit bot directly
+                line.push_str(&format!(", {}", cpp_bin_op(f.bin_op_type)));
+            }
+            line.push_str(", true");
+        } else {
+            // Ctor7: (nk, nf)
+            match f.named_key {
+                Some(k) => line.push_str(&format!(", \"{}\"", k)),
+                None => line.push_str(", nullptr"),
+            }
+            line.push_str(", true");
+        }
+    } else if f.bin_op_type >= 0 {
+        // Fusion with binOp: Ctor2 (bot, nk, cwe) — binOp BEFORE namedKey.
+        line.push_str(&format!(", {}", cpp_bin_op(f.bin_op_type)));
+        match f.named_key {
+            Some(k) => line.push_str(&format!(", \"{}\"", k)),
+            None => line.push_str(", nullptr"),
+        }
+        if f.conv_weight_elems >= 0 {
+            line.push_str(&format!(", {}", f.conv_weight_elems));
+        }
+    } else {
+        // Fusion without binOp: Ctor1 (nk, cwe) — no extra nullptr needed.
+        match f.named_key {
+            Some(k) => line.push_str(&format!(", \"{}\"", k)),
+            None => line.push_str(", nullptr"),
+        }
+        if f.conv_weight_elems >= 0 {
+            if !f.require_connectivity {
+                // Ctor5: (nk, nullptr_t, cwe, rc=false)
+                line.push_str(&format!(", nullptr, {}, false", f.conv_weight_elems));
+            } else {
+                // Ctor1: (nk, cwe)
+                line.push_str(&format!(", {}", f.conv_weight_elems));
+            }
+        } else if !f.require_connectivity {
+            // Ctor5: (nk, nullptr_t, -1, rc=false)
             line.push_str(", nullptr, -1, false");
         }
     }
@@ -2070,6 +2529,11 @@ mod tests {
             no_fuse: false,
             next_op_type: -1,
             require_connectivity: true,
+            input_trace: &[],
+            input_must_be_input: &[],
+            next_bin_op: -1,
+            chain_bin_ops: &[],
+            const_vals: &[],
         })
     }
 
@@ -2667,6 +3131,11 @@ mod tests {
                 no_fuse: true,
                 next_op_type: -1,
                 require_connectivity: true,
+                input_trace: &[],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[],
             }),
         };
         assert_eq!(classify_pass(&p), CppPass::Pass1);
@@ -2687,6 +3156,11 @@ mod tests {
                 no_fuse: false,
                 next_op_type: -1,
                 require_connectivity: true,
+                input_trace: &[],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[],
             }),
         };
         assert_eq!(classify_pass(&p), CppPass::Pass0);
@@ -2707,6 +3181,11 @@ mod tests {
                 no_fuse: false,
                 next_op_type: -1,
                 require_connectivity: true,
+                input_trace: &[],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[],
             }),
         };
         assert_eq!(classify_pass(&p), CppPass::Profile);
@@ -2744,6 +3223,11 @@ mod tests {
                 no_fuse: true,
                 next_op_type: 3,
                 require_connectivity: true,
+                input_trace: &[],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[],
             }),
         };
         let line = generate_cpp_entry(&p);
@@ -2768,6 +3252,11 @@ mod tests {
                 no_fuse: false,
                 next_op_type: -1,
                 require_connectivity: true,
+                input_trace: &[],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[],
             }),
         };
         let line = generate_cpp_entry(&p);
@@ -2970,6 +3459,89 @@ mod tests {
                 spv_names
             );
         }
+    }
+
+    #[test]
+    fn test_generate_cpp_entry_ctor4() {
+        let p = OpPattern {
+            op_types: &["Pooling", "BinaryOp", "BinaryOp", "BinaryOp"],
+            block_name: "ldci_a_ctor4",
+            fusion: Some(FusionSpec {
+                isp_type: "isp.ldci_a",
+                named_key: None,
+                const_elems: -1,
+                const_index: -1,
+                bin_op_type: -1,
+                conv_weight_elems: -1,
+                no_fuse: false,
+                next_op_type: -1,
+                require_connectivity: true,
+                input_trace: &[129, -1, -1, -1],
+                input_must_be_input: &[0],
+                next_bin_op: 0,
+                chain_bin_ops: &[(2, 0)],
+                const_vals: &[],
+            }),
+        };
+        let line = generate_cpp_entry(&p);
+        assert!(line.contains("ExactPattern("), "got: {line}");
+        // Ctor4: should have inputTrace, inputMustBeInput, nextOpType, chainBinOps, nextBinOp, constVals
+        assert!(
+            line.contains("OpType_ConvertTensor"),
+            "inputTrace should contain ConvertTensor: {line}"
+        );
+        assert!(
+            line.contains("{0}"),
+            "inputMustBeInput should contain 0: {line}"
+        );
+        assert!(
+            line.contains("OpType_BinaryOp"),
+            "chainBinOps should reference BinaryOp: {line}"
+        );
+        // Ctor4 with binOp should have the BinaryOpOperation
+        assert!(
+            line.contains("BinaryOpOperation_ADD"),
+            "nextBinOp should be ADD: {line}"
+        );
+    }
+
+    #[test]
+    fn test_generate_cpp_entry_ctor4_no_binop() {
+        let p = OpPattern {
+            op_types: &["BinaryOp", "BinaryOp"],
+            block_name: "test_ctor4_no_binop",
+            fusion: Some(FusionSpec {
+                isp_type: "isp.test",
+                named_key: Some("test"),
+                const_elems: -1,
+                const_index: -1,
+                bin_op_type: -1,
+                conv_weight_elems: -1,
+                no_fuse: false,
+                next_op_type: 12,
+                require_connectivity: true,
+                input_trace: &[-1, -1],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[1.0, 2.0],
+            }),
+        };
+        let line = generate_cpp_entry(&p);
+        assert!(line.contains("ExactPattern("), "got: {line}");
+        // Ctor4-lite: should have nullptr instead of BinaryOpOperation
+        assert!(
+            line.contains(", nullptr, true"),
+            "should have nullptr + true: {line}"
+        );
+        // nextOpType should be OpType_Convolution (id=12)
+        assert!(
+            line.contains("OpType_Convolution"),
+            "nextOpType should be Convolution: {line}"
+        );
+        // constVals should be present
+        assert!(line.contains("1f"), "constVals should contain 1f: {line}");
+        assert!(line.contains("2f"), "constVals should contain 2f: {line}");
     }
 
     /// Recursively walk a directory yielding all entries whose extension is `spv`.
