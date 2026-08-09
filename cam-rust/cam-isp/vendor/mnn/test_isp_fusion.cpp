@@ -1,21 +1,16 @@
-// test_isp_fusion.cpp — Compile-time + runtime test for IspChainFusion pass.
-// Reads .mnn files, deserializes via FlatBuffers, runs 3-pass ISP chain fusion,
-// and prints per-pass statistics.
+// test_isp_fusion.cpp — Per-pass JSON verification for IspChainFusion.
+// Reads .mnn files, runs pass0/pass1/profile separately, prints JSON results.
 //
 // Build:
 //   cd cam-rust/cam-isp/vendor/mnn
 //   clang++ -std=c++17 -O0 -g \
-//     -I schema/current \
-//     -I include \
-//     -I tools/converter/include \
-#    -I tools/converter/source/optimizer/postconvert \
+//     -I schema/current -I include -I tools/converter/include \
+//     -I tools/converter/source/optimizer/postconvert \
 //     -I ~/MNN/3rd_party/flatbuffers/include \
-//     test_isp_fusion.cpp \
-//     tools/converter/source/optimizer/postconvert/IspChainFusion.cpp \
-//     -o test_isp_fusion
+//     test_isp_fusion.cpp -o test_isp_fusion
 //
 // Run:
-//   LD_LIBRARY_PATH=../../lib/aarch64-v8a ./test_isp_fusion [model.mnn ...]
+//   env LD_LIBRARY_PATH=... ./test_isp_fusion model.mnn [model2.mnn ...]
 
 #include <cstdio>
 #include <cstdlib>
@@ -25,18 +20,14 @@
 #include <string>
 #include <vector>
 
-// MNN headers
 #include <MNN/MNNDefine.h>
 #include "MNN_generated.h"
 #include "TensorflowOp_generated.h"
 
-// ISP fusion pass (includes isp_fusion_patterns.h → ExactPattern.h)
 #include "IspChainFusion.cpp"
 
 using namespace MNN;
 
-// Provide the missing modelConfig destructor (declared in config.hpp but
-// defined only in the full MNN converter build).
 ::modelConfig::~modelConfig() = default;
 
 // ─── helpers ───────────────────────────────────────────────────────
@@ -54,22 +45,28 @@ static std::vector<uint8_t> read_file(const char* path) {
     return buf;
 }
 
-static int count_ops(const MNN::NetT& net) {
+static int count_ops(const NetT& net) {
     int n = 0;
     for (auto& op : net.oplists) {
         if (!op) continue;
-        if (op->type != MNN::OpType_Extra) ++n;
+        if (op->type != OpType_Extra) ++n;
     }
     return n;
 }
 
-static int count_extras(const MNN::NetT& net) {
+static int count_extras(const NetT& net) {
     int n = 0;
     for (auto& op : net.oplists) {
         if (!op) continue;
-        if (op->type == MNN::OpType_Extra) ++n;
+        if (op->type == OpType_Extra) ++n;
     }
     return n;
+}
+
+// Extract basename from path for JSON output
+static const char* basename_of(const char* path) {
+    const char* p = strrchr(path, '/');
+    return p ? p + 1 : path;
 }
 
 // ─── main ──────────────────────────────────────────────────────────
@@ -80,78 +77,108 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Print table sizes (compile-time verification)
-    printf("=== IspChainFusion Test ===\n");
-    printf("Pass0 entries: %zu\n",
-           sizeof(kExactFusionTablesPass0) / sizeof(kExactFusionTablesPass0[0]));
-    printf("Pass1 entries: %zu\n",
-           sizeof(kExactFusionTablesPass1) / sizeof(kExactFusionTablesPass1[0]));
-    printf("Profile entries: %zu\n",
-           sizeof(kExactProfileVariants) / sizeof(kExactProfileVariants[0]));
-    printf("\n");
-
     int total_ok = 0;
     int total_fail = 0;
 
+    // JSON array open
+    printf("[\n");
+
     for (int i = 1; i < argc; ++i) {
         const char* path = argv[i];
-        printf("--- %s ---\n", path);
+        const char* name = basename_of(path);
 
         auto buf = read_file(path);
         if (buf.empty()) {
-            printf("  SKIP (read failed)\n");
+            printf("  {\"model\": \"%s\", \"status\": \"SKIP\", \"reason\": \"read_failed\"}%s\n",
+                   name, i + 1 < argc ? "," : "");
             total_fail++;
             continue;
         }
 
-        // Verify FlatBuffer magic
         if (buf.size() < 8) {
-            printf("  SKIP (too small: %zu bytes)\n", buf.size());
+            printf("  {\"model\": \"%s\", \"status\": \"SKIP\", \"reason\": \"too_small\"}%s\n",
+                   name, i + 1 < argc ? "," : "");
             total_fail++;
             continue;
         }
 
-        // Deserialize via FlatBuffers
         flatbuffers::Verifier verifier(buf.data(), buf.size());
         bool ok = MNN::VerifyNetBuffer(verifier);
         if (!ok) {
-            printf("  SKIP (FlatBuffer verification failed)\n");
+            printf("  {\"model\": \"%s\", \"status\": \"SKIP\", \"reason\": \"flatbuf_verify\"}%s\n",
+                   name, i + 1 < argc ? "," : "");
             total_fail++;
             continue;
         }
 
         auto net = MNN::UnPackNet(buf.data());
         if (!net) {
-            printf("  SKIP (UnPackNet failed)\n");
+            printf("  {\"model\": \"%s\", \"status\": \"SKIP\", \"reason\": \"unpack\"}%s\n",
+                   name, i + 1 < argc ? "," : "");
             total_fail++;
             continue;
         }
 
         int ops_before = count_ops(*net);
         int extras_before = count_extras(*net);
-        printf("  ops: %d  extras: %d\n", ops_before, extras_before);
 
-        // Run ISP chain fusion — triggered by config.model == MNN (MNN→MNN)
-        modelConfig config;
-        config.model = modelConfig::MNN;
+        // ── Pass 0: first-match fusion ────────────────────────
+        auto producer = buildProducerMap(net.get());
+        int pass0 = runPass(net.get(), kExactFusionTablesPass0,
+                           sizeof(kExactFusionTablesPass0) / sizeof(ExactPattern),
+                           producer);
 
-        int consumed = optimizeIspChain(net.get(), config);
-        printf("  consumed by ISP fusion: %d\n", consumed);
+        // Rebuild producer map after pass0 mutations
+        if (pass0 > 0) {
+            producer = buildProducerMap(net.get());
+        }
+
+        // ── Pass 1: guard chains ──────────────────────────────
+        int pass1 = runPass(net.get(), kExactFusionTablesPass1,
+                           sizeof(kExactFusionTablesPass1) / sizeof(ExactPattern),
+                           producer);
+
+        // Rebuild producer map after pass1 mutations
+        if (pass1 > 0) {
+            producer = buildProducerMap(net.get());
+        }
+
+        // ── Pass 2: profile structural matching ───────────────
+        int pass2 = runPass(net.get(), kExactProfileVariants,
+                           sizeof(kExactProfileVariants) / sizeof(ExactPattern),
+                           producer);
 
         int ops_after = count_ops(*net);
         int extras_after = count_extras(*net);
-        printf("  ops after: %d  extras after: %d\n", ops_after, extras_after);
+        int total_consumed = pass0 + pass1 + pass2;
 
-        if (consumed >= 0) {
-            printf("  PASS\n");
-            total_ok++;
-        } else {
-            printf("  FAIL (returned %d)\n", consumed);
-            total_fail++;
-        }
-        printf("\n");
+        const char* status = total_consumed >= 0 ? "PASS" : "FAIL";
+        if (total_consumed >= 0) total_ok++; else total_fail++;
+
+        printf("  {\"model\": \"%s\", \"status\": \"%s\", "
+               "\"ops_before\": %d, \"extras_before\": %d, "
+               "\"pass0\": {\"consumed\": %d}, "
+               "\"pass1\": {\"consumed\": %d}, "
+               "\"pass2_profile\": {\"consumed\": %d}, "
+               "\"total_consumed\": %d, "
+               "\"ops_after\": %d, \"extras_after\": %d}%s\n",
+               name, status,
+               ops_before, extras_before,
+               pass0, pass1, pass2,
+               total_consumed,
+               ops_after, extras_after,
+               i + 1 < argc ? "," : "");
     }
 
-    printf("=== Results: %d PASS, %d FAIL ===\n", total_ok, total_fail);
+    // JSON array close + summary
+    printf("],\n");
+    printf("{\"summary\": {\"pass0_entries\": %zu, \"pass1_entries\": %zu, "
+           "\"profile_entries\": %zu, \"total_models\": %d, "
+           "\"pass\": %d, \"fail\": %d}}\n",
+           sizeof(kExactFusionTablesPass0) / sizeof(kExactFusionTablesPass0[0]),
+           sizeof(kExactFusionTablesPass1) / sizeof(kExactFusionTablesPass1[0]),
+           sizeof(kExactProfileVariants) / sizeof(kExactProfileVariants[0]),
+           argc - 1, total_ok, total_fail);
+
     return total_fail > 0 ? 1 : 0;
 }
