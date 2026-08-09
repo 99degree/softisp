@@ -142,14 +142,14 @@ static bool matchConstElems(const OpT* op, int expectedElems, int constIdx,
 //   5. Const element count matches (first op in chain)
 static int tryMatch(const NetT* net, int opIndex, const ExactPattern& pat,
                     const std::unordered_map<int, int>& producer) {
-    int n = static_cast<int>(pat.chain.size());
+    int n = static_cast<int>(pat.opTypes.size());
     if (n <= 0) return 0;
     if (opIndex + n > static_cast<int>(net->oplists.size())) return 0;
 
     for (int j = 0; j < n; j++) {
         const auto& op = net->oplists[opIndex + j];
         if (!op) return 0;
-        if (op->type != pat.chain[j]) return 0;
+        if (op->type != pat.opTypes[j]) return 0;
 
         // Verify connectivity to previous op in chain (skipped for tree-shaped DAGs)
         if (j > 0 && pat.requireConnectivity && !isConnected(net, opIndex + j - 1, opIndex + j)) {
@@ -158,11 +158,11 @@ static int tryMatch(const NetT* net, int opIndex, const ExactPattern& pat,
     }
 
     // Check BinaryOp sub-type on the FIRST BinaryOp in the chain
-    if (pat.binOp >= 0) {
+    if (pat.binOpType != MNN::BinaryOpOperation_ADD) {
         bool found = false;
         for (int j = 0; j < n; j++) {
-            if (pat.chain[j] == OpType_BinaryOp) {
-                if (!matchBinOp(net->oplists[opIndex + j].get(), pat.binOp)) {
+            if (pat.opTypes[j] == OpType_BinaryOp) {
+                if (!matchBinOp(net->oplists[opIndex + j].get(), static_cast<int>(pat.binOpType))) {
                     return 0;
                 }
                 found = true;
@@ -170,7 +170,7 @@ static int tryMatch(const NetT* net, int opIndex, const ExactPattern& pat,
             }
         }
         // If pattern specifies a binOp but chain has no BinaryOp, reject
-        if (!found && pat.binOp >= 0) return 0;
+        if (!found) return 0;
     }
 
     // Check conv weight elements on last op (if Conv)
@@ -261,7 +261,7 @@ static std::unique_ptr<OpT> makeExtraOp(const OpT& firstOp,
     // Create Extra parameter
     auto* extraParam = new ExtraT();
     extraParam->type = std::string(pat.ispType);
-    extraParam->engine = std::string(pat.typeKey);
+    extraParam->engine = std::string(pat.spvName);
     if (pat.namedKey) {
         extraParam->engine = std::string(pat.namedKey);
     }
