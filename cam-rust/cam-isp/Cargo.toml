@@ -115,3 +115,6 @@ required-features = ["mnn"]
 [[example]]
 name = "probe_fix"
 required-features = ["mnn"]
+
+[[example]]
+name = "dump_patterns"
