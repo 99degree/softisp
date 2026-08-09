@@ -1,152 +1,137 @@
-// ExactPattern.h — Match descriptor for ISP chain fusion.
+// ExactPattern.h — ISP exact-match pattern struct and constructors.
 //
-// Defines the ExactPattern struct consumed by the auto-generated pattern
-// tables in isp_fusion_patterns.h.  Separated so both the header and
-// IspChainFusion.cpp can include it without circular dependencies.
+// Extracted from IspChainFusion.cpp so the auto-generated IspExactPatterns.h
+// can include it without duplicating the struct definition.
+//
+// Seven constructor overloads cover all table entry forms:
+//   Ctor1 (base):         (nk, cwe, cwv, cv)
+//   Ctor2 (binOp):        (bot, nk, cwe, cwv, cv)
+//   Ctor3 (guard):        (bool nf, ccc)
+//   Ctor4 (profile):      (bot, bool pv, itr, ...)
+//   Ctor5 (9-arg):        (nk, nullptr_t, cwe, rc)
+//   Ctor7 (codegen guard): (nk, bool nf)        ← for codegen noFuse
+//   Ctor8 (codegen g+bot): (nk, bot, bool nf)   ← for codegen guard+binOp
+//   Ctor9 (guard+binOp):  (bot, bool nf)        ← for codegen guard without nk
 #pragma once
 
 #include <MNN/MNNDefine.h>
-#include <MNN_generated.h>
-#include <TensorflowOp_generated.h>
-
-#include <cstdint>
-#include <utility>
+#include <MNN.expr/Op.hpp>
 #include <vector>
+#include <utility>
+#include <cstddef>
 
 namespace MNN {
 
-// =====================================================================
-// ExactPattern — lightweight match descriptor consumed by the three
-// tables in isp_fusion_patterns.h.
-//
-// Constructor signatures used by the generated tables:
-//   6  args : (chain, ce, ci, type, key, namedKey)
-//   7a args : (chain, ce, ci, type, key, namedKey, BinaryOpOperation)   — binOp
-//   7b args : (chain, ce, ci, type, key, namedKey, bool)               — noFuse
-//   8a args : (chain, ce, ci, type, key, namedKey, nullptr_t, int)     — cw only
-//   8b args : (chain, ce, ci, type, key, namedKey, BinaryOpOperation, bool) — binOp+noFuse
-//   9  args : (chain, ce, ci, type, key, namedKey, nullptr_t, int, bool) — cw + reqConn
-//  10  args : (chain, ce, ci, type, key, namedKey, nullptr_t, int, bool, constVals)
-//  Ctor4    : (chain, ce, ci, type, key, namedKey, bot, true,
-//              inputTrace, inputMustBeInput, nextOpType, chainBinOps, nextBinOp, constVals)
-// =====================================================================
+struct ChainConstCheck {
+    int chainPos = 0;              // 0-based position in the collected chain
+    int inputIdx = 0;              // which input of that op is the const
+    std::vector<float> values;     // expected const values (1e-4 tol)
+    ChainConstCheck(int p, int in, std::vector<float> v)
+        : chainPos(p), inputIdx(in), values(std::move(v)) {}
+};
 
 struct ExactPattern {
-    std::vector<OpType> chain;
-    int constElems;        // -1 = any
-    int constIndex;        // -1 = any
-    const char* ispType;   // Extra-op type string, e.g. "isp.fcs"
-    const char* typeKey;   // engine / SPIR-V key
-    const char* namedKey;  // float-vector key or nullptr
-    int binOp;             // BinaryOpOperation value, -1 = any
-    int convWeightElems;   // -1 = any
-    bool noFuse;           // guard: consumed but not replaced
-    bool requireConnectivity; // false for tree-shaped DAGs (calibration, histogram, tone_stats)
+    std::vector<MNN::OpType> opTypes;
+    int constElems;
+    int constIndex;
+    const char* ispType;
+    const char* spvName;
+    const char* namedKey;
+    int convWeightElems = -1;
+    MNN::BinaryOpOperation binOpType = MNN::BinaryOpOperation_ADD; // default: any BinaryOp
+    std::vector<float> convWeightValues;   // if non-empty, require weight match (1e-4 tol)
+    std::vector<float> constValues;        // if non-empty, require const blob match (1e-4 tol)
+    // noFuse: match and consume the chain (advance scan) but KEEP ops primitive.
+    // Used as longest-match guard so shorter generic patterns (e.g. auto_contrast)
+    // never steal scalar control chains (algo_gamma / algo_cct).
+    bool noFuse = false;
+    // Per-position const-value checks: (chainPos, inputIdx) -> expected values.
+    std::vector<ChainConstCheck> chainConstChecks;
+    // Profile-variant disambiguation (blocks whose constants are graph Inputs):
+    //   inputTrace[k]      — required producer type of ops[idx[0]]->inputIndexes[k]
+    //                        (traced through ConvertTensor; -1 = any). Stops at Extra.
+    //   inputMustBeInput   — input indices that must be fed directly by a graph Input op.
+    //   nextOpType         — required type of the next non-CT/Const/Input op after the chain.
+    //   chainBinOps        — (chainPos, BinaryOp sub-type) requirements at chain positions.
+    std::vector<int> inputTrace;
+    std::vector<int> inputMustBeInput;
+    int nextOpType = -1;
+    int nextBinOp = -1;   // required BinaryOp sub-type of the next op (-1 = any)
+    std::vector<std::pair<int, MNN::BinaryOpOperation>> chainBinOps;
+    bool requireConnectivity = true; // false for tree-shaped DAGs (calibration, histogram, tone_stats)
 
-    // Ctor4 profile-variant fields
-    std::vector<int> inputTrace;         // producer OpType per input (-1 = any)
-    std::vector<int> inputMustBeInput;   // input indices that must be graph Input
-    int nextOpType;                      // required OpType of the op after the chain (-1 = any)
-    std::vector<std::pair<int, int>> chainBinOps;  // (chainPos, BinOp) requirements
-    int nextBinOp;                       // required BinaryOp sub-type of the next op (-1 = any)
-    std::vector<float> constVals;        // expected const blob float values (1e-4 tolerance)
+    // ── Ctor1: base (namedKey, constElems) ────────────────────────
+    ExactPattern(std::vector<MNN::OpType> ops, int ce, int ci,
+                 const char* isp, const char* spv, const char* nk = nullptr, int cwe = -1,
+                 std::vector<float> cwv = {}, std::vector<float> cv = {})
+        : opTypes(std::move(ops)), constElems(ce), constIndex(ci),
+          ispType(isp), spvName(spv), namedKey(nk), convWeightElems(cwe),
+          convWeightValues(std::move(cwv)), constValues(std::move(cv)) {}
 
-    // 6-arg base
-    ExactPattern(std::vector<OpType> ch, int ce, int ci,
-                 const char* t, const char* k, const char* nk)
-        : chain(std::move(ch)), constElems(ce), constIndex(ci),
-          ispType(t), typeKey(k), namedKey(nk),
-          binOp(-1), convWeightElems(-1), noFuse(false), requireConnectivity(true),
-          nextOpType(-1), nextBinOp(-1) {}
+    // ── Ctor2: binOp (binOpType, namedKey) ───────────────────────
+    ExactPattern(std::vector<MNN::OpType> ops, int ce, int ci,
+                 const char* isp, const char* spv, MNN::BinaryOpOperation bot,
+                 const char* nk = nullptr, int cwe = -1,
+                 std::vector<float> cwv = {}, std::vector<float> cv = {})
+        : opTypes(std::move(ops)), constElems(ce), constIndex(ci),
+          ispType(isp), spvName(spv), namedKey(nk), convWeightElems(cwe), binOpType(bot),
+          convWeightValues(std::move(cwv)), constValues(std::move(cv)) {}
 
-    // 7-arg with BinaryOpOperation
-    ExactPattern(std::vector<OpType> ch, int ce, int ci,
-                 const char* t, const char* k, const char* nk,
-                 BinaryOpOperation bo)
-        : chain(std::move(ch)), constElems(ce), constIndex(ci),
-          ispType(t), typeKey(k), namedKey(nk),
-          binOp(static_cast<int>(bo)), convWeightElems(-1), noFuse(false),
-          requireConnectivity(true),
-          nextOpType(-1), nextBinOp(-1) {}
+    // ── Ctor3: guard (bool nf, chainConstChecks) ─────────────────
+    ExactPattern(std::vector<MNN::OpType> ops, int ce, int ci,
+                 const char* isp, const char* spv, bool nf,
+                 std::vector<ChainConstCheck> ccc = {})
+        : opTypes(std::move(ops)), constElems(ce), constIndex(ci),
+          ispType(isp), spvName(spv), noFuse(nf), chainConstChecks(std::move(ccc)) {}
 
-    // 7-arg with noFuse bool (algo_cct guard pattern)
-    ExactPattern(std::vector<OpType> ch, int ce, int ci,
-                 const char* t, const char* k, const char* nk,
+    // ── Ctor4: profile-variant ────────────────────────────────────
+    // The 7th arg is the bool marker so this ctor never collides with the
+    // BinaryOp-sub-type ctor (whose 7th arg is the namedKey const char*).
+    ExactPattern(std::vector<MNN::OpType> ops, int ce, int ci,
+                 const char* isp, const char* spv, MNN::BinaryOpOperation bot,
+                 bool pv, std::vector<int> itr, std::vector<int> imbi = {},
+                 int nxt = -1, std::vector<std::pair<int, MNN::BinaryOpOperation>> cbo = {},
+                 int nbo = -1)
+        : opTypes(std::move(ops)), constElems(ce), constIndex(ci),
+          ispType(isp), spvName(spv), binOpType(bot),
+          inputTrace(std::move(itr)), inputMustBeInput(std::move(imbi)),
+          nextOpType(nxt), nextBinOp(nbo), chainBinOps(std::move(cbo)) {
+        (void)pv;
+    }
+
+    // ── Ctor5: 9-arg (nk, nullptr_t, cwe, requireConnectivity) ───
+    ExactPattern(std::vector<MNN::OpType> ops, int ce, int ci,
+                 const char* isp, const char* spv, const char* nk,
+                 std::nullptr_t, int cwe, bool rc = true)
+        : opTypes(std::move(ops)), constElems(ce), constIndex(ci),
+          ispType(isp), spvName(spv), namedKey(nk), convWeightElems(cwe),
+          requireConnectivity(rc) {}
+
+    // ── Ctor7: codegen guard (namedKey + bool nf) ────────────────
+    // Codegen emits (namedKey, true) for noFuse guard chains without binOp.
+    // Matches entries like: ExactPattern({...}, -1, -1, "isp.noop_cct", "isp.noop_cct", nullptr, true)
+    ExactPattern(std::vector<MNN::OpType> ops, int ce, int ci,
+                 const char* isp, const char* spv, const char* nk,
                  bool nf)
-        : chain(std::move(ch)), constElems(ce), constIndex(ci),
-          ispType(t), typeKey(k), namedKey(nk),
-          binOp(-1), convWeightElems(-1), noFuse(nf), requireConnectivity(true),
-          nextOpType(-1), nextBinOp(-1) {}
+        : opTypes(std::move(ops)), constElems(ce), constIndex(ci),
+          ispType(isp), spvName(spv), namedKey(nk), noFuse(nf) {}
 
-    // 8-arg nullptr_t + convWeightElems
-    ExactPattern(std::vector<OpType> ch, int ce, int ci,
-                 const char* t, const char* k, const char* nk,
-                 std::nullptr_t, int cw)
-        : chain(std::move(ch)), constElems(ce), constIndex(ci),
-          ispType(t), typeKey(k), namedKey(nk),
-          binOp(-1), convWeightElems(cw), noFuse(false), requireConnectivity(true),
-          nextOpType(-1), nextBinOp(-1) {}
+    // ── Ctor8: codegen guard + binOp (namedKey + bot + bool nf) ──
+    // Codegen emits (namedKey, binOpType, true) for noFuse guard chains with binOp.
+    // Matches entries like: ExactPattern({...}, -1, -1, "isp.noop_gamma", "isp.noop_gamma", nullptr, MNN::BinaryOpOperation_MUL, true)
+    ExactPattern(std::vector<MNN::OpType> ops, int ce, int ci,
+                 const char* isp, const char* spv, const char* nk,
+                 MNN::BinaryOpOperation bot, bool nf)
+        : opTypes(std::move(ops)), constElems(ce), constIndex(ci),
+          ispType(isp), spvName(spv), namedKey(nk), binOpType(bot), noFuse(nf) {}
 
-    // 8-arg BinaryOpOperation + noFuse
-    ExactPattern(std::vector<OpType> ch, int ce, int ci,
-                 const char* t, const char* k, const char* nk,
-                 BinaryOpOperation bo, bool nf)
-        : chain(std::move(ch)), constElems(ce), constIndex(ci),
-          ispType(t), typeKey(k), namedKey(nk),
-          binOp(static_cast<int>(bo)), convWeightElems(-1), noFuse(nf),
-          requireConnectivity(true),
-          nextOpType(-1), nextBinOp(-1) {}
-
-    // 9-arg: nullptr_t + convWeightElems + requireConnectivity
-    ExactPattern(std::vector<OpType> ch, int ce, int ci,
-                 const char* t, const char* k, const char* nk,
-                 std::nullptr_t, int cw, bool rc)
-        : chain(std::move(ch)), constElems(ce), constIndex(ci),
-          ispType(t), typeKey(k), namedKey(nk),
-          binOp(-1), convWeightElems(cw), noFuse(false),
-          requireConnectivity(rc),
-          nextOpType(-1), nextBinOp(-1) {}
-
-    // Ctor4: profile variant with inputTrace, inputMustBeInput, nextOpType,
-    //        chainBinOps, nextBinOp, constVals
-    //   ExactPattern({chain}, ce, ci, type, key, namedKey, bot, true,
-    //                 {inputTrace}, {inputMustBeInput}, nextOpType,
-    //                 {{chainPos, binOp}, ...}, nextBinOp, {constVals})
-    ExactPattern(std::vector<OpType> ch, int ce, int ci,
-                 const char* t, const char* k, const char* nk,
-                 BinaryOpOperation bo, bool /*nf*/,
-                 std::vector<int> itr, std::vector<int> imbi,
-                 int notype,
-                 std::vector<std::pair<int, int>> cbo,
-                 int nbo,
-                 std::vector<float> cv)
-        : chain(std::move(ch)), constElems(ce), constIndex(ci),
-          ispType(t), typeKey(k), namedKey(nk),
-          binOp(static_cast<int>(bo)), convWeightElems(-1), noFuse(true),
-          requireConnectivity(true),
-          inputTrace(std::move(itr)), inputMustBeInput(std::move(imbi)),
-          nextOpType(notype), chainBinOps(std::move(cbo)),
-          nextBinOp(nbo), constVals(std::move(cv)) {}
-
-    // Ctor4-lite: profile variant without binOp, using nullptr
-    //   ExactPattern({chain}, ce, ci, type, key, namedKey, nullptr,
-    //                 {inputTrace}, {inputMustBeInput}, nextOpType,
-    //                 {{chainPos, binOp}, ...}, nextBinOp, {constVals})
-    ExactPattern(std::vector<OpType> ch, int ce, int ci,
-                 const char* t, const char* k, const char* nk,
-                 std::nullptr_t,
-                 std::vector<int> itr, std::vector<int> imbi,
-                 int notype,
-                 std::vector<std::pair<int, int>> cbo,
-                 int nbo,
-                 std::vector<float> cv)
-        : chain(std::move(ch)), constElems(ce), constIndex(ci),
-          ispType(t), typeKey(k), namedKey(nk),
-          binOp(-1), convWeightElems(-1), noFuse(false),
-          requireConnectivity(true),
-          inputTrace(std::move(itr)), inputMustBeInput(std::move(imbi)),
-          nextOpType(notype), chainBinOps(std::move(cbo)),
-          nextBinOp(nbo), constVals(std::move(cv)) {}
+    // ── Ctor9: guard + binOp (no namedKey) ───────────────────────
+    // Codegen emits (binOpType, true) for guard chains with binOp but no namedKey.
+    ExactPattern(std::vector<MNN::OpType> ops, int ce, int ci,
+                 const char* isp, const char* spv, MNN::BinaryOpOperation bot,
+                 bool nf)
+        : opTypes(std::move(ops)), constElems(ce), constIndex(ci),
+          ispType(isp), spvName(spv), binOpType(bot), noFuse(nf) {}
 };
 
 } // namespace MNN

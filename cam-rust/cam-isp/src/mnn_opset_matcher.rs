@@ -2234,22 +2234,14 @@ pub fn generate_cpp_entry(p: &OpPattern) -> String {
         || !f.const_vals.is_empty();
 
     if has_ctor4 {
-        // Ctor4 signature:
-        //   ExactPattern({chain}, ce, ci, type, key, namedKey, bot, true,
+        // MNN Ctor4 signature (no namedKey, no constVals):
+        //   ExactPattern({ops}, ce, ci, isp, spv, bot, true,
         //                 {inputTrace}, {inputMustBeInput}, nextOpType,
-        //                 {{chainPos, binOp}, ...}, nextBinOp, {constVals})
-        // Without binOp (nullptr):
-        //   ExactPattern({chain}, ce, ci, type, key, namedKey, nullptr,
-        //                 {inputTrace}, {inputMustBeInput}, nextOpType,
-        //                 {{chainPos, binOp}, ...}, nextBinOp, {constVals})
-        match f.named_key {
-            Some(k) => line.push_str(&format!(", \"{}\"", k)),
-            None => line.push_str(", nullptr"),
-        }
+        //                 {{chainPos, binOp}, ...}, nextBinOp)
         if f.bin_op_type >= 0 {
             line.push_str(&format!(", {}", cpp_bin_op(f.bin_op_type)));
         } else {
-            line.push_str(", nullptr");
+            line.push_str(", MNN::BinaryOpOperation_ADD");
         }
         line.push_str(", true");
 
@@ -2300,16 +2292,6 @@ pub fn generate_cpp_entry(p: &OpPattern) -> String {
         } else {
             line.push_str(", -1");
         }
-
-        // constVals vector
-        line.push_str(", {");
-        for (i, v) in f.const_vals.iter().enumerate() {
-            if i > 0 {
-                line.push_str(", ");
-            }
-            line.push_str(&format!("{}f", v));
-        }
-        line.push('}');
     } else if f.no_fuse {
         // Guard chains: use Ctor7/Ctor8/Ctor9.
         // Ctor8: (nk, bot, nf) — namedKey first, then binOp, then true.
@@ -3529,19 +3511,26 @@ mod tests {
         };
         let line = generate_cpp_entry(&p);
         assert!(line.contains("ExactPattern("), "got: {line}");
-        // Ctor4-lite: should have nullptr instead of BinaryOpOperation
+        // MNN Ctor4: uses BinaryOpOperation_ADD as default (no nullptr), no namedKey
         assert!(
-            line.contains(", nullptr, true"),
-            "should have nullptr + true: {line}"
+            line.contains("BinaryOpOperation_ADD, true"),
+            "should have BinaryOpOperation_ADD + true: {line}"
         );
         // nextOpType should be OpType_Convolution (id=12)
         assert!(
             line.contains("OpType_Convolution"),
             "nextOpType should be Convolution: {line}"
         );
-        // constVals should be present
-        assert!(line.contains("1f"), "constVals should contain 1f: {line}");
-        assert!(line.contains("2f"), "constVals should contain 2f: {line}");
+        // namedKey is NOT emitted in MNN Ctor4 (no positional slot)
+        assert!(
+            !line.contains("\"test\""),
+            "namedKey should NOT appear in Ctor4: {line}"
+        );
+        // constVals NOT in MNN Ctor4
+        assert!(
+            !line.contains("1f"),
+            "constVals should NOT appear in MNN Ctor4: {line}"
+        );
     }
 
     /// Recursively walk a directory yielding all entries whose extension is `spv`.
