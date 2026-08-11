@@ -54,26 +54,12 @@ impl FormatConvertEngine {
         // Build ONNX model using DisplayBlock's pattern
         let onnx = build_format_convert_onnx(width, height, output_format);
 
-        // Convert ONNX→MNN and load it through a memfd so the model never
-        // round-trips through the Rust heap. Falls back to the heap buffer
-        // path if the memfd conversion is unavailable on this platform.
-        let interp = match crate::mnn_converter::convert_onnx_memfd(&onnx) {
-            Ok(fd) => {
-                let interp = MnnInterpreterSafe::from_fd(fd).ok_or_else(|| {
-                    crate::error::IspError::Mnn("fmt conv model load fail".into())
-                })?;
-                // MNN has parsed the flatbuffer into memory; the fd is no longer needed.
-                let _ = unsafe { libc::close(fd) };
-                interp
-            }
-            Err(_) => {
-                let mnn_bytes = convert_onnx_buffer(&onnx).map_err(|e| {
-                    crate::error::IspError::Conversion(format!("convert fmt conv: {}", e))
-                })?;
-                MnnInterpreterSafe::from_buffer(&mnn_bytes)
-                    .ok_or_else(|| crate::error::IspError::Mnn("fmt conv model load fail".into()))?
-            }
-        };
+        // Convert ONNX→MNN fully in memory (no temp files, no memfd) and
+        // load the returned flatbuffer directly.
+        let mnn_bytes = convert_onnx_buffer(&onnx)
+            .map_err(|e| crate::error::IspError::Conversion(format!("convert fmt conv: {}", e)))?;
+        let interp = MnnInterpreterSafe::from_buffer(&mnn_bytes)
+            .ok_or_else(|| crate::error::IspError::Mnn("fmt conv model load fail".into()))?;
 
         let session = interp
             .create_session(MnnBackendType::Cpu, 2)
