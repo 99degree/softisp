@@ -69,6 +69,208 @@ pub struct OpPattern {
     pub fusion: Option<FusionSpec>,
 }
 
+/// The three supported sensor input conventions. The pipeline head
+/// (unpack / CFA extraction) emits a different MNN op sequence per
+/// convention, so the IspChainFusion patterns need one variant each:
+///
+/// - `PackedInt32`: `RawInputPackedBlock` + `UnpackBlock` (Cast INT32→F32) +
+///   `CfaBlockPacked` (2-input-channel conv, kernel `[2,1]`) — `[1,2,H,W/2]`.
+/// - `PureInt16`: `RawInput16Block` + `UnpackCfaBlock` native fast
+///   (Cast + 1-channel conv, kernel `[2,2]`) — `[1,1,H,W]` INT16.
+/// - `RawInt32`: `RawInputBlock` + `NormalizeBlock` + `CfaBlock`
+///   (1-channel conv, kernel `[2,2]`) — `[1,1,H,W]` INT32 legacy.
+///
+/// All post-head patterns (demosaic, ccm, tone, fcs, ldci, ee, display, …)
+/// are input-style-independent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InputStyle {
+    PackedInt32,
+    PureInt16,
+    RawInt32,
+}
+
+impl InputStyle {
+    /// All three input conventions, in declaration order.
+    pub const ALL: [InputStyle; 3] = [Self::PackedInt32, Self::PureInt16, Self::RawInt32];
+
+    /// Stable label used in generated table names.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PackedInt32 => "PackedInt32",
+            Self::PureInt16 => "PureInt16",
+            Self::RawInt32 => "RawInt32",
+        }
+    }
+
+    /// The profile-builder flags that select this input convention:
+    /// `(use_unpack, force_input16)`.
+    pub fn profile_flags(self) -> (bool, bool) {
+        match self {
+            Self::PackedInt32 => (true, false),
+            Self::PureInt16 => (false, true),
+            Self::RawInt32 => (false, false),
+        }
+    }
+}
+
+/// A fusion pattern tagged with the input style(s) it applies to.
+/// `styles == InputStyle::ALL` means the pattern is input-style-independent
+/// (every post-head block); a subset means it only fires for those heads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StylePattern {
+    pub styles: &'static [InputStyle],
+    pub pattern: OpPattern,
+}
+
+/// True when two patterns are identical (same block, op chain and fusion
+/// spec) — used to dedup the per-style tables when merging.
+fn same_pattern(a: &OpPattern, b: &OpPattern) -> bool {
+    a.block_name == b.block_name && a.op_types == b.op_types && a.fusion == b.fusion
+}
+
+/// Merge every fusion pattern (style-independent `CPP_FUSION_TABLE` plus the
+/// per-style `STYLE_FUSION_TABLE`) into a single deduplicated list that
+/// covers all three input conventions. Entries identical in block name, op
+/// chain and fusion spec are merged and their style sets unioned.
+///
+/// The merged list feeds the generated header's `kExactFusionTablesPass0/1`
+/// and `kExactProfileVariants` tables, which IspChainFusion scans first-match.
+pub fn merge_fusion_patterns() -> Vec<(Vec<InputStyle>, OpPattern)> {
+    let mut merged: Vec<(Vec<InputStyle>, OpPattern)> = Vec::new();
+    for p in CPP_FUSION_TABLE.iter() {
+        merged.push((InputStyle::ALL.to_vec(), p.clone()));
+    }
+    for sp in STYLE_FUSION_TABLE.iter() {
+        merged.push((sp.styles.to_vec(), sp.pattern.clone()));
+    }
+    let mut out: Vec<(Vec<InputStyle>, OpPattern)> = Vec::new();
+    for (styles, p) in merged {
+        match out.iter_mut().find(|(_, e)| same_pattern(e, &p)) {
+            Some((existing_styles, _)) => {
+                for s in styles {
+                    if !existing_styles.contains(&s) {
+                        existing_styles.push(s);
+                    }
+                }
+            }
+            None => out.push((styles, p)),
+        }
+    }
+    out
+}
+
+/// Per-style fusion patterns — the pipeline-HEAD chains that differ between
+/// the three input conventions. Post-head patterns are input-style-
+/// independent and live in `CPP_FUSION_TABLE`.
+///
+/// Populated from `examples/dump_style_patterns.rs`: that tool builds each
+/// input style's pipeline, converts it to MNN and prints the actual op
+/// sequence, so the head patterns below are ground-truth op chains.
+pub const STYLE_FUSION_TABLE: &[StylePattern] = &[
+    // ── PackedInt32 head ────────────────────────────────────────────────
+    // RawInputPackedBlock → UnpackBlock (Cast INT32→F32) → NormalizeBlock
+    // (Mul) → CfaBlockPacked (2-input-channel conv, kernel [2,1], 16 weights).
+    // Dumped chain (HEAVY, on-device mnn2json):
+    //   Permute Cast Permute Const BinaryOp(MUL) Permute ConvertTensor
+    //   Convolution(16 weights)
+    StylePattern {
+        styles: &[InputStyle::PackedInt32],
+        pattern: OpPattern {
+            block_name: "unpack_packed_head",
+            op_types: &[
+                "Permute",
+                "Cast",
+                "Permute",
+                "Const",
+                "BinaryOp",
+                "Permute",
+                "ConvertTensor",
+                "Convolution",
+            ],
+            fusion: Some(FusionSpec {
+                isp_type: "isp.unpack_packed",
+                named_key: None,
+                const_elems: -1,
+                const_index: -1,
+                bin_op_type: 2, // MUL — normalize scale
+                conv_weight_elems: 16,
+                no_fuse: false,
+                next_op_type: -1,
+                require_connectivity: true,
+                input_trace: &[],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[],
+            }),
+        },
+    },
+    // ── PureInt16 head ──────────────────────────────────────────────────
+    // RawInput16Block → UnpackCfaBlock native fast. The converter DCEs the
+    // identity Cast (INT16 upcast → ConvertTensor) so only the CFA conv
+    // remains after the layout op.
+    // Dumped chain: Permute ConvertTensor Convolution(8 weights)
+    StylePattern {
+        styles: &[InputStyle::PureInt16],
+        pattern: OpPattern {
+            block_name: "unpack_cfa16_head",
+            op_types: &["Permute", "ConvertTensor", "Convolution"],
+            fusion: Some(FusionSpec {
+                isp_type: "isp.unpack_blc",
+                named_key: None,
+                const_elems: -1,
+                const_index: -1,
+                bin_op_type: -1,
+                conv_weight_elems: 8,
+                no_fuse: false,
+                next_op_type: -1,
+                require_connectivity: true,
+                input_trace: &[],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[],
+            }),
+        },
+    },
+    // ── RawInt32 head ───────────────────────────────────────────────────
+    // RawInputBlock → NormalizeBlock (Cast INT32→F32 + Mul) → CfaBlock
+    // (1-channel conv, kernel [2,2], 16 weights).
+    // Dumped chain: Permute Cast Const BinaryOp(MUL) Permute ConvertTensor
+    // Convolution(16 weights)
+    StylePattern {
+        styles: &[InputStyle::RawInt32],
+        pattern: OpPattern {
+            block_name: "unpack_raw_head",
+            op_types: &[
+                "Permute",
+                "Cast",
+                "Const",
+                "BinaryOp",
+                "Permute",
+                "ConvertTensor",
+                "Convolution",
+            ],
+            fusion: Some(FusionSpec {
+                isp_type: "isp.unpack_blc",
+                named_key: None,
+                const_elems: -1,
+                const_index: -1,
+                bin_op_type: 2, // MUL — normalize scale
+                conv_weight_elems: 16,
+                no_fuse: false,
+                next_op_type: -1,
+                require_connectivity: true,
+                input_trace: &[],
+                input_must_be_input: &[],
+                next_bin_op: -1,
+                chain_bin_ops: &[],
+                const_vals: &[],
+            }),
+        },
+    },
+];
+
 /// The exact matching table — full-pipeline HEAVY-profile ISP block op signatures.
 ///
 /// Patterns extracted from the actual MNN opset when all blocks are fused
@@ -2355,7 +2557,7 @@ pub fn generate_cpp_entry(p: &OpPattern) -> String {
 /// Generate a complete C++ `static const ExactPattern[]` table declaration.
 ///
 /// Returns the full table as a `String` ready to paste into `IspChainFusion.cpp`.
-pub fn generate_cpp_table(name: &str, entries: &[OpPattern]) -> String {
+pub fn generate_cpp_table(name: &str, entries: &[&OpPattern]) -> String {
     let mut out = format!("static const ExactPattern {}[] = {{\n", name);
     for p in entries {
         let entry = generate_cpp_entry(p);
@@ -2402,42 +2604,64 @@ pub fn classify_pass(p: &OpPattern) -> CppPass {
 /// - `#pragma once` include guard
 /// - Auto-generation comment with source provenance
 /// - `#include` directives for MNN types
-/// - Three `static const ExactPattern[]` tables: Pass0, Pass1, Profile
+/// - Per-input-style variant tables (3 variants × Pass0/Pass1/Profile)
+/// - Merged `static const ExactPattern[]` tables (Pass0, Pass1, Profile)
+///   covering all three input conventions — these are what IspChainFusion
+///   scans (first-match wins).
 pub fn generate_cpp_header() -> String {
-    let mut pass0: Vec<OpPattern> = CPP_FUSION_TABLE
+    // Merge style-independent + per-style patterns into one covering set.
+    let merged = merge_fusion_patterns();
+
+    let classify = |p: &OpPattern| classify_pass(p);
+
+    // Split the merged set per pass category.
+    let mut merged_pass0: Vec<(Vec<InputStyle>, OpPattern)> = merged
         .iter()
-        .filter(|p| classify_pass(p) == CppPass::Pass0)
+        .filter(|(_, p)| classify(p) == CppPass::Pass0)
         .cloned()
         .collect();
-    let mut pass1: Vec<OpPattern> = CPP_FUSION_TABLE
+    let mut merged_pass1: Vec<(Vec<InputStyle>, OpPattern)> = merged
         .iter()
-        .filter(|p| classify_pass(p) == CppPass::Pass1)
+        .filter(|(_, p)| classify(p) == CppPass::Pass1)
         .cloned()
         .collect();
-    let mut profile: Vec<OpPattern> = CPP_FUSION_TABLE
+    let mut merged_profile: Vec<(Vec<InputStyle>, OpPattern)> = merged
         .iter()
-        .filter(|p| classify_pass(p) == CppPass::Profile)
+        .filter(|(_, p)| classify(p) == CppPass::Profile)
         .cloned()
         .collect();
 
     // Sort each table by chain length descending (longest first) so the
     // first-match-wins scan in runPass() tries the most specific pattern
     // before shorter ones that could shadow it.
-    let chain_len = |p: &OpPattern| std::cmp::Reverse(p.op_types.len());
-    pass0.sort_by_key(chain_len);
-    pass1.sort_by_key(chain_len);
-    profile.sort_by_key(chain_len);
+    let chain_len = |(_, p): &(Vec<InputStyle>, OpPattern)| std::cmp::Reverse(p.op_types.len());
+    merged_pass0.sort_by_key(chain_len);
+    merged_pass1.sort_by_key(chain_len);
+    merged_profile.sort_by_key(chain_len);
 
     let mut h = String::with_capacity(16384);
 
     // Header guard + auto-gen comment
     h.push_str("// Auto-generated by cam-isp mnn_opset_matcher.rs — DO NOT EDIT.\n");
-    h.push_str("// Source: CPP_FUSION_TABLE in cam-rust/cam-isp/src/mnn_opset_matcher.rs\n");
+    h.push_str("// Source: CPP_FUSION_TABLE + STYLE_FUSION_TABLE in cam-rust/cam-isp/src/mnn_opset_matcher.rs\n");
     h.push_str("//\n");
     h.push_str("// Classification:\n");
     h.push_str("//   Pass0   — first-match fusion (concrete const/weight checks)\n");
     h.push_str("//   Pass1   — guard chains (no_fuse, consumed but kept primitive)\n");
     h.push_str("//   Profile — structural-only matching (relaxed const checks)\n");
+    h.push_str("//\n");
+    h.push_str("// Three input conventions are covered by the merged tables:\n");
+    for style in InputStyle::ALL {
+        let count = merged
+            .iter()
+            .filter(|(styles, _)| styles.contains(&style))
+            .count();
+        h.push_str(&format!(
+            "//   {} — {} patterns (head chains differ per convention; post-head shared)\n",
+            style.label(),
+            count
+        ));
+    }
     h.push_str("#pragma once\n");
     h.push('\n');
 
@@ -2446,35 +2670,96 @@ pub fn generate_cpp_header() -> String {
     // which already includes MNN_generated.h.
     h.push_str("#include <MNN/MNNDefine.h>\n");
     h.push('\n');
-    h.push_str("// ExactPattern struct — defines the five constructor overloads\n");
-    h.push_str("// used by the static tables below (6-arg base, 7a/7b, 8a/8b).\n");
+    h.push_str("// ExactPattern struct — defines the constructor overloads\n");
+    h.push_str("// used by the static tables below.\n");
     h.push_str("#include \"ExactPattern.h\"\n");
     h.push('\n');
     h.push_str("namespace MNN {\n");
     h.push('\n');
 
-    // Pass0 table
+    // ── Per-input-style variant tables (3 × Pass0/Pass1/Profile) ──
+    for style in InputStyle::ALL {
+        let style_entries: Vec<&OpPattern> = merged
+            .iter()
+            .filter(|(styles, _)| styles.contains(&style))
+            .map(|(_, p)| p)
+            .collect();
+        let mut pass0_s: Vec<&OpPattern> = style_entries
+            .iter()
+            .filter(|p| classify(p) == CppPass::Pass0)
+            .copied()
+            .collect();
+        let mut pass1_s: Vec<&OpPattern> = style_entries
+            .iter()
+            .filter(|p| classify(p) == CppPass::Pass1)
+            .copied()
+            .collect();
+        let mut profile_s: Vec<&OpPattern> = style_entries
+            .iter()
+            .filter(|p| classify(p) == CppPass::Profile)
+            .copied()
+            .collect();
+        let sort_style = |v: &mut Vec<&OpPattern>| {
+            v.sort_by_key(|p| std::cmp::Reverse(p.op_types.len()));
+        };
+        sort_style(&mut pass0_s);
+        sort_style(&mut pass1_s);
+        sort_style(&mut profile_s);
+        h.push_str(&format!(
+            "// ── {} variant: Pass0 ({}), Pass1 ({}), Profile ({}) ──────────\n",
+            style.label(),
+            pass0_s.len(),
+            pass1_s.len(),
+            profile_s.len()
+        ));
+        h.push_str(&generate_cpp_table(
+            &format!("kExactFusionTablesPass0_{}", style.label()),
+            &pass0_s,
+        ));
+        h.push_str(&generate_cpp_table(
+            &format!("kExactFusionTablesPass1_{}", style.label()),
+            &pass1_s,
+        ));
+        h.push_str(&generate_cpp_table(
+            &format!("kExactProfileVariants_{}", style.label()),
+            &profile_s,
+        ));
+        h.push('\n');
+    }
+
+    // ── Merged tables (all input styles, used by IspChainFusion) ──
+    let merged_pass0_refs: Vec<&OpPattern> = merged_pass0.iter().map(|(_, p)| p).collect();
+    let merged_pass1_refs: Vec<&OpPattern> = merged_pass1.iter().map(|(_, p)| p).collect();
+    let merged_profile_refs: Vec<&OpPattern> = merged_profile.iter().map(|(_, p)| p).collect();
+
     h.push_str(&format!(
-        "// ── Pass0: first-match fusion ({} entries) ─────────────────\n",
-        pass0.len()
+        "// ── MERGED Pass0 ({} entries, all input styles) ─────────────────\n",
+        merged_pass0_refs.len()
     ));
-    h.push_str(&generate_cpp_table("kExactFusionTablesPass0", &pass0));
+    h.push_str(&generate_cpp_table(
+        "kExactFusionTablesPass0",
+        &merged_pass0_refs,
+    ));
     h.push('\n');
 
-    // Pass1 table
     h.push_str(&format!(
-        "// ── Pass1: guard chains ({} entries) ──────────────────────\n",
-        pass1.len()
+        "// ── MERGED Pass1 ({} entries, all input styles) ─────────────────\n",
+        merged_pass1_refs.len()
     ));
-    h.push_str(&generate_cpp_table("kExactFusionTablesPass1", &pass1));
+    h.push_str(&generate_cpp_table(
+        "kExactFusionTablesPass1",
+        &merged_pass1_refs,
+    ));
     h.push('\n');
 
-    // Profile table
     h.push_str(&format!(
-        "// ── Profile: structural-only matching ({} entries) ─────────\n",
-        profile.len()
+        "// ── MERGED Profile ({} entries, all input styles) ───────────────\n",
+        merged_profile_refs.len()
     ));
-    h.push_str(&generate_cpp_table("kExactProfileVariants", &profile));
+    h.push_str(&generate_cpp_table(
+        "kExactProfileVariants",
+        &merged_profile_refs,
+    ));
     h.push('\n');
 
     h.push_str("} // namespace MNN\n");
@@ -3251,7 +3536,7 @@ mod tests {
 
     #[test]
     fn test_generate_cpp_table_count() {
-        let table = generate_cpp_table("TestTable", &CPP_FUSION_TABLE);
+        let table = generate_cpp_table("TestTable", &CPP_FUSION_TABLE.iter().collect::<Vec<&_>>());
         // Count entry lines: each entry starts with "ExactPattern("
         let entry_count = table
             .lines()
@@ -3287,16 +3572,37 @@ mod tests {
     #[test]
     fn test_generate_cpp_header_all_entries_covered() {
         let header = generate_cpp_header();
-        let total = CPP_FUSION_TABLE.len();
-        // Count entries across all 3 tables by counting exact-pattern entry lines
-        // Each entry has exactly one "ExactPattern(" occurrence
-        let pass0_count = header.matches("ExactPattern(").count();
-        // All entries must appear somewhere
+        let total = CPP_FUSION_TABLE.len() + STYLE_FUSION_TABLE.len();
+        // Count entries in the MERGED section only (from the first MERGED
+        // table to the end) — these are the tables IspChainFusion scans.
+        let merged_section = header
+            .find("// ── MERGED Pass0")
+            .map(|i| &header[i..])
+            .unwrap_or("");
+        let merged_count = merged_section.matches("ExactPattern(").count();
         assert_eq!(
-            pass0_count, total,
-            "Header must contain all {} CPP_FUSION_TABLE entries, found {}",
-            total, pass0_count
+            merged_count, total,
+            "Merged tables must cover all {} fusion patterns, found {}",
+            total, merged_count
         );
+        // Every input-style variant table must be emitted.
+        for style in InputStyle::ALL {
+            assert!(
+                header.contains(&format!("kExactFusionTablesPass0_{}", style.label())),
+                "missing Pass0 variant table for {}",
+                style.label()
+            );
+            assert!(
+                header.contains(&format!("kExactFusionTablesPass1_{}", style.label())),
+                "missing Pass1 variant table for {}",
+                style.label()
+            );
+            assert!(
+                header.contains(&format!("kExactProfileVariants_{}", style.label())),
+                "missing Profile variant table for {}",
+                style.label()
+            );
+        }
     }
 
     #[test]

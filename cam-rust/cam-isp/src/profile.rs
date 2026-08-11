@@ -526,6 +526,14 @@ impl PipelineProfile {
         self.force_input16 = true;
         self
     }
+
+    /// Override the packed-split input convention (`[1,2,H,W/2]` INT32).
+    /// `false` selects the legacy raw `[1,1,H,W]` INT32 head (unless
+    /// `force_input16` is set, which takes precedence).
+    pub fn with_use_unpack(mut self, use_unpack: bool) -> Self {
+        self.use_unpack = use_unpack;
+        self
+    }
 }
 
 #[cfg(test)]
