@@ -1,14 +1,12 @@
 //! MNN ONNX-to-MNN conversion.
 //!
-//! Three paths:
-//! 1. **memfd API** (`convert_onnx_memfd`): in-process via `libMNNConvertDeps.so`.
-//!    The converted `.mnn` is written into a memfd and the fd is returned;
-//!    the model never lands in the Rust heap. Load with `MnnInterpreterSafe::from_fd`.
-//!    Preferred for the zero-copy ONNX→MNN→inference hot path.
-//! 2. **Buffer API** (`convert_onnx_buffer`): in-process via `libMNNConvertDeps.so`.
-//!    Zero disk writes, zero subprocess — returns a `Vec<u8>` for callers that
-//!    need the bytes.
-//! 3. **Subprocess** (`convert_onnx_to_mnn`): spawns `MNNConvert` binary.
+//! Two paths:
+//! 1. **Buffer API** (`convert_onnx_buffer`): pure in-memory via
+//!    `libMNNConvertDeps.so`'s C-only `mnn_convert_onnx_to_mnn_buffer`
+//!    (MNN MNNConvertBuffer.cpp). The converter parses the ONNX protobuf from
+//!    the buffer, runs the full optimizeLevel=2 pipeline (incl. IspChainFusion)
+//!    and returns MNN bytes — no temp files, no memfd, no subprocess.
+//! 2. **Subprocess** (`convert_onnx_to_mnn`): spawns `MNNConvert` binary.
 //!    Retained as fallback for offline/export tooling only.
 
 use std::process::Command;
@@ -49,48 +47,48 @@ impl Default for MnnConvertOptions {
     }
 }
 
-/// Convert ONNX bytes to MNN bytes in-process (zero disk writes).
+/// Convert ONNX bytes to MNN bytes in-process (zero disk writes, zero memfd).
 ///
-/// Uses `libMNNConvertDeps.so` via `mnn_convert_onnx_buffer` FFI.
-/// The converter uses memfd internally — no temp files on Linux.
-/// Caller owns the returned `Vec<u8>`.
+/// Uses `libMNNConvertDeps.so` via the pure in-memory C API
+/// `mnn_convert_onnx_to_mnn_buffer` (MNN's MNNConvertBuffer.cpp) — the
+/// converter parses the ONNX protobuf from the buffer, runs the full
+/// optimizeLevel=2 pipeline and returns malloc'd MNN bytes. Caller owns the
+/// returned `Vec<u8>`.
 #[cfg(feature = "mnn")]
 pub fn convert_onnx_buffer(onnx_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    use crate::mnn_sys::{mnn_convert_onnx_buffer, MnnConvertBufferResult, MnnConvert_FreeBuffer};
+    use crate::mnn_sys::mnn_convert_onnx_to_mnn_buffer;
 
     if onnx_bytes.is_empty() {
         return Err("ONNX bytes are empty".into());
     }
 
-    let mut result = MnnConvertBufferResult {
-        success: 0,
-        error_msg: [0 as std::os::raw::c_char; 1024usize],
-        data: std::ptr::null_mut(),
-        size: 0,
-    };
-    unsafe {
-        mnn_convert_onnx_buffer(
+    let mut out_data: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut out_size: usize = 0;
+    let mut error_msg = [0 as std::os::raw::c_char; 1024usize];
+    let rc = unsafe {
+        mnn_convert_onnx_to_mnn_buffer(
             onnx_bytes.as_ptr() as *const std::ffi::c_void,
             onnx_bytes.len(),
-            &mut result,
-        );
-    }
-    if result.success != 0 {
-        let err_msg = unsafe { std::ffi::CStr::from_ptr(result.error_msg.as_ptr()) }
+            &mut out_data,
+            &mut out_size,
+            error_msg.as_mut_ptr(),
+            error_msg.len(),
+        )
+    };
+    if rc != 0 {
+        let err_msg = unsafe { std::ffi::CStr::from_ptr(error_msg.as_ptr()) }
             .to_string_lossy()
             .into_owned();
-        unsafe { MnnConvert_FreeBuffer(&mut result) };
         return Err(format!("ONNX→MNN buffer convert failed: {}", err_msg));
     }
-    if result.data.is_null() || result.size == 0 {
-        unsafe { MnnConvert_FreeBuffer(&mut result) };
+    if out_data.is_null() || out_size == 0 {
         return Err("ONNX→MNN buffer convert returned empty".into());
     }
 
-    let slice = unsafe { std::slice::from_raw_parts(result.data as *const u8, result.size) };
+    let slice = unsafe { std::slice::from_raw_parts(out_data as *const u8, out_size) };
     let mnn_bytes = slice.to_vec();
     unsafe {
-        MnnConvert_FreeBuffer(&mut result);
+        libc::free(out_data);
     }
     Ok(mnn_bytes)
 }
@@ -192,41 +190,6 @@ pub fn dump_mnn_to_json(mnn_bytes: &[u8]) -> Result<String, String> {
         MnnConvert_FreeBuffer(&mut result as *mut _ as *mut MnnConvertBufferResult);
     }
     Ok(s)
-}
-
-///
-/// Same as `convert_onnx_buffer` but the converted `.mnn` is written into a
-/// memfd and the fd is returned instead of copying bytes into a `Vec<u8>`.
-/// The model therefore never lands in the Rust heap. Load it with
-/// `MnnInterpreterSafe::from_fd(fd)` and `close(fd)` when done.
-#[cfg(feature = "mnn")]
-pub fn convert_onnx_memfd(onnx_bytes: &[u8]) -> Result<std::os::unix::io::RawFd, String> {
-    use crate::mnn_sys::mnn_convert_onnx_memfd;
-    use std::os::unix::io::RawFd;
-
-    if onnx_bytes.is_empty() {
-        return Err("ONNX bytes are empty".into());
-    }
-
-    // 1024-byte error buffer (matches the C API contract).
-    let mut err_buf = [0 as std::os::raw::c_char; 1024usize];
-    let fd = unsafe {
-        mnn_convert_onnx_memfd(
-            onnx_bytes.as_ptr() as *const std::ffi::c_void,
-            onnx_bytes.len(),
-            err_buf.as_mut_ptr(),
-            err_buf.len(),
-        )
-    };
-
-    if fd < 0 {
-        let err_msg = unsafe { std::ffi::CStr::from_ptr(err_buf.as_ptr()) }
-            .to_string_lossy()
-            .into_owned();
-        return Err(format!("ONNX→MNN memfd convert failed: {}", err_msg));
-    }
-
-    Ok(fd as RawFd)
 }
 
 /// Fallback: Convert ONNX file to MNN file via MNNConvert subprocess.
@@ -372,17 +335,18 @@ mod tests {
         assert_eq!(opts.biz_code, "MNN");
     }
 
-    // Build a trivial ONNX model (identity) and verify the memfd conversion
-    // path returns a usable fd that loads as an MNN interpreter without ever
-    // copying the model into a Rust heap Vec.
+    // Build a trivial ONNX model (identity) and verify the pure in-memory
+    // buffer conversion returns valid MNN bytes that load as an interpreter —
+    // no temp files, no memfd, no /proc/self/fd.
     #[cfg(feature = "mnn")]
     #[test]
-    fn test_convert_onnx_memfd_roundtrip() {
+    fn test_convert_onnx_buffer_roundtrip() {
         use crate::mnn_sys::MnnInterpreterSafe;
         use crate::onnx::proto::Proto;
 
-        // Minimal identity graph: input "x" -> output "y" (no ops).
-        let nodes = Vec::new();
+        // Minimal real graph: input "x" -> Identity -> output "y" (1 node;
+        // empty graphs are rejected by onnx2MNNNet).
+        let nodes = vec![Proto::node("Identity", &["x"], &["y"], &[])];
         let dims = vec![
             Proto::tensor_dim_value(1),
             Proto::tensor_dim_value(1),
@@ -394,18 +358,14 @@ mod tests {
         let init = Vec::new();
         let vi = Vec::new();
         let opset = Proto::opset("", 21);
-        let graph = Proto::graph("memfd_test", &nodes, &inputs, &outputs, &init, &vi);
-        let onnx = Proto::model(9, &opset, "memfd_test", &graph);
+        let graph = Proto::graph("buffer_test", &nodes, &inputs, &outputs, &init, &vi);
+        let onnx = Proto::model(9, &opset, "buffer_test", &graph);
 
-        let fd = convert_onnx_memfd(&onnx).expect("memfd ONNX→MNN conversion should succeed");
-        assert!(fd >= 0, "expected a valid fd");
+        let mnn = convert_onnx_buffer(&onnx).expect("buffer ONNX→MNN conversion should succeed");
+        assert!(!mnn.is_empty(), "expected non-empty MNN bytes");
 
         let interp =
-            MnnInterpreterSafe::from_fd(fd).expect("MNN interpreter should load from memfd fd");
-        // Drop the interpreter, then close the fd (model already parsed).
+            MnnInterpreterSafe::from_buffer(&mnn).expect("MNN interpreter should load from buffer");
         drop(interp);
-        unsafe {
-            libc::close(fd);
-        }
     }
 }
