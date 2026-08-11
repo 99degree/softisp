@@ -1028,11 +1028,7 @@ mod tests {
     #[test]
     fn test_zone_stats_pipeline() {
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(
-                crate::blocks::RawInputBlock::new()
-                    .with_elem_type(1)
-                    .with_concrete_dims(48, 64),
-            ),
+            Box::new(crate::blocks::RawInputBlock::new().with_concrete_dims(48, 64)),
             Box::new(crate::blocks::NormalizeBlock::new()),
             Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64)),
             Box::new(crate::blocks::BlcBlock::new()),
@@ -1054,11 +1050,7 @@ mod tests {
     #[test]
     fn test_channel_means_pipeline() {
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(
-                crate::blocks::RawInputBlock::new()
-                    .with_elem_type(1)
-                    .with_concrete_dims(48, 64),
-            ),
+            Box::new(crate::blocks::RawInputBlock::new().with_concrete_dims(48, 64)),
             Box::new(crate::blocks::NormalizeBlock::new()),
             Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64)),
             Box::new(crate::blocks::BlcBlock::new()),
@@ -1084,11 +1076,7 @@ mod tests {
     #[test]
     fn test_tone_stats_pipeline() {
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(
-                crate::blocks::RawInputBlock::new()
-                    .with_elem_type(1)
-                    .with_concrete_dims(48, 64),
-            ),
+            Box::new(crate::blocks::RawInputBlock::new().with_concrete_dims(48, 64)),
             Box::new(crate::blocks::NormalizeBlock::new()),
             Box::new(crate::blocks::DemosaicCcmBlock::new(2).with_concrete_dims(24, 32)),
             Box::new(ToneStatsBlock::new()),
@@ -1116,11 +1104,7 @@ mod tests {
     #[test]
     fn test_histogram_pipeline() {
         let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(
-                crate::blocks::RawInputBlock::new()
-                    .with_elem_type(1)
-                    .with_concrete_dims(8, 8),
-            ),
+            Box::new(crate::blocks::RawInputBlock::new().with_concrete_dims(8, 8)),
             Box::new(crate::blocks::NormalizeBlock::new()),
             Box::new(crate::blocks::DemosaicCcmBlock::new(2).with_concrete_dims(4, 4)),
             Box::new(CoarseHistogramBlock::new(4)),

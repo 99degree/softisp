@@ -222,12 +222,8 @@ mod tests {
     #[test]
     fn test_unpack_pipeline_integration() {
         // Build: RawInput(split INT32) -> UnpackBlock -> NormalizeBlock
-        let b1: Box<dyn IspBlock> = Box::new(
-            crate::blocks::RawInputBlock::new()
-                .with_elem_type(6) // INT32 input
-                .with_channels(2) // even/odd lanes
-                .with_concrete_dims(48, 32),
-        ); // packed width = 32
+        let b1: Box<dyn IspBlock> =
+            Box::new(crate::blocks::RawInputPackedBlock::new().with_concrete_dims(48, 64)); // packed width = 32
         let b2: Box<dyn IspBlock> = Box::new(UnpackBlock::new().with_concrete_dims(48, 64));
         let b3: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
 

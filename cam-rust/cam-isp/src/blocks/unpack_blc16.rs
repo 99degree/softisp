@@ -209,11 +209,7 @@ mod tests {
     #[test]
     fn test_unpack_blc16_pipeline() {
         use crate::blocks::*;
-        let b1: Box<dyn IspBlock> = Box::new(
-            RawInputBlock::new()
-                .with_elem_type(5)
-                .with_concrete_dims(48, 64),
-        );
+        let b1: Box<dyn IspBlock> = Box::new(RawInput16Block::new().with_concrete_dims(48, 64));
         let b2: Box<dyn IspBlock> = Box::new(UnpackBlc16Block::new());
         let b3: Box<dyn IspBlock> = Box::new(NormalizeBlock::new());
 

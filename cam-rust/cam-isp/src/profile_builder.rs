@@ -35,34 +35,14 @@ impl PipelineProfile {
             packed_w,
             target_width
         );
-        if self.use_unpack {
-            // input_native16 declares the split input as native INT16; the MNN
-            // converter upcasts it to FLOAT32 and the engine converts the u16
-            // pairs to f32 lanes. INT32 stays INT32 (engine splits to i32).
-            let input_elem = if self.input_native16 { 5 } else { 6 };
+        if self.force_input16 {
+            // Pure 16-bit raw input [1,1,H,W] INT16 — no packed tensor, no
+            // split. MNN's converter upcasts the INT16 input to FLOAT32, and
+            // the engine converts the u16 buffer to f32 (RawFloat mode).
+            // UnpackCfaBlock casts INT16→FLOAT32 and extracts the 4 Bayer
+            // quadrants via a stride-2 conv → [1,4,H/2,W/2].
             blocks.push(Box::new(
-                RawInputBlock::new()
-                    .with_elem_type(input_elem)
-                    .with_channels(2) // engine-split even/odd lanes [1,2,H,W/2]
-                    .with_concrete_width(packed_w)
-                    .with_concrete_height(concrete_h),
-            ));
-            blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
-            blocks.push(Box::new(NormalizeBlock::new()));
-            // UnpackBlock splits packed INT32 into even/odd channels [1,2,H,W/2];
-            // CfaBlock consumes them as 2 conv input channels (kernel [2,1], stride
-            // [2,1]) instead of an interleaved [1,1,H,W] tensor — keeps every op
-            // rank-4 and resize-safe for MNN resizeSession.
-            blocks.push(Box::new(CfaBlock::new().with_packed_input()));
-        } else if self.input_native16 {
-            // Path 3: native INT16 raw [1,1,H,W] — no unpack split. MNN's
-            // converter upcasts the INT16 input to FLOAT32, and the engine
-            // converts the u16 buffer to f32 (RawFloat mode). UnpackCfaBlock
-            // casts INT16→FLOAT32 and extracts the 4 Bayer quadrants via a
-            // stride-2 conv → [1,4,H/2,W/2].
-            blocks.push(Box::new(
-                RawInputBlock::new()
-                    .with_elem_type(5) // INT16
+                RawInput16Block::new()
                     .with_concrete_width(full_w)
                     .with_concrete_height(concrete_h),
             ));
@@ -72,6 +52,22 @@ impl PipelineProfile {
                     .with_fast_unpack(true) // Conv-based extract (unpack_w/unpack_b)
                     .with_concrete_dims(concrete_h, full_w),
             ));
+        } else if self.use_unpack {
+            // Packed 2×int16-as-int32 input [1,2,H,W/2]: engine splits the u16
+            // pairs into even/odd lanes on the host; the graph only needs a
+            // Vulkan-safe Cast INT32→FLOAT32 (UnpackBlock).
+            blocks.push(Box::new(
+                RawInputPackedBlock::new()
+                    .with_concrete_width(full_w) // full sensor width; block halves it
+                    .with_concrete_height(concrete_h),
+            ));
+            blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
+            blocks.push(Box::new(NormalizeBlock::new()));
+            // UnpackBlock splits packed INT32 into even/odd channels [1,2,H,W/2];
+            // CfaBlockPacked consumes them as 2 conv input channels (kernel
+            // [2,1], stride [2,1]) instead of an interleaved [1,1,H,W] tensor —
+            // keeps every op rank-4 and resize-safe for MNN resizeSession.
+            blocks.push(Box::new(CfaBlockPacked::new()));
         } else {
             blocks.push(Box::new(
                 RawInputBlock::new()

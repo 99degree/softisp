@@ -169,8 +169,8 @@ fn test_lite_ort_inference() {
     let w: u32 = 8;
     let h: u32 = 8;
 
-    // LITE profile has exactly one input (RawInputBlock/frame) and one output (DisplayBlock/frame)
-    let input_name = "RawInputBlock/frame";
+    // LITE profile has exactly one input (RawInputPackedBlock/frame) and one output (DisplayBlock/frame)
+    let input_name = "RawInputPackedBlock/frame";
     let output_name = "DisplayBlock/frame";
 
     eprintln!(
