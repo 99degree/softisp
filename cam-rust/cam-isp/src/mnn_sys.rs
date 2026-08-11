@@ -281,11 +281,12 @@ impl MnnInterpreterSafe {
         }
     }
 
-    /// Create an Interpreter from a model fd (e.g. a memfd returned by
-    /// `mnn_convert_onnx_memfd`). The path `/proc/self/fd/<fd>` is passed to
-    /// MNN, so the model is read straight from the fd without copying into the
-    /// Rust heap. `fd` must remain open for the lifetime of the returned
-    /// interpreter's load; it can be closed afterwards.
+    /// Create an Interpreter from a model file descriptor (e.g. an O_TMPFILE
+    /// or memfd). The path `/proc/self/fd/<fd>` is passed to MNN, so the
+    /// model is read straight from the fd without copying into the Rust heap.
+    /// `fd` must remain open for the lifetime of the returned interpreter's
+    /// load; it can be closed afterwards. Prefer `from_buffer` for the
+    /// converter's pure in-memory output.
     pub fn from_fd(fd: std::os::unix::io::RawFd) -> Option<Self> {
         let path = format!("/proc/self/fd/{}", fd);
         let c_path = std::ffi::CString::new(path).ok()?;
@@ -685,20 +686,22 @@ extern "C" {
     /// Free data allocated by mnn_convert_onnx_buffer.
     pub fn MnnConvert_FreeBuffer(result: *mut MnnConvertBufferResult);
 
-    /// memfd-based ONNX→MNN conversion (libMNNConvertDeps.so, same-process).
+    /// Pure in-memory ONNX→MNN conversion (libMNNConvertDeps.so, C-only API
+    /// from MNN's MNNConvertBuffer.cpp). No temp files, no memfd, no
+    /// `/proc/self/fd` — the converter parses the ONNX protobuf from the
+    /// buffer, runs the full optimizeLevel=2 pipeline (incl. IspChainFusion)
+    /// and returns malloc'd MNN flatbuffer bytes.
     ///
-    /// The ONNX bytes are written into an input memfd and the converted `.mnn`
-    /// is written into an output memfd; the output fd is returned to the caller.
-    /// The model never materializes in the Rust heap — the caller loads it via
-    /// `MnnInterpreterSafe::from_fd(out_fd)`. Returns the output fd (>=0) on
-    /// success, or -1 on error (message written into `error_msg`, capped at
-    /// `error_msg_cap`). The caller owns the returned fd and must `close()` it.
-    pub fn mnn_convert_onnx_memfd(
+    /// Returns 0 on success (out_data/out_size set; caller frees via
+    /// `libc::free`) or -1 on failure (error_msg filled when provided).
+    pub fn mnn_convert_onnx_to_mnn_buffer(
         onnx_data: *const c_void,
         onnx_len: usize,
+        out_data: *mut *mut c_void,
+        out_size: *mut usize,
         error_msg: *mut c_char,
         error_msg_cap: usize,
-    ) -> i32;
+    ) -> c_int;
 
     /// Convert TensorFlow model to MNN format.
     pub fn mnn_convert_tf_to_mnn(

@@ -61,6 +61,22 @@ namespace {
 std::mutex g_tempfile_mutex;
 std::vector<std::string>* g_tempfiles = nullptr;
 
+// Shared converter serialization lock, owned by libMNNConvertDeps.so
+// (MNNConvertBuffer.cpp). MNN's converter pipeline is not thread-safe
+// (Global<modelConfig> dangles across calls), so every conversion entry
+// point — here and in the buffer API — must hold it.
+extern "C" void mnn_convert_lock();
+extern "C" void mnn_convert_unlock();
+
+/// RAII guard for the shared converter lock.
+class ConvertLockGuard {
+public:
+    ConvertLockGuard() { mnn_convert_lock(); }
+    ~ConvertLockGuard() { mnn_convert_unlock(); }
+    ConvertLockGuard(const ConvertLockGuard&) = delete;
+    ConvertLockGuard& operator=(const ConvertLockGuard&) = delete;
+};
+
 /// atexit handler: removes all tracked temp files.
 void cleanup_tempfiles() {
     std::vector<std::string> paths;
@@ -166,6 +182,7 @@ MNN_PUBLIC void mnn_convert_onnx_to_mnn(
     int preserve_input_type,
     MnnConvertResult* result)
 {
+    ConvertLockGuard convert_guard;
     if (result == nullptr) {
         return;
     }
@@ -214,6 +231,7 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
     size_t onnx_len,
     MnnConvertBufferResult* result)
 {
+    ConvertLockGuard convert_guard;
     if (result == nullptr) {
         return;
     }
@@ -327,158 +345,6 @@ MNN_PUBLIC void mnn_convert_onnx_buffer(
     }
 }
 
-// ── memfd-based conversion (zero heap round-trip) ──────────────────────
-//
-// Convert ONNX bytes -> MNN bytes entirely via file descriptors:
-//   - input ONNX written to a memfd (no real disk)
-//   - converter writes .mnn to an output memfd
-//   - returns the output memfd to the caller
-// The caller loads MNN from /proc/self/fd/<fd> (MNN::Interpreter::createFromFile)
-// so the model never lands in the Rust/heap Vec. On Linux memfd_create is used;
-// on other platforms a temp file fd is returned instead.
-
-/// Portable memfd_create: some NDK/sysroot headers omit the SYS_memfd_create
-/// macro even when the kernel supports the syscall. Define __NR_memfd_create
-/// and the MFD_* flags explicitly when missing, then fall back to a temp file
-/// (still no real disk round-trip concern for the ONNX→MNN path on hosts
-/// without memfd).
-#if defined(__linux__) && !defined(SYS_memfd_create)
-#include <asm/unistd.h>
-#if !defined(__NR_memfd_create)
-#if defined(__aarch64__)
-#define __NR_memfd_create 279
-#elif defined(__arm__)
-#define __NR_memfd_create 385
-#elif defined(__x86_64__)
-#define __NR_memfd_create 319
-#elif defined(__i386__)
-#define __NR_memfd_create 356
-#else
-#define __NR_memfd_create 0
-#endif
-#endif
-#define SYS_memfd_create __NR_memfd_create
-#endif
-
-#if defined(__linux__) && !defined(MFD_CLOEXEC)
-#define MFD_CLOEXEC 0x0001U
-#define MFD_ALLOW_SEALING 0x0002U
-#endif
-
-/// Open a memfd (or temp file fallback) of `size` bytes, return the fd.
-static int open_output_fd(const char* name, size_t size) {
-#if defined(__linux__)
-#if SYS_memfd_create != 0
-    int fd = (int)syscall(SYS_memfd_create, name, (unsigned int)(MFD_CLOEXEC | MFD_ALLOW_SEALING));
-    if (fd < 0) return -1;
-    if (ftruncate(fd, (off_t)size) != 0) { close(fd); return -1; }
-    return fd;
-#else
-    (void)name;
-    char tmpl[512];
-    snprintf(tmpl, sizeof(tmpl), "/tmp/mnn_XXXXXX");
-    int fd = mkstemp(tmpl);
-    if (fd < 0) return -1;
-    if (ftruncate(fd, (off_t)size) != 0) { close(fd); return -1; }
-    return fd;
-#endif
-#else
-    char tmpl[512];
-    snprintf(tmpl, sizeof(tmpl), "/tmp/%s_XXXXXX", name);
-    int fd = mkstemp(tmpl);
-    if (fd < 0) return -1;
-    if (ftruncate(fd, (off_t)size) != 0) { close(fd); return -1; }
-    return fd;
-#endif
-}
-
-/// @return output fd on success (>=0), or -1 on error (msg in error_msg).
-MNN_PUBLIC int mnn_convert_onnx_memfd(
-    const void* onnx_data,
-    size_t onnx_len,
-    char* error_msg,
-    size_t error_msg_cap)
-{
-    if (!onnx_data || onnx_len == 0 || !error_msg || error_msg_cap == 0) {
-        if (error_msg && error_msg_cap) {
-            snprintf(error_msg, error_msg_cap, "NULL/empty ONNX or bad out buffer");
-        }
-        return -1;
-    }
-    error_msg[0] = '\0';
-
-    // Input memfd holds the ONNX protobuf; we point the converter at it.
-    int in_fd = open_output_fd("mnn_onnx", onnx_len > 0 ? onnx_len : 1);
-    if (in_fd < 0) {
-        snprintf(error_msg, error_msg_cap, "failed to create input memfd");
-        return -1;
-    }
-    {
-        size_t written = 0;
-        while (written < onnx_len) {
-            ssize_t n = write(in_fd, (const char*)onnx_data + written, onnx_len - written);
-            if (n < 0) {
-                close(in_fd);
-                snprintf(error_msg, error_msg_cap, "write input memfd failed");
-                return -1;
-            }
-            written += (size_t)n;
-        }
-        // Seal the input read-only so the converter cannot mutate it.
-#if defined(__linux__)
-        fcntl(in_fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL);
-#endif
-    }
-
-    // Output memfd placeholder (1 byte); the converter grows it via ftruncate.
-    int out_fd = open_output_fd("mnn_out", 1);
-    if (out_fd < 0) {
-        close(in_fd);
-        snprintf(error_msg, error_msg_cap, "failed to create output memfd");
-        return -1;
-    }
-
-    char in_path[64];
-    char out_path[64];
-    snprintf(in_path, sizeof(in_path), "/proc/self/fd/%d", in_fd);
-    snprintf(out_path, sizeof(out_path), "/proc/self/fd/%d", out_fd);
-
-    int rc = -1;
-    try {
-        modelConfig config;
-        config.model = modelConfig::ONNX;
-        config.modelFile = in_path;
-        config.MNNModel = out_path;
-        config.bizCode = "MNN";
-        config.optimizeLevel = 2;  // level=1 short-circuits to 3 passes only; level>=2 runs full pipeline including IspChainFusion
-        config.weightQuantBits = 0;
-        config.saveHalfFloat = false;
-#ifdef MNN_HAS_PRESERVE_INPUT_TYPE
-        config.preserveInputType = true;
-#endif
-
-        if (!MNN::Cli::convertModel(config)) {
-            snprintf(error_msg, error_msg_cap, "MNN::Cli::convertModel returned false");
-            rc = -1;
-        } else {
-            rc = out_fd;  // success: hand the fd to the caller
-        }
-    } catch (const std::exception& e) {
-        snprintf(error_msg, error_msg_cap, "%s", e.what());
-        rc = -1;
-    } catch (...) {
-        snprintf(error_msg, error_msg_cap, "Unknown exception");
-        rc = -1;
-    }
-
-    close(in_fd);
-    if (rc < 0) {
-        close(out_fd);
-    }
-    // On success out_fd is returned and owned by the caller (must be closed).
-    return rc;
-}
-
 // ── MNN→MNN conversion (Pass1: applies IspChainFusion) ──────────────────
 //
 // Same in-process buffer pattern as mnn_convert_onnx_buffer, but the input
@@ -494,6 +360,7 @@ MNN_PUBLIC void mnn_convert_mnn_buffer(
     size_t mnn_len,
     MnnConvertBufferResult* result)
 {
+    ConvertLockGuard convert_guard;
     if (result == nullptr) {
         return;
     }
@@ -621,6 +488,7 @@ MNN_PUBLIC void mnn_dump_mnn_to_json(
     size_t mnn_len,
     MnnConvertJsonResult* result)
 {
+    ConvertLockGuard convert_guard;
     if (result == nullptr) {
         return;
     }
