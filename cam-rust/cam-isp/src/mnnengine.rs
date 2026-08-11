@@ -75,14 +75,31 @@ pub(crate) use crate::mnn_session_pool::SessionPool;
 
 // ── Engine ──────────────────────────────────────────────────────────────
 
+/// How the engine feeds the model's input tensor. Inferred at build() from
+/// the MNN model's declared input shape (channels) and element type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    /// `[1,2,H,W/2]` INT32 — packed u16 pairs split into even/odd i32 lanes
+    /// on CPU (the packed-INT32 convention).
+    SplitInt32,
+    /// `[1,2,H,W/2]` FLOAT32 — native 2×int16 buffer split into even/odd f32
+    /// lanes on CPU. MNN's ONNX→MNN converter upcasts INT16-declared graph
+    /// inputs to FLOAT32, so a "2×int16" model arrives here as float.
+    SplitFloat,
+    /// `[1,1,H,W]` FLOAT32 — native int16 buffer converted to f32 on CPU
+    /// (unpack_blc16 / UnpackCfa-style heads).
+    RawFloat,
+    /// `[1,1,H,W]` INT32 — caller buffer passed through as-is.
+    RawInt,
+}
+
 pub struct MnnEngine {
     backend: MnnBackend,
     initialized: bool,
     model_path: Option<String>,
     model_input_type: Option<(i32, i32)>,
-    /// True when model expects INT32 packed input (w/2 width, each element = 2 pixels).
-    /// Triggers true zero-copy: buffer reinterpreted as i32, host pointer set directly.
-    packed_input: bool,
+    /// Input convention inferred from the converted model (shape + type).
+    input_mode: Option<InputMode>,
     /// Whether to preserve input type (int16/uint16/float16) instead of widening to int32.
     /// Used by NativeInt16 mode to avoid Cast(int32→int16) in UnpackCfaBlock.
     preserve_input_type: bool,
@@ -108,12 +125,15 @@ pub struct MnnEngine {
     /// Cached input tensor shape to skip redundant sess.resize().
     /// Fixed-resolution pipelines (e.g. 4K→FHD) never change shape,
     /// so resize() is only needed on the very first frame.
-    /// Stores (h, w, is_packed) of the last fully-configured frame.
-    last_input_shape: Mutex<Option<(i32, i32, bool)>>,
+    /// Stores (h, w, mode) of the last fully-configured frame.
+    last_input_shape: Mutex<Option<(i32, i32, InputMode)>>,
     /// Reused even/odd lane-split buffer for the packed INT32 input path.
     /// MNN's Vulkan backend cannot run integer elementwise ops, so the
     /// engine splits the two u16 lanes on CPU before feeding `[1,2,H,W/2]`.
     split_scratch: Mutex<Vec<i32>>,
+    /// Reused f32 scratch: u16→f32 lane conversion for native-int16 models
+    /// (SplitFloat) and full-frame conversion for raw FLOAT32 models (RawFloat).
+    scratch_f32: Mutex<Vec<f32>>,
 }
 
 #[cfg(feature = "mnn")]
@@ -188,7 +208,7 @@ impl MnnEngine {
             initialized: false,
             model_path: None,
             model_input_type: None,
-            packed_input: false,
+            input_mode: None,
             preserve_input_type: false,
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
@@ -202,6 +222,7 @@ impl MnnEngine {
             ),
             last_input_shape: Mutex::new(None),
             split_scratch: Mutex::new(Vec::new()),
+            scratch_f32: Mutex::new(Vec::new()),
         }
     }
 
@@ -1028,10 +1049,37 @@ impl IspEngine for MnnEngine {
             } else {
                 None
             };
-            self.packed_input = input_code == 0 && input_bits == 32;
+            // Infer the input convention from the converted model: channels==2
+            // means the engine must split u16 pairs into even/odd lanes
+            // ([1,2,H,W/2]); the element type (INT32 stays INT32, INT16-declared
+            // inputs are upcast by the converter to FLOAT32) selects i32 vs f32
+            // lanes. Raw 1-channel models are fed directly.
+            let mut input_dims = [0i32; 4];
+            let input_ndim = unsafe {
+                crate::mnn_sys::mnn_get_model_input_dims(
+                    interp.as_ptr(),
+                    probe_sess.as_ptr(),
+                    input_dims.as_mut_ptr(),
+                    4,
+                )
+            };
+            let split = input_ndim == 4 && input_dims[1] == 2;
+            let is_float = input_code == 2; // halide_type_float
+            let mode = if split {
+                if is_float {
+                    InputMode::SplitFloat
+                } else {
+                    InputMode::SplitInt32
+                }
+            } else if is_float {
+                InputMode::RawFloat
+            } else {
+                InputMode::RawInt
+            };
+            self.input_mode = Some(mode);
             info!(
-                "MNN model input type: code={}, bits={} packed={} expected_elems={}",
-                input_code, input_bits, self.packed_input, expected_elems
+                "MNN model input type: code={}, bits={} mode={:?} ndim={} dims={:?} expected_elems={}",
+                input_code, input_bits, mode, input_ndim, input_dims, expected_elems
             );
             // Don't need probe session any more — pool will create its own.
             drop(probe_sess);
@@ -1120,17 +1168,10 @@ impl IspEngine for MnnEngine {
             let mut out_bytes: Vec<u8> = vec![0u8; max_out * 4];
             let out_ptr = out_bytes.as_mut_ptr() as *mut f32;
 
-            // Determine inference path based on model input type
-
-            let n: i32;
-
-            // Determine if packed: model expects INT32 packed input. Key on the
-            // model's input *type* (INT32 → packed even/odd pairs), NOT on element
-            // count equality — the baked model size may differ from the runtime
-            // input size (e.g. 4K input into an FHD-baked model), and MNN
-            // resizeSession adapts the graph. Feeding raw [1,1,H,W] into a packed
-            // model feeds the wrong shape and element type (Defect B).
-            let is_packed = self.packed_input;
+            // Determine inference path based on the model's input convention
+            // (inferred at build() from the converted model's shape + type).
+            let mode = self.input_mode.unwrap_or(InputMode::RawInt);
+            let split = matches!(mode, InputMode::SplitInt32 | InputMode::SplitFloat);
 
             // ── Pre-inference: set input shape and extra inputs ──
             //
@@ -1145,7 +1186,7 @@ impl IspEngine for MnnEngine {
             // calls resizeSession on-demand if the element count changed,
             // so we skip our own call when the shape hasn't changed.
             let t_tensor_before: std::time::Instant = Instant::now();
-            let shape = if is_packed {
+            let shape = if split {
                 vec![1, 2, h as i32, (w / 2).max(1) as i32]
             } else {
                 vec![1, 1, h as i32, w as i32]
@@ -1157,7 +1198,7 @@ impl IspEngine for MnnEngine {
             // Skip resize if shape unchanged from last full setup.
             // The C++ wrapper handles first-use resize per session.
             let needs_resize = {
-                let shape_key = (h as i32, w as i32, is_packed);
+                let shape_key = (h as i32, w as i32, mode);
                 let mut cached = self.last_input_shape.lock().unwrap();
                 let needs = cached.as_ref().is_none_or(|last| *last != shape_key);
                 if needs {
@@ -1192,56 +1233,117 @@ impl IspEngine for MnnEngine {
             );
 
             debug!(
-                "MNN process: w={}, h={}, packed_w={}, is_packed={}, expected={:?}",
+                "MNN process: w={}, h={}, packed_w={}, mode={:?}, expected={:?}",
                 w,
                 h,
                 (w / 2).max(1),
-                is_packed,
+                mode,
                 self.expected_input_elements
             );
 
-            // ── Engine-side even/odd lane split (packed path) ──
+            // ── Engine-side input conversion ──
             //
-            // MNN's Vulkan backend cannot execute integer elementwise ops
-            // (Div/Mod/Sub) or INT16 casts, so splitting the two u16 lanes of
-            // a packed INT32 in-graph is impossible on GPU. Split here on CPU
-            // instead: exact and signedness-free; the graph only needs a
-            // Vulkan-safe Cast INT32→FLOAT32 (UnpackBlock).
+            // The even/odd lane split happens on CPU, not in-graph: MNN's
+            // Vulkan backend cannot execute integer elementwise ops
+            // (Div/Mod/Sub) or INT16 casts, so extracting two u16 lanes from a
+            // packed INT32 in-graph is impossible on GPU. Splitting on the host
+            // is exact and signedness-free; the graph only needs a Vulkan-safe
+            // Cast INT32→FLOAT32 (UnpackBlock). For INT16-declared models the
+            // converter upcasts the input to FLOAT32, so the engine converts
+            // the u16 pairs to f32 lanes instead (also exact).
             //
-            // The guard is held through inference: the FFI call reads the
-            // split buffer by raw pointer, and another thread resizing the
-            // scratch would otherwise dangle it.
-            let split_guard = if is_packed {
-                let pairs = ((w / 2).max(1) as usize) * h as usize;
-                let mut guard = self.split_scratch.lock().unwrap();
-                if guard.len() != pairs * 2 {
-                    guard.resize(pairs * 2, 0);
+            // The guards are held through inference: the FFI call reads the
+            // scratch by raw pointer, and another thread resizing the scratch
+            // would otherwise dangle it.
+            let split_scratch_i32: Option<std::sync::MutexGuard<'_, Vec<i32>>>;
+            let scratch_f32: Option<std::sync::MutexGuard<'_, Vec<f32>>>;
+            match mode {
+                InputMode::SplitInt32 => {
+                    let pairs = ((w / 2).max(1) as usize) * h as usize;
+                    let mut guard = self.split_scratch.lock().unwrap();
+                    if guard.len() != pairs * 2 {
+                        guard.resize(pairs * 2, 0);
+                    }
+                    let u16s: &[u16] = unsafe {
+                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+                    };
+                    for i in 0..pairs {
+                        guard[i] = u16s[2 * i] as i32;
+                        guard[pairs + i] = u16s[2 * i + 1] as i32;
+                    }
+                    split_scratch_i32 = Some(guard);
+                    scratch_f32 = None;
                 }
-                let u16s: &[u16] = unsafe {
-                    std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
-                };
-                for i in 0..pairs {
-                    guard[i] = u16s[2 * i] as i32;
-                    guard[pairs + i] = u16s[2 * i + 1] as i32;
+                InputMode::SplitFloat => {
+                    let pairs = ((w / 2).max(1) as usize) * h as usize;
+                    let mut guard = self.scratch_f32.lock().unwrap();
+                    if guard.len() != pairs * 2 {
+                        guard.resize(pairs * 2, 0.0);
+                    }
+                    let u16s: &[u16] = unsafe {
+                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+                    };
+                    for i in 0..pairs {
+                        guard[i] = u16s[2 * i] as f32;
+                        guard[pairs + i] = u16s[2 * i + 1] as f32;
+                    }
+                    split_scratch_i32 = None;
+                    scratch_f32 = Some(guard);
                 }
-                Some(guard)
-            } else {
-                None
-            };
+                InputMode::RawFloat => {
+                    let total = (w as usize) * (h as usize);
+                    let mut guard = self.scratch_f32.lock().unwrap();
+                    if guard.len() != total {
+                        guard.resize(total, 0.0);
+                    }
+                    let u16s: &[u16] = unsafe {
+                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+                    };
+                    for i in 0..total {
+                        guard[i] = u16s[i] as f32;
+                    }
+                    split_scratch_i32 = None;
+                    scratch_f32 = Some(guard);
+                }
+                InputMode::RawInt => {
+                    split_scratch_i32 = None;
+                    scratch_f32 = None;
+                }
+            }
 
-            let (buffer_ptr, buffer_type_code, buffer_type_bits, input_shape, path_str) =
-                if is_packed {
-                    let packed_w = (w / 2).max(1) as i32;
-                    let packed_shape = [1, 2, h as i32, packed_w];
-                    let v = split_guard.as_ref().unwrap();
+            let (buffer_ptr, buffer_type_code, buffer_type_bits, input_shape, path_str) = match mode
+            {
+                InputMode::SplitInt32 => {
+                    let v = split_scratch_i32.as_ref().unwrap();
                     (
                         v.as_ptr() as *const c_void,
                         0, // INT32
                         32,
-                        packed_shape.to_vec(),
+                        vec![1, 2, h as i32, (w / 2).max(1) as i32],
                         "packed_split",
                     )
-                } else {
+                }
+                InputMode::SplitFloat => {
+                    let v = scratch_f32.as_ref().unwrap();
+                    (
+                        v.as_ptr() as *const c_void,
+                        2, // FLOAT32
+                        32,
+                        vec![1, 2, h as i32, (w / 2).max(1) as i32],
+                        "split_f32",
+                    )
+                }
+                InputMode::RawFloat => {
+                    let v = scratch_f32.as_ref().unwrap();
+                    (
+                        v.as_ptr() as *const c_void,
+                        2, // FLOAT32
+                        32,
+                        vec![1, 1, h as i32, w as i32],
+                        "raw_f32",
+                    )
+                }
+                InputMode::RawInt => {
                     let raw_shape = [1, 1, h as i32, w as i32];
                     let (code, bits) = self.model_input_type.unwrap_or((0, 16));
                     (
@@ -1251,17 +1353,14 @@ impl IspEngine for MnnEngine {
                         raw_shape.to_vec(),
                         "raw_zero_copy",
                     )
-                };
+                }
+            };
 
             debug!(
-                "pipeline stage=write_input buf={}B -> {} chans packed={} shape=[1,1,{},{}]",
+                "pipeline stage=write_input buf={}B -> mode={:?} shape=[1,{},{},{}]",
                 buf.len(),
-                if is_packed {
-                    buf.len() / 4
-                } else {
-                    buf.len() / 2
-                },
-                is_packed,
+                mode,
+                input_shape[1],
                 input_shape[2],
                 input_shape[3]
             );
@@ -1269,6 +1368,7 @@ impl IspEngine for MnnEngine {
             let path: &str = path_str;
             let t_prep_end: std::time::Instant = Instant::now();
             let t_infer_start: std::time::Instant = Instant::now();
+            let n: i32;
             unsafe {
                 n = crate::mnn_sys::mnn_run_with_output(
                     interp.as_ptr(),
