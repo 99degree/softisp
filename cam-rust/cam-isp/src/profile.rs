@@ -48,6 +48,12 @@ pub struct PipelineProfile {
     /// When true (default), RawInputBlock uses INT32 at half-width and
     /// UnpackBlock is injected after it. When false, uses legacy FLOAT path.
     pub use_unpack: bool,
+    /// Declare the packed even/odd input as native INT16 (`[1,2,H,W/2]` INT16)
+    /// instead of packed INT32. The MNN converter upcasts INT16-declared
+    /// inputs to FLOAT32; the engine adapts to either convention (splitting
+    /// the u16 pairs into i32 lanes for INT32 models, f32 lanes for FLOAT32
+    /// models). Default: false (packed INT32).
+    pub input_native16: bool,
     /// Enable false color suppression (FCS).
     pub use_fcs: bool,
     /// Enable local contrast enhancement (LDCI).
@@ -135,6 +141,7 @@ impl PipelineProfile {
         label: "LITE",
         level: PipelineLevel::Lite,
         use_unpack: true,
+        input_native16: false,
         use_fcs: false,
         use_ldci: false,
         use_ee: false,
@@ -174,6 +181,7 @@ impl PipelineProfile {
         label: "MED",
         level: PipelineLevel::Medium,
         use_unpack: true,
+        input_native16: false,
         use_fcs: false,
         use_ldci: false,
         use_ee: true,
@@ -213,6 +221,7 @@ impl PipelineProfile {
         label: "HEAVY",
         level: PipelineLevel::Heavy,
         use_unpack: true,
+        input_native16: false,
         use_fcs: true,
         use_ldci: true,
         use_ee: true,
@@ -252,6 +261,7 @@ impl PipelineProfile {
         label: "PRO",
         level: PipelineLevel::Pro,
         use_unpack: true,
+        input_native16: false,
         use_fcs: true,
         use_ldci: true,
         use_ee: true,
@@ -292,6 +302,7 @@ impl PipelineProfile {
         label: "TEST",
         level: PipelineLevel::Lite,
         use_unpack: true,
+        input_native16: false,
         use_bad_pixel: false,
         demosaic_quality: DemosaicQuality::Standard,
         use_fcs: false,
@@ -334,6 +345,7 @@ impl PipelineProfile {
         label: "UNIFIED",
         level: PipelineLevel::Heavy,
         use_unpack: false,
+        input_native16: false,
         use_fcs: true,
         use_ldci: true,
         use_ee: true,
@@ -384,6 +396,7 @@ impl PipelineProfile {
         label: "HDR",
         level: PipelineLevel::Heavy,
         use_unpack: true,
+        input_native16: false,
         use_fcs: true,
         use_ldci: false,
         use_ee: false,
@@ -470,6 +483,7 @@ impl PipelineProfile {
             label,
             level,
             use_unpack,
+            input_native16: false,
             use_fcs,
             use_ldci,
             use_ee,
@@ -503,6 +517,14 @@ impl PipelineProfile {
             tile_overlap,              // overlap pixels
             output_format: OutputFormat::PackedRgb,
         }
+    }
+
+    /// Declare the packed even/odd input as native INT16 (`[1,2,H,W/2]` INT16)
+    /// instead of packed INT32. The MNN converter upcasts INT16-declared
+    /// inputs to FLOAT32; the engine adapts to either convention.
+    pub fn with_input_native16(mut self) -> Self {
+        self.input_native16 = true;
+        self
     }
 }
 
