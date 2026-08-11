@@ -432,6 +432,24 @@ extern "C" int mnn_get_model_input_elements(MnnInterpreter interpreter, MnnSessi
     return (int)in_tensor->elementSize();
 }
 
+/// Get the declared shape of the model's first input tensor.
+/// Writes up to `max_ndim` dims into `out_dims` and returns the rank,
+/// or -1 on error. The engine uses dims[1] (channels) + element type to
+/// pick the input convention: [1,2,H,W/2] split lanes vs [1,1,H,W] raw.
+extern "C" int mnn_get_model_input_dims(MnnInterpreter interpreter, MnnSession session,
+                                         int* out_dims, int max_ndim) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || !out_dims || max_ndim <= 0) return -1;
+    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    if (!in_tensor) return -1;
+    auto s = in_tensor->shape();
+    int n = (int)s.size();
+    if (n > max_ndim) n = max_ndim;
+    for (int i = 0; i < n; i++) out_dims[i] = s[i];
+    return (int)s.size();
+}
+
 
 /**
  * Run inference and copy a SPECIFIC named output tensor to out_data.
