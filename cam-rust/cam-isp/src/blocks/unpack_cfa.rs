@@ -799,11 +799,8 @@ mod tests {
     #[test]
     fn test_unpack_cfa_pipeline_integration_packed() {
         // Build: RawInput(packed INT32) -> UnpackCfaBlock -> BlcBlock
-        let b1: Box<dyn IspBlock> = Box::new(
-            crate::blocks::RawInputBlock::new()
-                .with_elem_type(6) // INT32 input
-                .with_concrete_dims(48, 32),
-        ); // packed width = 32
+        let b1: Box<dyn IspBlock> =
+            Box::new(crate::blocks::RawInputBlock::new().with_concrete_dims(48, 32)); // packed width = 32
         let b2: Box<dyn IspBlock> = Box::new(UnpackCfaBlock::new().with_concrete_dims(48, 64));
         let b3: Box<dyn IspBlock> = Box::new(crate::blocks::BlcBlock::new());
 
@@ -822,11 +819,8 @@ mod tests {
 
     #[test]
     fn test_unpack_cfa_pipeline_integration_native() {
-        let b1: Box<dyn IspBlock> = Box::new(
-            crate::blocks::RawInputBlock::new()
-                .with_elem_type(5) // INT16 input
-                .with_concrete_dims(48, 64),
-        );
+        let b1: Box<dyn IspBlock> =
+            Box::new(crate::blocks::RawInput16Block::new().with_concrete_dims(48, 64));
         let b2: Box<dyn IspBlock> = Box::new(
             UnpackCfaBlock::new()
                 .with_mode(UnpackMode::NativeInt16)
@@ -865,11 +859,8 @@ mod tests {
         );
 
         // Verify pipeline integration
-        let b1: Box<dyn IspBlock> = Box::new(
-            crate::blocks::RawInputBlock::new()
-                .with_elem_type(5)
-                .with_concrete_dims(48, 64),
-        );
+        let b1: Box<dyn IspBlock> =
+            Box::new(crate::blocks::RawInput16Block::new().with_concrete_dims(48, 64));
         let b2: Box<dyn IspBlock> = Box::new(
             UnpackCfaBlock::new()
                 .with_mode(UnpackMode::NativeInt16)
