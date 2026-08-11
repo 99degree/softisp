@@ -1,6 +1,6 @@
 //! BayerProcBlock — Flexible debayer block supporting multiple modes. //! //! Replaces UnpackCfaBlock + DemosaicCcmBlock with a unified, mode-flexible block. //!
 #[cfg(test)]
-use crate::blocks::RawInputBlock;
+use crate::blocks::{RawInput16Block, RawInputBlock};
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
@@ -489,11 +489,8 @@ mod tests {
 
     #[test]
     fn test_pipeline_integration() {
-        let _b1: Box<dyn IspBlock> = Box::new(
-            crate::blocks::RawInputBlock::new()
-                .with_elem_type(5) // INT16
-                .with_concrete_dims(48, 64),
-        );
+        let _b1: Box<dyn IspBlock> =
+            Box::new(crate::blocks::RawInput16Block::new().with_concrete_dims(48, 64));
 
         // Test each mode
         for &mode in &[
@@ -508,11 +505,7 @@ mod tests {
             );
 
             let mut blocks: Vec<Box<dyn IspBlock>> = vec![];
-            blocks.push(Box::new(
-                RawInputBlock::new()
-                    .with_elem_type(5)
-                    .with_concrete_dims(48, 64),
-            ));
+            blocks.push(Box::new(RawInput16Block::new().with_concrete_dims(48, 64)));
             blocks.push(Box::new(
                 BayerProcBlock::new()
                     .with_mode(mode)

@@ -1144,78 +1144,20 @@ mod tests {
         assert!(!frame.data.is_empty(), "output data should not be empty");
     }
 
-    /// Alt path: the same split even/odd input declared as native INT16
-    /// (`[1,2,H,W/2]` INT16 → upcast to FLOAT32 by the MNN converter). The
-    /// engine must convert the u16 pairs to f32 lanes and feed FLOAT32.
+    /// Forced pure 16-bit raw input: `[1,1,H,W]` INT16 via `RawInput16Block`
+    /// (no packed 2×int16-as-int32 tensor). The MNN converter upcasts the
+    /// input to FLOAT32; the engine converts the whole u16 buffer to f32
+    /// (RawFloat mode) and UnpackCfaBlock extracts the 4 Bayer quadrants.
     #[test]
-    fn test_unified_native_int16_input() {
+    fn test_unified_force_input16() {
         crate::init();
         let config = UnifiedConfig {
-            profile: PipelineProfile::MED.with_input_native16(),
+            profile: PipelineProfile::MED.with_force_input16(),
             target_width: 640,
             ..UnifiedConfig::default()
         };
         let mut pipeline = UnifiedPipeline::new(config).expect("pipeline build should succeed");
         // HD bayer: 1280×720, u16 per pixel = 2 bytes
-        let raw = vec![128u8; 1280 * 720 * 2];
-        let params = ProcessParams::new(1280, 720, &raw);
-        let result = pipeline.process(&params);
-        assert!(result.is_ok(), "process failed: {:?}", result.err());
-        let frame = result.unwrap();
-        assert!(frame.width > 0, "output width should be > 0");
-        assert!(!frame.data.is_empty(), "output data should not be empty");
-    }
-
-    /// Path 3: raw native INT16 `[1,1,H,W]` (no unpack split) — UnpackCfaBlock
-    /// casts INT16→FLOAT32 and extracts the 4 Bayer quadrants via a stride-2
-    /// conv → `[1,4,H/2,W/2]` FLOAT32. The engine must convert the whole u16
-    /// buffer to f32 (RawFloat mode).
-    #[test]
-    fn test_unified_native_int16_raw_cfa() {
-        crate::init();
-        let profile = PipelineProfile::custom(
-            "P3",
-            crate::profile::PipelineLevel::Lite,
-            false, // use_unpack = false → raw 1-channel input
-            false, // use_fcs
-            false, // use_ldci
-            false, // use_ee
-            false, // use_bad_pixel
-            crate::profile::DemosaicQuality::Standard,
-            false, // use_local_contrast
-            false, // use_unsharp
-            false, // use_lsc
-            false, // use_warp
-            false, // use_hdr
-            0,     // rotate_mode
-            false, // use_zone_stats
-            false, // use_channel_means
-            false, // use_tone_stats
-            false, // use_histogram
-            0,     // stats_downscale_max
-            0,     // pipeline_downscale_target
-            0.0,   // eis_margin
-            false, // use_bilateral
-            false, // use_saturation
-            false, // use_vignetting
-            false, // use_colorspace
-            false, // use_gamma
-            false, // use_sharpen
-            false, // use_wavelet_denoise
-            false, // use_auto_contrast
-            false, // use_normalize
-            false, // use_tiled_rendering
-            1,     // tile_count_x
-            1,     // tile_count_y
-            0,     // tile_overlap
-        )
-        .with_input_native16();
-        let config = UnifiedConfig {
-            profile,
-            target_width: 640,
-            ..UnifiedConfig::default()
-        };
-        let mut pipeline = UnifiedPipeline::new(config).expect("pipeline build should succeed");
         let raw = vec![128u8; 1280 * 720 * 2];
         let params = ProcessParams::new(1280, 720, &raw);
         let result = pipeline.process(&params);

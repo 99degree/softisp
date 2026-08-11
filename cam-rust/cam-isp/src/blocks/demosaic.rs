@@ -270,11 +270,8 @@ mod tests {
     #[test]
     fn test_demosaic_pipeline_integration() {
         // Build pipeline through DemosaicBlock
-        let b1: Box<dyn IspBlock> = Box::new(
-            crate::blocks::RawInputBlock::new()
-                .with_elem_type(1)
-                .with_concrete_dims(48, 64),
-        );
+        let b1: Box<dyn IspBlock> =
+            Box::new(crate::blocks::RawInputBlock::new().with_concrete_dims(48, 64));
         let b2: Box<dyn IspBlock> = Box::new(crate::blocks::NormalizeBlock::new());
         let b3: Box<dyn IspBlock> =
             Box::new(crate::blocks::CfaBlock::new().with_concrete_dims(48, 64));
