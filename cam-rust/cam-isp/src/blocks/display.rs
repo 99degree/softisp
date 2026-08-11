@@ -585,7 +585,7 @@ impl IspBlock for DisplayBlock {
                 } else {
                     inits.push(Proto::tensor_proto_float(
                         &format!("{}/pack_w", ns),
-                        &[3],
+                        &[3, 1, 1],
                         &[65536.0, 256.0, 1.0],
                     ));
                 }

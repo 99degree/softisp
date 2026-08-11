@@ -73,6 +73,7 @@ impl SessionPool {
             "DisplayBlock/gamma_exp",
             "DisplayBlock/zero",
             "DisplayBlock/one",
+            "vignetting/gain_map",
         ];
         let tensor_names: Vec<String> = extra_names.iter().map(|s| s.to_string()).collect();
         let mut slots = VecDeque::with_capacity(n);
