@@ -110,6 +110,10 @@ pub struct MnnEngine {
     /// so resize() is only needed on the very first frame.
     /// Stores (h, w, is_packed) of the last fully-configured frame.
     last_input_shape: Mutex<Option<(i32, i32, bool)>>,
+    /// Reused even/odd lane-split buffer for the packed INT32 input path.
+    /// MNN's Vulkan backend cannot run integer elementwise ops, so the
+    /// engine splits the two u16 lanes on CPU before feeding `[1,2,H,W/2]`.
+    split_scratch: Mutex<Vec<i32>>,
 }
 
 #[cfg(feature = "mnn")]
@@ -197,6 +201,7 @@ impl MnnEngine {
                 crate::gpu_watchdog::WatchdogConfig::default(),
             ),
             last_input_shape: Mutex::new(None),
+            split_scratch: Mutex::new(Vec::new()),
         }
     }
 
@@ -831,6 +836,40 @@ impl MnnEngine {
             write_f32_array(pool, "WarpGrid/shading_lut", lut);
         }
     }
+
+    /// Resize + fill the vignetting gain map extra input for the current
+    /// pipeline size (post-demosaic dims `h/2 × w/2`). Must run BEFORE
+    /// `resizeSession` so the Mul broadcast check sees consistent shapes.
+    #[cfg(feature = "mnn")]
+    fn write_vignetting_gain(
+        pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
+        interp: &crate::mnn_sys::MnnInterpreterSafe,
+        sess: &crate::mnn_sys::MnnSessionSafe,
+        h: u32,
+        w: u32,
+    ) {
+        let Some(t) = pool
+            .iter()
+            .find(|(n, _)| n == "vignetting/gain_map")
+            .map(|(_, t)| t)
+        else {
+            return;
+        };
+        let gh = (h / 2).max(1);
+        let gw = (w / 2).max(1);
+        let shape = vec![1i32, 1, gh as i32, gw as i32];
+        let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
+        // Strength/falloff must match VignettingBlock::new_default (0.5 / 2.0).
+        let gain = crate::blocks::VignettingBlock::gain_map(gh, gw, 0.5, 2.0);
+        if let Some(bytes) = t.as_bytes_mut() {
+            let byte_count = gain.len() * 4;
+            if bytes.len() >= byte_count {
+                let src =
+                    unsafe { std::slice::from_raw_parts(gain.as_ptr() as *const u8, byte_count) };
+                bytes[..byte_count].copy_from_slice(src);
+            }
+        }
+    }
 }
 
 impl IspEngine for MnnEngine {
@@ -1085,16 +1124,13 @@ impl IspEngine for MnnEngine {
 
             let n: i32;
 
-            // Determine if packed: model expects INT32 packed input
-            let is_packed = if self.packed_input {
-                if let Some(expected) = self.expected_input_elements {
-                    expected == h * w / 2
-                } else {
-                    true
-                }
-            } else {
-                false
-            };
+            // Determine if packed: model expects INT32 packed input. Key on the
+            // model's input *type* (INT32 → packed even/odd pairs), NOT on element
+            // count equality — the baked model size may differ from the runtime
+            // input size (e.g. 4K input into an FHD-baked model), and MNN
+            // resizeSession adapts the graph. Feeding raw [1,1,H,W] into a packed
+            // model feeds the wrong shape and element type (Defect B).
+            let is_packed = self.packed_input;
 
             // ── Pre-inference: set input shape and extra inputs ──
             //
@@ -1110,7 +1146,7 @@ impl IspEngine for MnnEngine {
             // so we skip our own call when the shape hasn't changed.
             let t_tensor_before: std::time::Instant = Instant::now();
             let shape = if is_packed {
-                vec![1, 1, h as i32, (w / 2).max(1) as i32]
+                vec![1, 2, h as i32, (w / 2).max(1) as i32]
             } else {
                 vec![1, 1, h as i32, w as i32]
             };
@@ -1125,6 +1161,13 @@ impl IspEngine for MnnEngine {
                 let mut cached = self.last_input_shape.lock().unwrap();
                 let needs = cached.as_ref().is_none_or(|last| *last != shape_key);
                 if needs {
+                    // Vignetting gain map is a runtime extra input (not a baked
+                    // initializer): resize it to the post-demosaic dims (h/2 × w/2)
+                    // and fill with computed gains BEFORE resizeSession so the Mul
+                    // shape check passes during propagation. A baked [1,1,H,W] gain
+                    // would break resizeSession for any input size differing from
+                    // the model's baked dims.
+                    Self::write_vignetting_gain(&slot.tensor_pool, interp, sess, h, w);
                     let _ = sess.resize();
                     *cached = Some(shape_key);
                 }
@@ -1157,19 +1200,46 @@ impl IspEngine for MnnEngine {
                 self.expected_input_elements
             );
 
+            // ── Engine-side even/odd lane split (packed path) ──
+            //
+            // MNN's Vulkan backend cannot execute integer elementwise ops
+            // (Div/Mod/Sub) or INT16 casts, so splitting the two u16 lanes of
+            // a packed INT32 in-graph is impossible on GPU. Split here on CPU
+            // instead: exact and signedness-free; the graph only needs a
+            // Vulkan-safe Cast INT32→FLOAT32 (UnpackBlock).
+            //
+            // The guard is held through inference: the FFI call reads the
+            // split buffer by raw pointer, and another thread resizing the
+            // scratch would otherwise dangle it.
+            let split_guard = if is_packed {
+                let pairs = ((w / 2).max(1) as usize) * h as usize;
+                let mut guard = self.split_scratch.lock().unwrap();
+                if guard.len() != pairs * 2 {
+                    guard.resize(pairs * 2, 0);
+                }
+                let u16s: &[u16] = unsafe {
+                    std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+                };
+                for i in 0..pairs {
+                    guard[i] = u16s[2 * i] as i32;
+                    guard[pairs + i] = u16s[2 * i + 1] as i32;
+                }
+                Some(guard)
+            } else {
+                None
+            };
+
             let (buffer_ptr, buffer_type_code, buffer_type_bits, input_shape, path_str) =
                 if is_packed {
                     let packed_w = (w / 2).max(1) as i32;
-                    let packed_shape = [1, 1, h as i32, packed_w];
-                    let packed_buf: &[i32] = unsafe {
-                        std::slice::from_raw_parts(buf.as_ptr() as *const i32, buf.len() / 4)
-                    };
+                    let packed_shape = [1, 2, h as i32, packed_w];
+                    let v = split_guard.as_ref().unwrap();
                     (
-                        packed_buf.as_ptr() as *const c_void,
+                        v.as_ptr() as *const c_void,
                         0, // INT32
                         32,
                         packed_shape.to_vec(),
-                        "packed_zero_copy",
+                        "packed_split",
                     )
                 } else {
                     let raw_shape = [1, 1, h as i32, w as i32];

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
+#include <cstdlib>
 #include <MNN/MNNForwardType.h>
 #include <cstring>
 #include <dlfcn.h>
@@ -473,7 +474,10 @@ extern "C" int mnn_run_with_output(
     // Resize if input element count doesn't match model
     size_t tensor_size = in_tensor->elementSize();
     if (tensor_size != (size_t)total) {
-        net->resizeSession(sess);
+        auto rc = net->tryResizeSession(sess);
+        if (rc != 0) {
+            return -3;
+        }
         in_tensor = net->getSessionInput(sess, nullptr);
         if (!in_tensor) return -3;
         in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
@@ -502,16 +506,14 @@ extern "C" int mnn_run_with_output(
     // No copyToHostTensor needed — data is already in out_data.
     auto run_ok = net->runSession(sess);
     if (run_ok != 0) {
-        return static_cast<int>(run_ok);
+        // MNN returns positive error codes (e.g. COMPUTE_SIZE_ERROR=3).
+        // Normalize to a negative value so callers treat failures as errors
+        // rather than mistaking a big positive code for a valid element count.
+        return -std::abs(static_cast<int>(run_ok));
     }
 
     // Return element count for the output tensor
     auto out_shape = out_tensor->shape();
-    fprintf(stderr, "[mnn_run_with_output] output '%s' shape=[", output_name ? output_name : "<null>");
-    for (int i = 0; i < (int)out_shape.size(); i++) {
-        fprintf(stderr, "%s%d", i > 0 ? "," : "", out_shape[i]);
-    }
-    fprintf(stderr, "] dims=%d\n", (int)out_shape.size());
     int out_total = 1;
     for (auto d : out_shape) out_total *= d;
     return out_total < max_out ? out_total : max_out;

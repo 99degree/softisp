@@ -8,6 +8,14 @@ use crate::pipeline::IspBlock;
 ///
 /// Uses Conv(kernel=2, stride=2, 4 filters) matching the Java implementation.
 /// Avoids Slice op which MNN doesn't handle.
+///
+/// In packed mode (`with_packed_input`) the input is the UnpackBlock output
+/// `[1,2,H,W/2]` — channel 0 = even pixels, channel 1 = odd pixels. The 2x2
+/// quad is then extracted with a 2-input-channel conv (kernel `[2,1]`, stride
+/// `[2,1]`), producing the same `[1,4,H/2,W/2]` output with the same
+/// quad→channel mapping. This avoids interleaving even/odd back into one
+/// `[1,1,H,W]` tensor (which previously needed rank/baked-dim Reshape tricks
+/// that broke MNN resizeSession).
 pub struct CfaBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -16,6 +24,8 @@ pub struct CfaBlock {
     pub input_source: String,
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
+    /// Input is the 2-channel even/odd split from UnpackBlock (`[1,2,H,W/2]`).
+    pub packed_input: bool,
 }
 
 impl Default for CfaBlock {
@@ -34,6 +44,7 @@ impl CfaBlock {
             input_source: String::new(),
             concrete_h: None,
             concrete_w: None,
+            packed_input: false,
         }
     }
 
@@ -41,6 +52,13 @@ impl CfaBlock {
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
         self.concrete_h = Some(h);
         self.concrete_w = Some(w);
+        self
+    }
+
+    /// Consume the 2-channel even/odd split from `UnpackBlock` (`[1,2,H,W/2]`)
+    /// instead of a single interleaved `[1,1,H,W]` Bayer tensor.
+    pub fn with_packed_input(mut self) -> Self {
+        self.packed_input = true;
         self
     }
 }
@@ -91,26 +109,55 @@ impl IspBlock for CfaBlock {
     }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
-        let dims: Vec<Vec<u8>> = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
-            vec![
-                Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(h),
-                Proto::tensor_dim_value(w),
-            ]
+        if self.packed_input {
+            // Input is the 2-channel even/odd split: [1,2,H,W/2]
+            let pw = self.concrete_w.map(|w| w / 2);
+            let dims: Vec<Vec<u8>> = match (self.concrete_h, pw) {
+                (Some(h), Some(pw)) => vec![
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_value(2),
+                    Proto::tensor_dim_value(h),
+                    Proto::tensor_dim_value(pw),
+                ],
+                (None, Some(pw)) => vec![
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_value(2),
+                    Proto::tensor_dim_param("H"),
+                    Proto::tensor_dim_value(pw),
+                ],
+                _ => vec![
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_value(2),
+                    Proto::tensor_dim_param("H"),
+                    Proto::tensor_dim_param("W2"),
+                ],
+            };
+            Some(Proto::value_info(&self.input_source, &dims, 1))
         } else {
-            vec![
-                Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
-                Proto::tensor_dim_param("H"),
-                Proto::tensor_dim_param("W"),
-            ]
-        };
-        Some(Proto::value_info(&self.input_source, &dims, 1))
+            let dims: Vec<Vec<u8>> = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w)
+            {
+                vec![
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_value(h),
+                    Proto::tensor_dim_value(w),
+                ]
+            } else {
+                vec![
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_value(1),
+                    Proto::tensor_dim_param("H"),
+                    Proto::tensor_dim_param("W"),
+                ]
+            };
+            Some(Proto::value_info(&self.input_source, &dims, 1))
+        }
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         let oh = self.concrete_h.map(|h| h / 2);
+        // Both modes produce output width W/2: raw mode halves W with stride 2;
+        // packed mode keeps the already-half-width even/odd input with stride 1.
         let ow = self.concrete_w.map(|w| w / 2);
         let dims: Vec<Vec<u8>> = if let (Some(h), Some(w)) = (oh, ow) {
             vec![
@@ -132,6 +179,14 @@ impl IspBlock for CfaBlock {
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        let (kernel_shape, strides) = if self.packed_input {
+            // Packed input: [1,2,H,W/2] even/odd channels. Each quad column j of
+            // the packed row holds both column parities, so stride W is 1 and the
+            // kernel only spans rows (2x1).
+            ([2, 1], [2, 1])
+        } else {
+            ([2, 2], [2, 2])
+        };
         vec![Proto::node(
             "Conv",
             &[
@@ -141,8 +196,8 @@ impl IspBlock for CfaBlock {
             ],
             &[&self.frame_tensor],
             &[
-                Proto::attribute_ints("kernel_shape", &[2, 2]),
-                Proto::attribute_ints("strides", &[2, 2]),
+                Proto::attribute_ints("kernel_shape", &kernel_shape),
+                Proto::attribute_ints("strides", &strides),
                 Proto::attribute_ints("pads", &[0, 0, 0, 0]),
                 Proto::attribute_int("group", 1),
             ],
@@ -151,22 +206,46 @@ impl IspBlock for CfaBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        // Conv weights [4, 1, 2, 2] — 4 filters, 1 input channel, 2x2 kernel
-        // Each filter picks one quad position:
-        //   filter 0 (TL): [[1,0],[0,0]]
-        //   filter 1 (TR): [[0,1],[0,0]]
-        //   filter 2 (BL): [[0,0],[1,0]]
-        //   filter 3 (BR): [[0,0],[0,1]]
-        let w = vec![
-            1f32, 0f32, 0f32, 0f32, // TL
-            0f32, 1f32, 0f32, 0f32, // TR
-            0f32, 0f32, 1f32, 0f32, // BL
-            0f32, 0f32, 0f32, 1f32, // BR
-        ];
-        vec![
-            Proto::tensor_proto_float(&format!("{}/w", ns), &[4, 1, 2, 2], &w),
-            Proto::tensor_proto_float(&format!("{}/b", ns), &[4], &[0f32; 4]),
-        ]
+        if self.packed_input {
+            // Conv weights [4, 2, 2, 1] — 4 filters, 2 input channels (even/odd),
+            // 2x1 kernel. Filter oc picks the quad position:
+            //   oc0 (TL) = even[2i][j]   → kernel (0,0) on channel 0 (even)
+            //   oc1 (TR) = odd[2i][j]    → kernel (0,0) on channel 1 (odd)
+            //   oc2 (BL) = even[2i+1][j] → kernel (1,0) on channel 0 (even)
+            //   oc3 (BR) = odd[2i+1][j]  → kernel (1,0) on channel 1 (odd)
+            // Row-major [oc][ic][kh][kw]:
+            //   oc0: ic0 [[1],[0]] ic1 [[0],[0]]
+            //   oc1: ic0 [[0],[0]] ic1 [[1],[0]]
+            //   oc2: ic0 [[0],[1]] ic1 [[0],[0]]
+            //   oc3: ic0 [[0],[0]] ic1 [[0],[1]]
+            let w = vec![
+                1f32, 0f32, 0f32, 0f32, // oc0: even @ (0,0)
+                0f32, 0f32, 1f32, 0f32, // oc1: odd  @ (0,0)
+                0f32, 1f32, 0f32, 0f32, // oc2: even @ (1,0)
+                0f32, 0f32, 0f32, 1f32, // oc3: odd  @ (1,0)
+            ];
+            vec![
+                Proto::tensor_proto_float(&format!("{}/w", ns), &[4, 2, 2, 1], &w),
+                Proto::tensor_proto_float(&format!("{}/b", ns), &[4], &[0f32; 4]),
+            ]
+        } else {
+            // Conv weights [4, 1, 2, 2] — 4 filters, 1 input channel, 2x2 kernel
+            // Each filter picks one quad position:
+            //   filter 0 (TL): [[1,0],[0,0]]
+            //   filter 1 (TR): [[0,1],[0,0]]
+            //   filter 2 (BL): [[0,0],[1,0]]
+            //   filter 3 (BR): [[0,0],[0,1]]
+            let w = vec![
+                1f32, 0f32, 0f32, 0f32, // TL
+                0f32, 1f32, 0f32, 0f32, // TR
+                0f32, 0f32, 1f32, 0f32, // BL
+                0f32, 0f32, 0f32, 1f32, // BR
+            ];
+            vec![
+                Proto::tensor_proto_float(&format!("{}/w", ns), &[4, 1, 2, 2], &w),
+                Proto::tensor_proto_float(&format!("{}/b", ns), &[4], &[0f32; 4]),
+            ]
+        }
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -229,6 +308,22 @@ mod tests {
         let model = result.unwrap();
         assert!(!model.is_empty(), "Model should not be empty");
         assert!(model.len() > 100, "Model should be substantial");
+    }
+
+    #[test]
+    fn test_cfa_packed_input_mode() {
+        // Packed mode: input [1,2,H,W/2] (even/odd channels from UnpackBlock)
+        let block = CfaBlock::new()
+            .with_concrete_dims(48, 64)
+            .with_packed_input();
+        assert!(block.packed_input);
+        let nodes = block.nodes();
+        assert_eq!(nodes.len(), 1, "CfaBlock should produce 1 Conv node");
+        let inits = block.initializers();
+        assert_eq!(inits.len(), 2, "Should have weight and bias initializers");
+        // Output dims halve H and keep W/2 (same as raw mode)
+        let vi = block.output_value_info().unwrap();
+        assert!(!vi.is_empty(), "Output value_info should not be empty");
     }
 
     #[test]

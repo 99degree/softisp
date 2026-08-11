@@ -30,6 +30,9 @@ pub struct RawInputBlock {
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
     pub elem_type: i32,
+    /// Channel count of the declared input (1 = single packed lane,
+    /// 2 = engine-split even/odd lanes `[1,2,H,W/2]`).
+    channels: i64,
 }
 
 impl Default for RawInputBlock {
@@ -49,6 +52,7 @@ impl RawInputBlock {
             concrete_h: None,
             concrete_w: None,
             elem_type: 6, // INT32 default — no UINT16 in pipeline
+            channels: 1,
         }
     }
 
@@ -73,6 +77,12 @@ impl RawInputBlock {
     /// Set element type: 1=FLOAT, 6=INT32 (default).
     pub fn with_elem_type(mut self, t: i32) -> Self {
         self.elem_type = t;
+        self
+    }
+
+    /// Set the declared channel count (2 = engine-split even/odd lanes).
+    pub fn with_channels(mut self, ch: i64) -> Self {
+        self.channels = ch;
         self
     }
 }
@@ -129,19 +139,19 @@ impl IspBlock for RawInputBlock {
         let dims: Vec<Vec<u8>> = match (self.concrete_h, self.concrete_w) {
             (Some(h), Some(w)) => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(self.channels),
                 Proto::tensor_dim_value(h),
                 Proto::tensor_dim_value(w),
             ],
             (None, Some(w)) => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(self.channels),
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_value(w),
             ],
             _ => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(self.channels),
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_param("W"),
             ],

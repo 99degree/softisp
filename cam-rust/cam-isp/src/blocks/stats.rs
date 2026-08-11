@@ -358,14 +358,14 @@ impl IspBlock for ToneStatsBlock {
         let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
             vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(4),
                 Proto::tensor_dim_value(h),
                 Proto::tensor_dim_value(w),
             ]
         } else {
             vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(4),
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_param("W"),
             ]
@@ -489,11 +489,12 @@ impl IspBlock for ToneStatsBlock {
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
-            // Luma weights [1, 3, 1, 1]: [0.299, 0.587, 0.114]
+            // Luma weights [1, 4, 1, 1]: the stats blocks read the pre-demosaic
+            // 4-quadrant Bayer tensor (aux_hook_src); luma ≈ mean of the quads.
             Proto::tensor_proto_float(
                 &format!("{}/luma_w", ns),
-                &[1, 3, 1, 1],
-                &[0.299, 0.587, 0.114],
+                &[1, 4, 1, 1],
+                &[0.25, 0.25, 0.25, 0.25],
             ),
             Proto::tensor_proto_float(&format!("{}/luma_b", ns), &[1], &[0.0]),
             Proto::tensor_proto_float_scalar(&format!("{}/clip_thresh", ns), 0.95),

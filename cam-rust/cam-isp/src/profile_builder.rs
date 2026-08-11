@@ -39,12 +39,17 @@ impl PipelineProfile {
             blocks.push(Box::new(
                 RawInputBlock::new()
                     .with_elem_type(6)
+                    .with_channels(2) // engine-split even/odd lanes [1,2,H,W/2]
                     .with_concrete_width(packed_w)
                     .with_concrete_height(concrete_h),
             ));
             blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
             blocks.push(Box::new(NormalizeBlock::new()));
-            blocks.push(Box::new(CfaBlock::new()));
+            // UnpackBlock splits packed INT32 into even/odd channels [1,2,H,W/2];
+            // CfaBlock consumes them as 2 conv input channels (kernel [2,1], stride
+            // [2,1]) instead of an interleaved [1,1,H,W] tensor — keeps every op
+            // rank-4 and resize-safe for MNN resizeSession.
+            blocks.push(Box::new(CfaBlock::new().with_packed_input()));
         } else {
             blocks.push(Box::new(
                 RawInputBlock::new()
@@ -88,7 +93,10 @@ impl PipelineProfile {
 
         if self.use_lsc {
             info!("  lsc: CcmBlock");
-            blocks.push(Box::new(CcmBlock::new()));
+            // Post-CFA tensors carry 4 Bayer quad channels; the LSC CCM must
+            // match (4→4 identity pass-through), otherwise MNN resizeSession
+            // rejects the 1x1 conv: inputChannel 4 vs filter inputCount 3.
+            blocks.push(Box::new(CcmBlock::with_instance("lsc").with_channels(4)));
         } else {
             info!("  lsc: IDENTITY");
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("lsc")));
@@ -97,10 +105,13 @@ impl PipelineProfile {
         blocks.push(Box::new(BayerWbBlock::new()));
 
         blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
-        blocks.push(Box::new(CcmBlock::new()));
+        // Unique instance names: multiple CcmBlocks share the default
+        // "CcmBlock/applied|frame" tensors, which alias in the ONNX→MNN
+        // converter and silently drop the demosaic chain.
+        blocks.push(Box::new(CcmBlock::with_instance("ccm")));
 
         if self.use_warp {
-            blocks.push(Box::new(CcmBlock::new()));
+            blocks.push(Box::new(CcmBlock::with_instance("warp")));
         }
 
         blocks.push(Box::new(ToneBlock::new()));
