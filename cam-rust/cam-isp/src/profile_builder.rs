@@ -36,9 +36,13 @@ impl PipelineProfile {
             target_width
         );
         if self.use_unpack {
+            // input_native16 declares the split input as native INT16; the MNN
+            // converter upcasts it to FLOAT32 and the engine converts the u16
+            // pairs to f32 lanes. INT32 stays INT32 (engine splits to i32).
+            let input_elem = if self.input_native16 { 5 } else { 6 };
             blocks.push(Box::new(
                 RawInputBlock::new()
-                    .with_elem_type(6)
+                    .with_elem_type(input_elem)
                     .with_channels(2) // engine-split even/odd lanes [1,2,H,W/2]
                     .with_concrete_width(packed_w)
                     .with_concrete_height(concrete_h),
@@ -50,6 +54,24 @@ impl PipelineProfile {
             // [2,1]) instead of an interleaved [1,1,H,W] tensor — keeps every op
             // rank-4 and resize-safe for MNN resizeSession.
             blocks.push(Box::new(CfaBlock::new().with_packed_input()));
+        } else if self.input_native16 {
+            // Path 3: native INT16 raw [1,1,H,W] — no unpack split. MNN's
+            // converter upcasts the INT16 input to FLOAT32, and the engine
+            // converts the u16 buffer to f32 (RawFloat mode). UnpackCfaBlock
+            // casts INT16→FLOAT32 and extracts the 4 Bayer quadrants via a
+            // stride-2 conv → [1,4,H/2,W/2].
+            blocks.push(Box::new(
+                RawInputBlock::new()
+                    .with_elem_type(5) // INT16
+                    .with_concrete_width(full_w)
+                    .with_concrete_height(concrete_h),
+            ));
+            blocks.push(Box::new(
+                crate::blocks::UnpackCfaBlock::new()
+                    .with_mode(crate::blocks::UnpackMode::NativeInt16)
+                    .with_fast_unpack(true) // Conv-based extract (unpack_w/unpack_b)
+                    .with_concrete_dims(concrete_h, full_w),
+            ));
         } else {
             blocks.push(Box::new(
                 RawInputBlock::new()

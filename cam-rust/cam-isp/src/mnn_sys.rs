@@ -182,6 +182,15 @@ extern "C" {
     /// Get expected input tensor element count.
     pub fn mnn_get_model_input_elements(interpreter: *mut c_void, session: *mut c_void) -> c_int;
 
+    /// Declared shape of the model's first input tensor (rank returned,
+    /// dims written into `out_dims`, -1 on error).
+    pub fn mnn_get_model_input_dims(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        out_dims: *mut c_int,
+        max_ndim: c_int,
+    ) -> c_int;
+
     /// Benchmark with GPU synchronization.
     /// Uses tensor map/unmap to force GPU→CPU sync for accurate timing.
     pub fn mnn_benchmark_sync(
