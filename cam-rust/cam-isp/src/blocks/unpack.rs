@@ -1,20 +1,18 @@
-//! UnpackBlock — splits packed INT32 into interleaved INT32 pixels.
+//! UnpackBlock — converts the engine-split even/odd INT32 lanes to float.
 //!
-//! Input:  INT32`[1,1,H,W/2]` where each element = pixel_even | (pixel_odd << 16)
-//! Output: INT32`[1,1,H,W]`    interleaved even/odd pixels (as 12-bit values)
+//! Input:  INT32 `[1,2,H,W/2]` — channel 0 = even pixels, channel 1 = odd
+//!         pixels (each a zero-extended u16 value, 0..65535).
+//! Output: FLOAT32 `[1,2,H,W/2]`.
 //!
-//! Low 16 bits (even pixels): Cast INT32→INT16 (truncates), Cast INT16→INT32
-//! High 16 bits (odd pixels): Shr(input, 16) — ONE node instead of float path
-//! Interleave via: Reshape→`[H,PW,1]`→Concat(axis=2)→Reshape→`[1,1,H,W]` — 3 nodes vs 5
+//! The even/odd lane split itself is performed engine-side (CPU): MNN's
+//! Vulkan backend cannot execute integer elementwise ops (Div/Mod/Sub) or
+//! INT16 casts, so extracting the two u16 lanes from a packed INT32 in-graph
+//! is impossible on GPU. Splitting on the host is exact and signedness-free.
 
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
-/// UnpackBlock — Bayer packed-INT32 or native-INT16 unpack.
-///
-/// Converts packed 4-pixel Bayer data from INT32→float32 or INT16→float32.
-/// Supports 4 Bayer patterns (RGGB/GRBG/GBRG/BGGR) via const buffer.
-/// Optional concrete dimensions for static shape inference.
+/// UnpackBlock — engine-split even/odd Bayer lanes, INT32 → FLOAT32.
 pub struct UnpackBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -23,8 +21,6 @@ pub struct UnpackBlock {
     pub input_source: String,
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
-    /// Workgroup tuning for Vulkan dispatch: (size_x, size_y).
-    pub workgroup_size: (u32, u32),
 }
 
 impl Default for UnpackBlock {
@@ -43,20 +39,6 @@ impl UnpackBlock {
             input_source: String::new(),
             concrete_h: None,
             concrete_w: None,
-            workgroup_size: (0, 0), // auto-tune
-        }
-    }
-
-    /// Return the effective input tensor name: `input_source` if set,
-    /// otherwise `graph_input_name()`. This ensures ONNX nodes always
-    /// reference a valid tensor name even when `wire_blocks` wasn't called.
-    fn effective_input(&self) -> String {
-        if self.input_source.is_empty() {
-            self.graph_input_name()
-                .unwrap_or("UnpackBlock/frame")
-                .to_string()
-        } else {
-            self.input_source.clone()
         }
     }
 
@@ -118,25 +100,25 @@ impl IspBlock for UnpackBlock {
         vec![self.frame_tensor.clone()]
     }
 
-    /// Input is packed INT32`[1,1,H,W/2]`
+    /// Input is split even/odd INT32 `[1,2,H,W/2]`
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let pw = self.concrete_w.map(|w| w / 2);
         let dims: Vec<Vec<u8>> = match (self.concrete_h, pw) {
             (Some(h), Some(pw)) => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2),
                 Proto::tensor_dim_value(h),
                 Proto::tensor_dim_value(pw),
             ],
             (None, Some(pw)) => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2),
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_value(pw),
             ],
             _ => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2),
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_param("W2"), // packed width = W/2
             ],
@@ -144,107 +126,67 @@ impl IspBlock for UnpackBlock {
         Some(Proto::value_info(&self.effective_input(), &dims, 6)) // INT32
     }
 
-    /// Output is interleaved INT32`[1,1,H,W]`
+    /// Output is FLOAT32 `[1,2,H,W/2]` (consumed by CfaBlock packed conv)
     fn output_value_info(&self) -> Option<Vec<u8>> {
-        let dims: Vec<Vec<u8>> = match (self.concrete_h, self.concrete_w) {
-            (Some(h), Some(w)) => vec![
+        let pw = self.concrete_w.map(|w| w / 2);
+        let dims: Vec<Vec<u8>> = match (self.concrete_h, pw) {
+            (Some(h), Some(pw)) => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2),
                 Proto::tensor_dim_value(h),
-                Proto::tensor_dim_value(w),
+                Proto::tensor_dim_value(pw),
             ],
-            (None, Some(w)) => vec![
+            (None, Some(pw)) => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2),
                 Proto::tensor_dim_param("H"),
-                Proto::tensor_dim_value(w),
+                Proto::tensor_dim_value(pw),
             ],
             _ => vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2),
                 Proto::tensor_dim_param("H"),
-                Proto::tensor_dim_param("W"),
+                Proto::tensor_dim_param("W2"), // packed width = W/2
             ],
         };
-        Some(Proto::value_info(&self.frame_tensor, &dims, 6)) // INT32
+        Some(Proto::value_info(&self.frame_tensor, &dims, 1)) // FLOAT32
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
         let inp = self.effective_input();
 
         vec![
-            // --- Extract low 16 bits (even pixels) via INT16 truncation ---
+            // INT32 → FLOAT32 lane conversion. Attribute-only, rank-4, and
+            // Vulkan-supported (Cast int32→float is a 4-byte→4-byte op).
             Proto::node(
                 "Cast",
                 &[&inp],
-                &[&format!("{}/even_i16", ns)],
-                &[Proto::attribute_int("to", 5)],
-            ), // to=5 = INT16 (truncates to low 16 bits)
-            Proto::node(
-                "Cast",
-                &[&format!("{}/even_i16", ns)],
-                &[&format!("{}/even", ns)],
-                &[Proto::attribute_int("to", 6)],
-            ), // to=6 = INT32
-            // --- Extract high 16 bits (odd pixels) via integer Div ---
-            // For positive INT32 values (pixel0 | pixel1<<16), Div(65536) gives pixel1
-            Proto::node(
-                "Div",
-                &[&inp, &format!("{}/div_65536", ns)],
-                &[&format!("{}/odd", ns)],
-                &[],
-            ),
-            // --- Interleave even + odd into [1,1,H,W] ---
-            // Reshape even to [H, PW, 1], odd to [H, PW, 1], Concat, Reshape to [1,1,H,W]
-            Proto::node(
-                "Reshape",
-                &[&format!("{}/even", ns), &format!("{}/shape_3d", ns)],
-                &[&format!("{}/even_3d", ns)],
-                &[],
-            ),
-            Proto::node(
-                "Reshape",
-                &[&format!("{}/odd", ns), &format!("{}/shape_3d", ns)],
-                &[&format!("{}/odd_3d", ns)],
-                &[],
-            ),
-            Proto::node(
-                "Concat",
-                &[&format!("{}/even_3d", ns), &format!("{}/odd_3d", ns)],
-                &[&format!("{}/interleaved_3d", ns)],
-                &[Proto::attribute_int("axis", 2)],
-            ),
-            Proto::node(
-                "Reshape",
-                &[
-                    &format!("{}/interleaved_3d", ns),
-                    &format!("{}/shape_4d", ns),
-                ],
                 &[&self.frame_tensor],
-                &[],
-            ),
+                &[Proto::attribute_int("to", 1)],
+            ), // to=1 = FLOAT
         ]
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        let h = self.concrete_h.unwrap_or(64);
-        let pw = self.concrete_w.map(|w| w / 2).unwrap_or(32);
-        let w = self.concrete_w.unwrap_or(64);
-
-        vec![
-            // Div constant: 65536 for high 16 bits extraction (INT32)
-            Proto::tensor_proto_int32_scalar(&format!("{}/div_65536", ns), 65536),
-            // Shape constants: [H, PW, 1] for 3D reshape (shared by even and odd)
-            Proto::tensor_proto_int64(&format!("{}/shape_3d", ns), &[h, pw, 1]),
-            // Final shape: [1, 1, H, W]
-            Proto::tensor_proto_int64(&format!("{}/shape_4d", ns), &[1, 1, h, w]),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         vec![]
+    }
+}
+
+impl UnpackBlock {
+    /// Return the effective input tensor name: `input_source` if set,
+    /// otherwise `graph_input_name()`.
+    fn effective_input(&self) -> String {
+        if self.input_source.is_empty() {
+            self.graph_input_name()
+                .unwrap_or("UnpackBlock/frame")
+                .to_string()
+        } else {
+            self.input_source.clone()
+        }
     }
 }
 
@@ -257,13 +199,9 @@ mod tests {
     fn test_unpack_block_generates_nodes() {
         let block = UnpackBlock::new().with_concrete_dims(48, 64);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 7, "UnpackBlock should produce 7 nodes (Cast, Cast, Shr, Reshape, Reshape, Concat, Reshape)");
+        assert_eq!(nodes.len(), 1, "UnpackBlock should produce 1 Cast node");
         let inits = block.initializers();
-        assert_eq!(
-            inits.len(),
-            3,
-            "UnpackBlock should have 3 initializers (shift_16, shape_3d, shape_4d)"
-        );
+        assert_eq!(inits.len(), 0, "UnpackBlock should have no initializers");
     }
 
     #[test]
@@ -273,20 +211,21 @@ mod tests {
         let out_vi = block.output_value_info().unwrap();
         assert!(!in_vi.is_empty());
         assert!(!out_vi.is_empty());
-        // 7 nodes: 2 Cast + 1 Shr + 2 Reshape + 1 Concat + 1 Reshape
+        // 1 node: Cast (engine pre-splits even/odd lanes)
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 7);
-        // 3 initializers: shift_16 + shape_3d + shape_4d
+        assert_eq!(nodes.len(), 1);
+        // no initializers
         let inits = block.initializers();
-        assert_eq!(inits.len(), 3);
+        assert_eq!(inits.len(), 0);
     }
 
     #[test]
     fn test_unpack_pipeline_integration() {
-        // Build: RawInput(packed INT32) -> UnpackBlock -> NormalizeBlock
+        // Build: RawInput(split INT32) -> UnpackBlock -> NormalizeBlock
         let b1: Box<dyn IspBlock> = Box::new(
             crate::blocks::RawInputBlock::new()
                 .with_elem_type(6) // INT32 input
+                .with_channels(2) // even/odd lanes
                 .with_concrete_dims(48, 32),
         ); // packed width = 32
         let b2: Box<dyn IspBlock> = Box::new(UnpackBlock::new().with_concrete_dims(48, 64));
@@ -314,13 +253,5 @@ mod tests {
     fn test_unpack_tensor_ns() {
         let b = UnpackBlock::new();
         assert!(!b.tensor_ns().is_empty());
-    }
-}
-
-impl UnpackBlock {
-    /// Set custom workgroup size for Vulkan dispatch.
-    pub fn workgroup(mut self, size_x: u32, size_y: u32) -> Self {
-        self.workgroup_size = (size_x, size_y);
-        self
     }
 }
