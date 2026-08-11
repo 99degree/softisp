@@ -58,11 +58,7 @@ fn main() {
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
         // 1. INT16 input: [1,1,2160,3840] — sensor native format
-        Box::new(
-            RawInputBlock::new()
-                .with_elem_type(5) // INT16
-                .with_concrete_dims(full_h, full_w),
-        ),
+        Box::new(RawInput16Block::new().with_concrete_dims(full_h, full_w)),
         // 2. Unpack CFA via Conv: NativeInt16 + fast_unpack
         //    stride_w=2 → Conv kernel 2×2, stride 2×2 → [1,4,1080,960]
         Box::new(
