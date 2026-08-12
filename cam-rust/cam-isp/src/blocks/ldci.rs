@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_ldci_initializers() {
         let b = LdciBlock::new();
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         assert_eq!(inits.len(), 0);
     }
 
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn test_ldci_with_strength() {
         let b = LdciBlock::new();
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         assert_eq!(inits.len(), 0);
     }
 }

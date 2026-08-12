@@ -352,27 +352,6 @@ impl IspBlock for WarpGridBlock {
         Some(&self.frame_tensor)
     }
 
-    /// Grid and shading LUT are runtime graph inputs — NOT initializers.
-    /// The engine writes actual data into these tensors via set_extra_inputs().
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        let mut inputs = Vec::new();
-        if self.grid_data.is_some() {
-            inputs.push((
-                format!("{}/grid", self.tensor_ns()),
-                1, // FLOAT
-                vec![1, self.output_height as i64, self.output_width as i64, 2],
-            ));
-        }
-        if self.shading_data.is_some() {
-            inputs.push((
-                format!("{}/shading_lut", self.tensor_ns()),
-                1, // FLOAT
-                vec![1, 3, self.output_height as i64, self.output_width as i64],
-            ));
-        }
-        inputs
-    }
-
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
             &self.effective_input(),
@@ -544,90 +523,154 @@ impl IspBlock for WarpGridBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        let mut inits = Vec::new();
-
-        // Grid and shading LUT are runtime extra_inputs — NOT initializers.
-        // This keeps the ONNX model small (~200KB-1MB) and prevents MNN
-        // from DCE-ing the entire ISP graph.
-
-        if self.swaps_dims() {
-            return inits;
-        }
-
-        let (height, width) = (self.output_height as i64, self.output_width as i64);
-
-        if self.needs_hflip() && width > 0 {
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/hflip_starts", ns),
-                &[width - 1],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/hflip_ends", ns),
-                &[-1],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/hflip_axes", ns),
-                &[3],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/hflip_steps", ns),
-                &[-1],
+        let mut inputs = Vec::new();
+        if self.grid_data.is_some() {
+            inputs.push((
+                format!("{}/grid", ns),
+                1, // FLOAT
+                vec![1, self.output_height as i64, self.output_width as i64, 2],
             ));
         }
-
-        if self.needs_vflip() && height > 0 {
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/vflip_starts", ns),
-                &[height - 1],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/vflip_ends", ns),
-                &[-1],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/vflip_axes", ns),
-                &[2],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/vflip_steps", ns),
-                &[-1],
+        if self.shading_data.is_some() {
+            inputs.push((
+                format!("{}/shading_lut", ns),
+                1, // FLOAT
+                vec![1, 3, self.output_height as i64, self.output_width as i64],
             ));
         }
-
-        // BCS constants
-        if let Some((bright, contr, sat)) = self.bcs {
+        if !self.swaps_dims() {
+            let (height, width) = (self.output_height as i64, self.output_width as i64);
+            if self.needs_hflip() && width > 0 {
+                inputs.push((format!("{}/hflip_starts", ns).to_string(), 6, vec![1]));
+                inputs.push((format!("{}/hflip_ends", ns).to_string(), 6, vec![1]));
+                inputs.push((format!("{}/hflip_axes", ns).to_string(), 6, vec![1]));
+                inputs.push((format!("{}/hflip_steps", ns).to_string(), 6, vec![1]));
+            }
+            if self.needs_vflip() && height > 0 {
+                inputs.push((format!("{}/vflip_starts", ns).to_string(), 6, vec![1]));
+                inputs.push((format!("{}/vflip_ends", ns).to_string(), 6, vec![1]));
+                inputs.push((format!("{}/vflip_axes", ns).to_string(), 6, vec![1]));
+                inputs.push((format!("{}/vflip_steps", ns).to_string(), 6, vec![1]));
+            }
+        }
+        if let Some((_bright, _contr, _sat)) = self.bcs {
             let scope = format!("{}/bcs", ns);
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/bright_add", scope),
-                bright,
+            inputs.push((format!("{}/bright_add", scope).to_string(), 1, vec![]));
+            inputs.push((format!("{}/half", scope).to_string(), 1, vec![]));
+            inputs.push((format!("{}/contr_w", scope).to_string(), 1, vec![]));
+            inputs.push((format!("{}/luma_w", scope).to_string(), 1, vec![3]));
+            inputs.push((format!("{}/sat_w", scope).to_string(), 1, vec![3]));
+        }
+        inputs
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        let mut defaults = Vec::new();
+        if self.grid_data.is_some() {
+            defaults.push((format!("{}/grid", ns).to_string(), vec![]));
+        }
+        if self.shading_data.is_some() {
+            defaults.push((format!("{}/shading_lut", ns).to_string(), vec![]));
+        }
+        if !self.swaps_dims() {
+            let (height, width) = (self.output_height as i64, self.output_width as i64);
+            if self.needs_hflip() && width > 0 {
+                defaults.push((
+                    format!("{}/hflip_starts", ns).to_string(),
+                    (width - 1).to_ne_bytes().to_vec(),
+                ));
+                defaults.push((
+                    format!("{}/hflip_ends", ns).to_string(),
+                    [(-1i64)]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+                defaults.push((
+                    format!("{}/hflip_axes", ns).to_string(),
+                    [3i64]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+                defaults.push((
+                    format!("{}/hflip_steps", ns).to_string(),
+                    [(-1i64)]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+            }
+            if self.needs_vflip() && height > 0 {
+                defaults.push((
+                    format!("{}/vflip_starts", ns).to_string(),
+                    (height - 1).to_ne_bytes().to_vec(),
+                ));
+                defaults.push((
+                    format!("{}/vflip_ends", ns).to_string(),
+                    [(-1i64)]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+                defaults.push((
+                    format!("{}/vflip_axes", ns).to_string(),
+                    [2i64]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+                defaults.push((
+                    format!("{}/vflip_steps", ns).to_string(),
+                    [(-1i64)]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+            }
+        }
+        if let Some((bright, contr, _sat)) = self.bcs {
+            let scope = format!("{}/bcs", ns);
+            defaults.push((
+                format!("{}/bright_add", scope).to_string(),
+                (bright).to_ne_bytes().to_vec(),
             ));
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/half", scope),
-                0.5,
+            defaults.push((
+                format!("{}/half", scope).to_string(),
+                (0.5f32).to_ne_bytes().to_vec(),
             ));
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/contr_w", scope),
-                contr,
+            defaults.push((
+                format!("{}/contr_w", scope).to_string(),
+                (contr).to_ne_bytes().to_vec(),
             ));
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/luma_w", scope),
-                &[3],
-                &[0.299, 0.587, 0.114],
+            defaults.push((
+                format!("{}/luma_w", scope).to_string(),
+                [0.299f32, 0.587f32, 0.114f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ));
+            let sat = _sat;
             let sat_w = if sat >= 0.0 {
-                vec![1.0, sat, sat]
+                vec![1.0f32, sat, sat]
             } else {
-                vec![1.0, 1.4, 0.5]
+                vec![1.0f32, 1.4, 0.5]
             };
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/sat_w", scope),
-                &[3],
-                &sat_w,
+            defaults.push((
+                format!("{}/sat_w", scope).to_string(),
+                sat_w
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ));
         }
-
-        inits
+        defaults
     }
 }
 
@@ -668,12 +711,9 @@ mod tests {
         let nodes = block.nodes();
         // GridSample + Mul(shading) + Identity = 3 nodes
         assert_eq!(nodes.len(), 3, "should have GridSample + Mul + Identity");
-        let inits = block.initializers();
         // grid + shading_lut moved to extra_inputs — initializers should be empty
-        assert!(
-            inits.is_empty(),
-            "grid/shading are extra_inputs now, not initializers"
-        );
+        let inits = block.extra_input_defaults();
+        assert_eq!(inits.len(), 2, "grid and shading defaults");
         let extras = block.extra_inputs();
         assert_eq!(
             extras.len(),
@@ -765,8 +805,6 @@ mod tests {
         let nodes = block.nodes();
         // GridSample + Identity = 2 nodes
         assert_eq!(nodes.len(), 2, "GDC should emit GridSample + Identity");
-        let inits = block.initializers();
-        assert!(inits.is_empty(), "grid is extra_input now, not initializer");
         let extras = block.extra_inputs();
         assert_eq!(extras.len(), 1, "should have grid extra_input");
     }
@@ -779,8 +817,6 @@ mod tests {
         let nodes = block.nodes();
         // GridSample + Mul(shading) + Identity = 3 nodes
         assert_eq!(nodes.len(), 3, "GDC + lens shading = 3 nodes");
-        let inits = block.initializers();
-        assert!(inits.is_empty(), "grid is extra_input now, not initializer");
         let extras = block.extra_inputs();
         assert_eq!(
             extras.len(),

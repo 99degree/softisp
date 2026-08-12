@@ -153,27 +153,29 @@ impl IspBlock for CfaBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        // Conv weights [4, 1, 2, 2] — 4 filters, 1 input channel, 2x2 kernel
-        // Each filter picks one quad position:
-        //   filter 0 (TL): [[1,0],[0,0]]
-        //   filter 1 (TR): [[0,1],[0,0]]
-        //   filter 2 (BL): [[0,0],[1,0]]
-        //   filter 3 (BR): [[0,0],[0,1]]
-        let w = vec![
-            1f32, 0f32, 0f32, 0f32, // TL
-            0f32, 1f32, 0f32, 0f32, // TR
-            0f32, 0f32, 1f32, 0f32, // BL
-            0f32, 0f32, 0f32, 1f32, // BR
-        ];
-        vec![
-            Proto::tensor_proto_float(&format!("{}/w", ns), &[4, 1, 2, 2], &w),
-            Proto::tensor_proto_float(&format!("{}/b", ns), &[4], &[0f32; 4]),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/w", ns).to_string(), 1, vec![4, 1, 2, 2]),
+            (format!("{}/b", ns).to_string(), 1, vec![4]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/w", ns).to_string(), vec![]),
+            (
+                format!("{}/b", ns).to_string(),
+                [0f32; 4]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+        ]
     }
 }
 
@@ -340,32 +342,29 @@ impl IspBlock for CfaBlockPacked {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        // Conv weights [4, 2, 2, 1] — 4 filters, 2 input channels (even/odd),
-        // 2x1 kernel. Filter oc picks the quad position:
-        //   oc0 (TL) = even[2i][j]   → kernel (0,0) on channel 0 (even)
-        //   oc1 (TR) = odd[2i][j]    → kernel (0,0) on channel 1 (odd)
-        //   oc2 (BL) = even[2i+1][j] → kernel (1,0) on channel 0 (even)
-        //   oc3 (BR) = odd[2i+1][j]  → kernel (1,0) on channel 1 (odd)
-        // Row-major [oc][ic][kh][kw]:
-        //   oc0: ic0 [[1],[0]] ic1 [[0],[0]]
-        //   oc1: ic0 [[0],[0]] ic1 [[1],[0]]
-        //   oc2: ic0 [[0],[1]] ic1 [[0],[0]]
-        //   oc3: ic0 [[0],[0]] ic1 [[0],[1]]
-        let w = vec![
-            1f32, 0f32, 0f32, 0f32, // oc0: even @ (0,0)
-            0f32, 0f32, 1f32, 0f32, // oc1: odd  @ (0,0)
-            0f32, 1f32, 0f32, 0f32, // oc2: even @ (1,0)
-            0f32, 0f32, 0f32, 1f32, // oc3: odd  @ (1,0)
-        ];
-        vec![
-            Proto::tensor_proto_float(&format!("{}/w", ns), &[4, 2, 2, 1], &w),
-            Proto::tensor_proto_float(&format!("{}/b", ns), &[4], &[0f32; 4]),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/w", ns).to_string(), 1, vec![4, 2, 2, 1]),
+            (format!("{}/b", ns).to_string(), 1, vec![4]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/w", ns).to_string(), vec![]),
+            (
+                format!("{}/b", ns).to_string(),
+                [0f32; 4]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+        ]
     }
 }
 
@@ -395,7 +394,7 @@ mod tests {
     #[test]
     fn test_cfa_block_conv_weights() {
         let block = CfaBlock::new();
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 2, "Should have weight and bias initializers");
         // Weight should have shape [4, 1, 2, 2]
         // Bias should have shape [4]
@@ -430,7 +429,7 @@ mod tests {
         let block = CfaBlockPacked::new().with_concrete_dims(48, 64);
         let nodes = block.nodes();
         assert_eq!(nodes.len(), 1, "CfaBlockPacked should produce 1 Conv node");
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 2, "Should have weight and bias initializers");
         // Output dims halve H and keep W/2 (same as raw mode)
         let vi = block.output_value_info().unwrap();

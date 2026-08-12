@@ -134,75 +134,22 @@ impl IspBlock for DemosaicInterpBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-
-        // Conv weights: [3, 1, 4, 4] = 48 floats
-        // Bilinear interpolation weights for RGGB Bayer pattern
-        let mut weights = vec![0.0f32; 3 * 4 * 4]; // [OC, IC, KY, KX]
-
-        // Channel 0 (R): weight R positions heavily, interpolate G and B
-        for ky in 0..4 {
-            for kx in 0..4 {
-                let bx = kx % 2;
-                let by = ky % 2;
-                let idx = ky * 4 + kx;
-
-                if bx == 0 && by == 0 {
-                    // R position: weight 0.25
-                    weights[idx] = 0.25;
-                } else if (bx == 1 && by == 0) || (bx == 0 && by == 1) {
-                    // Gr or Gb position: weight 0.125
-                    weights[idx] = 0.125;
-                } else {
-                    // B position: weight 0.0625
-                    weights[idx] = 0.0625;
-                }
-            }
-        }
-
-        // Channel 1 (G): weight Gr/Gb positions heavily
-        for ky in 0..4 {
-            for kx in 0..4 {
-                let bx = kx % 2;
-                let by = ky % 2;
-                let idx = 16 + ky * 4 + kx;
-
-                if (bx == 1 && by == 0) || (bx == 0 && by == 1) {
-                    // G position: weight 0.25
-                    weights[idx] = 0.25;
-                } else {
-                    // R or B position: weight 0.125
-                    weights[idx] = 0.125;
-                }
-            }
-        }
-
-        // Channel 2 (B): weight B positions heavily, interpolate R and G
-        for ky in 0..4 {
-            for kx in 0..4 {
-                let bx = kx % 2;
-                let by = ky % 2;
-                let idx = 2 * 16 + ky * 4 + kx;
-
-                if bx == 1 && by == 1 {
-                    // B position: weight 0.25
-                    weights[idx] = 0.25;
-                } else if (bx == 1 && by == 0) || (bx == 0 && by == 1) {
-                    // G position: weight 0.125
-                    weights[idx] = 0.125;
-                } else {
-                    // R position: weight 0.0625
-                    weights[idx] = 0.0625;
-                }
-            }
-        }
-
-        // Bias: [3] zeros
-        let bias = vec![0.0f32; 3];
-
         vec![
-            Proto::tensor_proto_float(&format!("{ns}/conv_w"), &[3, 1, 4, 4], &weights),
-            Proto::tensor_proto_float(&format!("{ns}/conv_b"), &[3], &bias),
+            (format!("{ns}/conv_w").to_string(), 1, vec![3, 1, 4, 4]),
+            (format!("{ns}/conv_b").to_string(), 1, vec![3]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{ns}/conv_w").to_string(), vec![]),
+            (format!("{ns}/conv_b").to_string(), vec![]),
         ]
     }
 }
@@ -222,7 +169,7 @@ mod tests {
     #[test]
     fn test_demosaic_interp_initializers() {
         let block = DemosaicInterpBlock::new();
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 2, "Conv weights + bias");
     }
 
@@ -241,7 +188,7 @@ mod tests {
     #[test]
     fn test_demosaic_interp_with_sensor_max() {
         let block = DemosaicInterpBlock::new().with_sensor_max(4095.0);
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 2, "Conv weights + bias");
     }
 }

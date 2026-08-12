@@ -487,22 +487,45 @@ impl IspBlock for ToneStatsBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
         vec![
-            // Luma weights [1, 4, 1, 1]: the stats blocks read the pre-demosaic
-            // 4-quadrant Bayer tensor (aux_hook_src); luma ≈ mean of the quads.
-            Proto::tensor_proto_float(
-                &format!("{}/luma_w", ns),
-                &[1, 4, 1, 1],
-                &[0.25, 0.25, 0.25, 0.25],
-            ),
-            Proto::tensor_proto_float(&format!("{}/luma_b", ns), &[1], &[0.0]),
-            Proto::tensor_proto_float_scalar(&format!("{}/clip_thresh", ns), 0.95),
-            Proto::tensor_proto_float_scalar(&format!("{}/shadow_thresh", ns), 0.05),
+            (format!("{}/luma_w", ns).to_string(), 1, vec![1, 4, 1, 1]),
+            (format!("{}/luma_b", ns).to_string(), 1, vec![1]),
+            (format!("{}/clip_thresh", ns).to_string(), 1, vec![]),
+            (format!("{}/shadow_thresh", ns).to_string(), 1, vec![]),
         ]
     }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/luma_w", ns).to_string(),
+                [0.25f32, 0.25f32, 0.25f32, 0.25f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/luma_b", ns).to_string(),
+                [0.0f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/clip_thresh", ns).to_string(),
+                (0.95f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/shadow_thresh", ns).to_string(),
+                (0.05f32).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 
     fn graph_output_name(&self) -> Option<&str> {
@@ -699,32 +722,55 @@ impl IspBlock for CoarseHistogramBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        let mut inits = vec![
-            Proto::tensor_proto_float(
-                &format!("{}/luma_w", ns),
-                &[1, 3, 1, 1],
-                &[0.299, 0.587, 0.114],
-            ),
-            Proto::tensor_proto_float(&format!("{}/luma_b", ns), &[1], &[0.0]),
-        ];
+        vec![]
+    }
 
-        // Bin edges: [0, 1/N, 2/N, ..., 1]
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        let mut inputs = vec![
+            (format!("{}/luma_w", ns).to_string(), 1, vec![1, 3, 1, 1]),
+            (format!("{}/luma_b", ns).to_string(), 1, vec![1]),
+        ];
+        for i in 0..=self.num_bins {
+            inputs.push((format!("{}/e{}", ns, i).to_string(), 1, vec![]));
+        }
+        inputs.push((format!("{}/axis", ns).to_string(), 6, vec![1]));
+        inputs
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        let mut defaults = vec![
+            (
+                format!("{}/luma_w", ns).to_string(),
+                [0.299f32, 0.587f32, 0.114f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/luma_b", ns).to_string(),
+                [0.0f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+        ];
         for i in 0..=self.num_bins {
             let edge_val = i as f32 / self.num_bins as f32;
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/e{}", ns, i),
-                edge_val,
+            defaults.push((
+                format!("{}/e{}", ns, i).to_string(),
+                (edge_val).to_ne_bytes().to_vec(),
             ));
         }
-
-        // Concat axis
-        inits.push(Proto::tensor_proto_int64(&format!("{}/axis", ns), &[1]));
-
-        inits
-    }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        defaults.push((
+            format!("{}/axis", ns).to_string(),
+            [1i64]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>(),
+        ));
+        defaults
     }
 
     fn graph_output_name(&self) -> Option<&str> {
@@ -971,14 +1017,30 @@ impl IspBlock for CalibrationBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        vec![
-            Proto::tensor_proto_float_scalar("CalibrationBlock/eps", 1e-6f32),
-            Proto::tensor_proto_int64("CalibrationBlock/shape", &[1, 24]),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        vec![
+            ("CalibrationBlock/eps".to_string(), 1, vec![]),
+            ("CalibrationBlock/shape".to_string(), 6, vec![1, 24]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        vec![
+            (
+                "CalibrationBlock/eps".to_string(),
+                (1e-6f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                "CalibrationBlock/shape".to_string(),
+                [1i64, 24]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+        ]
     }
 
     fn graph_output_name(&self) -> Option<&str> {
@@ -1098,7 +1160,10 @@ mod tests {
     fn test_histogram_initializers() {
         let b = CoarseHistogramBlock::new(16);
         // luma_w + luma_b + (num_bins+1) edges + axis = 4 + 16
-        assert_eq!(b.initializers().len(), 2 + (b.num_bins + 1) as usize + 1);
+        assert_eq!(
+            b.extra_input_defaults().len(),
+            2 + (b.num_bins + 1) as usize + 1
+        );
     }
 
     #[test]

@@ -228,6 +228,15 @@ pub trait IspBlock: Send {
         vec![]
     }
 
+    /// Default raw tensor bytes for each extra input this block formerly
+    /// baked as a Const initializer.  The engine caches these at build time
+    /// and writes them into MNN input tensors before inference; per-frame
+    /// overrides from `isp_params` take precedence.  Returned in any order,
+    /// keyed by tensor name.  Empty by default (blocks with no baked values).
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        vec![]
+    }
+
     /// Auxiliary blocks this block depends on.
     ///
     /// Returns ids of aux blocks (e.g. `"fcs"`, `"ldci"`, `"ee"`)
@@ -418,7 +427,7 @@ impl GraphComposer {
 
         for blk in &all_blocks {
             all_nodes.extend(blk.nodes());
-            all_initializers.extend(blk.initializers());
+            all_initializers.extend(blk.extra_input_defaults().into_iter().map(|(_, data)| data));
 
             // Intermediate tensor value info for type inference (→ field 13)
             // Only for non-Identity blocks
@@ -742,7 +751,7 @@ impl GraphComposer {
         // Collect stats before composing
         let block_names: Vec<String> = blocks.iter().map(|b| b.id().to_string()).collect();
         let total_nodes: usize = blocks.iter().map(|b| b.nodes().len()).sum();
-        let total_inits: usize = blocks.iter().map(|b| b.initializers().len()).sum();
+        let total_inits: usize = blocks.iter().map(|b| b.extra_input_defaults().len()).sum();
 
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
         let onnx = Self::compose_from_vec(&refs, aux_blocks, opset_version)?;
@@ -827,7 +836,7 @@ impl GraphComposer {
 
         for (i, blk) in blocks.iter().enumerate() {
             let nodes = blk.nodes().len();
-            let inits = blk.initializers().len();
+            let inits = blk.extra_input_defaults().len();
             let inputs = blk.input_tensors().join(", ");
             let outputs = blk.output_tensors().join(", ");
             lines.push(format!(
@@ -843,7 +852,7 @@ impl GraphComposer {
 
         lines.push("─".repeat(60));
         let total_nodes: usize = blocks.iter().map(|b| b.nodes().len()).sum();
-        let total_inits: usize = blocks.iter().map(|b| b.initializers().len()).sum();
+        let total_inits: usize = blocks.iter().map(|b| b.extra_input_defaults().len()).sum();
         lines.push(format!(
             "  Total: {} ops, {} initializers",
             total_nodes, total_inits
@@ -958,7 +967,11 @@ impl GraphComposer {
             };
             let output_bytes = channels * pixels * f32_size;
             // Initializer data
-            let init_bytes: u64 = blk.initializers().iter().map(|i| i.len() as u64).sum();
+            let init_bytes: u64 = blk
+                .extra_input_defaults()
+                .iter()
+                .map(|i| i.1.len() as u64)
+                .sum();
             let block_total = output_bytes + init_bytes;
             total += block_total;
             per_block.push((blk.id().to_string(), block_total));

@@ -177,18 +177,13 @@ impl IspBlock for GammaBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        // min/max/inv_gamma/lift/norm are runtime inputs (fed by the engine
-        // per-frame); only the epsilon guard stays baked.
-        vec![Proto::tensor_proto_float_scalar(
-            &format!("{}/eps", ns),
-            1e-6,
-        )]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
         let mut extras = vec![
+            (format!("{}/eps", ns), 1, vec![]),
             (format!("{}/inv_gamma", ns), 1, vec![1]),
             (format!("{}/min", ns), 1, vec![1]),
             (format!("{}/max", ns), 1, vec![1]),
@@ -198,6 +193,31 @@ impl IspBlock for GammaBlock {
             extras.push((format!("{}/norm", ns), 1, vec![1]));
         }
         extras
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        let inv_gamma = 1.0 / self.gamma;
+        let mut defaults = vec![
+            (format!("{}/eps", ns), (1e-6f32).to_ne_bytes().to_vec()),
+            (
+                format!("{}/inv_gamma", ns),
+                inv_gamma.to_ne_bytes().to_vec(),
+            ),
+            (format!("{}/min", ns), (0.0f32).to_ne_bytes().to_vec()),
+            (format!("{}/max", ns), (1.0f32).to_ne_bytes().to_vec()),
+        ];
+        if self.shadow_lift > 0.0 {
+            defaults.push((
+                format!("{}/lift", ns),
+                (self.shadow_lift).to_ne_bytes().to_vec(),
+            ));
+            defaults.push((
+                format!("{}/norm", ns),
+                (1.0f32 / self.gamma).to_ne_bytes().to_vec(),
+            ));
+        }
+        defaults
     }
 }
 
@@ -211,9 +231,14 @@ mod tests {
         let nodes = block.nodes();
         // Log + Mul + Exp + Max + Min + Add(eps) = 6 nodes
         assert!(nodes.len() >= 5, "need >= 5 nodes, got {}", nodes.len());
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         // min/max/inv_gamma/lift/norm are runtime inputs; only eps stays baked
-        assert_eq!(inits.len(), 1, "only eps stays baked, got {}", inits.len());
+        assert_eq!(
+            inits.len(),
+            4,
+            "eps + inv_gamma + min + max stay baked, got {}",
+            inits.len()
+        );
     }
 
     #[test]
@@ -242,9 +267,13 @@ mod tests {
     #[test]
     fn test_gamma_identity() {
         let block = GammaBlock::new(1.0);
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         // inv_gamma is a runtime input; only eps stays baked
-        assert_eq!(inits.len(), 1, "gamma=1.0 should only bake eps");
+        assert_eq!(
+            inits.len(),
+            4,
+            "gamma should have eps, inv_gamma, min, max as runtime inputs"
+        );
     }
 
     #[test]

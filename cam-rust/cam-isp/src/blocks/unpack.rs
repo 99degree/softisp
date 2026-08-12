@@ -200,7 +200,7 @@ mod tests {
         let block = UnpackBlock::new().with_concrete_dims(48, 64);
         let nodes = block.nodes();
         assert_eq!(nodes.len(), 1, "UnpackBlock should produce 1 Cast node");
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 0, "UnpackBlock should have no initializers");
     }
 
@@ -215,7 +215,7 @@ mod tests {
         let nodes = block.nodes();
         assert_eq!(nodes.len(), 1);
         // no initializers
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 0);
     }
 

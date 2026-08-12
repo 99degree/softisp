@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn test_demosaic_block_weights_shape() {
         let block = DemosaicBlock::new(2);
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 0, "w/b are runtime inputs now");
         let extras = block.extra_inputs();
         assert_eq!(extras.len(), 2, "Should declare weight and bias as inputs");
