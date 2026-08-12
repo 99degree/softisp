@@ -128,13 +128,8 @@ impl IspBlock for SaturationBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let scale = vec![self.saturation; 3];
-        // Shape [1,3,1,1] for MNN broadcast — [3] causes runSession code=3.
-        vec![Proto::tensor_proto_float(
-            "saturation/scale",
-            &[1, 3, 1, 1],
-            &scale,
-        )]
+        // scale is a runtime input (fed by the engine per-frame).
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {

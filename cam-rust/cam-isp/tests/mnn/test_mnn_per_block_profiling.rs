@@ -67,6 +67,7 @@ fn test_mnn_per_block_profiling() {
         let _ = cam_isp::mnn_sys::mnn_run_with_output(
             interp.as_ptr(),
             sess.as_ptr(),
+            std::ptr::null(),
             buf.as_ptr() as *const c_void,
             0,
             32,
