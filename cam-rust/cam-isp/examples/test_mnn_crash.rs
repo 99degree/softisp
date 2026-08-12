@@ -52,7 +52,6 @@ fn main() {
     #[cfg(feature = "mnn")]
     {
         cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-        cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Cpu);
     }
     let engine_name = std::env::var("ENGINE").unwrap_or_else(|_| "mnn_cpu".to_string());
 

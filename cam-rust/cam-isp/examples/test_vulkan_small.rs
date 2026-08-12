@@ -9,7 +9,6 @@ fn main() {
     // Register engines
     cam_isp::cpu::register_cpu_engine();
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-    cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Cpu);
 
     // Small 64x64 test - just unpack + display (no demosaic or warp)
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![

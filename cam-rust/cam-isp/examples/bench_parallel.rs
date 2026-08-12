@@ -40,14 +40,10 @@ fn main() {
     }
 
     // ── Select engine ────────────────────────────────────────────────
-    let engine_name = std::env::var("ENGINE").unwrap_or_else(|_| "mnn_cpu".to_string());
-    let be = match engine_name.as_str() {
-        "mnn_vulkan" => cam_isp::mnnengine::MnnBackend::Vulkan,
-        "mnn_opencl" => cam_isp::mnnengine::MnnBackend::Opencl,
-        "mnn_opengl" => cam_isp::mnnengine::MnnBackend::OpenGl,
-        "mnn_neon" => cam_isp::mnnengine::MnnBackend::CpuNeon,
-        _ => cam_isp::mnnengine::MnnBackend::Cpu,
-    };
+    let engine_name = std::env::var("ENGINE").unwrap_or_else(|_| "mnn_vulkan".to_string());
+    // Vulkan is the only supported MNN backend.
+    let _ = &engine_name;
+    let be = cam_isp::mnnengine::MnnBackend::Vulkan;
 
     let use_native = std::env::var("MODE")
         .ok()

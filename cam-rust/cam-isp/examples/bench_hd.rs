@@ -39,9 +39,6 @@ fn main() {
         for &be_name in &backends {
             let be = match be_name {
                 "vulkan" => cam_isp::mnnengine::MnnBackend::Vulkan,
-                "opencl" => cam_isp::mnnengine::MnnBackend::Opencl,
-                "opengl" => cam_isp::mnnengine::MnnBackend::OpenGl,
-                "cpu" => cam_isp::mnnengine::MnnBackend::Cpu,
                 _ => unreachable!(),
             };
 

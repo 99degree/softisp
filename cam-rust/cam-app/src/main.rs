@@ -111,9 +111,8 @@ fn register_engines(backend: &str) {
         "mnn" => {
             #[cfg(feature = "mnn")]
             {
-                info!("Registering MNN engines");
+                info!("Registering MNN engine");
                 register_mnn_engine!(MnnBackend::Vulkan);
-                register_mnn_engine!(MnnBackend::Cpu);
             }
             #[cfg(not(feature = "mnn"))]
             {
@@ -125,7 +124,6 @@ fn register_engines(backend: &str) {
             #[cfg(feature = "mnn")]
             {
                 register_mnn_engine!(MnnBackend::Vulkan);
-                register_mnn_engine!(MnnBackend::Cpu);
             }
             #[cfg(feature = "ort")]
             {

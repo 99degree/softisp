@@ -17,7 +17,6 @@ fn main() {
     #[cfg(feature = "mnn")]
     {
         cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-        cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Cpu);
     }
 
     // 4K input, FHD output

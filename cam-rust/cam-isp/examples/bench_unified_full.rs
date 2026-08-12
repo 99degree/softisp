@@ -22,7 +22,6 @@ fn bench_raw_pipeline(name: &str, w: u32, h: u32, fmt: OutputFormat, iters: u32)
     // Register engines
     cam_isp::cpu::register_cpu_engine();
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-    cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Cpu);
 
     let mut engine = cam_isp::engine::select_engine_by_name("mnn_vulkan").unwrap();
     let head = blocks.remove(0);

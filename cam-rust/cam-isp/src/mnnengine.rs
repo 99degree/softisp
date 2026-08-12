@@ -30,42 +30,25 @@ pub use crate::mnn_sys::*;
 
 // ── Backend ─────────────────────────────────────────────────────────────
 
+/// The MNN inference backend. Only Vulkan is supported: the whole pipeline
+/// (GDC grid compute + GridSample + fused isp.* extras) runs on GPU via
+/// MNN's Vulkan backend; CPU/OpenCL/OpenGL backends are intentionally not
+/// offered so the runtime contract stays unambiguous.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MnnBackend {
     Vulkan,
-    Opencl,
-    OpenGl,
-    CpuNeon,
-    Cpu,
 }
 
 impl MnnBackend {
     pub fn id(&self) -> &'static str {
-        match self {
-            Self::Vulkan => "mnn_vulkan",
-            Self::Opencl => "mnn_opencl",
-            Self::OpenGl => "mnn_opengl",
-            Self::CpuNeon => "mnn_neon",
-            Self::Cpu => "mnn_cpu",
-        }
+        "mnn_vulkan"
     }
     pub fn priority(&self) -> i32 {
-        match self {
-            Self::Vulkan => 99,
-            Self::Opencl => 55,
-            Self::OpenGl => 50,
-            Self::CpuNeon => 75,
-            Self::Cpu => 65,
-        }
+        99
     }
     #[cfg(feature = "mnn")]
     fn to_sys(self) -> MnnBackendType {
-        match self {
-            Self::Vulkan => MnnBackendType::Vulkan,
-            Self::Opencl => MnnBackendType::Opencl,
-            Self::OpenGl => MnnBackendType::Opengl,
-            _ => MnnBackendType::Cpu,
-        }
+        MnnBackendType::Vulkan
     }
 }
 
@@ -313,15 +296,7 @@ impl MnnEngine {
         &self.watchdog
     }
 
-    /// Check if CPU fallback is currently requested by watchdog
-    pub fn needs_cpu_fallback(&self) -> bool {
-        self.watchdog.fallback_requested()
-    }
-
-    /// Register MNN engine factories for all available backends.
-    /// Benchmarks each backend at startup and sets priority by actual FPS.
-    /// Uses a 320×240 model (sweet-spot: realistic, not too slow to build).
-    /// Times out after 2 s per backend — marks tardy backends with low priority.
+    /// Register the Vulkan MNN engine factory.
     /// Called automatically by `cam_isp::init()`.
     #[cfg(feature = "mnn")]
     pub fn register_factories() {
@@ -335,28 +310,15 @@ impl MnnEngine {
     fn register_with_defaults() {
         use crate::engine::register_engine;
         use crate::engine::EngineFactory;
-        let backends = [
-            MnnBackend::CpuNeon,
-            MnnBackend::Cpu,
-            MnnBackend::Vulkan,
-            MnnBackend::Opencl,
-            MnnBackend::OpenGl,
-        ];
-        for be in &backends {
-            let name = be.id();
-            let pri = be.priority();
-            let b = *be;
-            let create_fn = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
-            register_engine(EngineFactory {
-                name,
-                priority: pri,
-                create_fn,
-            });
-        }
-        info!(
-            "Registered {} MNN engine factories (default priorities)",
-            backends.len()
-        );
+        // Vulkan is the only supported MNN backend.
+        let b = MnnBackend::Vulkan;
+        let create_fn = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
+        register_engine(EngineFactory {
+            name: b.id(),
+            priority: b.priority(),
+            create_fn,
+        });
+        info!("Registered MNN engine factory mnn_vulkan (default priority)");
     }
 
     /// Build a comprehensive benchmark .mnn model exercising all pipeline ops:
@@ -1054,24 +1016,11 @@ impl IspEngine for MnnEngine {
             })?;
 
             // Use first session to probe model input type (before building pool)
-            let probe_sess = interp
-                .create_session(self.backend.to_sys(), 4)
-                .or_else(|| {
-                    // Fallback: try CPU if requested backend fails
-                    if self.backend != MnnBackend::Cpu {
-                        warn!(
-                            "Backend {:?} unavailable, falling back to CPU",
-                            self.backend
-                        );
-                        self.backend = MnnBackend::Cpu;
-                        interp.create_session(MnnBackendType::Cpu, 4)
-                    } else {
-                        None
-                    }
-                })
-                .ok_or(crate::error::IspError::Mnn(
-                    "probe session create fail (all backends exhausted)".into(),
-                ))?;
+            let probe_sess = interp.create_session(self.backend.to_sys(), 4).ok_or(
+                crate::error::IspError::Mnn(
+                    "probe session create fail (Vulkan backend unavailable)".into(),
+                ),
+            )?;
             // Resolve the frame input by NAME: getSessionInput(nullptr) returns
             // the alphabetically-first input, which is a runtime-fed weight
             // tensor in multi-input models (e.g. CcmBlock_ccm/matrix <
@@ -1721,29 +1670,28 @@ mod tests {
     #[test]
     fn test_mnn_backend_id() {
         assert_eq!(MnnBackend::Vulkan.id(), "mnn_vulkan");
-        assert_eq!(MnnBackend::Cpu.id(), "mnn_cpu");
     }
 
     #[test]
     fn test_mnn_backend_priority() {
-        assert!(MnnBackend::Vulkan.priority() > MnnBackend::Cpu.priority());
+        assert_eq!(MnnBackend::Vulkan.priority(), 99);
     }
 
     #[test]
     fn test_mnn_engine_new() {
-        let engine = MnnEngine::new(MnnBackend::Cpu);
-        assert_eq!(engine.backend_name(), "mnn_cpu");
+        let engine = MnnEngine::new(MnnBackend::Vulkan);
+        assert_eq!(engine.backend_name(), "mnn_vulkan");
     }
 
     #[test]
     fn test_mnn_engine_with_pool_size() {
-        let engine = MnnEngine::with_pool_size(MnnBackend::Cpu, 4);
-        assert_eq!(engine.backend_name(), "mnn_cpu");
+        let engine = MnnEngine::with_pool_size(MnnBackend::Vulkan, 4);
+        assert_eq!(engine.backend_name(), "mnn_vulkan");
     }
 
     #[test]
     fn test_preserve_input_type() {
-        let mut engine = MnnEngine::new(MnnBackend::Cpu);
+        let mut engine = MnnEngine::new(MnnBackend::Vulkan);
         assert!(!engine.preserve_input_type());
         engine.set_preserve_input_type(true);
         assert!(engine.preserve_input_type());
