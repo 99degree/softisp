@@ -237,7 +237,7 @@ mod tests {
         let nodes = block.nodes();
         // center(Sub) + stretch(Mul) + uncenter(Add) = 3 nodes
         assert_eq!(nodes.len(), 3, "should emit 3 nodes");
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         // half/contrast_w/zero/one are runtime inputs (fed by the engine).
         assert_eq!(inits.len(), 0, "params are runtime inputs now");
         assert!(

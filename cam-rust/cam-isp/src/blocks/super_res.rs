@@ -247,18 +247,26 @@ impl IspBlock for SuperResBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![Proto::tensor_proto_float_scalar(
-            &format!("{}/eps", ns),
-            1e-6,
-        )]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        self.frame_sources
+        let ns = self.tensor_ns();
+        let mut inputs = self
+            .frame_sources
             .iter()
             .map(|s| (s.clone(), 1, vec![1, 3, -1, -1]))
-            .collect()
+            .collect::<Vec<_>>();
+        inputs.push((format!("{}/eps", ns).to_string(), 1, vec![]));
+        inputs
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![(
+            format!("{}/eps", ns).to_string(),
+            (1e-6f32).to_ne_bytes().to_vec(),
+        )]
     }
 }
 
@@ -339,7 +347,7 @@ mod tests {
         b = b.add_frame("frame1");
         b = b.add_frame("frame2");
         let extras = b.extra_inputs();
-        assert_eq!(extras.len(), 2, "should have 2 extra frame inputs");
+        assert_eq!(extras.len(), 3, "should have 2 extra frame inputs + eps");
     }
 
     #[test]

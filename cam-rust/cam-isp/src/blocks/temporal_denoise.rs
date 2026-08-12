@@ -228,34 +228,27 @@ impl IspBlock for TemporalDenoiseBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        let mut inits = Vec::new();
+        vec![
+            (format!("{}/threshold", ns).to_string(), 1, vec![]),
+            (format!("{}/one", ns).to_string(), 1, vec![]),
+            (format!("{}/blend_w", ns).to_string(), 1, vec![]),
+            (format!("{}/curr_weight", ns).to_string(), 1, vec![]),
+        ]
+    }
 
-        // Threshold scalar
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/threshold", ns),
-            self.threshold,
-        ));
-
-        // One constant
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/one", ns),
-            1.0,
-        ));
-
-        // Blend weight
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/blend_w", ns),
-            self.blend_weight,
-        ));
-
-        // Complement of blend weight
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/curr_weight", ns),
-            1.0 - self.blend_weight,
-        ));
-
-        inits
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/threshold", ns).to_string(), vec![]),
+            (format!("{}/one", ns).to_string(), vec![]),
+            (format!("{}/blend_w", ns).to_string(), vec![]),
+            (format!("{}/curr_weight", ns).to_string(), vec![]),
+        ]
     }
 }
 
@@ -275,7 +268,7 @@ mod tests {
             "should emit >= 8 nodes, got {}",
             nodes.len()
         );
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         // threshold, one, blend_w, curr_weight = 4
         assert_eq!(inits.len(), 4);
     }
@@ -290,7 +283,7 @@ mod tests {
     #[test]
     fn test_temporal_denoise_threshold_affects_inits() {
         let block = TemporalDenoiseBlock::new().with_threshold(0.1);
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         // First init is threshold
         assert_eq!(inits.len(), 4);
     }

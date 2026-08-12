@@ -148,22 +148,40 @@ impl IspBlock for BayerWbBlock {
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        if self.is_identity_gains() {
-            return vec![]; // Identity passthrough needs no initializers
-        }
-        vec![
-            // gains is a runtime input (fed by the engine per-frame); only
-            // the Clip bounds are baked.
-            Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
-        ]
+        vec![]
     }
+
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         if self.is_identity_gains() {
-            return vec![]; // Identity passthrough has no extra inputs
+            return vec![];
         }
-        vec![(format!("{}/gains", self.tensor_ns()), 1, vec![1, 4, 1, 1])]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/gains", ns).to_string(), 1, vec![1, 4, 1, 1]),
+            (format!("{}/zero", ns).to_string(), 1, vec![]),
+            (format!("{}/one", ns).to_string(), 1, vec![]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        if self.is_identity_gains() {
+            return vec![];
+        }
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/gains", ns).to_string(),
+                self.gains.iter().flat_map(|v| v.to_ne_bytes()).collect(),
+            ),
+            (
+                format!("{}/zero", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/one", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 }
 
@@ -197,7 +215,7 @@ mod tests {
     #[test]
     fn test_bayer_wb_initializers() {
         let b = BayerWbBlock::new();
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         // Identity gains → no initializers
         assert_eq!(inits.len(), 0);
     }
@@ -205,10 +223,14 @@ mod tests {
     #[test]
     fn test_bayer_wb_initializers_with_gains() {
         let b = BayerWbBlock::new().with_gains(1.2, 1.0, 1.0, 0.8);
-        let inits = b.initializers();
-        // Non-identity gains → gains is a runtime input; only zero + one baked
-        assert_eq!(inits.len(), 2, "gains is a runtime input now");
-        assert_eq!(b.extra_inputs().len(), 1, "gains declared as extra input");
+        let inits = b.extra_input_defaults();
+        // Non-identity gains → gains + zero + one as runtime inputs
+        assert_eq!(inits.len(), 3, "gains + zero + one as runtime inputs");
+        assert_eq!(
+            b.extra_inputs().len(),
+            3,
+            "gains + zero + one declared as extra inputs"
+        );
     }
 
     #[test]
@@ -223,7 +245,7 @@ mod tests {
     fn test_bayer_wb_extra_inputs_with_gains() {
         let b = BayerWbBlock::new().with_gains(1.2, 1.0, 1.0, 0.8);
         let extra = b.extra_inputs();
-        assert_eq!(extra.len(), 1);
+        assert_eq!(extra.len(), 3);
         assert_eq!(extra[0].2, vec![1, 4, 1, 1]);
     }
 

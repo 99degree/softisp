@@ -127,23 +127,37 @@ impl IspBlock for BlcBlock {
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
         vec![
-            Proto::tensor_proto_float(
-                &format!("{}/blc_vals", ns),
-                &[1, 4, 1, 1],
-                &[0.0, 0.0, 0.0, 0.0],
-            ),
-            Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
+            (format!("{}/blc_vals", ns).to_string(), 1, vec![1, 4, 1, 1]),
+            (format!("{}/zero", ns).to_string(), 1, vec![]),
+            (format!("{}/one", ns).to_string(), 1, vec![]),
         ]
     }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(
-            format!("{}/blc_vals", self.tensor_ns()),
-            1,
-            vec![1, 4, 1, 1],
-        )]
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/blc_vals", ns).to_string(),
+                [0.0f32, 0.0f32, 0.0f32, 0.0f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/zero", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/one", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 }
 
@@ -175,7 +189,7 @@ mod tests {
     fn test_blc_extra_inputs() {
         let b = BlcBlock::new();
         let extra = b.extra_inputs();
-        assert_eq!(extra.len(), 1);
+        assert_eq!(extra.len(), 3);
         assert_eq!(extra[0].2, vec![1, 4, 1, 1]);
     }
 

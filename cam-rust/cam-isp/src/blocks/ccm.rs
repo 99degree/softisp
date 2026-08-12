@@ -173,50 +173,31 @@ impl IspBlock for CcmBlock {
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        // Identity matrix for Conv: [out_ch, in_ch, 1, 1]
-        // Only diagonal elements are 1.0 when out_ch == in_ch.
-        let n = self.out_ch.max(self.in_ch) as usize;
-        let mut identity = vec![0.0f32; n * n];
-        for i in 0..self.out_ch.min(self.in_ch) as usize {
-            identity[i * n + i] = 1.0;
-        }
-        // Trim to actual dimensions
-        let actual_size = (self.out_ch * self.in_ch) as usize;
-        identity.truncate(actual_size);
-
-        let mut inits = Vec::new();
-        // The color-matrix instance ("ccm") is a pure runtime input: the engine
-        // feeds `CcmBlock_ccm/matrix` per-frame. LSC/warp/default matrices are
-        // fixed calibration constants and stay baked.
-        if self.instance != "ccm" {
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/matrix", ns),
-                &[self.out_ch, self.in_ch, 1, 1],
-                &self.matrix,
-            ));
-        }
-        inits.push(Proto::tensor_proto_float(
-            &format!("{}/bias", ns),
-            &[self.out_ch],
-            &self.bias[..self.out_ch as usize],
-        ));
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/zero", ns),
-            0.0,
-        ));
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/one", ns),
-            1.0,
-        ));
-        inits
+        vec![]
     }
+
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(
-            format!("{}/matrix", self.tensor_ns()),
-            1,
-            vec![self.out_ch, self.in_ch, 1, 1],
-        )]
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/matrix", ns).to_string(),
+                1,
+                vec![self.out_ch, self.in_ch, 1, 1],
+            ),
+            (format!("{}/bias", ns).to_string(), 1, vec![self.out_ch]),
+            (format!("{}/zero", ns).to_string(), 1, vec![]),
+            (format!("{}/one", ns).to_string(), 1, vec![]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/matrix", ns).to_string(), vec![]),
+            (format!("{}/bias", ns).to_string(), vec![]),
+            (format!("{}/zero", ns).to_string(), vec![]),
+            (format!("{}/one", ns).to_string(), vec![]),
+        ]
     }
 }
 
@@ -247,7 +228,7 @@ mod tests {
     #[test]
     fn test_ccm_with_channels() {
         let b = CcmBlock::new().with_channels(4);
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         assert_eq!(inits.len(), 4);
     }
 
@@ -256,7 +237,7 @@ mod tests {
         let b3 = CcmBlock::new().with_channels(3);
         let b4 = CcmBlock::new().with_channels(4);
         // 4-channel has more initializer data than 3-channel
-        assert!(b4.initializers().len() >= b3.initializers().len());
+        assert!(b4.extra_input_defaults().len() >= b3.extra_input_defaults().len());
     }
 
     #[test]

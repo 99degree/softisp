@@ -149,19 +149,31 @@ impl IspBlock for WatermarkBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        // Placeholder watermark RGB (1×3×1×1 white pixel — real implementation
-        // would load actual watermark bitmap)
-        let wm_data = vec![1.0f32; 3];
-        vec![
-            Proto::tensor_proto_float(&format!("{}/wm_rgb", ns), &[1, 3, 1, 1], &wm_data),
-            Proto::tensor_proto_float_scalar(&format!("{}/alpha", ns), self.opacity),
-            Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(format!("{}/{}", self.tensor_ns(), "alpha"), 1, vec![1])]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/wm_rgb", ns).to_string(), 1, vec![1, 3, 1, 1]),
+            (format!("{}/alpha", ns).to_string(), 1, vec![]),
+            (format!("{}/one", ns).to_string(), 1, vec![]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/wm_rgb", ns).to_string(), vec![]),
+            (
+                format!("{}/alpha", ns).to_string(),
+                (self.opacity).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/one", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 }
 
@@ -231,6 +243,10 @@ mod tests {
     fn test_watermark_extra_inputs() {
         let b = WatermarkBlock::new();
         let extras = b.extra_inputs();
-        assert_eq!(extras.len(), 1, "should have alpha extra input");
+        assert_eq!(
+            extras.len(),
+            3,
+            "should have alpha + zero + one extra inputs"
+        );
     }
 }

@@ -112,25 +112,26 @@ impl IspBlock for PyramidBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        // Nearest-neighbor 2× downscale: pick top-left pixel
-        // Weight shape: [3, 3, 2, 2] — identity for each input→output channel
-        // weight[oc][ic][y][x] = 1.0 if oc==ic && y==0 && x==0, else 0.0
-        let mut w = vec![0.0f32; 3 * 3 * 2 * 2];
-        for oc in 0..3 {
-            let ic = oc; // identity: each output channel reads from same input channel
-            let idx = oc * 3 * 2 * 2 + ic * 2 * 2; // position (oc, ic, 0, 0) = top-left
-            w[idx] = 1.0;
-        }
-        vec![Proto::tensor_proto_float(
-            &format!("{}/weight", ns),
-            &[3, 3, 2, 2],
-            &w,
-        )]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        let ns = self.tensor_ns();
+        vec![(format!("{}/weight", ns).to_string(), 1, vec![3, 3, 2, 2])]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        let mut w = [0.0f32; 3 * 3 * 2 * 2];
+        for oc in 0..3 {
+            let ic = oc;
+            let idx = oc * 3 * 2 * 2 + ic * 2 * 2;
+            w[idx] = 1.0;
+        }
+        vec![(
+            format!("{}/weight", ns).to_string(),
+            w.iter().flat_map(|v| v.to_ne_bytes()).collect::<Vec<u8>>(),
+        )]
     }
 }
 
@@ -143,9 +144,9 @@ mod tests {
     #[test]
     fn test_pyramid_identity_weights() {
         let block = PyramidBlock::new();
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 1, "should have 1 initializer (weight)");
-        let w_bytes = &inits[0];
+        let w_bytes = &inits[0].1;
         // Weight has 3*3*2*2 = 36 float32 values = 144 bytes of raw_data
         // Each output channel oc reads from its corresponding input channel ic
         // weight[oc][ic][y][x] = 1.0 if oc==ic && y==0 && x==0

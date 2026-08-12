@@ -285,33 +285,87 @@ impl IspBlock for HdrMergeBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            // Luminance weights [3,1,1,1] for group=3 Conv
-            Proto::tensor_proto_float(
-                &format!("{}/lum_w", ns),
-                &[3, 1, 1, 1],
-                &[0.299, 0.587, 0.114],
-            ),
-            Proto::tensor_proto_float(&format!("{}/lum_b", ns), &[3], &[0.0, 0.0, 0.0]),
-            // Constants
-            Proto::tensor_proto_float_scalar(&format!("{}/lum_clip_min", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/lum_clip_max", ns), 1.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/scale_2", ns), 2.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/w_clip_min", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/w_clip_max", ns), 1.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/half", ns), 0.5),
-            // Expand weights: 1ch → 3ch Conv(1×1)
-            Proto::tensor_proto_float(&format!("{}/expand_w", ns), &[3, 1, 1, 1], &[1.0, 1.0, 1.0]),
-            Proto::tensor_proto_float(&format!("{}/expand_b", ns), &[3], &[0.0, 0.0, 0.0]),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
         vec![
             (self.under_source.clone(), 1, vec![1, 3, -1, -1]),
             (self.over_source.clone(), 1, vec![1, 3, -1, -1]),
+            (format!("{}/lum_w", ns).to_string(), 1, vec![3, 1, 1, 1]),
+            (format!("{}/lum_b", ns).to_string(), 1, vec![3]),
+            (format!("{}/lum_clip_min", ns).to_string(), 1, vec![]),
+            (format!("{}/lum_clip_max", ns).to_string(), 1, vec![]),
+            (format!("{}/scale_2", ns).to_string(), 1, vec![]),
+            (format!("{}/w_clip_min", ns).to_string(), 1, vec![]),
+            (format!("{}/w_clip_max", ns).to_string(), 1, vec![]),
+            (format!("{}/one", ns).to_string(), 1, vec![]),
+            (format!("{}/half", ns).to_string(), 1, vec![]),
+            (format!("{}/expand_w", ns).to_string(), 1, vec![3, 1, 1, 1]),
+            (format!("{}/expand_b", ns).to_string(), 1, vec![3]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/lum_w", ns).to_string(),
+                [0.299f32, 0.587f32, 0.114f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/lum_b", ns).to_string(),
+                [0.0f32, 0.0f32, 0.0f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/lum_clip_min", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/lum_clip_max", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/scale_2", ns).to_string(),
+                (2.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/w_clip_min", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/w_clip_max", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/one", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/half", ns).to_string(),
+                (0.5f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/expand_w", ns).to_string(),
+                [1.0f32, 1.0f32, 1.0f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/expand_b", ns).to_string(),
+                [0.0f32, 0.0f32, 0.0f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
         ]
     }
 }
@@ -325,7 +379,7 @@ mod tests {
         let block = HdrMergeBlock::new().with_concrete_dims(1080, 1920);
 
         let nodes = block.nodes();
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
 
         // 18 nodes: Conv(lum) + ReduceSum + Clip + Mul(scale) + Clip(w_over) +
         //   Sub(w_under) + Sub(lum_diff) + Abs + Mul(scale) + Sub(w_neutral) +
@@ -340,7 +394,7 @@ mod tests {
 
         // Extra inputs: under + over
         let extra = block.extra_inputs();
-        assert_eq!(extra.len(), 2);
+        assert_eq!(extra.len(), 13);
         assert_eq!(extra[0].0, "HdrMergeBlock/under");
         assert_eq!(extra[1].0, "HdrMergeBlock/over");
 

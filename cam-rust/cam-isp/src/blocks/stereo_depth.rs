@@ -209,37 +209,47 @@ impl IspBlock for StereoDepthBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        let mut inits = Vec::new();
+        vec![]
+    }
 
-        // Luminance kernel: [3, 1, 3, 3] group=3
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        let bs = self.block_size;
+        vec![
+            (format!("{}/lum_k", ns).to_string(), 1, vec![3, 1, 3, 3]),
+            (format!("{}/sad_k", ns).to_string(), 1, vec![1, 1, bs, bs]),
+            (format!("{}/scale", ns).to_string(), 1, vec![]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        let bs = self.block_size as usize;
         let lum_w: Vec<f32> = vec![
             0.0, 0.0, 0.0, 0.0, 0.299, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.587, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.114, 0.0, 0.0, 0.0, 0.0,
         ];
-        inits.push(Proto::tensor_proto_float(
-            &format!("{}/lum_k", ns),
-            &[3, 1, 3, 3],
-            &lum_w,
-        ));
-
-        // SAD kernel: uniform box filter [1, 1, block_size, block_size]
-        let bs = self.block_size as usize;
-        let sad_w: Vec<f32> = vec![1.0 / (bs * bs) as f32; bs * bs];
-        inits.push(Proto::tensor_proto_float(
-            &format!("{}/sad_k", ns),
-            &[1, 1, bs as i64, bs as i64],
-            &sad_w,
-        ));
-
-        // Scale: normalize SAD to [0, 1]
-        // SAD max ≈ 255, scale = 1/255
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/scale", ns),
-            1.0 / 255.0,
-        ));
-
-        inits
+        let sad_w: Vec<f32> = vec![1.0 / (bs as f32 * bs as f32); bs * bs];
+        vec![
+            (
+                format!("{}/lum_k", ns).to_string(),
+                lum_w
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/sad_k", ns).to_string(),
+                sad_w
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/scale", ns).to_string(),
+                (1.0 / 255.0f32).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 }
 
@@ -291,7 +301,7 @@ mod tests {
     #[test]
     fn test_stereo_depth_initializers() {
         let block = StereoDepthBlock::new().with_block_size(7);
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         // lum_k + sad_k + scale = 3
         assert_eq!(inits.len(), 3, "need 3 initializers, got {}", inits.len());
     }

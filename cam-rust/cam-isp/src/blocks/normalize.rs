@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn test_normalize_initializers() {
         let b = NormalizeBlock::new();
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         // max_val is a runtime input (fed by the engine per-frame)
         assert_eq!(inits.len(), 0, "scale factor is a runtime input");
         assert_eq!(b.extra_inputs().len(), 1);

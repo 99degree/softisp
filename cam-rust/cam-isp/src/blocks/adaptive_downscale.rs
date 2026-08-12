@@ -448,14 +448,79 @@ impl IspBlock for AdaptiveDownscaleBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        let mut inits: Vec<Vec<u8>> = Vec::new();
+        let mut inputs = Vec::new();
         let (sh, sw) = match (self.in_h, self.in_w) {
             (Some(h), Some(w)) => (h, w),
-            _ => return inits,
+            _ => return inputs,
         };
+        // Aspect adjustment
+        if let Some((sy, sah, sx, saw)) = self.aspect_adjust() {
+            if self.aspect_mode.as_str() == "pad" {
+                inputs.push((format!("{}/aspect_pads", ns), 6, vec![8]));
+                inputs.push((format!("{}/aspect_cval", ns), 1, vec![]));
+            } else {
+                inputs.push((
+                    format!("{}/crop_starts", ns),
+                    6,
+                    vec![0, 0, sy.max(0), sx.max(0)],
+                ));
+                inputs.push((
+                    format!("{}/crop_ends", ns),
+                    6,
+                    vec![i64::MAX, i64::MAX, (sy + sah).min(sh), (sx + saw).min(sw)],
+                ));
+                inputs.push((format!("{}/crop_axes", ns), 6, vec![0, 1, 2, 3]));
+                inputs.push((format!("{}/crop_steps", ns), 6, vec![1, 1, 1, 1]));
+            }
+        }
+        // Resize scale factors
+        let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
+        if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
+            inputs.push((format!("{}/scales", ns), 1, vec![4]));
+        }
+        // EIS margin center-crop
+        if self.margin > 0.001 && _oh > self.target_h && _ow > self.target_w {
+            let crop_h = (_oh - self.target_h) / 2;
+            let crop_w = (_ow - self.target_w) / 2;
+            inputs.push((
+                format!("{}/margin_starts", ns),
+                6,
+                vec![0, 0, crop_h, crop_w],
+            ));
+            inputs.push((
+                format!("{}/margin_ends", ns),
+                6,
+                vec![
+                    i64::MAX,
+                    i64::MAX,
+                    (crop_h + self.target_h).min(_oh),
+                    (crop_w + self.target_w).min(_ow),
+                ],
+            ));
+            inputs.push((format!("{}/margin_axes", ns), 6, vec![0, 1, 2, 3]));
+            inputs.push((format!("{}/margin_steps", ns), 6, vec![1, 1, 1, 1]));
+        }
+        // Codec-align pad
+        let (_, pb, _, pr) = self.align_pad();
+        if pb > 0 || pr > 0 {
+            inputs.push((format!("{}/align_pads", ns), 6, vec![8]));
+            inputs.push((format!("{}/align_cval", ns), 1, vec![]));
+        }
+        inputs
+    }
 
-        // Aspect adjustment initializers
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        let mut defaults = Vec::new();
+        let (sh, sw) = match (self.in_h, self.in_w) {
+            (Some(h), Some(w)) => (h, w),
+            _ => return defaults,
+        };
         if let Some((sy, sah, sx, saw)) = self.aspect_adjust() {
             if self.aspect_mode.as_str() == "pad" {
                 let p_top = if sy < 0 { -sy } else { 0 };
@@ -463,94 +528,111 @@ impl IspBlock for AdaptiveDownscaleBlock {
                 let p_left = if sx < 0 { -sx } else { 0 };
                 let p_right = if saw > sw + sx { saw - sw - sx } else { 0 };
                 let pad_arr: [i64; 8] = [0, 0, p_top, p_left, 0, 0, p_bot, p_right];
-                inits.push(Proto::tensor_proto_int64(
-                    &format!("{}/aspect_pads", ns),
-                    &pad_arr,
+                defaults.push((
+                    format!("{}/aspect_pads", ns),
+                    pad_arr
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
                 ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/aspect_cval", ns),
-                    0.0,
+                defaults.push((
+                    format!("{}/aspect_cval", ns),
+                    (0.0f32).to_ne_bytes().to_vec(),
                 ));
             } else {
-                // Crop
-                inits.push(Proto::tensor_proto_int64(
-                    &format!("{}/crop_starts", ns),
-                    &[0, 0, sy.max(0), sx.max(0)],
+                defaults.push((
+                    format!("{}/crop_starts", ns),
+                    [0i64, 0, sy.max(0), sx.max(0)]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
                 ));
-                inits.push(Proto::tensor_proto_int64(
-                    &format!("{}/crop_ends", ns),
-                    &[i64::MAX, i64::MAX, (sy + sah).min(sh), (sx + saw).min(sw)],
+                defaults.push((
+                    format!("{}/crop_ends", ns),
+                    [i64::MAX, i64::MAX, (sy + sah).min(sh), (sx + saw).min(sw)]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
                 ));
-                inits.push(Proto::tensor_proto_int64(
-                    &format!("{}/crop_axes", ns),
-                    &[0, 1, 2, 3],
+                defaults.push((
+                    format!("{}/crop_axes", ns),
+                    [0i64, 1, 2, 3]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
                 ));
-                inits.push(Proto::tensor_proto_int64(
-                    &format!("{}/crop_steps", ns),
-                    &[1, 1, 1, 1],
+                defaults.push((
+                    format!("{}/crop_steps", ns),
+                    [1i64, 1, 1, 1]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
                 ));
             }
         }
-
-        // Resize scale factors
         let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
         if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/scales", ns),
-                &[4],
-                &[1.0f32, 1.0f32, scale_h as f32, scale_w as f32],
+            defaults.push((
+                format!("{}/scales", ns),
+                [1.0f32, 1.0, scale_h as f32, scale_w as f32]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ));
         }
-
-        // EIS margin center-crop (from enlarged resize output back to target)
         if self.margin > 0.001 && _oh > self.target_h && _ow > self.target_w {
             let crop_h = (_oh - self.target_h) / 2;
             let crop_w = (_ow - self.target_w) / 2;
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/margin_starts", ns),
-                &[0, 0, crop_h.max(0), crop_w.max(0)],
+            defaults.push((
+                format!("{}/margin_starts", ns),
+                [0i64, 0, crop_h.max(0), crop_w.max(0)]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/margin_ends", ns),
-                &[
+            defaults.push((
+                format!("{}/margin_ends", ns),
+                [
                     i64::MAX,
                     i64::MAX,
                     (crop_h + self.target_h).min(_oh),
                     (crop_w + self.target_w).min(_ow),
-                ],
+                ]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>(),
             ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/margin_axes", ns),
-                &[0, 1, 2, 3],
+            defaults.push((
+                format!("{}/margin_axes", ns),
+                [0i64, 1, 2, 3]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/margin_steps", ns),
-                &[1, 1, 1, 1],
+            defaults.push((
+                format!("{}/margin_steps", ns),
+                [1i64, 1, 1, 1]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ));
         }
-
-        // Codec-align pad
         let (_, pb, _, pr) = self.align_pad();
         if pb > 0 || pr > 0 {
             let pad_arr: [i64; 8] = [0, 0, 0, 0, 0, 0, pb, pr];
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/align_pads", ns),
-                &pad_arr,
+            defaults.push((
+                format!("{}/align_pads", ns),
+                pad_arr
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ));
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/align_cval", ns),
-                0.0,
+            defaults.push((
+                format!("{}/align_cval", ns),
+                (0.0f32).to_ne_bytes().to_vec(),
             ));
         }
-
-        inits
-    }
-
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        let ns = self.tensor_ns();
-        vec![
-            (format!("{}/margin", ns), 1, vec![1]), // float scalar: EIS margin (0.05 = 5%)
-        ]
+        defaults
     }
 }
 
