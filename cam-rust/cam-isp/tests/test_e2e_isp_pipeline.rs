@@ -350,7 +350,7 @@ fn test_fp16_output_display_block() {
             .with_concrete_dims(1080, 1920);
 
         let nodes = block.nodes();
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
 
         // Float16Rgb: [Mul, Cast], Float16Bgra: [Conv, Identity, Cast]
         assert_eq!(

@@ -536,184 +536,192 @@ impl IspBlock for DisplayBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        // scale/gamma_exp/zero/one are runtime inputs (fed by the engine
-        // per-frame on the FloatRgb/Float16Rgb/postprocess paths). Only the
-        // format constants stay baked.
-        let mut inits = Vec::new();
+        vec![]
+    }
 
-        // Format-specific initializers
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         use OutputFormat::*;
+        let ns = self.tensor_ns();
+        let mut inputs = Vec::new();
         match self.output_format {
-            FloatRgb | Float16Rgb => {
-                // Runtime inputs: gamma_exp = 1/2.4 for sRGB gamma correction,
-                // zero/one Clip bounds, scale — all fed by the engine.
-            }
+            FloatRgb | Float16Rgb => {}
             PackedRgb => {
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/scale_255", ns),
-                    255.0,
+                inputs.push((format!("{}/scale_255", ns).to_string(), 1, vec![]));
+                if self.can_pack_two_pixels() && self.in_h.is_some() && self.in_w.is_some() {
+                    inputs.push((
+                        format!("{}/pack_pair_w", ns).to_string(),
+                        1,
+                        vec![1, 4, 1, 2],
+                    ));
+                    inputs.push((format!("{}/pack_pair_b", ns).to_string(), 1, vec![1]));
+                } else if !self.can_pack_two_pixels() {
+                    inputs.push((format!("{}/pack_w", ns).to_string(), 1, vec![3, 1, 1]));
+                }
+            }
+            fmt @ (FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
+                let oc = fmt.channel_count() as i64;
+                inputs.push((format!("{}/conv_w", ns).to_string(), 1, vec![oc, 3, 1, 1]));
+                inputs.push((format!("{}/conv_b", ns).to_string(), 1, vec![oc]));
+            }
+        }
+        if !self.is_identity() {
+            if let (Some(h), Some(w)) = (self.in_h, self.in_w) {
+                let (flip_h, flip_w) = if self.swaps_dims() { (w, h) } else { (h, w) };
+                if self.needs_hflip() && flip_w > 0 {
+                    inputs.push((format!("{}/hflip_starts", ns).to_string(), 6, vec![1]));
+                    inputs.push((format!("{}/hflip_ends", ns).to_string(), 6, vec![1]));
+                    inputs.push((format!("{}/hflip_axes", ns).to_string(), 6, vec![1]));
+                    inputs.push((format!("{}/hflip_steps", ns).to_string(), 6, vec![1]));
+                }
+                if self.needs_vflip() && flip_h > 0 {
+                    inputs.push((format!("{}/vflip_starts", ns).to_string(), 6, vec![1]));
+                    inputs.push((format!("{}/vflip_ends", ns).to_string(), 6, vec![1]));
+                    inputs.push((format!("{}/vflip_axes", ns).to_string(), 6, vec![1]));
+                    inputs.push((format!("{}/vflip_steps", ns).to_string(), 6, vec![1]));
+                }
+            }
+        }
+        if self.postprocess_output.is_some() {
+            inputs.push((format!("{}/pp_scale", ns).to_string(), 1, vec![]));
+        }
+        inputs
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        use OutputFormat::*;
+        let ns = self.tensor_ns();
+        let mut defaults = Vec::new();
+        match self.output_format {
+            FloatRgb | Float16Rgb => {}
+            PackedRgb => {
+                defaults.push((
+                    format!("{}/scale_255", ns).to_string(),
+                    (255.0f32).to_ne_bytes().to_vec(),
                 ));
-                if self.can_pack_two_pixels() {
-                    match (self.in_h, self.in_w) {
-                        (Some(_), Some(_)) => {}
-                        _ => return inits,
-                    };
-                    inits.push(Proto::tensor_proto_float(
-                        &format!("{}/pack_pair_w", ns),
-                        &[1, 4, 1, 2],
-                        &[256.0, 0.0, 1.0, 0.0, 0.0, 16777216.0, 0.0, 16777216.0],
+                if self.can_pack_two_pixels() && self.in_h.is_some() && self.in_w.is_some() {
+                    defaults.push((
+                        format!("{}/pack_pair_w", ns).to_string(),
+                        [256.0f32, 0.0, 1.0, 0.0, 0.0, 16777216.0, 0.0, 16777216.0]
+                            .iter()
+                            .flat_map(|v| v.to_ne_bytes())
+                            .collect::<Vec<u8>>(),
                     ));
-                    inits.push(Proto::tensor_proto_float(
-                        &format!("{}/pack_pair_b", ns),
-                        &[1],
-                        &[0.0],
+                    defaults.push((
+                        format!("{}/pack_pair_b", ns).to_string(),
+                        [0.0f32]
+                            .iter()
+                            .flat_map(|v| v.to_ne_bytes())
+                            .collect::<Vec<u8>>(),
                     ));
-                } else {
-                    inits.push(Proto::tensor_proto_float(
-                        &format!("{}/pack_w", ns),
-                        &[3, 1, 1],
-                        &[65536.0, 256.0, 1.0],
+                } else if !self.can_pack_two_pixels() {
+                    defaults.push((
+                        format!("{}/pack_w", ns).to_string(),
+                        [65536.0f32, 256.0f32, 1.0f32]
+                            .iter()
+                            .flat_map(|v| v.to_ne_bytes())
+                            .collect::<Vec<u8>>(),
                     ));
                 }
             }
             fmt @ (FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
-                // Conv(1×1): channel permutation + scale(255) + alpha bias
-                let oc = fmt.channel_count(); // 3 for Rgb/Bgr, 4 for others
                 let (weights, bias): (Vec<f32>, Vec<f32>) = match fmt {
                     FloatBgra | Float16Bgra | Bgra => (
-                        // oc0(B)=255*B, oc1(G)=255*G, oc2(R)=255*R, oc3(A)=0
                         vec![
                             0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                         ],
                         vec![0.0, 0.0, 0.0, 255.0],
                     ),
                     Rgba => (
-                        // oc0(R)=255*R, oc1(G)=255*G, oc2(B)=255*B, oc3(A)=0
                         vec![
                             255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0,
                         ],
                         vec![0.0, 0.0, 0.0, 255.0],
                     ),
                     Argb => (
-                        // oc0(A)=0, oc1(R)=255*R, oc2(G)=255*G, oc3(B)=255*B
                         vec![
                             0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0,
                         ],
                         vec![255.0, 0.0, 0.0, 0.0],
                     ),
                     Abgr => (
-                        // oc0(A)=0, oc1(B)=255*B, oc2(G)=255*G, oc3(R)=255*R
                         vec![
                             0.0, 0.0, 0.0, 0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0,
                         ],
                         vec![255.0, 0.0, 0.0, 0.0],
                     ),
                     Rgb => (
-                        // oc0(R)=255*R, oc1(G)=255*G, oc2(B)=255*B
                         vec![255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0],
                         vec![0.0, 0.0, 0.0],
                     ),
                     Bgr => (
-                        // oc0(B)=255*B, oc1(G)=255*G, oc2(R)=255*R
                         vec![0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0],
                         vec![0.0, 0.0, 0.0],
                     ),
                     _ => unreachable!(),
                 };
-                let w_shape: Vec<i64> = vec![oc as i64, 3, 1, 1];
-                let b_shape: Vec<i64> = vec![oc as i64];
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/conv_w", ns),
-                    &w_shape,
-                    &weights,
+                defaults.push((
+                    format!("{}/conv_w", ns).to_string(),
+                    weights
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
                 ));
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/conv_b", ns),
-                    &b_shape,
-                    &bias,
+                defaults.push((
+                    format!("{}/conv_b", ns).to_string(),
+                    bias.iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
                 ));
             }
         }
-
-        if self.is_identity() {
-            return inits;
+        if !self.is_identity() {
+            if let (Some(h), Some(w)) = (self.in_h, self.in_w) {
+                let (flip_h, flip_w) = if self.swaps_dims() { (w, h) } else { (h, w) };
+                if self.needs_hflip() && flip_w > 0 {
+                    defaults.push((
+                        format!("{}/hflip_starts", ns).to_string(),
+                        (flip_w - 1).to_ne_bytes().to_vec(),
+                    ));
+                    defaults.push((
+                        format!("{}/hflip_ends", ns).to_string(),
+                        [(-1i64)].iter().flat_map(|v| v.to_ne_bytes()).collect(),
+                    ));
+                    defaults.push((
+                        format!("{}/hflip_axes", ns).to_string(),
+                        [3i64].iter().flat_map(|v| v.to_ne_bytes()).collect(),
+                    ));
+                    defaults.push((
+                        format!("{}/hflip_steps", ns).to_string(),
+                        [(-1i64)].iter().flat_map(|v| v.to_ne_bytes()).collect(),
+                    ));
+                }
+                if self.needs_vflip() && flip_h > 0 {
+                    defaults.push((
+                        format!("{}/vflip_starts", ns).to_string(),
+                        (flip_h - 1).to_ne_bytes().to_vec(),
+                    ));
+                    defaults.push((
+                        format!("{}/vflip_ends", ns).to_string(),
+                        [(-1i64)].iter().flat_map(|v| v.to_ne_bytes()).collect(),
+                    ));
+                    defaults.push((
+                        format!("{}/vflip_axes", ns).to_string(),
+                        [2i64].iter().flat_map(|v| v.to_ne_bytes()).collect(),
+                    ));
+                    defaults.push((
+                        format!("{}/vflip_steps", ns).to_string(),
+                        [(-1i64)].iter().flat_map(|v| v.to_ne_bytes()).collect(),
+                    ));
+                }
+            }
         }
-
-        let (h, w) = match (self.in_h, self.in_w) {
-            (Some(h), Some(w)) => (h, w),
-            _ => return inits, // no concrete dims → no flip initializers
-        };
-
-        // For 90/270, transpose swaps dims so flip axes apply post-swap
-        let (flip_h, flip_w) = if self.swaps_dims() { (w, h) } else { (h, w) };
-
-        if self.needs_hflip() && flip_w > 0 {
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/hflip_starts", ns),
-                &[flip_w - 1],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/hflip_ends", ns),
-                &[-1],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/hflip_axes", ns),
-                &[3],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/hflip_steps", ns),
-                &[-1],
-            ));
-        }
-
-        if self.needs_vflip() && flip_h > 0 {
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/vflip_starts", ns),
-                &[flip_h - 1],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/vflip_ends", ns),
-                &[-1],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/vflip_axes", ns),
-                &[2],
-            ));
-            inits.push(Proto::tensor_proto_int64(
-                &format!("{}/vflip_steps", ns),
-                &[-1],
-            ));
-        }
-
-        // Add post-process scale initializer
         if self.postprocess_output.is_some() {
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/pp_scale", ns),
-                1.0,
+            defaults.push((
+                format!("{}/pp_scale", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
             ));
         }
-
-        inits
-    }
-
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        let ns = self.tensor_ns();
-        let mut extras = Vec::new();
-        // scale is only used in nodes() for FloatRgb/FP16Rgb/postprocess paths
-        if self.is_identity()
-            || self.output_format == OutputFormat::Float16Rgb
-            || self.postprocess_output.is_some()
-        {
-            extras.push((format!("{}/scale", ns), 1, vec![1]));
-        }
-        // gamma_exp, zero, one only for FloatRgb identity path
-        if self.is_identity() {
-            extras.push((format!("{}/gamma_exp", ns), 1, vec![1]));
-            extras.push((format!("{}/zero", ns), 1, vec![1]));
-            extras.push((format!("{}/one", ns), 1, vec![1]));
-        }
-        extras
+        defaults
     }
 }
 
@@ -759,7 +767,7 @@ mod tests {
     #[test]
     fn test_display_initializers() {
         let b = DisplayBlock::new(640);
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         // scale is a runtime input; only format constants stay baked
         assert_eq!(inits.len(), 2);
     }

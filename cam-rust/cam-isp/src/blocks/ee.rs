@@ -142,24 +142,29 @@ impl IspBlock for EeBlock {
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        // Unsharp kernel: center=3.0, neighbors=-0.5 (sum=1 → no DC shift)
-        // R4 checks: first 9 weights must match {0,-0.5,0,-0.5,3,-0.5,0,-0.5,0}
-        // For depthwise (group=3): weights shape [3, 1, 3, 3] = 9 floats per channel
-        // All 3 channels use the same unsharp kernel (identical per-channel behavior)
-        let k_unsharp: [f32; 9] = [0.0, -0.5, 0.0, -0.5, 3.0, -0.5, 0.0, -0.5, 0.0];
-        let mut k = Vec::with_capacity(27);
-        for _ in 0..3 {
-            k.extend_from_slice(&k_unsharp);
-        }
         vec![
-            Proto::tensor_proto_float(&format!("{}/kernel_ee", ns), &[3, 1, 3, 3], &k),
-            Proto::tensor_proto_float(&format!("{}/bias_ee", ns), &[3], &[0.0; 3]),
+            (format!("{}/kernel_ee", ns).to_string(), 1, vec![3, 1, 3, 3]),
+            (format!("{}/bias_ee", ns).to_string(), 1, vec![3]),
         ]
     }
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        // No runtime inputs — strength is baked in shader const buffer
-        vec![]
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/kernel_ee", ns).to_string(), vec![]),
+            (
+                format!("{}/bias_ee", ns).to_string(),
+                [0.0f32; 3]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+        ]
     }
 }
 
@@ -193,7 +198,7 @@ mod tests {
     #[test]
     fn test_ee_kernel_shape() {
         let b = EeBlock::new();
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         assert_eq!(inits.len(), 2);
     }
 

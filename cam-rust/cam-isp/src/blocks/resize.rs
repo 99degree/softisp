@@ -201,19 +201,23 @@ impl IspBlock for ResizeBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            // scales = [1.0, 1.0, s, s]  (N, C, H, W)
-            Proto::tensor_proto_float(
-                &format!("{}/scales", ns),
-                &[4],
-                &[1.0, 1.0, self.scale, self.scale],
-            ),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        let ns = self.tensor_ns();
+        vec![(format!("{}/scales", ns).to_string(), 1, vec![4])]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![(
+            format!("{}/scales", ns).to_string(),
+            [1.0f32, 1.0f32, self.scale, self.scale]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>(),
+        )]
     }
 }
 
@@ -227,7 +231,7 @@ mod tests {
         let down = ResizeBlock::new(0.5);
         assert_eq!(down.nodes().len(), 1, "Resize should produce 1 node");
         assert_eq!(
-            down.initializers().len(),
+            down.extra_input_defaults().len(),
             1,
             "Should have 1 initializer (scales)"
         );

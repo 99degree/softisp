@@ -112,19 +112,23 @@ impl IspBlock for GrayscaleBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        // BT.601 luminance weights: Y = 0.299R + 0.587G + 0.114B
-        // Weight shape: [1, 3, 1, 1] = [oc, ic, kh, kw]
-        let lum_w = [0.299f32, 0.587f32, 0.114f32];
-        vec![Proto::tensor_proto_float(
-            &format!("{}/weight", ns),
-            &[1, 3, 1, 1],
-            &lum_w,
-        )]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        let ns = self.tensor_ns();
+        vec![(format!("{}/weight", ns).to_string(), 1, vec![1, 3, 1, 1])]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![(
+            format!("{}/weight", ns).to_string(),
+            [0.299f32, 0.587f32, 0.114f32]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>(),
+        )]
     }
 }
 
@@ -136,22 +140,21 @@ mod tests {
     #[test]
     fn test_grayscale_luminance_weights() {
         let block = GrayscaleBlock::new();
-        let inits = block.initializers();
-        assert_eq!(inits.len(), 1, "should have 1 initializer (weight)");
-        // Parse the weight tensor
-        let w_bytes = &inits[0];
-        // Verify it starts with a valid ONNX tensor proto (field 1 = name)
-        assert!(w_bytes.len() > 20, "weight tensor should be non-trivial");
-        // The weight floats are written via Proto::tensor_proto_float
+        let inits = block.extra_input_defaults();
+        assert_eq!(inits.len(), 1, "should have 1 weight input");
+        // The raw bytes should contain the 3 float32 values
+        let w_bytes = &inits[0].1;
+        assert_eq!(
+            w_bytes.len(),
+            12,
+            "3 f32 values = 12 bytes, got {}",
+            w_bytes.len()
+        );
         // Expected: [0.299f32, 0.587f32, 0.114f32] (little-endian)
-        // In raw_data (field 9), they appear as 12 bytes of float32 data
-        // Let's find them by looking at the float values
         let expected: [f32; 3] = [0.299, 0.587, 0.114];
         let f32_bytes = unsafe {
             std::slice::from_raw_parts(expected.as_ptr() as *const u8, expected.len() * 4)
         };
-        // The floats are in raw_data which is the last part of the protobuf
-        // Check that all expected float bytes appear in order
         let w_pos = w_bytes.windows(12).position(|window| window == f32_bytes);
         assert!(w_pos.is_some(), "luminance weights not found in tensor");
     }

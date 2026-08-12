@@ -79,6 +79,12 @@ extern "C" {
         session: *mut c_void,
         name: *const c_char,
     ) -> *mut c_void;
+    pub fn mnn_session_get_input_count(interpreter: *mut c_void, session: *mut c_void) -> c_int;
+    pub fn mnn_session_get_input_name(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        index: c_int,
+    ) -> *const c_char;
     pub fn mnn_session_get_output_v2(
         interpreter: *mut c_void,
         session: *mut c_void,
@@ -339,6 +345,26 @@ impl MnnInterpreterSafe {
             None
         } else {
             Some(MnnTensorSafe { inner: ptr })
+        }
+    }
+
+    /// Number of input tensors declared by the model for this session.
+    pub fn get_input_count(&self, session: &MnnSessionSafe) -> usize {
+        (unsafe { mnn_session_get_input_count(self.inner, session.inner) }) as usize
+    }
+
+    /// Name of the i-th input tensor (0-based, in declaration order).
+    pub fn get_input_name(&self, session: &MnnSessionSafe, index: usize) -> Option<String> {
+        use std::ffi::CStr;
+        let ptr = unsafe { mnn_session_get_input_name(self.inner, session.inner, index as c_int) };
+        if ptr.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(ptr) }
+                    .to_string_lossy()
+                    .into_owned(),
+            )
         }
     }
 

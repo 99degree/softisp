@@ -136,16 +136,34 @@ impl IspBlock for UnpackBlc16Block {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            Proto::tensor_proto_float_scalar(&format!("{}/blc_val", ns), 64.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/clip_min", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/clip_max", ns), 65504.0),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(format!("{}/blc_val", self.tensor_ns()), 1, vec![1, 1, 1, 1])]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/blc_val", ns).to_string(), 1, vec![1, 1, 1, 1]),
+            (format!("{}/clip_min", ns).to_string(), 1, vec![]),
+            (format!("{}/clip_max", ns).to_string(), 1, vec![]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/blc_val", ns).to_string(),
+                (64.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/clip_min", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/clip_max", ns).to_string(),
+                (65504.0f32).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 
     fn input_elem_type(&self) -> i32 {
@@ -184,14 +202,14 @@ mod tests {
     #[test]
     fn test_unpack_blc16_initializers() {
         let b = UnpackBlc16Block::new();
-        assert_eq!(b.initializers().len(), 3);
+        assert_eq!(b.extra_input_defaults().len(), 3);
     }
 
     #[test]
     fn test_unpack_blc16_extra_inputs() {
         let b = UnpackBlc16Block::new();
         let extra = b.extra_inputs();
-        assert_eq!(extra.len(), 1);
+        assert_eq!(extra.len(), 3);
         assert_eq!(extra[0].2, vec![1, 1, 1, 1]);
     }
 

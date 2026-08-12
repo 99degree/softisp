@@ -123,20 +123,35 @@ impl IspBlock for Blc50Block {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            Proto::tensor_proto_float(&format!("{}/dark_frame", ns), &[1, 3, 1, 1], &self.offsets),
-            Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/max_val", ns), 65535.0),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(
-            format!("{}/{}", self.tensor_ns(), "dark_frame"),
-            1,
-            vec![1, 3, 1, 1],
-        )]
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/dark_frame", ns).to_string(),
+                1,
+                vec![1, 3, 1, 1],
+            ),
+            (format!("{}/zero", ns).to_string(), 1, vec![]),
+            (format!("{}/max_val", ns).to_string(), 1, vec![]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/dark_frame", ns).to_string(), vec![]),
+            (
+                format!("{}/zero", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/max_val", ns).to_string(),
+                (65535.0f32).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 }
 
@@ -180,6 +195,10 @@ mod tests {
     fn test_blc50_extra_inputs() {
         let b = Blc50Block::new();
         let extras = b.extra_inputs();
-        assert_eq!(extras.len(), 1, "should have dark_frame extra input");
+        assert_eq!(
+            extras.len(),
+            3,
+            "should have dark_frame + zero + one extra inputs"
+        );
     }
 }

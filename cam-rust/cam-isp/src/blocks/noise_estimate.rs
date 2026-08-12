@@ -190,42 +190,43 @@ impl IspBlock for NoiseEstimateBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        let mut inits = Vec::new();
+        vec![
+            (format!("{}/lum_k", ns).to_string(), 1, vec![3, 1, 3, 3]),
+            (format!("{}/lap_k", ns).to_string(), 1, vec![1, 1, 3, 3]),
+            (format!("{}/scale", ns).to_string(), 1, vec![]),
+        ]
+    }
 
-        // Luminance kernel: [3, 3, 1, 3] — Conv 3×3, 3ch→1ch, group=3
-        // Group conv: each input channel gets its own 3×3 filter
-        // Channel 0 (R): weight = [0.299, 0, 0; 0.299, 0, 0; 0.299, 0, 0] etc.
-        // Simplified: [1, 3, 3, 3] with per-group weights
-        let lum_w: Vec<f32> = vec![
-            // Group 0 (R→out): 0.299 at center, 0 elsewhere
-            0.0, 0.0, 0.0, 0.0, 0.299, 0.0, 0.0, 0.0, 0.0,
-            // Group 1 (G→out): 0.587 at center
-            0.0, 0.0, 0.0, 0.0, 0.587, 0.0, 0.0, 0.0, 0.0,
-            // Group 2 (B→out): 0.114 at center
-            0.0, 0.0, 0.0, 0.0, 0.114, 0.0, 0.0, 0.0, 0.0,
-        ];
-        inits.push(Proto::tensor_proto_float(
-            &format!("{}/lum_k", ns),
-            &[3, 1, 3, 3],
-            &lum_w,
-        ));
-
-        // Laplacian kernel: [1, 1, 3, 3]
-        let lap_w: Vec<f32> = vec![0.0, 1.0, 0.0, 1.0, -4.0, 1.0, 0.0, 1.0, 0.0];
-        inits.push(Proto::tensor_proto_float(
-            &format!("{}/lap_k", ns),
-            &[1, 1, 3, 3],
-            &lap_w,
-        ));
-
-        // Scale constant
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/scale", ns),
-            self.scale,
-        ));
-
-        inits
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/lum_k", ns).to_string(),
+                [
+                    0.0f32, 0.0, 0.0, 0.0, 0.299, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.587,
+                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.114, 0.0, 0.0, 0.0, 0.0,
+                ]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/lap_k", ns).to_string(),
+                [0.0f32, 1.0, 0.0, 1.0, -4.0, 1.0, 0.0, 1.0, 0.0]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/scale", ns).to_string(),
+                (self.scale).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 }
 
@@ -269,7 +270,7 @@ mod tests {
     #[test]
     fn test_noise_estimate_has_initializers() {
         let block = NoiseEstimateBlock::new();
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         // lum_k + lap_k + scale = 3
         assert_eq!(inits.len(), 3, "need 3 initializers, got {}", inits.len());
     }
@@ -278,8 +279,8 @@ mod tests {
     fn test_noise_estimate_scale_affects_output() {
         let block1 = NoiseEstimateBlock::new().with_scale(0.5);
         let block2 = NoiseEstimateBlock::new().with_scale(2.0);
-        let inits1 = block1.initializers();
-        let inits2 = block2.initializers();
+        let inits1 = block1.extra_input_defaults();
+        let inits2 = block2.extra_input_defaults();
         assert_ne!(
             inits1, inits2,
             "different scales should produce different initializers"

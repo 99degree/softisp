@@ -351,79 +351,85 @@ impl IspBlock for BayerProcBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let mut inits = vec![];
-
-        // Max value for norm/denorm
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/sensor_max", self.id),
-            self.sensor_max,
-        ));
-
-        match self.mode {
-            BayerMode::Int16Direct => {
-                // No additional initializers for direct mode
-            }
-            BayerMode::BuiltinDemosaic => {
-                // Demosaic weights [3, 4, 1, 1]
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/demosaic_w", self.id),
-                    &[3, 4, 1, 1],
-                    &self.demosaic_weights(),
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/demosaic_b", self.id),
-                    0.0,
-                ));
-                // Clip range [0, 1]
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/clip_lo", self.id),
-                    0.0,
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/clip_hi", self.id),
-                    1.0,
-                ));
-            }
-            BayerMode::FullProc => {
-                // WB gains [1, 4, 1, 1] (defaults to all 1.0)
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/wb_gains", self.id),
-                    &[1, 4, 1, 1],
-                    &[1.0, 1.0, 1.0, 1.0],
-                ));
-
-                // BLC values [1, 4, 1, 1] (defaults to [0, 0, 0, 0])
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/blc_vals", self.id),
-                    &[1, 4, 1, 1],
-                    &[0.0, 0.0, 0.0, 0.0],
-                ));
-            }
-        }
-        inits
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        let mut extras = vec![(format!("{}/sensor_max", self.id), 1, vec![])];
-
+        let mut inputs = vec![(format!("{}/sensor_max", self.id).to_string(), 1, vec![])];
         match self.mode {
-            BayerMode::Int16Direct => {
-                // No extra inputs
-            }
+            BayerMode::Int16Direct => {}
             BayerMode::BuiltinDemosaic => {
-                // No runtime-modified extra inputs needed
+                inputs.push((
+                    format!("{}/demosaic_w", self.id).to_string(),
+                    1,
+                    vec![3, 4, 1, 1],
+                ));
+                inputs.push((format!("{}/demosaic_b", self.id).to_string(), 1, vec![]));
+                inputs.push((format!("{}/clip_lo", self.id).to_string(), 1, vec![]));
+                inputs.push((format!("{}/clip_hi", self.id).to_string(), 1, vec![]));
             }
             BayerMode::FullProc => {
-                // Let controller set:
-                // - wb_gains shape [1, 4, 1, 1], type FLOAT
-                // - blc_vals shape [1, 4, 1, 1], type FLOAT (optional)
-                extras.push((format!("{}/wb_gains", self.id), 1, vec![1, 4, 1, 1]));
-                if self.use_blc {
-                    extras.push((format!("{}/blc_vals", self.id), 1, vec![1, 4, 1, 1]));
-                }
+                inputs.push((
+                    format!("{}/wb_gains", self.id).to_string(),
+                    1,
+                    vec![1, 4, 1, 1],
+                ));
+                inputs.push((
+                    format!("{}/blc_vals", self.id).to_string(),
+                    1,
+                    vec![1, 4, 1, 1],
+                ));
             }
         }
-        extras
+        inputs
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let mut defaults = vec![(
+            format!("{}/sensor_max", self.id).to_string(),
+            (self.sensor_max).to_ne_bytes().to_vec(),
+        )];
+        match self.mode {
+            BayerMode::Int16Direct => {}
+            BayerMode::BuiltinDemosaic => {
+                defaults.push((
+                    format!("{}/demosaic_w", self.id).to_string(),
+                    self.demosaic_weights()
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+                defaults.push((
+                    format!("{}/demosaic_b", self.id).to_string(),
+                    (0.0f32).to_ne_bytes().to_vec(),
+                ));
+                defaults.push((
+                    format!("{}/clip_lo", self.id).to_string(),
+                    (0.0f32).to_ne_bytes().to_vec(),
+                ));
+                defaults.push((
+                    format!("{}/clip_hi", self.id).to_string(),
+                    (1.0f32).to_ne_bytes().to_vec(),
+                ));
+            }
+            BayerMode::FullProc => {
+                defaults.push((
+                    format!("{}/wb_gains", self.id).to_string(),
+                    [1.0f32, 1.0, 1.0, 1.0]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+                defaults.push((
+                    format!("{}/blc_vals", self.id).to_string(),
+                    [0.0f32, 0.0, 0.0, 0.0]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+            }
+        }
+        defaults
     }
 }
 
