@@ -458,6 +458,7 @@ extern "C" int mnn_get_model_input_dims(MnnInterpreter interpreter, MnnSession s
 extern "C" int mnn_run_with_output(
     MnnInterpreter interpreter,
     MnnSession session,
+    const char* input_name,
     const void* buffer,
     int buffer_type_code,
     int buffer_type_bits,
@@ -471,7 +472,13 @@ extern "C" int mnn_run_with_output(
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!net || !sess || !buffer || !out_data) return -1;
 
-    auto* in_tensor = net->getSessionInput(sess, nullptr);
+    // The model may declare several inputs (frame + runtime-fed weights).
+    // MNN's getSessionInput(nullptr) returns the alphabetically-first input
+    // (std::map ordering), which is NOT necessarily the frame — so the caller
+    // must pass the frame input's name explicitly.
+    auto* in_tensor = (input_name != nullptr)
+        ? net->getSessionInput(sess, input_name)
+        : net->getSessionInput(sess, nullptr);
     if (!in_tensor) return -1;
 
     halide_type_t buffer_type = { (halide_type_code_t)buffer_type_code, (uint8_t)buffer_type_bits, 1 };
@@ -496,7 +503,9 @@ extern "C" int mnn_run_with_output(
         if (rc != 0) {
             return -3;
         }
-        in_tensor = net->getSessionInput(sess, nullptr);
+        in_tensor = (input_name != nullptr)
+            ? net->getSessionInput(sess, input_name)
+            : net->getSessionInput(sess, nullptr);
         if (!in_tensor) return -3;
         in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
         in_tensor->buffer().device = 0;

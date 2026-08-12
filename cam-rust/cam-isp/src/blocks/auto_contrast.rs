@@ -188,37 +188,9 @@ impl IspBlock for AutoContrastBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        let mut inits = Vec::new();
-
-        if self.shadow_lift > 0.01 {
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/lift", ns),
-                self.shadow_lift,
-            ));
-        }
-        if (self.contrast - 1.0).abs() > 0.01 {
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/half", ns),
-                0.5,
-            ));
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/contrast_w", ns),
-                self.contrast,
-            ));
-        }
-        if self.highlight_compress > 0.01 || (self.contrast - 1.0).abs() > 0.01 {
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/zero", ns),
-                0.0,
-            ));
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/one", ns),
-                1.0,
-            ));
-        }
-
-        inits
+        // lift/half/contrast_w/zero/one are runtime inputs (fed by the engine
+        // per-frame when the corresponding params are active).
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -266,9 +238,11 @@ mod tests {
         // center(Sub) + stretch(Mul) + uncenter(Add) = 3 nodes
         assert_eq!(nodes.len(), 3, "should emit 3 nodes");
         let inits = block.initializers();
+        // half/contrast_w/zero/one are runtime inputs (fed by the engine).
+        assert_eq!(inits.len(), 0, "params are runtime inputs now");
         assert!(
-            inits.len() >= 3,
-            "should have half, contrast_w, zero, one inits"
+            !block.extra_inputs().is_empty(),
+            "should declare runtime inputs"
         );
     }
 

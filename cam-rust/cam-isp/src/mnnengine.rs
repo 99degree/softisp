@@ -98,6 +98,11 @@ pub struct MnnEngine {
     initialized: bool,
     model_path: Option<String>,
     model_input_type: Option<(i32, i32)>,
+    /// Head block's graph input tensor name (e.g. `RawInputPackedBlock/frame`).
+    /// MNN's `getSessionInput(nullptr)` returns the alphabetically-first input,
+    /// which is a runtime-fed weight tensor in multi-input models — the frame
+    /// must always be looked up by name.
+    frame_input_name: Option<String>,
     /// Input convention inferred from the converted model (shape + type).
     input_mode: Option<InputMode>,
     /// Whether to preserve input type (int16/uint16/float16) instead of widening to int32.
@@ -208,6 +213,7 @@ impl MnnEngine {
             initialized: false,
             model_path: None,
             model_input_type: None,
+            frame_input_name: None,
             input_mode: None,
             preserve_input_type: false,
             expected_input_elements: None,
@@ -782,6 +788,17 @@ impl MnnEngine {
         if let Some(gains) = bayer {
             write_f32_array(pool, "BayerWbBlock/gains", gains);
         }
+        // DemosaicBlock/w + b [3,4,1,1]/[3] — production demosaic conv weights
+        // (depend on the sensor Bayer pattern). CcmBlock_ccm/matrix [3,3] —
+        // color matrix (identity when not provided). All three are true
+        // runtime inputs on the production pipeline (no initializer defaults).
+        write_f32_array(pool, "DemosaicBlock/w", demo);
+        write_f32_array(pool, "DemosaicBlock/b", &[0.0f32; 3]);
+        let ccm_mat: [f32; 9] = match ccm {
+            Some(m) => *m,
+            None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        };
+        write_f32_array(pool, "CcmBlock_ccm/matrix", &ccm_mat);
         // ToneBlock/contrast [1]
         write_f32(pool, "ToneBlock/contrast", tone.contrast);
         // ToneBlock/brightness [1]
@@ -800,6 +817,23 @@ impl MnnEngine {
         write_f32_array(pool, "FcsBlock/bias", &[0.0f32; 3]);
         // NormalizeBlock/max_val [1] — max value for division (default: 65535)
         write_f32(pool, "NormalizeBlock/max_val", 65535.0);
+        // GammaBlock / AutoContrastBlock / DisplayBlock — always write
+        // defaults so pure-input tensors are never left uninitialized when
+        // no isp_params are supplied; the isp_params branch below overrides.
+        write_f32(pool, "Gamma/inv_gamma", 1.0 / 2.2);
+        write_f32(pool, "Gamma/min", 0.0);
+        write_f32(pool, "Gamma/max", 1.0);
+        write_f32(pool, "Gamma/lift", 0.0);
+        write_f32(pool, "Gamma/norm", 1.0);
+        write_f32(pool, "AutoContrast/lift", 0.0);
+        write_f32(pool, "AutoContrast/half", 0.5);
+        write_f32(pool, "AutoContrast/contrast_w", 1.0);
+        write_f32(pool, "AutoContrast/zero", 0.0);
+        write_f32(pool, "AutoContrast/one", 1.0);
+        write_f32(pool, "DisplayBlock/scale", 1.0);
+        write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
+        write_f32(pool, "DisplayBlock/zero", 0.0);
+        write_f32(pool, "DisplayBlock/one", 1.0);
         // GammaBlock — inv_gamma, min, max, lift, norm
         if let Some(isp) = isp_params {
             let inv_gamma = if isp.tone.gamma > 0.0 {
@@ -934,6 +968,10 @@ impl IspEngine for MnnEngine {
                         std::thread::current().id(),
                         p
                     );
+                    // The pre-converted file may declare several inputs (frame +
+                    // runtime-fed weights); record the frame tensor name so the
+                    // engine never relies on getSessionInput(nullptr) ordering.
+                    self.frame_input_name = head.graph_input_name().map(str::to_string);
                     std::fs::read(p).map_err(|e| {
                         error!("Failed to read MNN model: {}", p);
                         crate::error::IspError::Io(format!("read {}: {}", p, e))
@@ -942,6 +980,10 @@ impl IspEngine for MnnEngine {
                 None => {
                     // Build ONNX graph: head + aux as pipeline, stats as aux_blocks
                     // But we don't know which aux are stats — pass all as pipeline for now
+                    // The head block's graph input name is the model's frame input
+                    // tensor; multi-input models (runtime-fed weights) need it
+                    // looked up by name, never via getSessionInput(nullptr).
+                    self.frame_input_name = head.graph_input_name().map(str::to_string);
                     let mut all: Vec<Box<dyn IspBlock>> = vec![head];
                     all.extend(aux);
                     let refs: Vec<&dyn IspBlock> = all.iter().map(|b| b.as_ref()).collect();
@@ -1030,20 +1072,44 @@ impl IspEngine for MnnEngine {
                 .ok_or(crate::error::IspError::Mnn(
                     "probe session create fail (all backends exhausted)".into(),
                 ))?;
-            let mut input_code = 0i32;
-            let mut input_bits = 0i32;
-            unsafe {
-                crate::mnn_sys::mnn_get_model_input_type(
-                    interp.as_ptr(),
-                    probe_sess.as_ptr(),
-                    &mut input_code,
-                    &mut input_bits,
-                );
-            }
-            self.model_input_type = Some((input_code, input_bits));
-            let expected_elems = unsafe {
-                crate::mnn_sys::mnn_get_model_input_elements(interp.as_ptr(), probe_sess.as_ptr())
+            // Resolve the frame input by NAME: getSessionInput(nullptr) returns
+            // the alphabetically-first input, which is a runtime-fed weight
+            // tensor in multi-input models (e.g. CcmBlock_ccm/matrix <
+            // RawInputPackedBlock/frame), and reading ITS dims would misclassify
+            // the input convention.
+            let frame_t = interp
+                .get_input(&probe_sess, self.frame_input_name.as_deref().unwrap_or(""))
+                .or_else(|| interp.get_first_input(&probe_sess));
+            let (input_code, input_bits, input_ndim, input_dims) = match &frame_t {
+                Some(t) => {
+                    let code = t.data_type();
+                    let dims = t.shape();
+                    let ndim = dims.len();
+                    let mut dims4 = [0i32; 4];
+                    for (i, d) in dims.iter().take(4).enumerate() {
+                        dims4[i] = *d;
+                    }
+                    // data_type() returns 4=float32/5=int32/6=uint32; map back
+                    // to halide codes (2=float/1=int/3=uint) so
+                    // model_input_type stays compatible with the FFI buffer
+                    // type codes used by mnn_run_with_output.
+                    let halide_code = match code {
+                        4 => 2, // halide_type_float
+                        5 => 1, // halide_type_int
+                        6 => 3, // halide_type_uint
+                        _ => code,
+                    };
+                    (halide_code, 32, ndim, dims4)
+                }
+                None => (0, 0, 0, [0; 4]),
             };
+            self.model_input_type = if input_code != 0 {
+                Some((input_code, input_bits))
+            } else {
+                None
+            };
+            let is_float = input_code == 2; // halide_type_float
+            let expected_elems: i64 = input_dims[..input_ndim].iter().map(|&d| d as i64).product();
             self.expected_input_elements = if expected_elems > 0 {
                 Some(expected_elems as u32)
             } else {
@@ -1054,17 +1120,7 @@ impl IspEngine for MnnEngine {
             // ([1,2,H,W/2]); the element type (INT32 stays INT32, INT16-declared
             // inputs are upcast by the converter to FLOAT32) selects i32 vs f32
             // lanes. Raw 1-channel models are fed directly.
-            let mut input_dims = [0i32; 4];
-            let input_ndim = unsafe {
-                crate::mnn_sys::mnn_get_model_input_dims(
-                    interp.as_ptr(),
-                    probe_sess.as_ptr(),
-                    input_dims.as_mut_ptr(),
-                    4,
-                )
-            };
             let split = input_ndim == 4 && input_dims[1] == 2;
-            let is_float = input_code == 2; // halide_type_float
             let mode = if split {
                 if is_float {
                     InputMode::SplitFloat
@@ -1191,8 +1247,13 @@ impl IspEngine for MnnEngine {
             } else {
                 vec![1, 1, h as i32, w as i32]
             };
-            // Always set shape (cheap) so C++ on-demand resize works
-            if let Some(t) = interp.get_first_input(sess) {
+            // Always set shape (cheap) so C++ on-demand resize works.
+            // Resolve the frame input by NAME (never getSessionInput(nullptr),
+            // which is the alphabetically-first input in multi-input models).
+            let frame_t = interp
+                .get_input(sess, self.frame_input_name.as_deref().unwrap_or(""))
+                .or_else(|| interp.get_first_input(sess));
+            if let Some(t) = frame_t {
                 let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
             }
             // Skip resize if shape unchanged from last full setup.
@@ -1369,10 +1430,23 @@ impl IspEngine for MnnEngine {
             let t_prep_end: std::time::Instant = Instant::now();
             let t_infer_start: std::time::Instant = Instant::now();
             let n: i32;
+            // Frame input tensor name for the FFI call (None → nullptr for
+            // single-input models; MNN then picks its first input).
+            let frame_name_c = self
+                .frame_input_name
+                .as_deref()
+                .map(std::ffi::CString::new)
+                .transpose()
+                .ok()
+                .flatten();
+            let frame_name_ptr = frame_name_c
+                .as_ref()
+                .map_or(std::ptr::null(), |c| c.as_ptr());
             unsafe {
                 n = crate::mnn_sys::mnn_run_with_output(
                     interp.as_ptr(),
                     sess.as_ptr(),
+                    frame_name_ptr,
                     buffer_ptr,
                     buffer_type_code,
                     buffer_type_bits,

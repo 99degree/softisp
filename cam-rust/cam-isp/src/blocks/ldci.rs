@@ -148,11 +148,8 @@ impl IspBlock for LdciBlock {
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            // Strength scalar: controls contrast boost amount
-            Proto::tensor_proto_float_scalar(&format!("{}/strength", ns), 0.5),
-        ]
+        // strength is a runtime input (fed by the engine per-frame).
+        vec![]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         vec![(format!("{}/strength", self.tensor_ns()), 1, vec![1])]
@@ -181,7 +178,7 @@ mod tests {
     fn test_ldci_initializers() {
         let b = LdciBlock::new();
         let inits = b.initializers();
-        assert_eq!(inits.len(), 1);
+        assert_eq!(inits.len(), 0);
     }
 
     #[test]
@@ -194,6 +191,6 @@ mod tests {
     fn test_ldci_with_strength() {
         let b = LdciBlock::new();
         let inits = b.initializers();
-        assert_eq!(inits.len(), 1);
+        assert_eq!(inits.len(), 0);
     }
 }
