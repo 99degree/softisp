@@ -30,7 +30,7 @@ fn bench_separate(h: u32, w_full: u32) -> (f64, String) {
     let head = all.remove(0);
     let aux = all;
 
-    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.build(head, aux, None, 21).unwrap();
 
     // Test buffer
@@ -94,7 +94,7 @@ fn bench_fused(h: u32, w_full: u32) -> (f64, String) {
     let head = all.remove(0);
     let aux = all;
 
-    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.build(head, aux, None, 21).unwrap();
 
     let mut buf = vec![0u8; (w_full * h * 2) as usize];

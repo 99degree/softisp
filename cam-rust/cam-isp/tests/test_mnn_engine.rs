@@ -51,7 +51,7 @@ fn test_mnn_engine_streaming() {
     let mnn = build_test_mnn(".mnn_test_stream").expect("model build + convert");
     eprintln!("MNN model: {}", mnn);
 
-    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
 
     // Provide a dummy head block (ignored when model_path is set)
@@ -137,7 +137,7 @@ fn test_mnn_engine_frame_difference() {
 
     let mnn = build_test_mnn(".mnn_test_diff").expect("model build");
 
-    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
     let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
     engine.build(head, vec![], None, 16).expect("build");
@@ -278,7 +278,7 @@ fn test_mnn_engine_lite_profile() {
     let mnn = ".mnn_test_lite.mnn".to_string();
     eprintln!("MNN model: {}", mnn);
 
-    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
     let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
     engine.build(head, vec![], None, 16).expect("build");
@@ -388,7 +388,7 @@ fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
     let mnn = test_profile_via_mnn(profile, tag).expect(&format!("{} model build + convert", tag));
     eprintln!("MNN model: {}", mnn);
 
-    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
     let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
     engine.build(head, vec![], None, 16).expect("build");
@@ -464,7 +464,7 @@ fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
     let mnn = build_profile_mnn(&cam_isp::profile::PipelineProfile::LITE, profile_tag, w, h)
         .expect(&format!("model build {}x{}", w, h));
 
-    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
     let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
     engine.build(head, vec![], None, 16).expect("build");
@@ -580,9 +580,6 @@ fn stream_mnn_backend(w: u32, h: u32, n_frames: u32, backend: &str) -> Result<f6
 
     let be = match backend {
         "vulkan" => MnnBackend::Vulkan,
-        "opencl" => MnnBackend::Opencl,
-        "opengl" => MnnBackend::OpenGl,
-        "cpu" => MnnBackend::Cpu,
         _ => return Err(format!("unknown backend: {}", backend)),
     };
 
@@ -727,7 +724,7 @@ fn test_mnn_packed_pipeline() {
     let mut all = blocks;
     let head = all.remove(0);
 
-    let mut engine = MnnEngine::new(MnnBackend::Cpu);
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.build(head, all, None, 16).expect("engine build");
 
     eprintln!("Packed pipeline: engine built OK");
@@ -821,7 +818,7 @@ fn test_mnn_engine_uninitialized() {
     {
         use cam_isp::engine::IspEngine;
         use cam_isp::mnnengine::{MnnBackend, MnnEngine};
-        let engine = MnnEngine::new(MnnBackend::Cpu);
+        let engine = MnnEngine::new(MnnBackend::Vulkan);
         let result = engine.process(&cam_isp::engine::ProcessParams {
             width: 48,
             height: 64,

@@ -259,9 +259,6 @@ fn main() {
 
     let backend = match backend_name {
         "vulkan" => cam_isp::mnnengine::MnnBackend::Vulkan,
-        "opencl" => cam_isp::mnnengine::MnnBackend::Opencl,
-        "opengl" => cam_isp::mnnengine::MnnBackend::OpenGl,
-        "cpu" => cam_isp::mnnengine::MnnBackend::Cpu,
         _ => {
             eprintln!(
                 "Unknown backend: '{}' (use cpu, vulkan, opencl, opengl)",
