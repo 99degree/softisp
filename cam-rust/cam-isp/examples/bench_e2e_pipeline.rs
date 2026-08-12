@@ -39,7 +39,6 @@ fn bench_resolution(name: &str, w: u32, h: u32, iterations: u32) {
     #[cfg(feature = "mnn")]
     {
         cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-        cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Cpu);
     }
 
     // Select engine
