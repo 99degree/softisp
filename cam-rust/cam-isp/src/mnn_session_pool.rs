@@ -40,45 +40,16 @@ pub(crate) struct SessionPool {
 #[cfg(feature = "mnn")]
 impl SessionPool {
     /// Build a pool of `n` sessions sharing `interp`.
+    /// `extra_names` are the non-frame input tensors (runtime-fed weights
+    /// + constants) that the engine will write into before each inference.
     pub(crate) fn new(
         interp: MnnInterpreterSafe,
         backend: MnnBackendType,
         n: usize,
         num_threads: i32,
+        extra_names: Vec<String>,
     ) -> Result<Self, String> {
-        let extra_names = [
-            "DemosaicCcmBlock/w",
-            "DemosaicCcmBlock/b",
-            "DemosaicBlock/w",
-            "DemosaicBlock/b",
-            "CcmBlock_ccm/matrix",
-            "BayerWbBlock/gains",
-            "ToneBlock/contrast",
-            "ToneBlock/brightness",
-            "ToneBlock/gamma_recip",
-            "saturation/scale",
-            "Sharpen/strength",
-            "LdciBlock/strength",
-            "FcsBlock/gain",
-            "FcsBlock/bias",
-            "NormalizeBlock/max_val",
-            "Gamma/inv_gamma",
-            "Gamma/min",
-            "Gamma/max",
-            "Gamma/lift",
-            "Gamma/norm",
-            "AutoContrast/lift",
-            "AutoContrast/half",
-            "AutoContrast/contrast_w",
-            "AutoContrast/zero",
-            "AutoContrast/one",
-            "DisplayBlock/scale",
-            "DisplayBlock/gamma_exp",
-            "DisplayBlock/zero",
-            "DisplayBlock/one",
-            "vignetting/gain_map",
-        ];
-        let tensor_names: Vec<String> = extra_names.iter().map(|s| s.to_string()).collect();
+        let tensor_names = extra_names;
         let mut slots = VecDeque::with_capacity(n);
         for _ in 0..n {
             let sess = interp

@@ -226,11 +226,43 @@ impl IspBlock for RuntimeWarpBlock {
 
     /// Grid tensor provided as runtime input (computed on CPU).
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(
+        let ns = self.tensor_ns();
+        let mut inputs = vec![(
             "RuntimeWarp/grid".into(),
             1,
             vec![1, self.output_height as i64, self.output_width as i64, 2],
-        )]
+        )];
+        if self.shading_lut.is_some() {
+            inputs.push((
+                format!("{}/shading_lut", ns),
+                1,
+                vec![1, 3, self.output_height as i64, self.output_width as i64],
+            ));
+        }
+        inputs
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        let grid = self.grid.as_deref().unwrap_or(&[]);
+        let mut defaults = Vec::new();
+        if !grid.is_empty() {
+            defaults.push((
+                format!("{}/grid", ns),
+                grid.iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ));
+        }
+        if let Some(lut) = &self.shading_lut {
+            defaults.push((
+                format!("{}/shading_lut", ns),
+                lut.iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ));
+        }
+        defaults
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -278,30 +310,7 @@ impl IspBlock for RuntimeWarpBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        let mut inits = vec![];
-
-        // Grid initializer (identity if not set)
-        let grid = self.grid.as_deref().unwrap_or(&[]);
-
-        if !grid.is_empty() {
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/grid", ns),
-                &[1, self.output_height as i64, self.output_width as i64, 2],
-                grid,
-            ));
-        }
-
-        // Lens shading LUT initializer
-        if let Some(lut) = &self.shading_lut {
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/shading_lut", ns),
-                &[1, 3, self.output_height as i64, self.output_width as i64],
-                lut,
-            ));
-        }
-
-        inits
+        vec![]
     }
 }
 
@@ -406,6 +415,10 @@ mod tests {
         assert_eq!(nodes.len(), 3, "Should produce GridSample + Mul + Identity");
         // extra_inputs returns grid only (shading_lut is initializer)
         let extras = block.extra_inputs();
-        assert_eq!(extras.len(), 1, "Should have grid as extra input");
+        assert_eq!(
+            extras.len(),
+            2,
+            "Should have grid + shading as extra inputs"
+        );
     }
 }

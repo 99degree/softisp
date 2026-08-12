@@ -128,6 +128,25 @@ MnnTensor mnn_session_get_input_v2(MnnInterpreter interpreter, MnnSession sessio
     return reinterpret_cast<MnnTensor>(tensor);
 }
 
+int mnn_session_get_input_count(MnnInterpreter interpreter, MnnSession session) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess) return 0;
+    const auto& inputs = net->getSessionInputAll(sess);
+    return (int)inputs.size();
+}
+
+const char* mnn_session_get_input_name(MnnInterpreter interpreter, MnnSession session, int index) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess) return nullptr;
+    const auto& inputs = net->getSessionInputAll(sess);
+    if (index < 0 || index >= (int)inputs.size()) return nullptr;
+    auto iter = inputs.begin();
+    std::advance(iter, index);
+    return iter->first.c_str();
+}
+
 MnnTensor mnn_session_get_output_v2(MnnInterpreter interpreter, MnnSession session, const char* name) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);

@@ -259,209 +259,164 @@ impl IspBlock for UnpackCfaBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        let sm = self.sensor_max;
         let sw = self.stride_w;
-
-        let mut inits = vec![Proto::tensor_proto_float_scalar(
-            &format!("{}/max_val", ns),
-            sm,
-        )];
-
+        let mut inputs = vec![(format!("{}/max_val", ns).to_string(), 1, vec![])];
         match self.mode {
             UnpackMode::PackedInt32 => {
-                // Conv weights [4, 2, 2, sw] — 4 filters, 2 in channels, kernel 2×sw
-                // sw=1 (default): kernel=(2,1), each out_ch picks one Bayer position from 1 packed col
-                // sw=2 (downscale): kernel=(2,2), each out_ch averages 2 adjacent packed cols
-                //
-                // Filter 0 (R):  in_ch=0 (even), picks top row
-                // Filter 1 (Gr): in_ch=1 (odd),  picks top row
-                // Filter 2 (Gb): in_ch=0 (even), picks bottom row
-                // Filter 3 (B):  in_ch=1 (odd),  picks bottom row
-                //
-                // For stride_w=1 (kernel=(2,1)):  flat order: [oc,ic,kh,0]
-                //   oc=0,ic=0: [1, 0]
-                //   oc=1,ic=1: [1, 0]
-                //   oc=2,ic=0: [0, 1]
-                //   oc=3,ic=1: [0, 1]
-                //
-                // For stride_w=2 (kernel=(2,2)):  flat order: [oc,ic,kh,kw]
-                //   oc=0,ic=0: [0.5, 0.5, 0, 0]  ← avg R over 2 packed cols
-                //   oc=1,ic=1: [0.5, 0.5, 0, 0]  ← avg Gr over 2 packed cols
-                //   oc=2,ic=0: [0, 0, 0.5, 0.5]  ← avg Gb over 2 packed cols
-                //   oc=3,ic=1: [0, 0, 0.5, 0.5]  ← avg B over 2 packed cols
-                let w: Vec<f32> = if sw == 1 {
-                    vec![
-                        // out_ch=0 (R)
-                        1f32, 0f32, // in_ch=0 (even): picks top row
-                        0f32, 0f32, // in_ch=1 (odd):  none
-                        // out_ch=1 (Gr)
-                        0f32, 0f32, // in_ch=0 (even): none
-                        1f32, 0f32, // in_ch=1 (odd):  picks top row
-                        // out_ch=2 (Gb)
-                        0f32, 1f32, // in_ch=0 (even): picks bottom row
-                        0f32, 0f32, // in_ch=1 (odd):  none
-                        // out_ch=3 (B)
-                        0f32, 0f32, // in_ch=0 (even): none
-                        0f32, 1f32, // in_ch=1 (odd):  picks bottom row
-                    ]
-                } else {
-                    // stride_w=2: kernel=(2,2), average over 2 packed cols
-                    vec![
-                        // oc=0 (R), ic=0 (even): avg over cols 0,1 top row
-                        0.5, 0.5, 0.0, 0.0, // oc=0 (R), ic=1 (odd): none
-                        0.0, 0.0, 0.0, 0.0, // oc=1 (Gr), ic=0 (even): none
-                        0.0, 0.0, 0.0, 0.0,
-                        // oc=1 (Gr), ic=1 (odd): avg over cols 0,1 top row
-                        0.5, 0.5, 0.0, 0.0,
-                        // oc=2 (Gb), ic=0 (even): avg over cols 0,1 bottom row
-                        0.0, 0.0, 0.5, 0.5, // oc=2 (Gb), ic=1 (odd): none
-                        0.0, 0.0, 0.0, 0.0, // oc=3 (B), ic=0 (even): none
-                        0.0, 0.0, 0.0, 0.0,
-                        // oc=3 (B), ic=1 (odd): avg over cols 0,1 bottom row
-                        0.0, 0.0, 0.5, 0.5,
-                    ]
-                };
-
                 let w_shape = if sw == 1 {
                     vec![4i64, 2, 2, 1]
                 } else {
                     vec![4i64, 2, 2, 2]
                 };
-
-                inits.push(Proto::tensor_proto_int32_scalar(
-                    &format!("{}/div_65536", ns),
-                    65536,
-                ));
-                inits.push(Proto::tensor_proto_int32_scalar(
-                    &format!("{}/mod_65536", ns),
-                    65536,
-                ));
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/cfa_w", ns),
-                    &w_shape,
-                    &w,
-                ));
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/cfa_b", ns),
-                    &[4],
-                    &[0f32; 4],
-                ));
-                // 12-bit mode: SHR by 2 = Div by 4.0 to get 10-bit mantissa
+                inputs.push((format!("{}/div_65536", ns).to_string(), 6, vec![]));
+                inputs.push((format!("{}/mod_65536", ns).to_string(), 6, vec![]));
+                inputs.push((format!("{}/cfa_w", ns).to_string(), 1, w_shape));
+                inputs.push((format!("{}/cfa_b", ns).to_string(), 1, vec![4]));
                 if self.valid_bits == 12 {
-                    inits.push(Proto::tensor_proto_float_scalar(
-                        &format!("{}/shr_4", ns),
-                        4.0,
+                    inputs.push((format!("{}/shr_4", ns).to_string(), 1, vec![]));
+                }
+            }
+            UnpackMode::NativeInt16 => {
+                if self.use_fast_unpack {
+                    let w_shape = vec![4i64, 1, 2, sw];
+                    inputs.push((format!("{}/unpack_w", ns).to_string(), 1, w_shape));
+                    inputs.push((format!("{}/unpack_b", ns).to_string(), 1, vec![4]));
+                }
+            }
+        }
+        if self.use_blc {
+            inputs.push((format!("{}/blc_vals", ns).to_string(), 1, vec![1, 4, 1, 1]));
+        }
+        if self.use_wb {
+            inputs.push((format!("{}/wb_gains", ns).to_string(), 1, vec![1, 4, 1, 1]));
+        }
+        if (self.use_blc || self.use_wb) && matches!(self.mode, UnpackMode::PackedInt32) {
+            inputs.push((format!("{}/zero", ns).to_string(), 1, vec![]));
+            inputs.push((format!("{}/one", ns).to_string(), 1, vec![]));
+        }
+        if self.height_downscale > 1 {
+            inputs.push((format!("{}/scale_h", ns).to_string(), 1, vec![4]));
+        }
+        inputs
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        let sm = self.sensor_max;
+        let sw = self.stride_w;
+        let mut defaults = vec![(
+            format!("{}/max_val", ns).to_string(),
+            sm.to_ne_bytes().to_vec(),
+        )];
+        match self.mode {
+            UnpackMode::PackedInt32 => {
+                let w: Vec<f32> = if sw == 1 {
+                    vec![
+                        1f32, 0f32, 0f32, 0f32, 0f32, 1f32, 0f32, 0f32, 0f32, 0f32, 1f32, 0f32,
+                        0f32, 0f32, 0f32, 1f32,
+                    ]
+                } else {
+                    vec![
+                        0.5f32, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5,
+                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0,
+                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5,
+                    ]
+                };
+                defaults.push((
+                    format!("{}/div_65536", ns).to_string(),
+                    (65536i32).to_ne_bytes().to_vec(),
+                ));
+                defaults.push((
+                    format!("{}/mod_65536", ns).to_string(),
+                    (65536i32).to_ne_bytes().to_vec(),
+                ));
+                defaults.push((
+                    format!("{}/cfa_w", ns).to_string(),
+                    w.iter().flat_map(|v| v.to_ne_bytes()).collect::<Vec<u8>>(),
+                ));
+                defaults.push((
+                    format!("{}/cfa_b", ns).to_string(),
+                    [0.0f32; 4]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                ));
+                if self.valid_bits == 12 {
+                    defaults.push((
+                        format!("{}/shr_4", ns).to_string(),
+                        (4.0f32).to_ne_bytes().to_vec(),
                     ));
                 }
             }
             UnpackMode::NativeInt16 => {
-                // Conv weights [4, 1, 2, sw] — 4 out_ch, 1 in_ch, kernel 2×sw
-                // sw=1: kernel=(2,1) — identity extraction, each out_ch picks one Bayer position
-                // sw=2: kernel=(2,2) — 2× width downscale, each out_ch picks one Bayer pos from 2-wide block
-                // sw=4: kernel=(2,4) — 4× width downscale, each out_ch picks one Bayer pos from 4-wide block
-                let w: Vec<f32> = if sw <= 1 {
-                    vec![
-                        1.0, 0.0, // oc=0 (R):  TL
-                        0.0, 1.0, // oc=1 (Gr): TR
-                        0.0, 0.0, // oc=2 (Gb): BL
-                        0.0, 0.0, // oc=3 (B):  BR
-                    ]
-                } else {
-                    // kernel shape [4, 1, 2, sw]: flat layout [oc, kh, kw]
-                    // flat_index = oc * 2*sw + kh * sw + kw
-                    // Each oc picks one Bayer position from a 2×sw block:
-                    //   oc=0 (R):  TL → kh=0, kw=0
-                    //   oc=1 (Gr): TR → kh=0, kw=sw/2 (center top)
-                    //   oc=2 (Gb): BL → kh=1, kw=0
-                    //   oc=3 (B):  BR → kh=1, kw=sw/2 (center bottom)
-                    let mut w2 = vec![0.0f32; 4 * 2 * sw as usize];
-                    w2[0] = 1.0; // oc=0, TL
-                    w2[sw as usize / 2] = 1.0; // oc=1, TR
-                    w2[sw as usize] = 1.0; // oc=2, BL
-                    w2[sw as usize + sw as usize / 2] = 1.0; // oc=3, BR
-                    w2
-                };
-
-                let w_shape = vec![4i64, 1, 2, sw];
-
                 if self.use_fast_unpack {
-                    inits.push(Proto::tensor_proto_float(
-                        &format!("{}/unpack_w", ns),
-                        &w_shape,
-                        &w,
+                    let w: Vec<f32> = if sw <= 1 {
+                        vec![1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+                    } else {
+                        let mut w2 = vec![0.0f32; 4 * 2 * sw as usize];
+                        w2[0] = 1.0;
+                        w2[sw as usize / 2] = 1.0;
+                        w2[sw as usize] = 1.0;
+                        w2[sw as usize + sw as usize / 2] = 1.0;
+                        w2
+                    };
+                    defaults.push((
+                        format!("{}/unpack_w", ns).to_string(),
+                        w.iter().flat_map(|v| v.to_ne_bytes()).collect::<Vec<u8>>(),
                     ));
-                    inits.push(Proto::tensor_proto_float(
-                        &format!("{}/unpack_b", ns),
-                        &[4],
-                        &[0.0; 4],
+                    defaults.push((
+                        format!("{}/unpack_b", ns).to_string(),
+                        [0.0f32; 4]
+                            .iter()
+                            .flat_map(|v| v.to_ne_bytes())
+                            .collect::<Vec<u8>>(),
                     ));
-                } else {
-                    // SpaceToDepth path — no Conv weights needed
                 }
             }
         }
-
-        if self.use_blc || self.use_wb {
-            // BLC/WB values are kept as initializers for the controller
-            // to use when computing DemosaicCcmBlock's fused weights.
-            // The ONNX nodes do NOT reference these — they are NOT graph inputs.
-            // But having them here doesn't hurt (unused initializers are ignored).
-            if self.use_blc {
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/blc_vals", ns),
-                    &[1, 4, 1, 1],
-                    &[0.0, 0.0, 0.0, 0.0],
-                ));
-            }
-            if self.use_wb {
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/wb_gains", ns),
-                    &[1, 4, 1, 1],
-                    &[1.0, 1.0, 1.0, 1.0],
-                ));
-            }
-            // PackedInt32 mode still needs zero/one for its Clip node
-            if self.mode == UnpackMode::PackedInt32 {
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/zero", ns),
-                    0.0,
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/one", ns),
-                    1.0,
-                ));
-            }
-        }
-
-        // Resize scale for height downscale
-        if self.height_downscale > 1 {
-            // Resize needs: [scales] tensor with [1, 1, 0.5, 1.0] for H/2, W unchanged
-            // Actually ONNX Resize takes scales as [N,C,H,W] = [1,1,0.5,1.0]
-            inits.push(Proto::tensor_proto_float(
-                &format!("{}/scale_h", ns),
-                &[4],
-                &[1.0, 1.0, 0.5, 1.0],
+        if self.use_blc {
+            defaults.push((
+                format!("{}/blc_vals", ns).to_string(),
+                [0.0f32, 0.0, 0.0, 0.0]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ));
         }
-
-        inits
-    }
-
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        let ns = self.tensor_ns();
-        let mut extras = vec![(format!("{}/max_val", ns), 1, vec![])];
-        if self.mode == UnpackMode::PackedInt32 {
-            extras.push((format!("{}/div_65536", ns), 6, vec![]));
-            extras.push((format!("{}/mod_65536", ns), 6, vec![]));
+        if self.use_wb {
+            defaults.push((
+                format!("{}/wb_gains", ns).to_string(),
+                [1.0f32, 1.0, 1.0, 1.0]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ));
         }
-        if self.use_blc {
-            extras.push((format!("{}/blc_vals", ns), 1, vec![1, 4, 1, 1]));
+        if (self.use_blc || self.use_wb) && matches!(self.mode, UnpackMode::PackedInt32) {
+            defaults.push((
+                format!("{}/zero", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ));
+            defaults.push((
+                format!("{}/one", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ));
         }
-        if self.use_wb && self.mode == UnpackMode::NativeInt16 {
-            extras.push((format!("{}/wb_gains", ns), 1, vec![1, 4, 1, 1]));
+        if self.height_downscale > 1 {
+            defaults.push((
+                format!("{}/scale_h", ns).to_string(),
+                [1.0f32, 1.0, 0.5, 1.0]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ));
         }
-        extras
+        defaults
     }
 }
 
@@ -670,7 +625,7 @@ mod tests {
             9,
             "Packed UnpackCfaBlock (no BLC) should produce 9 nodes (no Cast to INT16)"
         );
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(
             inits.len(),
             5,
@@ -686,14 +641,14 @@ mod tests {
             "Packed UnpackCfaBlock + BLC should produce 11 nodes (+Sub+Clip+Mul)"
         );
         assert_eq!(
-            block2.initializers().len(),
+            block2.extra_input_defaults().len(),
             8,
             "Packed UnpackCfaBlock + BLC should have 8 initializers"
         );
         assert_eq!(
             block2.extra_inputs().len(),
-            4,
-            "Packed UnpackCfaBlock + BLC should have 4 extra inputs"
+            8,
+            "Packed UnpackCfaBlock + BLC should have 8 extra inputs"
         );
     }
 
@@ -705,7 +660,7 @@ mod tests {
             .with_concrete_dims(48, 64);
         let nodes = block.nodes();
         assert_eq!(nodes.len(), 2, "Native no-BLC/WB: Cast+Conv = 2 nodes");
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(
             inits.len(),
             1,
@@ -724,7 +679,7 @@ mod tests {
         assert_eq!(block2.output_elem_type(), 1, "Native + BLC: output F32");
         // max_val + blc_vals = 2 (no zero/one for NativeInt16 PackedInt32 mode)
         assert_eq!(
-            block2.initializers().len(),
+            block2.extra_input_defaults().len(),
             2,
             "Native + BLC: max_val+blc_vals = 2"
         );
@@ -744,7 +699,7 @@ mod tests {
         assert_eq!(block3.output_elem_type(), 1, "Native + WB: output F32");
         // max_val + wb_gains = 2
         assert_eq!(
-            block3.initializers().len(),
+            block3.extra_input_defaults().len(),
             2,
             "Native + WB: max_val+wb_gains = 2"
         );
@@ -769,7 +724,7 @@ mod tests {
         assert_eq!(block4.output_elem_type(), 1, "Native + BLC+WB: output F32");
         // max_val + blc_vals + wb_gains = 3
         assert_eq!(
-            block4.initializers().len(),
+            block4.extra_input_defaults().len(),
             3,
             "Native + BLC+WB: max_val+blc_vals+wb_gains = 3"
         );
@@ -852,7 +807,7 @@ mod tests {
         assert_eq!(fast.output_elem_type(), 1, "Fast unpack: FLOAT output");
 
         // Check Conv weights exist
-        let inits = fast.initializers();
+        let inits = fast.extra_input_defaults();
         assert!(
             inits.len() >= 3,
             "Fast unpack: max_val + unpack_w + unpack_b >= 3"

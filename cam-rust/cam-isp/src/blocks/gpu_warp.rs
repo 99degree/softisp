@@ -321,22 +321,22 @@ impl IspBlock for GpuWarpBlock {
         ))
     }
 
-    /// Runtime inputs: GDC coefficients + EIS displacement.
+    /// Runtime inputs: GDC coefficients + EIS displacement + grid constants.
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        let h = self.output_height as i64;
+        let w = self.output_width as i64;
         vec![
             ("GpuWarp/gdc_k1".into(), 1, vec![1]),
             ("GpuWarp/gdc_k2".into(), 1, vec![1]),
             ("GpuWarp/gdc_k3".into(), 1, vec![1]),
-            (
-                "GpuWarp/eis_x".into(),
-                1,
-                vec![1, 1, self.output_height as i64, self.output_width as i64],
-            ),
-            (
-                "GpuWarp/eis_y".into(),
-                1,
-                vec![1, 1, self.output_height as i64, self.output_width as i64],
-            ),
+            ("GpuWarp/eis_x".into(), 1, vec![1, 1, h, w]),
+            ("GpuWarp/eis_y".into(), 1, vec![1, 1, h, w]),
+            (format!("{}/zero", ns), 1, vec![]),
+            (format!("{}/one", ns), 1, vec![]),
+            (format!("{}/shape4", ns), 2, vec![1, h, w, 2]),
+            (format!("{}/grid_x", ns), 1, vec![1, 1, 1, w]),
+            (format!("{}/grid_y", ns), 1, vec![1, 1, h, 1]),
         ]
     }
 
@@ -345,27 +345,40 @@ impl IspBlock for GpuWarpBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let ns = self.tensor_ns();
         let h = self.output_height as usize;
         let w = self.output_width as usize;
-
         vec![
-            Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
-            Proto::tensor_proto_int64(&format!("{}/shape4", ns), &[1, h as i64, w as i64, 2]),
-            Proto::tensor_proto_float(
-                &format!("{}/grid_x", ns),
-                &[1, 1, 1, w as i64],
-                &(0..w)
-                    .map(|x| 2.0 * x as f32 / (w - 1) as f32 - 1.0)
-                    .collect::<Vec<_>>(),
+            (format!("{}/zero", ns), (0.0f32).to_ne_bytes().to_vec()),
+            (format!("{}/one", ns), (1.0f32).to_ne_bytes().to_vec()),
+            (
+                format!("{}/shape4", ns),
+                [1i64, h as i64, w as i64, 2]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ),
-            Proto::tensor_proto_float(
-                &format!("{}/grid_y", ns),
-                &[1, 1, h as i64, 1],
-                &(0..h)
+            (
+                format!("{}/grid_x", ns),
+                (0..w)
+                    .map(|x| 2.0 * x as f32 / (w - 1) as f32 - 1.0)
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/grid_y", ns),
+                (0..h)
                     .map(|y| 2.0 * y as f32 / (h - 1) as f32 - 1.0)
-                    .collect::<Vec<_>>(),
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
             ),
         ]
     }
@@ -391,7 +404,11 @@ mod tests {
     fn test_gpu_warp_extra_inputs() {
         let block = GpuWarpBlock::new(128, 128);
         let extras = block.extra_inputs();
-        assert_eq!(extras.len(), 5, "Should have k1,k2,k3,eis_x,eis_y");
+        assert_eq!(
+            extras.len(),
+            10,
+            "Should have k1,k2,k3,eis_x,eis_y + zero,one,shape4,grid_x,grid_y"
+        );
         assert!(extras[0].0.contains("gdc_k1"));
         assert!(extras[3].0.contains("eis_x"));
         assert!(extras[4].0.contains("eis_y"));
