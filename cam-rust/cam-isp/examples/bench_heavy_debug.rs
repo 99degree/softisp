@@ -37,7 +37,6 @@ fn try_blocks(label: &str, blocks: Vec<Box<dyn IspBlock>>) {
 fn main() {
     cam_isp::cpu::register_cpu_engine();
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
-    cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Cpu);
 
     // Simple 3-block (works)
     try_blocks(
