@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn test_fcs_initializers() {
         let b = FcsBlock::new();
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         // gain + bias are runtime inputs — nothing baked
         assert_eq!(inits.len(), 0);
     }
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn test_fcs_with_gain_offset() {
         let b = FcsBlock::new();
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         // gain/bias are runtime inputs (fed by the engine per-frame)
         assert_eq!(inits.len(), 0);
     }

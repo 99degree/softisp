@@ -222,26 +222,40 @@ impl IspBlock for ChromaticAberrationBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let mut inits = Vec::new();
-        if let Some(ref grids) = self.grids {
-            let (h, w) = match (self.height, self.width) {
-                (Some(h), Some(w)) => (h, w),
-                _ => return inits,
-            };
-            let grid_size = (h * w * 2) as usize;
-            for ch in 0..3 {
+        vec![]
+    }
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let (h, w) = match (self.height, self.width) {
+            (Some(h), Some(w)) => (h, w),
+            _ => return vec![],
+        };
+        (0..3)
+            .map(|ch| (self.grid_name(ch), 1, vec![1, h, w, 2]))
+            .collect()
+    }
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let (h, w) = match (self.height, self.width) {
+            (Some(h), Some(w)) => (h, w),
+            _ => return vec![],
+        };
+        let grids = match &self.grids {
+            Some(g) => g,
+            None => return vec![],
+        };
+        let grid_size = (h * w * 2) as usize;
+        (0..3)
+            .map(|ch| {
                 let start = ch * grid_size;
                 let end = start + grid_size;
-                if end <= grids.len() {
-                    inits.push(Proto::tensor_proto_float(
-                        &self.grid_name(ch),
-                        &[1, h, w, 2],
-                        &grids[start..end],
-                    ));
-                }
-            }
-        }
-        inits
+                (
+                    self.grid_name(ch),
+                    grids[start..end]
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<u8>>(),
+                )
+            })
+            .collect()
     }
 }
 
@@ -285,7 +299,7 @@ mod tests {
             5,
             "should emit 5 nodes (Split + 3 GridSample + Concat)"
         );
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 3, "should have 3 grid initializers (R, G, B)");
     }
 

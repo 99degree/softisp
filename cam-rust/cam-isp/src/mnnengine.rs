@@ -122,6 +122,10 @@ pub struct MnnEngine {
     /// Reused f32 scratch: u16→f32 lane conversion for native-int16 models
     /// (SplitFloat) and full-frame conversion for raw FLOAT32 models (RawFloat).
     scratch_f32: Mutex<Vec<f32>>,
+    /// Cached default values for extra inputs (formerly baked as initializers).
+    /// Populated at build() from each block's `extra_input_defaults()`.
+    #[cfg(feature = "mnn")]
+    default_inputs: Mutex<Vec<(String, Vec<u8>)>>,
 }
 
 #[cfg(feature = "mnn")]
@@ -212,6 +216,8 @@ impl MnnEngine {
             last_input_shape: Mutex::new(None),
             split_scratch: Mutex::new(Vec::new()),
             scratch_f32: Mutex::new(Vec::new()),
+            #[cfg(feature = "mnn")]
+            default_inputs: Mutex::new(Vec::new()),
         }
     }
 
@@ -647,6 +653,7 @@ impl MnnEngine {
     /// - 2 = GRBG
     /// - 3 = GBRG
     fn set_extra_inputs(
+        &self,
         pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
         ccm: Option<&[f32; 9]>,
         tone: &ToneParams,
@@ -696,6 +703,28 @@ impl MnnEngine {
                 }
             }
         }
+
+        /// Write raw bytes into a named tensor (for int64 / int32 / float
+        /// tensors that were formerly baked as initializers).  No-op if the
+        /// tensor is missing or too small.
+        fn write_raw(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, data: &[u8]) {
+            if let Some(t) = find(pool, name) {
+                if let Some(bytes) = t.as_bytes_mut() {
+                    let n = data.len().min(bytes.len());
+                    bytes[..n].copy_from_slice(&data[..n]);
+                }
+            }
+        }
+
+        // ── Block-provided defaults (formerly baked Const initializers) ──
+        // Write raw tensor bytes from each block's `extra_input_defaults()`.
+        // These are written FIRST so that per-frame isp_params overrides
+        // below take precedence.
+        let defaults = self.default_inputs.lock().unwrap();
+        for (name, data) in defaults.iter() {
+            write_raw(pool, name, data);
+        }
+        drop(defaults);
 
         // DemosaicCcmBlock/w [3,4,1,1] — fused CCM × demosaic weights
         //
@@ -923,7 +952,8 @@ impl IspEngine for MnnEngine {
             use crate::mnn_converter::{convert_onnx_buffer, MnnConvertOptions};
             use std::path::Path;
 
-            let mnn_bytes: Vec<u8> = match &self.model_path {
+            #[allow(clippy::type_complexity)]
+            let mnn_result: (Vec<u8>, Option<Vec<(String, Vec<u8>)>>) = match &self.model_path {
                 Some(p) => {
                     info!(
                         "build [tid={:?}]: reading pre-converted .mnn from {}",
@@ -934,10 +964,11 @@ impl IspEngine for MnnEngine {
                     // runtime-fed weights); record the frame tensor name so the
                     // engine never relies on getSessionInput(nullptr) ordering.
                     self.frame_input_name = head.graph_input_name().map(str::to_string);
-                    std::fs::read(p).map_err(|e| {
+                    let bytes = std::fs::read(p).map_err(|e| {
                         error!("Failed to read MNN model: {}", p);
                         crate::error::IspError::Io(format!("read {}: {}", p, e))
-                    })?
+                    })?;
+                    (bytes, None)
                 }
                 None => {
                     // Build ONNX graph: head + aux as pipeline, stats as aux_blocks
@@ -961,6 +992,15 @@ impl IspEngine for MnnEngine {
                         onnx.len()
                     );
 
+                    // Collect default values for extra inputs from every block
+                    // before we discard the block list.  These replace the
+                    // former baked Const initializers: the engine writes them
+                    // into MNN Input tensors at inference time.
+                    let mut block_defaults: Vec<(String, Vec<u8>)> = Vec::new();
+                    for b in &all {
+                        block_defaults.extend(b.extra_input_defaults());
+                    }
+
                     // Save ONNX for inspection (debug only)
                     if cfg!(debug_assertions) {
                         let _ = std::fs::write(".mnn_last_pipeline.onnx", &onnx);
@@ -977,9 +1017,10 @@ impl IspEngine for MnnEngine {
                     );
 
                     // In-process buffer conversion — zero disk writes
-                    convert_onnx_buffer(&onnx).map_err(|e| {
+                    let bytes = convert_onnx_buffer(&onnx).map_err(|e| {
                         crate::error::IspError::Conversion(format!("convert: {}", e))
-                    })?
+                    })?;
+                    (bytes, Some(block_defaults))
                 }
             };
 
@@ -1003,16 +1044,16 @@ impl IspEngine for MnnEngine {
                 }
             }
 
-            if mnn_bytes.is_empty() {
+            if mnn_result.0.is_empty() {
                 error!("MNN model bytes are empty");
                 return Err(crate::error::IspError::Mnn("MNN model bytes empty".into()));
             }
-            let interp = MnnInterpreterSafe::from_buffer(&mnn_bytes).ok_or_else(|| {
+            let interp = MnnInterpreterSafe::from_buffer(&mnn_result.0).ok_or_else(|| {
                 error!(
                     "Failed to load MNN model from buffer ({} bytes)",
-                    mnn_bytes.len()
+                    mnn_result.0.len()
                 );
-                crate::error::IspError::Mnn(format!("load fail ({} bytes)", mnn_bytes.len()))
+                crate::error::IspError::Mnn(format!("load fail ({} bytes)", mnn_result.0.len()))
             })?;
 
             // Use first session to probe model input type (before building pool)
@@ -1086,19 +1127,48 @@ impl IspEngine for MnnEngine {
                 "MNN model input type: code={}, bits={} mode={:?} ndim={} dims={:?} expected_elems={}",
                 input_code, input_bits, mode, input_ndim, input_dims, expected_elems
             );
+
+            // ── Enumerate ALL model inputs to build the extra-inputs list ──
+            // The model may declare frame + many runtime-fed weight inputs.
+            let all_input_names: Vec<String> = (0..interp.get_input_count(&probe_sess))
+                .filter_map(|i| interp.get_input_name(&probe_sess, i))
+                .collect();
+            let extra_names: Vec<String> = all_input_names
+                .into_iter()
+                .filter(|n| Some(n.as_str()) != self.frame_input_name.as_deref())
+                .collect();
+            info!(
+                "MNN model inputs: {} total (1 frame + {} extras)",
+                1 + extra_names.len(),
+                extra_names.len()
+            );
             // Don't need probe session any more — pool will create its own.
             drop(probe_sess);
 
             // Build session pool (N sessions for parallel inference)
             // Backend was already validated by probe session above.
-            let pool = SessionPool::new(interp, self.backend.to_sys(), self.pool_size.max(1), 4)?;
+            let pool = SessionPool::new(
+                interp,
+                self.backend.to_sys(),
+                self.pool_size.max(1),
+                4,
+                extra_names,
+            )?;
             info!(
-                "MNN engine loaded ({} bytes, backend={:?}, {} sessions)",
-                mnn_bytes.len(),
+                "MNN engine loaded ({} bytes, backend={:?}, {} sessions, {} extra inputs)",
+                mnn_result.0.len(),
                 self.backend,
-                self.pool_size
+                self.pool_size,
+                pool.tensor_count()
             );
             self.pool = Some(pool);
+            // Cache block-provided default values for extra inputs (formerly
+            // baked as Const initializers).  These are written before each
+            // inference; isp_params per-frame values take precedence.
+            if let Some(defaults) = mnn_result.1 {
+                let mut cache = self.default_inputs.lock().unwrap();
+                *cache = defaults;
+            }
         }
 
         #[cfg(not(feature = "mnn"))]
@@ -1224,7 +1294,7 @@ impl IspEngine for MnnEngine {
                 }
                 needs
             };
-            Self::set_extra_inputs(
+            self.set_extra_inputs(
                 &slot.tensor_pool,
                 ccm,
                 tone,

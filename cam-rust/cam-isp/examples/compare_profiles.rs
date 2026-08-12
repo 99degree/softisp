@@ -23,7 +23,7 @@ fn main() {
         // Count blocks
         for block in &blocks {
             let nodes = block.nodes();
-            let inits = block.initializers();
+            let inits = block.extra_input_defaults();
             eprintln!(
                 "  Block: {} - nodes: {}, initializers: {}",
                 block.id(),

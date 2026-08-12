@@ -173,15 +173,29 @@ impl IspBlock for HdrDebayerBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            Proto::tensor_proto_float_scalar(&format!("{}/gain", ns), self.exposure_ratio),
-            Proto::tensor_proto_float_scalar(&format!("{}/two", ns), 2.0),
-        ]
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![(format!("{}/gain", self.tensor_ns()), 1, vec![1])]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/gain", ns).to_string(), 1, vec![]),
+            (format!("{}/two", ns).to_string(), 1, vec![]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (
+                format!("{}/gain", ns).to_string(),
+                (self.exposure_ratio).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/two", ns).to_string(),
+                (2.0f32).to_ne_bytes().to_vec(),
+            ),
+        ]
     }
 }
 
@@ -243,6 +257,6 @@ mod tests {
     fn test_hdr_debayer_extra_inputs() {
         let b = HdrDebayerBlock::new();
         let extras = b.extra_inputs();
-        assert_eq!(extras.len(), 1, "should have gain extra input");
+        assert_eq!(extras.len(), 2, "should have gain + zero extra inputs");
     }
 }

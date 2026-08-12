@@ -128,17 +128,28 @@ impl IspBlock for AspectCropBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        // Slice params: start at (0, 0, crop_y, crop_x), end at (1, 3, crop_y+crop_h, crop_x+crop_w)
-        // The actual crop depends on input dimensions; for ONNX we emit parametric values.
-        // Since ONNX Slice needs concrete values, we emit the target aspect ratio as metadata.
         vec![
-            Proto::tensor_proto_int64(&format!("{}/starts", ns), &[0, 0, 0, 0]),
-            Proto::tensor_proto_int64(
-                &format!("{}/ends", ns),
-                &[1, 3, self.target_h, self.target_w],
+            (format!("{}/starts", ns).to_string(), 6, vec![0, 0, 0, 0]),
+            (
+                format!("{}/ends", ns).to_string(),
+                6,
+                vec![1, 3, self.target_h, self.target_w],
             ),
-            Proto::tensor_proto_int64(&format!("{}/axes", ns), &[0, 1, 2, 3]),
+            (format!("{}/axes", ns).to_string(), 6, vec![0, 1, 2, 3]),
+        ]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/starts", ns).to_string(), vec![]),
+            (format!("{}/ends", ns).to_string(), vec![]),
+            (format!("{}/axes", ns).to_string(), vec![]),
         ]
     }
 }
@@ -177,7 +188,7 @@ mod tests {
     #[test]
     fn test_aspect_crop_has_initializers() {
         let block = AspectCropBlock::new(1920, 1080);
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 3); // starts, ends, axes
     }
 
@@ -185,7 +196,7 @@ mod tests {
     fn test_aspect_crop_same_ratio() {
         // 1:1 aspect — no cropping needed
         let block = AspectCropBlock::new(100, 100);
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(inits.len(), 3);
     }
 

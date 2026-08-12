@@ -188,7 +188,7 @@ mod tests {
     fn test_sharpen_has_initializer() {
         let block = SharpenBlock::new(0.7);
         // strength is a runtime input — no baked initializers.
-        assert_eq!(block.initializers().len(), 0);
+        assert_eq!(block.extra_input_defaults().len(), 0);
     }
 
     #[test]

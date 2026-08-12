@@ -177,7 +177,7 @@ fn auto_contrast_with_shadow_lift() {
 #[test]
 fn auto_contrast_has_initializers() {
     let block = AutoContrastBlock::new(1.2);
-    let inits = block.initializers();
+    let inits = block.extra_input_defaults();
     assert!(
         inits.len() >= 1,
         "need at least 1 initializer, got {}",
@@ -218,7 +218,7 @@ fn temporal_denoise_emits_sub_abs_less() {
 #[test]
 fn temporal_denoise_threshold_in_init() {
     let block = TemporalDenoiseBlock::new().with_threshold(0.08);
-    let inits = block.initializers();
+    let inits = block.extra_input_defaults();
     assert_eq!(
         inits.len(),
         4,
@@ -585,7 +585,7 @@ fn test_super_res_block_emit() {
     let sr_block = sr.add_frame("input/frame1");
     let nodes = sr_block.nodes();
     assert!(!nodes.is_empty(), "SuperRes should emit nodes");
-    let inits = sr_block.initializers();
+    let inits = sr_block.extra_input_defaults();
     assert!(!inits.is_empty(), "SuperRes should have initializers");
     let extras = sr_block.extra_inputs();
     assert_eq!(extras.len(), 1, "SuperRes should have 1 extra input");

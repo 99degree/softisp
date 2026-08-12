@@ -422,125 +422,100 @@ impl IspBlock for HdrToneBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        let mut inits = Vec::new();
-
-        match self.operator {
-            ToneOperator::Reinhard => {
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/white2", ns),
-                    1.0 / (self.white_point * self.white_point),
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/inv_w2", ns),
-                    1.0 / (self.white_point * self.white_point),
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/one", ns),
-                    1.0,
-                ));
-                if (self.intensity - 1.0).abs() > 1e-6 {
-                    inits.push(Proto::tensor_proto_float_scalar(
-                        &format!("{}/intensity", ns),
-                        self.intensity,
-                    ));
-                }
-            }
-            ToneOperator::Aces => {
-                // ACES input transform matrix (sRGB → ACES) — 3×3 flattened
-                let input_matrix: [f32; 9] = [
-                    0.59719, 0.35458, 0.04823, 0.07600, 0.90834, 0.01566, 0.02840, 0.13383, 0.83777,
-                ];
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/input_matrix", ns),
-                    &[3, 3],
-                    &input_matrix,
-                ));
-
-                // ACES curve constants
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/a", ns), 2.51));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/b", ns), 0.03));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/c", ns), 2.43));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/d", ns), 0.59));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/e", ns), 0.14));
-
-                // ACES output transform matrix (ACES → sRGB) — 3×3 flattened
-                let output_matrix: [f32; 9] = [
-                    1.60475, -0.53108, -0.07367, -0.10208, 1.10813, -0.00605, -0.00327, -0.07276,
-                    1.07602,
-                ];
-                inits.push(Proto::tensor_proto_float(
-                    &format!("{}/output_matrix", ns),
-                    &[3, 3],
-                    &output_matrix,
-                ));
-
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/min", ns),
-                    0.0,
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/max", ns),
-                    1.0,
-                ));
-                if (self.intensity - 1.0).abs() > 1e-6 {
-                    inits.push(Proto::tensor_proto_float_scalar(
-                        &format!("{}/intensity", ns),
-                        self.intensity,
-                    ));
-                }
-            }
-            ToneOperator::Uncharted2 => {
-                // Hable's filmic constants
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/a", ns), 0.15));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/b", ns), 0.50));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/c", ns), 0.10));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/d", ns), 0.20));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/e", ns), 0.02));
-                inits.push(Proto::tensor_proto_float_scalar(&format!("{}/f", ns), 0.30));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/exposure", ns),
-                    1.0,
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/min", ns),
-                    0.0,
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/max", ns),
-                    1.0,
-                ));
-                if (self.intensity - 1.0).abs() > 1e-6 {
-                    inits.push(Proto::tensor_proto_float_scalar(
-                        &format!("{}/intensity", ns),
-                        self.intensity,
-                    ));
-                }
-            }
-        }
-
-        inits
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        let mut extras = Vec::new();
+        vec![
+            (format!("{}/white2", ns).to_string(), 1, vec![]),
+            (format!("{}/inv_w2", ns).to_string(), 1, vec![]),
+            (format!("{}/one", ns).to_string(), 1, vec![]),
+            (format!("{}/intensity", ns).to_string(), 1, vec![]),
+            (format!("{}/input_matrix", ns).to_string(), 1, vec![3, 3]),
+            (format!("{}/a", ns).to_string(), 1, vec![]),
+            (format!("{}/b", ns).to_string(), 1, vec![]),
+            (format!("{}/c", ns).to_string(), 1, vec![]),
+            (format!("{}/d", ns).to_string(), 1, vec![]),
+            (format!("{}/e", ns).to_string(), 1, vec![]),
+            (format!("{}/output_matrix", ns).to_string(), 1, vec![3, 3]),
+            (format!("{}/min", ns).to_string(), 1, vec![]),
+            (format!("{}/max", ns).to_string(), 1, vec![]),
+            (format!("{}/intensity", ns).to_string(), 1, vec![]),
+            (format!("{}/a", ns).to_string(), 1, vec![]),
+            (format!("{}/b", ns).to_string(), 1, vec![]),
+            (format!("{}/c", ns).to_string(), 1, vec![]),
+            (format!("{}/d", ns).to_string(), 1, vec![]),
+            (format!("{}/e", ns).to_string(), 1, vec![]),
+            (format!("{}/f", ns).to_string(), 1, vec![]),
+            (format!("{}/exposure", ns).to_string(), 1, vec![]),
+            (format!("{}/min", ns).to_string(), 1, vec![]),
+            (format!("{}/max", ns).to_string(), 1, vec![]),
+            (format!("{}/intensity", ns).to_string(), 1, vec![]),
+        ]
+    }
 
-        match self.operator {
-            ToneOperator::Reinhard => {
-                extras.push((format!("{}/white2", ns), 1, vec![1]));
-            }
-            ToneOperator::Uncharted2 => {
-                extras.push((format!("{}/exposure", ns), 1, vec![1]));
-            }
-            _ => {}
-        }
-
-        if (self.intensity - 1.0).abs() > 1e-6 {
-            extras.push((format!("{}/intensity", ns), 1, vec![1]));
-        }
-
-        extras
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/white2", ns).to_string(), vec![]),
+            (format!("{}/inv_w2", ns).to_string(), vec![]),
+            (format!("{}/one", ns).to_string(), vec![]),
+            (format!("{}/intensity", ns).to_string(), vec![]),
+            (format!("{}/input_matrix", ns).to_string(), vec![]),
+            (
+                format!("{}/a", ns).to_string(),
+                (2.51f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/b", ns).to_string(),
+                (0.03f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/c", ns).to_string(),
+                (2.43f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/d", ns).to_string(),
+                (0.59f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/e", ns).to_string(),
+                (0.14f32).to_ne_bytes().to_vec(),
+            ),
+            (format!("{}/output_matrix", ns).to_string(), vec![]),
+            (format!("{}/min", ns).to_string(), vec![]),
+            (format!("{}/max", ns).to_string(), vec![]),
+            (format!("{}/intensity", ns).to_string(), vec![]),
+            (
+                format!("{}/a", ns).to_string(),
+                (0.15f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/b", ns).to_string(),
+                (0.50f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/c", ns).to_string(),
+                (0.10f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/d", ns).to_string(),
+                (0.20f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/e", ns).to_string(),
+                (0.02f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/f", ns).to_string(),
+                (0.30f32).to_ne_bytes().to_vec(),
+            ),
+            (format!("{}/exposure", ns).to_string(), vec![]),
+            (format!("{}/min", ns).to_string(), vec![]),
+            (format!("{}/max", ns).to_string(), vec![]),
+            (format!("{}/intensity", ns).to_string(), vec![]),
+        ]
     }
 }
 
@@ -579,7 +554,7 @@ mod tests {
             "ACES needs >= 9 nodes, got {}",
             nodes.len()
         );
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         // input_matrix + 5 constants + output_matrix + min + max = 9
         assert!(
             inits.len() >= 8,

@@ -141,12 +141,23 @@ impl IspBlock for DynResizeBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        vec![(format!("{}/scales", ns).to_string(), 1, vec![4])]
+    }
+
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let ns = self.tensor_ns();
         let (sh, sw) = self.scale_factors();
-        vec![Proto::tensor_proto_float(
-            &format!("{}/scales", ns),
-            &[4],
-            &[1.0, 1.0, sh, sw],
+        vec![(
+            format!("{}/scales", ns).to_string(),
+            [1.0f32, 1.0, sh, sw]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>(),
         )]
     }
 }

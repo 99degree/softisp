@@ -268,27 +268,38 @@ impl IspBlock for DemosaicCcmBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        vec![]
+    }
+
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        // Weights initialized as demosaic / sensor_max so Conv1×1 output is [0,1].
-        let sm = self.sensor_max;
-        let raw_w: Vec<f32> = self.demosaic_weights().iter().map(|v| v / sm).collect();
         vec![
-            Proto::tensor_proto_float(&format!("{}/w", ns), &[3, 4, 1, 1], &raw_w),
-            // Bias [3]
-            Proto::tensor_proto_float(&format!("{}/b", ns), &[3], &[0.0; 3]),
-            // Clip constants
-            Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
+            (format!("{}/w", ns).to_string(), 1, vec![3, 4, 1, 1]),
+            (format!("{}/b", ns).to_string(), 1, vec![3]),
+            (format!("{}/zero", ns).to_string(), 1, vec![]),
+            (format!("{}/one", ns).to_string(), 1, vec![]),
         ]
     }
 
-    /// Expose the fused weight tensor and bias as dynamic extra inputs.
-    /// The `zzz_` prefix ensures these sort AFTER the main frame input
-    /// in MNN's alphabetical input ordering.
-    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+    fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
+        let ns = self.tensor_ns();
         vec![
-            (format!("{}/w", self.tensor_ns()), 1, vec![3, 4, 1, 1]),
-            (format!("{}/b", self.tensor_ns()), 1, vec![3]),
+            (format!("{}/w", ns).to_string(), vec![]),
+            (
+                format!("{}/b", ns).to_string(),
+                [0.0f32; 3]
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/zero", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/one", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ),
         ]
     }
 }
@@ -308,7 +319,7 @@ mod tests {
     #[test]
     fn test_demosaic_ccm_initializers() {
         let block = DemosaicCcmBlock::new(0);
-        let inits = block.initializers();
+        let inits = block.extra_input_defaults();
         assert_eq!(
             inits.len(),
             4,
@@ -317,7 +328,7 @@ mod tests {
         // w should be demosaic/sensor_max
         let raw_w = block.demosaic_weights();
         let _sm = block.sensor_max; // 1023.0
-        for (_f, _r) in inits[0].iter().zip(raw_w.iter()) {
+        for (_f, _r) in inits[0].1.iter().zip(raw_w.iter()) {
             // Can't easily compare protobuf bytes, just check count
         }
     }
@@ -326,7 +337,7 @@ mod tests {
     fn test_demosaic_ccm_extra_inputs() {
         let block = DemosaicCcmBlock::new(2);
         let extra = block.extra_inputs();
-        assert_eq!(extra.len(), 2, "Should expose 2 extra inputs");
+        assert_eq!(extra.len(), 4, "Should expose 4 extra inputs");
         assert_eq!(extra[0].0, "DemosaicCcmBlock/w");
         assert_eq!(extra[1].0, "DemosaicCcmBlock/b");
     }

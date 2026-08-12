@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn test_wavelet_initializers() {
         let b = WaveletDenoiseBlock::new();
-        let inits = b.initializers();
+        let inits = b.extra_input_defaults();
         assert_eq!(inits.len(), 0); // Simplified: no initializers
     }
 
