@@ -155,10 +155,9 @@ impl IspBlock for ToneBlock {
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        // gamma_recip, contrast, brightness are runtime inputs (fed by the
+        // engine per-frame); only the Clip bounds are baked.
         vec![
-            Proto::tensor_proto_float_scalar(&format!("{}/gamma_recip", ns), 1.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/contrast", ns), 1.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/brightness", ns), 0.0),
             Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
             Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
         ]
@@ -206,7 +205,7 @@ mod tests {
     fn test_tone_initializers() {
         let b = ToneBlock::new();
         let inits = b.initializers();
-        assert_eq!(inits.len(), 5);
+        assert_eq!(inits.len(), 2);
     }
 
     #[test]

@@ -178,43 +178,12 @@ impl IspBlock for GammaBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        let mut inits = Vec::new();
-
-        // Clamp bounds
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/min", ns),
-            0.0,
-        ));
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/max", ns),
-            1.0,
-        ));
-
-        // Epsilon
-        inits.push(Proto::tensor_proto_float_scalar(
+        // min/max/inv_gamma/lift/norm are runtime inputs (fed by the engine
+        // per-frame); only the epsilon guard stays baked.
+        vec![Proto::tensor_proto_float_scalar(
             &format!("{}/eps", ns),
             1e-6,
-        ));
-
-        // Inverse gamma: pow(x, 1/gamma) = exp(log(x) / gamma)
-        inits.push(Proto::tensor_proto_float_scalar(
-            &format!("{}/inv_gamma", ns),
-            1.0 / self.gamma,
-        ));
-
-        // Shadow lift parameters
-        if self.shadow_lift > 0.0 {
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/lift", ns),
-                self.shadow_lift,
-            ));
-            inits.push(Proto::tensor_proto_float_scalar(
-                &format!("{}/norm", ns),
-                1.0 / (1.0 + self.shadow_lift),
-            ));
-        }
-
-        inits
+        )]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -243,11 +212,8 @@ mod tests {
         // Log + Mul + Exp + Max + Min + Add(eps) = 6 nodes
         assert!(nodes.len() >= 5, "need >= 5 nodes, got {}", nodes.len());
         let inits = block.initializers();
-        assert!(
-            inits.len() >= 4,
-            "need >= 4 initializers, got {}",
-            inits.len()
-        );
+        // min/max/inv_gamma/lift/norm are runtime inputs; only eps stays baked
+        assert_eq!(inits.len(), 1, "only eps stays baked, got {}", inits.len());
     }
 
     #[test]
@@ -265,14 +231,11 @@ mod tests {
     #[test]
     fn test_gamma_inv_gamma_in_init() {
         let block = GammaBlock::new(2.2);
-        let inits = block.initializers();
-        // Check inv_gamma = 1/2.2 ≈ 0.4545
+        // inv_gamma is now a runtime input (declared via extra_inputs)
+        let extras = block.extra_inputs();
         assert!(
-            inits.iter().any(|i| {
-                let s = String::from_utf8_lossy(i);
-                s.contains("inv_gamma")
-            }),
-            "must have inv_gamma initializer"
+            extras.iter().any(|(n, _, _)| n.ends_with("inv_gamma")),
+            "must declare inv_gamma runtime input"
         );
     }
 
@@ -280,8 +243,8 @@ mod tests {
     fn test_gamma_identity() {
         let block = GammaBlock::new(1.0);
         let inits = block.initializers();
-        // inv_gamma = 1.0 for identity
-        assert_eq!(inits.len(), 4, "gamma=1.0 should have 4 initializers");
+        // inv_gamma is a runtime input; only eps stays baked
+        assert_eq!(inits.len(), 1, "gamma=1.0 should only bake eps");
     }
 
     #[test]

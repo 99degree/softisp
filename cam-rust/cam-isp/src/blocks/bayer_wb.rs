@@ -153,7 +153,8 @@ impl IspBlock for BayerWbBlock {
             return vec![]; // Identity passthrough needs no initializers
         }
         vec![
-            Proto::tensor_proto_float(&format!("{}/gains", ns), &[1, 4, 1, 1], &self.gains),
+            // gains is a runtime input (fed by the engine per-frame); only
+            // the Clip bounds are baked.
             Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
             Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
         ]
@@ -205,8 +206,9 @@ mod tests {
     fn test_bayer_wb_initializers_with_gains() {
         let b = BayerWbBlock::new().with_gains(1.2, 1.0, 1.0, 0.8);
         let inits = b.initializers();
-        // Non-identity gains → gains + zero + one = 3
-        assert_eq!(inits.len(), 3);
+        // Non-identity gains → gains is a runtime input; only zero + one baked
+        assert_eq!(inits.len(), 2, "gains is a runtime input now");
+        assert_eq!(b.extra_inputs().len(), 1, "gains declared as extra input");
     }
 
     #[test]

@@ -185,20 +185,31 @@ impl IspBlock for CcmBlock {
         let actual_size = (self.out_ch * self.in_ch) as usize;
         identity.truncate(actual_size);
 
-        vec![
-            Proto::tensor_proto_float(
+        let mut inits = Vec::new();
+        // The color-matrix instance ("ccm") is a pure runtime input: the engine
+        // feeds `CcmBlock_ccm/matrix` per-frame. LSC/warp/default matrices are
+        // fixed calibration constants and stay baked.
+        if self.instance != "ccm" {
+            inits.push(Proto::tensor_proto_float(
                 &format!("{}/matrix", ns),
                 &[self.out_ch, self.in_ch, 1, 1],
                 &self.matrix,
-            ),
-            Proto::tensor_proto_float(
-                &format!("{}/bias", ns),
-                &[self.out_ch],
-                &self.bias[..self.out_ch as usize],
-            ),
-            Proto::tensor_proto_float_scalar(&format!("{}/zero", ns), 0.0),
-            Proto::tensor_proto_float_scalar(&format!("{}/one", ns), 1.0),
-        ]
+            ));
+        }
+        inits.push(Proto::tensor_proto_float(
+            &format!("{}/bias", ns),
+            &[self.out_ch],
+            &self.bias[..self.out_ch as usize],
+        ));
+        inits.push(Proto::tensor_proto_float_scalar(
+            &format!("{}/zero", ns),
+            0.0,
+        ));
+        inits.push(Proto::tensor_proto_float_scalar(
+            &format!("{}/one", ns),
+            1.0,
+        ));
+        inits
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         vec![(

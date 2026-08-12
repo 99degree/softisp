@@ -49,7 +49,7 @@ impl DemosaicBlock {
     }
 
     /// Compute Conv 1×1 weights `[3,4,1,1]` based on bayer pattern.
-    fn conv_weights(&self) -> Vec<f32> {
+    pub fn conv_weights(&self) -> Vec<f32> {
         match self.bayer_pattern {
             0 => vec![
                 // RGGB: [R, G, G, B] → [R, G_avg, B]
@@ -181,15 +181,17 @@ impl IspBlock for DemosaicBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            Proto::tensor_proto_float(&format!("{}/w", ns), &[3, 4, 1, 1], &self.conv_weights()),
-            Proto::tensor_proto_float(&format!("{}/b", ns), &[3], &[0f32; 3]),
-        ]
+        // w/b are runtime inputs (fed by the engine per-frame — they depend
+        // on the sensor Bayer pattern).
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
-        vec![]
+        let ns = self.tensor_ns();
+        vec![
+            (format!("{}/w", ns), 1, vec![3, 4, 1, 1]),
+            (format!("{}/b", ns), 1, vec![3]),
+        ]
     }
 }
 
@@ -213,7 +215,9 @@ mod tests {
     fn test_demosaic_block_weights_shape() {
         let block = DemosaicBlock::new(2);
         let inits = block.initializers();
-        assert_eq!(inits.len(), 2, "Should have weight and bias");
+        assert_eq!(inits.len(), 0, "w/b are runtime inputs now");
+        let extras = block.extra_inputs();
+        assert_eq!(extras.len(), 2, "Should declare weight and bias as inputs");
     }
 
     #[test]

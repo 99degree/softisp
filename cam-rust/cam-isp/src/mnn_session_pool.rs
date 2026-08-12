@@ -49,6 +49,9 @@ impl SessionPool {
         let extra_names = [
             "DemosaicCcmBlock/w",
             "DemosaicCcmBlock/b",
+            "DemosaicBlock/w",
+            "DemosaicBlock/b",
+            "CcmBlock_ccm/matrix",
             "BayerWbBlock/gains",
             "ToneBlock/contrast",
             "ToneBlock/brightness",

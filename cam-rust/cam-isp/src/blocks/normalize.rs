@@ -114,10 +114,8 @@ impl IspBlock for NormalizeBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        vec![Proto::tensor_proto_float_scalar(
-            &format!("{}/max_val", self.tensor_ns()),
-            65535.0,
-        )]
+        // max_val is a runtime input (fed by the engine per-frame).
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -159,7 +157,9 @@ mod tests {
     fn test_normalize_initializers() {
         let b = NormalizeBlock::new();
         let inits = b.initializers();
-        assert_eq!(inits.len(), 1, "scale factor");
+        // max_val is a runtime input (fed by the engine per-frame)
+        assert_eq!(inits.len(), 0, "scale factor is a runtime input");
+        assert_eq!(b.extra_inputs().len(), 1);
     }
 
     #[test]
