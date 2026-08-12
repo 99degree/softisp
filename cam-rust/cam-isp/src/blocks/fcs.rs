@@ -132,14 +132,8 @@ impl IspBlock for FcsBlock {
         ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            // Per-channel gain: [1,3,1,1] — broadcasts trivially over N,H,W
-            // Shape [1,3,1,1] so MNN shape inference can resolve without 1D broadcast
-            Proto::tensor_proto_float(&format!("{}/gain", ns), &[1, 3, 1, 1], &[1.0, 1.0, 1.0]),
-            // Per-channel bias: [1,3,1,1]
-            Proto::tensor_proto_float(&format!("{}/bias", ns), &[1, 3, 1, 1], &[0.0, 0.0, 0.0]),
-        ]
+        // gain + bias are runtime inputs (fed by the engine per-frame).
+        vec![]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
@@ -172,8 +166,8 @@ mod tests {
     fn test_fcs_initializers() {
         let b = FcsBlock::new();
         let inits = b.initializers();
-        // gain + bias = 2
-        assert_eq!(inits.len(), 2);
+        // gain + bias are runtime inputs — nothing baked
+        assert_eq!(inits.len(), 0);
     }
 
     #[test]
@@ -186,6 +180,7 @@ mod tests {
     fn test_fcs_with_gain_offset() {
         let b = FcsBlock::new();
         let inits = b.initializers();
-        assert_eq!(inits.len(), 2);
+        // gain/bias are runtime inputs (fed by the engine per-frame)
+        assert_eq!(inits.len(), 0);
     }
 }
