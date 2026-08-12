@@ -537,30 +537,17 @@ impl IspBlock for DisplayBlock {
 
     fn initializers(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        // Scale 1.0 — used by non-identity format conversion paths
-        let mut inits = vec![Proto::tensor_proto_float_scalar(
-            &format!("{}/scale", ns),
-            1.0,
-        )];
+        // scale/gamma_exp/zero/one are runtime inputs (fed by the engine
+        // per-frame on the FloatRgb/Float16Rgb/postprocess paths). Only the
+        // format constants stay baked.
+        let mut inits = Vec::new();
 
         // Format-specific initializers
         use OutputFormat::*;
         match self.output_format {
             FloatRgb | Float16Rgb => {
-                // For FloatRgb identity path: Pow(1/2.4) + Clip(0,1) → R6 matches
-                // gamma_exp = 1/2.4 for sRGB gamma correction
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/gamma_exp", ns),
-                    1.0 / 2.4,
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/zero", ns),
-                    0.0,
-                ));
-                inits.push(Proto::tensor_proto_float_scalar(
-                    &format!("{}/one", ns),
-                    1.0,
-                ));
+                // Runtime inputs: gamma_exp = 1/2.4 for sRGB gamma correction,
+                // zero/one Clip bounds, scale — all fed by the engine.
             }
             PackedRgb => {
                 inits.push(Proto::tensor_proto_float_scalar(
@@ -773,6 +760,7 @@ mod tests {
     fn test_display_initializers() {
         let b = DisplayBlock::new(640);
         let inits = b.initializers();
-        assert_eq!(inits.len(), 3);
+        // scale is a runtime input; only format constants stay baked
+        assert_eq!(inits.len(), 2);
     }
 }

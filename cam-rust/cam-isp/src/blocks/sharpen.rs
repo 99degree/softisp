@@ -148,10 +148,8 @@ impl IspBlock for SharpenBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        vec![Proto::tensor_proto_float_scalar(
-            &format!("{}/strength", self.tensor_ns()),
-            self.strength,
-        )]
+        // strength is a runtime input (fed by the engine per-frame).
+        vec![]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -189,7 +187,8 @@ mod tests {
     #[test]
     fn test_sharpen_has_initializer() {
         let block = SharpenBlock::new(0.7);
-        assert_eq!(block.initializers().len(), 1);
+        // strength is a runtime input — no baked initializers.
+        assert_eq!(block.initializers().len(), 0);
     }
 
     #[test]
