@@ -78,6 +78,9 @@ impl PipelineProfile {
             blocks.push(Box::new(CfaBlock::new()));
         }
 
+        if self.use_bad_pixel {
+            blocks.push(Box::new(BlcBlock::with_instance("dpc")));
+        }
         blocks.push(Box::new(BlcBlock::new()));
 
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_src")));
