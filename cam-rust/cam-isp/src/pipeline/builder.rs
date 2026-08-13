@@ -25,7 +25,7 @@
 //! ```
 
 use crate::blocks::*;
-use crate::pipeline::{GraphComposer, IspBlock, PipelineStats};
+use crate::pipeline::{BlockOpsetMode, GraphComposer, IspBlock, PipelineStats};
 use std::fmt;
 
 /// Error type for pipeline builder operations.
@@ -74,6 +74,12 @@ pub struct PipelineBuilder {
     width: u32,
     #[allow(dead_code)]
     height: u32,
+    /// Global override for block opset mode.
+    /// When `Some`, overrides every block's `opset_mode()`:
+    /// - `Primitive` → lower all custom op types to primitives
+    /// - `Custom` → emit custom op types verbatim
+    /// When `None`, use each block's own `opset_mode()`.
+    force_mode: Option<BlockOpsetMode>,
 }
 
 impl PipelineBuilder {
@@ -92,6 +98,7 @@ impl PipelineBuilder {
             blocks: Vec::new(),
             width: w,
             height: h,
+            force_mode: None,
         }
     }
 
@@ -108,6 +115,39 @@ impl PipelineBuilder {
     /// let b = PipelineBuilder::from_config(&cfg);
     /// let ids = b.block_ids();  // `["unpack", "display"]`
     /// ```
+    /// Set a global opset mode override for all blocks.
+    ///
+    /// When `Some(mode)`, every block in the pipeline will emit ONNX
+    /// according to `mode`, regardless of its individual `opset_mode()`:
+    /// - `Primitive` → custom `isp::*` op types are lowered to standard primitives
+    /// - `Custom` → custom `isp::*` op types are emitted verbatim in ONNX
+    ///
+    /// When `None` (default), each block uses its own `opset_mode()`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let onnx = PipelineBuilder::new(1920, 1080)
+    ///     .unpack().display()
+    ///     .with_opset_mode(BlockOpsetMode::Custom)
+    ///     .compose()
+    ///     .unwrap();
+    /// ```
+    pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
+        self.force_mode = Some(mode);
+        self
+    }
+
+    /// Use custom opsets for all blocks (shortcut for `with_opset_mode(Custom)`).
+    pub fn with_custom_opsets(self) -> Self {
+        self.with_opset_mode(BlockOpsetMode::Custom)
+    }
+
+    /// Use primitive opsets for all blocks (shortcut for `with_opset_mode(Primitive)`).
+    pub fn with_primitive_opsets(self) -> Self {
+        self.with_opset_mode(BlockOpsetMode::Primitive)
+    }
+
     pub fn from_config(cfg: &crate::serializer::PipelineConfig) -> Self {
         let mut builder = Self::new(cfg.width, cfg.height);
         for id in &cfg.block_ids {
@@ -695,10 +735,11 @@ impl PipelineBuilder {
     pub fn compose(self) -> Result<Vec<u8>, String> {
         let mut blocks = self.blocks;
         GraphComposer::wire_blocks(&mut blocks);
-        GraphComposer::compose_from_vec(
+        GraphComposer::compose_from_vec_with_mode(
             &blocks.iter().map(|b| b.as_ref()).collect::<Vec<_>>(),
             &[],
             16,
+            self.force_mode,
         )
     }
 
@@ -748,7 +789,7 @@ impl PipelineBuilder {
     /// Wire, compose, and return full stats + validation issues.
     pub fn compose_full(self) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
         let mut blocks = self.blocks;
-        GraphComposer::compose_full(&mut blocks, &[], 16)
+        GraphComposer::compose_full(&mut blocks, &[], 16, self.force_mode)
     }
 
     /// Wire and compose with specific resolution for accurate FLOPs/memory estimates.
@@ -758,7 +799,7 @@ impl PipelineBuilder {
         h: u32,
     ) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
         let mut blocks = self.blocks;
-        GraphComposer::compose_full_at(&mut blocks, &[], 16, w, h)
+        GraphComposer::compose_full_at(&mut blocks, &[], 16, w, h, self.force_mode)
     }
 
     /// Get block count.
@@ -1522,5 +1563,64 @@ mod tests {
             .cost();
         assert!(flops > 0);
         assert!(mem > 0);
+    }
+
+    // ── Custom opset mode tests ────────────────────────────────────────
+
+    #[test]
+    fn test_with_custom_opsets_emits_domain() {
+        // Build a simple pipeline with global Custom mode.
+        let onnx = PipelineBuilder::new(640, 480)
+            .unpack()
+            .display()
+            .with_opset_mode(BlockOpsetMode::Custom)
+            .compose()
+            .expect("compose should succeed");
+        assert!(!onnx.is_empty());
+        let s = String::from_utf8_lossy(&onnx);
+        assert!(s.contains("isp"), "custom mode should emit isp domain: {}", s);
+    }
+
+    #[test]
+    fn test_with_primitive_opsets_no_domain() {
+        // Build a simple pipeline with global Primitive mode.
+        let onnx = PipelineBuilder::new(640, 480)
+            .unpack()
+            .display()
+            .with_primitive_opsets()
+            .compose()
+            .expect("compose should succeed");
+        assert!(!onnx.is_empty());
+        let s = String::from_utf8_lossy(&onnx);
+        assert!(!s.contains("\nisp\n") && !s.contains("\"isp\""),
+            "primitive mode should not emit isp domain: {}", s);
+    }
+
+    #[test]
+    fn test_with_custom_opsets_shortcut() {
+        // .with_custom_opsets() is equivalent to .with_opset_mode(Custom).
+        let onnx = PipelineBuilder::new(640, 480)
+            .unpack()
+            .display()
+            .with_custom_opsets()
+            .compose()
+            .expect("compose should succeed");
+        assert!(!onnx.is_empty());
+        let s = String::from_utf8_lossy(&onnx);
+        assert!(s.contains("isp"));
+    }
+
+    #[test]
+    fn test_default_opsets_no_domain() {
+        // Default (no override) should not emit custom domain.
+        let onnx = PipelineBuilder::new(640, 480)
+            .unpack()
+            .display()
+            .compose()
+            .expect("compose should succeed");
+        assert!(!onnx.is_empty());
+        let s = String::from_utf8_lossy(&onnx);
+        assert!(!s.contains("\nisp\n") && !s.contains("\"isp\""),
+            "default mode should not emit isp domain: {}", s);
     }
 }
