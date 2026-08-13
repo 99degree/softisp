@@ -24,8 +24,6 @@ use cam_isp::mnn_converter::{convert_mnn_buffer, convert_onnx_buffer, dump_mnn_t
 use cam_isp::mnn_sys::{MnnBackendType, MnnInterpreterSafe};
 use cam_isp::pipeline::{GraphComposer, IspBlock};
 
-use std::ffi::CString;
-use std::os::raw::c_void;
 use std::sync::Mutex;
 
 /// MNN's converter keeps a process-global `Global<modelConfig>` singleton;
@@ -216,92 +214,79 @@ fn run_ab(
 
 fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, i32, i32)> {
     use cam_isp::blocks::*;
+
+    let float3_chain = |h: i64, w: i64| -> Vec<Box<dyn IspBlock>> {
+        vec![
+            Box::new(RawInputPackedBlock::new().with_concrete_dims(h, w)),
+            Box::new(
+                UnpackCfaBlock::new()
+                    .with_concrete_dims(h, w)
+                    .with_blc(true),
+            ),
+            Box::new(DemosaicCcmBlock::new(0)),
+        ]
+    };
+
     vec![
-        // Chains start with RawInputBlock (production topology): a head block
-        // emitting nodes needs input != output tensor names, else the graph is
-        // `x = f(x)` and MNN DCEs it to a bare Input op.
         (
             "unpack_blc16",
             vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_elem_type(5)
-                        .with_concrete_dims(16, 16),
-                ),
+                Box::new(RawInput16Block::new().with_concrete_dims(16, 16)),
                 Box::new(UnpackBlc16Block::new()),
             ],
             vec![1, 1, 16, 16],
-            5,
-            16,
+            2, // FLOAT32 after converter upcast
+            32,
         ),
         (
             "demosaic",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(DemosaicCcmBlock::new(0)),
-            ],
-            vec![1, 4, 16, 16],
-            2,
+            float3_chain(16, 16),
+            vec![1, 2, 16, 16], // RawInputPackedBlock input shape
+            0,                  // INT32
             32,
         ),
         (
             "fcs",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(FcsBlock::new()),
-            ],
-            vec![1, 3, 16, 16],
-            2,
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(FcsBlock::new()));
+                c
+            },
+            vec![1, 2, 16, 16],
+            0,
             32,
         ),
         (
             "ee",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(EeBlock::new()),
-            ],
-            vec![1, 3, 16, 16],
-            2,
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(EeBlock::new()));
+                c
+            },
+            vec![1, 2, 16, 16],
+            0,
             32,
         ),
         (
             "ldci",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(LdciBlock::new()),
-            ],
-            vec![1, 3, 16, 16],
-            2,
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(LdciBlock::new()));
+                c
+            },
+            vec![1, 2, 16, 16],
+            0,
             32,
         ),
         (
             "display",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(DisplayBlock::new(16)),
-            ],
-            vec![1, 3, 16, 16],
-            2,
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(DisplayBlock::new(16)));
+                c
+            },
+            vec![1, 2, 16, 16],
+            0,
             32,
         ),
     ]
