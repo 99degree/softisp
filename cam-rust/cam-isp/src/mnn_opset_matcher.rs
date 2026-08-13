@@ -5,6 +5,15 @@
 //! to a block name. Patterns are extracted from the actual opset produced
 //! when all blocks are fused into a single MNN graph.
 //!
+//! # Bridge Op Handling
+//!
+//! MNN's graph layout converters may insert `OpType_Permute` and
+//! `OpType_Identity` ops between ISP block ops. These are bridge artifacts
+//! — they don't consume or produce ISP-relevant tensors. The generated header
+//! provides an `isBridgeOp()` helper that `IspChainFusion.cpp`'s `tryMatch`
+//! must use to skip these ops before/after pattern chains. No pattern
+//! table entries include Permute/Identity ops.
+//!
 //! # Ambiguous Groups
 //!
 //! MNN cross-block optimization fuses/eliminates ops, making some blocks
@@ -2608,6 +2617,10 @@ pub fn classify_pass(p: &OpPattern) -> CppPass {
 /// - Merged `static const ExactPattern[]` tables (Pass0, Pass1, Profile)
 ///   covering all three input conventions — these are what IspChainFusion
 ///   scans (first-match wins).
+/// - `isBridgeOp()` helper for skipping Permute/Identity ops in the matcher.
+///   IspChainFusion.cpp's `tryMatch` must call `isBridgeOp()` to skip
+///   bridge artifacts (Permute/Identity) before/after chain positions —
+///   they are layout-conversion artifacts, not ISP-relevant ops.
 pub fn generate_cpp_header() -> String {
     // Merge style-independent + per-style patterns into one covering set.
     let merged = merge_fusion_patterns();
@@ -2676,6 +2689,15 @@ pub fn generate_cpp_header() -> String {
     h.push('\n');
     h.push_str("namespace MNN {\n");
     h.push('\n');
+
+    // Helper: Permute/Identity are bridge artifacts inserted by MNN's graph
+    // layout converters. They don't consume or produce ISP-relevant tensors,
+    // so the matcher in IspChainFusion.cpp must skip them.
+    h.push_str("// Bridge op predicate: Permute/Identity ops are layout-conversion\n");
+    h.push_str("// artifacts — the matcher skips them (see tryMatch in IspChainFusion.cpp).\n");
+    h.push_str("inline bool isBridgeOp(MNN::OpType t) {\n");
+    h.push_str("    return t == MNN::OpType_Permute || t == MNN::OpType_Identity;\n");
+    h.push_str("}\n\n");
 
     // ── Per-input-style variant tables (3 × Pass0/Pass1/Profile) ──
     for style in InputStyle::ALL {
