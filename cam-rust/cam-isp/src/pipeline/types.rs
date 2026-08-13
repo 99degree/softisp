@@ -246,7 +246,43 @@ pub trait IspBlock: Send {
     fn signals_aux(&self) -> Vec<String> {
         vec![]
     }
+
+    /// Optional custom ONNX op types this block emits, one per entry in
+    /// `nodes()`.  When `Some`, each `&str` is the domain-prefixed op_type
+    /// for the corresponding node (e.g. "isp::Fcs").  Default `None`
+    /// means all nodes are standard ONNX primitive ops.
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        None
+    }
+
+    /// Custom opsets this block requires.  Each entry is `(domain, version)`.
+    /// GraphComposer deduplicates across blocks and emits one
+    /// `OperatorSetIdProto` per unique `(domain, version)`.  Default empty
+    /// means the block only uses the standard ONNX opset.
+    fn custom_opsets(&self) -> Vec<(String, i64)> {
+        vec![]
+    }
+
+    /// Whether this block's ONNX fragment uses custom or primitive ops.
+    /// - `Primitive` (default): `custom_op_types()` is metadata only; the
+    ///   emitted ONNX uses standard ONNX op types.  GraphComposer may lower
+    ///   custom names to primitives before MNN conversion.
+    /// - `Custom`: the block emits custom op types in ONNX; the consumer
+    ///   must understand them.
+    fn opset_mode(&self) -> BlockOpsetMode {
+        BlockOpsetMode::Primitive
+    }
 }
+
+/// Whether a block's ONNX fragment uses custom or primitive ops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockOpsetMode {
+    /// Emit standard primitives; custom names are metadata only.
+    Primitive,
+    /// Emit custom op types in ONNX; consumer must understand them.
+    Custom,
+}
+
 
 /// Helper to build a chain of blocks as a Vec.
 pub struct PipelineBuilder {
@@ -559,8 +595,33 @@ impl GraphComposer {
             &all_initializers,
             &value_infos,
         );
-        let opset = Proto::opset("", opset_version);
-        let model = Proto::model(11, &opset, "cam_rust_graph_composer", &graph);
+
+        // Collect custom opsets from all blocks and emit one
+        // OperatorSetIdProto per unique (domain, version).
+        let mut custom_domains: std::collections::HashSet<(String, i64)> =
+            std::collections::HashSet::new();
+        for blk in &all_blocks {
+            for (domain, version) in blk.custom_opsets() {
+                custom_domains.insert((domain.clone(), version));
+            }
+        }
+        let mut opset_imports: Vec<Vec<u8>> = vec![Proto::opset("", opset_version)];
+        for (domain, version) in &custom_domains {
+            opset_imports.push(Proto::opset_domain(domain, *version));
+        }
+        let opset_refs: Vec<&[u8]> = opset_imports.iter().map(|o| o.as_slice()).collect();
+        let model = Proto::model_multi_opset(
+            11,
+            &opset_refs,
+            "cam_rust_graph_composer",
+            &graph,
+        );
+
+        info!(
+            "{}: model has {} opset imports",
+            Self::TAG,
+            opset_refs.len()
+        );
 
         Ok(model)
     }
@@ -1312,5 +1373,95 @@ mod tests {
         assert!(issues.is_empty());
         assert!(elapsed >= 0.0);
         println!("Full benchmark: {:.2} ms, {} bytes", elapsed, onnx.len());
+    }
+
+    // ── Custom opset tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_custom_opset_emits_domain() {
+        struct CustomBlock {
+            id: String,
+            input_source: String,
+            frame_tensor: String,
+        }
+        impl CustomBlock {
+            fn new() -> Self {
+                Self {
+                    id: "custom_test".into(),
+                    input_source: "prev/out".into(),
+                    frame_tensor: "CustomBlock/out".into(),
+                }
+            }
+        }
+        impl IspBlock for CustomBlock {
+            fn id(&self) -> &str { &self.id }
+            fn tensor_ns(&self) -> String { "CustomBlock".to_string() }
+            fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
+            fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
+            fn prev(&self) -> Option<&Box<dyn IspBlock>> { None }
+            fn set_prev(&mut self, _block: Box<dyn IspBlock>) {}
+            fn next(&self) -> Option<&Box<dyn IspBlock>> { None }
+            fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
+            fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
+            fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
+            fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+            fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+            fn output_value_info(&self) -> Option<Vec<u8>> {
+                Some(Proto::value_info(
+                    &self.frame_tensor,
+                    &[
+                        Proto::tensor_dim_value(1),
+                        Proto::tensor_dim_value(3),
+                        Proto::tensor_dim_param("H"),
+                        Proto::tensor_dim_param("W"),
+                    ],
+                    1,
+                ))
+            }
+            fn custom_op_types(&self) -> Option<&[&str]> {
+                Some(&["isp::CustomOp", "isp::Mul"])
+            }
+            fn custom_opsets(&self) -> Vec<(String, i64)> {
+                vec![("isp".to_string(), 1)]
+            }
+            fn nodes(&self) -> Vec<Vec<u8>> {
+                vec![
+                    Proto::node("Mul", &[&self.input_source, "const"], &["mid"], &[]),
+                    Proto::node("Add", &["mid", "bias"], &[&self.frame_tensor], &[]),
+                ]
+            }
+        }
+
+        let raw = RawInputBlock::new();
+        let mut custom = CustomBlock::new();
+        custom.set_input_source(raw.frame_tensor().unwrap_or(""));
+        let pipeline: Vec<&dyn IspBlock> = vec![&raw, &custom];
+        let model = GraphComposer::compose_from_vec(&pipeline, &[], 16).expect("compose");
+        assert!(!model.is_empty());
+
+        let model_str = String::from_utf8_lossy(&model);
+        assert!(
+            model_str.contains("isp"),
+            "model should contain custom opset domain 'isp': {}",
+            model_str
+        );
+    }
+
+    #[test]
+    fn test_custom_opset_backward_compat() {
+        let raw = RawInputBlock::new();
+        let mut norm = NormalizeBlock::new();
+        norm.set_input_source(raw.frame_tensor().unwrap_or(""));
+        let pipeline: Vec<&dyn IspBlock> = vec![&raw, &norm];
+        let model = GraphComposer::compose_from_vec(&pipeline, &[], 16).expect("compose");
+        assert!(!model.is_empty());
+
+        let model_str = String::from_utf8_lossy(&model);
+        let has_isp = model_str.contains("\nisp\n") || model_str.contains("\"isp\"");
+        assert!(
+            !has_isp,
+            "standard pipeline should not emit custom opset domain: {}",
+            model_str
+        );
     }
 }
