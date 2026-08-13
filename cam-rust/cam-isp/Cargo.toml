@@ -3,6 +3,9 @@ name = "cam-isp"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 cam-types = { path = "../cam-types" }
 serde = { workspace = true }
@@ -83,6 +86,7 @@ rectifier = ["isp-rectifier"]
 cuda = []
 tensorrt = []
 openvino = []
+cabi = []
 
 [dependencies.ort]
 version = "2.0.0-rc.12"
