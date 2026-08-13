@@ -352,6 +352,28 @@ impl GraphComposer {
     /// Compose blocks from a Vec into a single ONNX model.
     /// Blocks are in order: index 0 = head, index N-1 = tail.
     /// This is simpler than linked-list walking and avoids ownership issues.
+    /// Lower custom domain-prefixed op types in serialized NodeProto bytes
+    /// back to their primitive equivalents by stripping the domain prefix.
+    ///
+    /// For example, `"isp::Mul"` becomes `"Mul"`, `"isp.ml::Conv"` becomes
+    /// `"Conv"`.  This is a simple byte-level replacement because the
+    /// op_type string is unique within a node and does not collide with
+    /// tensor names or attribute values in SoftISP graphs.
+    fn lower_custom_op_types(node_bytes: &[u8], custom_types: &[&str]) -> Vec<u8> {
+        let Ok(s) = std::str::from_utf8(node_bytes) else {
+            return node_bytes.to_vec();
+        };
+        let mut result = s.to_string();
+        for &custom in custom_types {
+            if let Some((_, primitive)) = custom.rsplit_once("::") {
+                if primitive != custom {
+                    result = result.replace(custom, primitive);
+                }
+            }
+        }
+        result.into_bytes()
+    }
+
     ///
     /// * `pipeline` — Ordered list of pipeline blocks (head to tail).
     /// * `aux_blocks` — Auxiliary parameter blocks (not in the main pipeline).
@@ -462,7 +484,20 @@ impl GraphComposer {
         let graph_name = format!("{}_pipeline", pipeline_head.id());
 
         for blk in &all_blocks {
-            all_nodes.extend(blk.nodes());
+            let mut nodes = blk.nodes();
+            // Lowering pass: for blocks in Primitive mode, rewrite custom
+            // domain-prefixed op types back to their primitive equivalents
+            // (strip the domain prefix, e.g. "isp::Mul" -> "Mul").
+            // This lets blocks declare semantic names while keeping MNN
+            // compatibility — MNN sees only standard primitives.
+            if blk.opset_mode() == BlockOpsetMode::Primitive {
+                if let Some(custom_types) = blk.custom_op_types() {
+                    for node_bytes in &mut nodes {
+                        *node_bytes = Self::lower_custom_op_types(node_bytes, custom_types);
+                    }
+                }
+            }
+            all_nodes.extend(nodes);
             all_initializers.extend(blk.extra_input_defaults().into_iter().map(|(_, data)| data));
 
             // Intermediate tensor value info for type inference (→ field 13)
@@ -1443,6 +1478,100 @@ mod tests {
         assert!(
             model_str.contains("isp"),
             "model should contain custom opset domain 'isp': {}",
+            model_str
+        );
+    }
+
+    #[test]
+    fn test_custom_opset_lowering_primitive_mode() {
+        // A block in Primitive mode that declares custom op types and emits
+        // custom nodes. The lowering pass should rewrite them to primitives.
+        struct LoweringBlock {
+            id: String,
+            input_source: String,
+            frame_tensor: String,
+        }
+        impl LoweringBlock {
+            fn new() -> Self {
+                Self {
+                    id: "lowering_test".into(),
+                    input_source: "prev/out".into(),
+                    frame_tensor: "LoweringBlock/out".into(),
+                }
+            }
+        }
+        impl IspBlock for LoweringBlock {
+            fn id(&self) -> &str { &self.id }
+            fn tensor_ns(&self) -> String { "LoweringBlock".to_string() }
+            fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
+            fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
+            fn prev(&self) -> Option<&Box<dyn IspBlock>> { None }
+            fn set_prev(&mut self, _block: Box<dyn IspBlock>) {}
+            fn next(&self) -> Option<&Box<dyn IspBlock>> { None }
+            fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
+            fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
+            fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
+            fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
+            fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+            fn output_value_info(&self) -> Option<Vec<u8>> {
+                Some(Proto::value_info(
+                    &self.frame_tensor,
+                    &[
+                        Proto::tensor_dim_value(1),
+                        Proto::tensor_dim_value(3),
+                        Proto::tensor_dim_param("H"),
+                        Proto::tensor_dim_param("W"),
+                    ],
+                    1,
+                ))
+            }
+            fn custom_op_types(&self) -> Option<&[&str]> {
+                Some(&["isp::Mul", "isp::Add"])
+            }
+            fn custom_opsets(&self) -> Vec<(String, i64)> {
+                vec![("isp".to_string(), 1)]
+            }
+            fn opset_mode(&self) -> BlockOpsetMode {
+                BlockOpsetMode::Primitive
+            }
+            fn nodes(&self) -> Vec<Vec<u8>> {
+                vec![
+                    Proto::node("isp::Mul", &[&self.input_source, "const"], &["mid"], &[]),
+                    Proto::node("isp::Add", &["mid", "bias"], &[&self.frame_tensor], &[]),
+                ]
+            }
+        }
+
+        let raw = RawInputBlock::new();
+        let mut lowering = LoweringBlock::new();
+        lowering.set_input_source(raw.frame_tensor().unwrap_or(""));
+        let pipeline: Vec<&dyn IspBlock> = vec![&raw, &lowering];
+        let model = GraphComposer::compose_from_vec(&pipeline, &[], 16).expect("compose");
+        assert!(!model.is_empty());
+
+        let model_str = String::from_utf8_lossy(&model);
+        // The custom opset domain should still be emitted
+        assert!(model_str.contains("isp"), "model should contain custom opset domain");
+        // But the node op types should be lowered to primitives
+        assert!(
+            model_str.contains("\"Mul\"") || model_str.contains("Mul"),
+            "lowered model should contain primitive Mul, got: {}",
+            model_str
+        );
+        assert!(
+            model_str.contains("\"Add\"") || model_str.contains("Add"),
+            "lowered model should contain primitive Add, got: {}",
+            model_str
+        );
+        // The custom-prefixed versions should NOT appear in nodes
+        assert!(
+            !model_str.contains("isp::Mul"),
+            "lowered model should not contain custom isp::Mul: {}",
+            model_str
+        );
+        assert!(
+            !model_str.contains("isp::Add"),
+            "lowered model should not contain custom isp::Add: {}",
             model_str
         );
     }
