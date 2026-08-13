@@ -216,85 +216,75 @@ fn run_pass1_block(
 }
 
 /// All 17 blocks: (name, chain, shape, raw_range).
+/// NOTE: Individual block tests require proper input chains post-6ae4877
+/// (distinct input block variants replacing with_elem_type). FLOAT-consuming
+/// blocks are chained through unpack_cfa → demosaic_ccm to produce [1,3,H,W]
+/// FLOAT input.
 #[allow(clippy::type_complexity)]
 fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, bool)> {
     use cam_isp::blocks::*;
+
+    // Helper: build a [1,3,H,W] FLOAT chain by unpacking packed bayer input.
+    let float3_chain = |h: i64, w: i64| -> Vec<Box<dyn IspBlock>> {
+        vec![
+            Box::new(RawInputPackedBlock::new().with_concrete_dims(h, w)),
+            Box::new(
+                UnpackCfaBlock::new()
+                    .with_concrete_dims(h, w)
+                    .with_blc(true),
+            ),
+            Box::new(DemosaicCcmBlock::new(0)),
+        ]
+    };
+
     vec![
         (
             "unpack_blc16",
             vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_elem_type(5)
-                        .with_concrete_dims(16, 16),
-                ),
+                Box::new(RawInput16Block::new().with_concrete_dims(16, 16)),
                 Box::new(UnpackBlc16Block::new()),
             ],
             vec![1, 1, 16, 16],
             true,
         ),
-        (
-            "demosaic",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(DemosaicCcmBlock::new(0)),
-            ],
-            vec![1, 4, 16, 16],
-            false,
-        ),
+        ("demosaic", float3_chain(16, 16), vec![1, 4, 16, 16], false),
         (
             "fcs",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(FcsBlock::new()),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(FcsBlock::new()));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "ee",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(EeBlock::new()),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(EeBlock::new()));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "ldci",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(LdciBlock::new()),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(LdciBlock::new()));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "display",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(DisplayBlock::new(16)),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(DisplayBlock::new(16)));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
@@ -302,143 +292,116 @@ fn core_blocks() -> Vec<(&'static str, Vec<Box<dyn IspBlock>>, Vec<i32>, bool)> 
             "unpack_cfa",
             vec![
                 Box::new(
-                    RawInputBlock::new()
-                        .with_elem_type(6)
+                    RawInputPackedBlock::new()
                         .with_concrete_width(8)
                         .with_concrete_height(16),
                 ),
                 Box::new(UnpackCfaBlock::new().with_concrete_width(16).with_blc(true)),
             ],
-            vec![1, 1, 16, 8],
+            vec![1, 2, 16, 16],
             true,
         ),
         (
             "bayer_wb",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(BayerWbBlock::new().with_gains(1.2, 1.0, 1.0, 0.8)),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                // Insert bayer_wb BEFORE demosaic (operates on 4-channel bayer data).
+                c.insert(
+                    2,
+                    Box::new(BayerWbBlock::new().with_gains(1.2, 1.0, 1.0, 0.8)),
+                );
+                c
+            },
             vec![1, 4, 16, 16],
             false,
         ),
         (
             "ccm",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(CcmBlock::new()),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(CcmBlock::new()));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "bilateral",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(BilateralBlock::new_default()),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(BilateralBlock::new_default()));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "vignetting",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(VignettingBlock::new(16, 16, 0.5)),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(VignettingBlock::new(16, 16, 0.5)));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "gamma",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(GammaBlock::new(2.2)),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(GammaBlock::new(2.2)));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "sharpen",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(SharpenBlock::new(0.5)),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(SharpenBlock::new(0.5)));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "saturation",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(SaturationBlock::new(1.2)),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(SaturationBlock::new(1.2)));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "auto_contrast",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(AutoContrastBlock::new(1.2)),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(AutoContrastBlock::new(1.2)));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "wavelet_denoise",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(WaveletDenoiseBlock::new()),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(WaveletDenoiseBlock::new()));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
         (
             "tone",
-            vec![
-                Box::new(
-                    RawInputBlock::new()
-                        .with_concrete_dims(16, 16)
-                        .with_elem_type(1),
-                ),
-                Box::new(ToneBlock::new()),
-            ],
+            {
+                let mut c = float3_chain(16, 16);
+                c.push(Box::new(ToneBlock::new()));
+                c
+            },
             vec![1, 3, 16, 16],
             false,
         ),
