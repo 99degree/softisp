@@ -380,10 +380,28 @@ impl GraphComposer {
     /// * `opset_version` — ONNX opset version.
     ///
     /// Returns serialized ModelProto bytes.
+    /// Compose blocks into ONNX, using each block's own `opset_mode()`.
+    /// This is the backward-compatible default: blocks in `Primitive` mode
+    /// have their custom op types lowered to standard primitives.
     pub fn compose_from_vec(
         pipeline: &[&dyn IspBlock],
         aux_blocks: &[&dyn IspBlock],
         opset_version: i64,
+    ) -> Result<Vec<u8>, String> {
+        Self::compose_from_vec_with_mode(pipeline, aux_blocks, opset_version, None)
+    }
+
+    /// Compose blocks into ONNX with a global opset mode override.
+    ///
+    /// * `force_mode` — When `Some`, overrides every block's `opset_mode()`:
+    ///   - `Primitive` → lower all custom op types to primitives
+    ///   - `Custom` → emit custom op types verbatim
+    ///   When `None`, use each block's own `opset_mode()`.
+    pub fn compose_from_vec_with_mode(
+        pipeline: &[&dyn IspBlock],
+        aux_blocks: &[&dyn IspBlock],
+        opset_version: i64,
+        force_mode: Option<BlockOpsetMode>,
     ) -> Result<Vec<u8>, String> {
         eprintln!(
             "GraphComposer::compose_from_vec: pipeline len={}, aux len={}",
@@ -485,12 +503,20 @@ impl GraphComposer {
 
         for blk in &all_blocks {
             let mut nodes = blk.nodes();
+            // Determine whether to lower custom op types for this block.
+            // - If force_mode is set, it overrides per-block opset_mode().
+            // - Otherwise, use the block's own opset_mode().
+            let should_lower = match force_mode {
+                Some(BlockOpsetMode::Primitive) => true,
+                Some(BlockOpsetMode::Custom) => false,
+                None => blk.opset_mode() == BlockOpsetMode::Primitive,
+            };
             // Lowering pass: for blocks in Primitive mode, rewrite custom
             // domain-prefixed op types back to their primitive equivalents
             // (strip the domain prefix, e.g. "isp::Mul" -> "Mul").
             // This lets blocks declare semantic names while keeping MNN
             // compatibility — MNN sees only standard primitives.
-            if blk.opset_mode() == BlockOpsetMode::Primitive {
+            if should_lower {
                 if let Some(custom_types) = blk.custom_op_types() {
                     for node_bytes in &mut nodes {
                         *node_bytes = Self::lower_custom_op_types(node_bytes, custom_types);
@@ -682,10 +708,10 @@ impl GraphComposer {
                 "GraphComposer::compose: using full_chain length = {}",
                 full_chain.len()
             );
-            Self::compose_from_vec(&full_chain, &[], opset_version)
+            Self::compose_from_vec_with_mode(&full_chain, &[], opset_version, None)
         } else {
             eprintln!("GraphComposer::compose: using chain + aux_blocks");
-            Self::compose_from_vec(&chain, aux_blocks, opset_version)
+            Self::compose_from_vec_with_mode(&chain, aux_blocks, opset_version, None)
         }
     }
 
@@ -840,6 +866,7 @@ impl GraphComposer {
         blocks: &mut [Box<dyn IspBlock>],
         aux_blocks: &[&dyn IspBlock],
         opset_version: i64,
+        force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, PipelineStats), String> {
         // Auto-wire input sources
         Self::wire_blocks(blocks);
@@ -850,7 +877,7 @@ impl GraphComposer {
         let total_inits: usize = blocks.iter().map(|b| b.extra_input_defaults().len()).sum();
 
         let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
-        let onnx = Self::compose_from_vec(&refs, aux_blocks, opset_version)?;
+        let onnx = Self::compose_from_vec_with_mode(&refs, aux_blocks, opset_version, force_mode)?;
 
         let stats = PipelineStats {
             block_count: blocks.len(),
@@ -871,6 +898,7 @@ impl GraphComposer {
         blocks: &mut [Box<dyn IspBlock>],
         aux_blocks: &[&dyn IspBlock],
         opset_version: i64,
+        force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
         // Auto-wire
         Self::wire_blocks(blocks);
@@ -885,7 +913,7 @@ impl GraphComposer {
         drop(refs);
 
         // Compose
-        let (onnx, mut stats) = Self::compose_auto(blocks, aux_blocks, opset_version)?;
+        let (onnx, mut stats) = Self::compose_auto(blocks, aux_blocks, opset_version, force_mode)?;
 
         // Auto-populate estimates
         stats.estimated_flops = flops;
@@ -902,6 +930,7 @@ impl GraphComposer {
         opset_version: i64,
         w: u32,
         h: u32,
+        force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, PipelineStats, Vec<String>), String> {
         // Auto-wire
         Self::wire_blocks(blocks);
@@ -916,7 +945,7 @@ impl GraphComposer {
         drop(refs);
 
         // Compose
-        let (onnx, mut stats) = Self::compose_auto(blocks, aux_blocks, opset_version)?;
+        let (onnx, mut stats) = Self::compose_auto(blocks, aux_blocks, opset_version, force_mode)?;
 
         stats.estimated_flops = flops;
         stats.estimated_memory_bytes = mem;
@@ -978,8 +1007,9 @@ impl GraphComposer {
         opset_version: i64,
         mnn_dir: &std::path::Path,
         name: &str,
+        force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, std::path::PathBuf, PipelineStats), String> {
-        let (onnx, stats, issues) = Self::compose_full(blocks, aux_blocks, opset_version)?;
+        let (onnx, stats, issues) = Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
         if !issues.is_empty() {
             eprintln!("Warning: {} validation issues", issues.len());
             for issue in &issues {
@@ -1001,9 +1031,10 @@ impl GraphComposer {
         blocks: &mut [Box<dyn IspBlock>],
         aux_blocks: &[&dyn IspBlock],
         opset_version: i64,
+        force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, PipelineStats, f64), String> {
         let t0 = std::time::Instant::now();
-        let (onnx, stats, _issues) = Self::compose_full(blocks, aux_blocks, opset_version)?;
+        let (onnx, stats, _issues) = Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
         let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
         Ok((onnx, stats, elapsed_ms))
     }
@@ -1081,9 +1112,10 @@ impl GraphComposer {
         blocks: &mut [Box<dyn IspBlock>],
         aux_blocks: &[&dyn IspBlock],
         opset_version: i64,
+        force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, PipelineStats, Vec<String>, f64), String> {
         let t0 = std::time::Instant::now();
-        let (onnx, stats, issues) = Self::compose_full(blocks, aux_blocks, opset_version)?;
+        let (onnx, stats, issues) = Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
         let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
         Ok((onnx, stats, issues, elapsed_ms))
     }
@@ -1231,7 +1263,7 @@ mod tests {
             Box::new(DemosaicCcmBlock::new(0)),
             Box::new(DisplayBlock::new(640)),
         ];
-        let (onnx, stats) = GraphComposer::compose_auto(&mut blocks, &[], 16).unwrap();
+        let (onnx, stats) = GraphComposer::compose_auto(&mut blocks, &[], 16, None).unwrap();
         assert!(!onnx.is_empty());
         assert_eq!(stats.block_count, 3);
         assert_eq!(stats.block_names, vec!["unpack", "demosaic_ccm", "display"]);
@@ -1266,7 +1298,7 @@ mod tests {
             Box::new(DemosaicCcmBlock::new(0)),
             Box::new(DisplayBlock::new(640)),
         ];
-        let (onnx, stats, issues) = GraphComposer::compose_full(&mut blocks, &[], 16).unwrap();
+        let (onnx, stats, issues) = GraphComposer::compose_full(&mut blocks, &[], 16, None).unwrap();
         assert!(!onnx.is_empty());
         assert_eq!(stats.block_count, 3);
         assert!(
@@ -1289,7 +1321,7 @@ mod tests {
             Box::new(DisplayBlock::new(3840)),
         ];
         let (onnx, stats, _) =
-            GraphComposer::compose_full_at(&mut blocks, &[], 16, 3840, 2160).unwrap();
+            GraphComposer::compose_full_at(&mut blocks, &[], 16, 3840, 2160, None).unwrap();
         assert!(!onnx.is_empty());
         assert!(stats.estimated_flops > 0);
         println!(
@@ -1340,7 +1372,7 @@ mod tests {
             Box::new(DisplayBlock::new(640)),
         ];
         let (onnx, stats, elapsed_ms) =
-            GraphComposer::compose_benchmark(&mut blocks, &[], 16).unwrap();
+            GraphComposer::compose_benchmark(&mut blocks, &[], 16, None).unwrap();
         assert!(!onnx.is_empty());
         assert!(elapsed_ms >= 0.0);
         assert!(stats.block_count == 3);
@@ -1402,7 +1434,7 @@ mod tests {
             Box::new(DisplayBlock::new(640)),
         ];
         let (onnx, stats, issues, elapsed) =
-            GraphComposer::compose_full_benchmark(&mut blocks, &[], 16).unwrap();
+            GraphComposer::compose_full_benchmark(&mut blocks, &[], 16, None).unwrap();
         assert!(!onnx.is_empty());
         assert_eq!(stats.block_count, 3);
         assert!(issues.is_empty());
