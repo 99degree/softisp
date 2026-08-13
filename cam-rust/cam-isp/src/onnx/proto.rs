@@ -378,10 +378,24 @@ impl Proto {
     ///   field 8 = opset_import (repeated OperatorSetIdProto)  ← MNN's location, NOT standard 12
     /// Writing opset to field 12 (standard) causes MNN to see no opset → 0 FLOPs.
     pub fn model(ir_version: i64, opset: &[u8], producer: &str, graph: &[u8]) -> Vec<u8> {
+        Self::model_multi_opset(ir_version, &[opset], producer, graph)
+    }
+
+    /// `onnx.ModelProto` with multiple opset imports.
+    /// Field 8 is `repeated OperatorSetIdProto`, so each opset entry is
+    /// encoded as a separate length-delimited message in the same field.
+    pub fn model_multi_opset(
+        ir_version: i64,
+        opsets: &[&[u8]],
+        producer: &str,
+        graph: &[u8],
+    ) -> Vec<u8> {
         let mut buf = Self::int64(1, ir_version);
         buf.extend_from_slice(&Self::string(2, producer));
         buf.extend_from_slice(&Self::raw_bytes(7, graph));
-        buf.extend_from_slice(&Self::raw_bytes(8, opset));
+        for opset in opsets {
+            buf.extend_from_slice(&Self::raw_bytes(8, opset));
+        }
         buf
     }
 
@@ -390,6 +404,12 @@ impl Proto {
         let mut buf = Self::string(1, domain);
         buf.extend_from_slice(&Self::int64(2, version));
         buf
+    }
+
+    /// `onnx.OperatorSetIdProto` for a non-empty custom domain.
+    /// Use this when emitting `isp`, `isp.ml`, etc.
+    pub fn opset_domain(domain: &str, version: i64) -> Vec<u8> {
+        Self::opset(domain, version)
     }
 
     // ── Utility ──
