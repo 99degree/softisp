@@ -577,11 +577,11 @@ mod tests {
     #[test]
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
-        // HEAVY: 24 main blocks + 23 identity bridges = 47
+        // HEAVY: 24 main + 1 DPC + 24 identity bridges = 49
         assert_eq!(
             blocks.len(),
-            47,
-            "HEAVY (primitive) should have 47 blocks (24 + 23 identities), got {}",
+            49,
+            "HEAVY (primitive) should have 49 blocks (24 + 1 DPC + 24 identities), got {}",
             blocks.len()
         );
     }
@@ -702,11 +702,11 @@ mod tests {
             50,
             "LITE: 24 main + 23 identities + 3 stats = 50"
         );
-        // HEAVY: 24 main + 23 identities + 5 stats = 52
+        // HEAVY: 24 main + 1 DPC + 24 identities + 5 stats = 54
         assert_eq!(
             PipelineProfile::HEAVY.block_count(),
-            52,
-            "HEAVY: 24 main + 23 identities + 5 stats = 52"
+            54,
+            "HEAVY: 24 main + 1 DPC + 24 identities + 5 stats = 54"
         );
     }
 
