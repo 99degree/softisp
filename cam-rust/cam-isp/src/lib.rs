@@ -89,6 +89,10 @@ pub mod store;
 pub mod synth_bayer;
 pub mod temporal;
 
+// C ABI — enables building cam-isp as a cdylib (.so) with a minimal pipeline API.
+#[cfg(feature = "cabi")]
+pub mod cabi;
+
 use log::info;
 use std::sync::Once;
 
