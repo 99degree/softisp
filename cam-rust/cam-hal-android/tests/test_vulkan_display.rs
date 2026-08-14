@@ -4,19 +4,31 @@
 //! surface and present APIs. These tests verify the module loads
 //! correctly and can resolve Vulkan function pointers.
 //!
-//! Note: `vkCreateAndroidSurfaceKHR` is an instance-extension function —
-//! it is NOT a direct symbol in `libvulkan.so`. It must be resolved via
-//! `vkGetInstanceProcAddr` after `vkCreateInstance`. This is how the
-//! `VkLoader` / `VulkanDisplay` module handles it.
+//! Key findings from on-device investigation:
+//!
+//! - `vkCreateAndroidSurfaceKHR` is an instance-extension function —
+//!   NOT a direct symbol in `libvulkan.so`. Must be resolved via
+//!   `vkGetInstanceProcAddr` after `vkCreateInstance`.
+//! - `VK_KHR_android_surface` is NOT enumerated as available in the
+//!   Termux environment (requires Android framework window context).
+//! - `VK_KHR_display` IS enumerated but `vkCreateDisplaySurfaceKHR`
+//!   is NOT found (returns null via vkGetInstanceProcAddr, and the
+//!   function is absent from the loader binary). Display enumeration
+//!   returns 0 displays.
+//! - Therefore, actual screen presentation requires a real
+//!   `ANativeWindow*` from the Android app framework.
 
 use std::ffi::c_void;
+use std::ptr;
 
-use cam_hal_android::vulkan_display::{VkLoader, VulkanDisplay};
+use cam_hal_android::vulkan_display::{
+    VkApplicationInfo, VkInstanceCreateInfo, VkLoader, VulkanDisplay,
+    VK_STRUCTURE_TYPE_APPLICATION_INFO, VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, VK_SUCCESS,
+};
 
 #[cfg(not(target_os = "android"))]
 #[test]
 fn test_vulkan_display_not_available_on_host() {
-    // On non-Android hosts there is no libvulkan.so / ANativeWindow.
     let result = unsafe { VkLoader::open() };
     assert!(result.is_err(), "VkLoader should fail on non-Android host");
 }
@@ -26,8 +38,6 @@ fn test_vulkan_display_not_available_on_host() {
 fn test_vulkan_loader_loads() {
     // On Android, libvulkan.so should be present and export the two
     // direct loader symbols: vkCreateInstance and vkGetInstanceProcAddr.
-    // Extension functions like vkCreateAndroidSurfaceKHR are NOT direct
-    // symbols — they must be obtained via vkGetInstanceProcAddr.
     let result = unsafe { VkLoader::open() };
     assert!(
         result.is_ok(),
@@ -38,33 +48,47 @@ fn test_vulkan_loader_loads() {
 
 #[cfg(target_os = "android")]
 #[test]
-fn test_vulkan_instance_and_surface() {
-    // Full integration: create a Vulkan instance, resolve the
-    // vkCreateAndroidSurfaceKHR extension function via the loader,
-    // and verify it is available.
-    //
-    // On Android, the ANativeWindow* comes from:
-    //   - ANativeActivity.onNativeWindowCreated callback
-    //   - JNI ANativeWindow_fromSurface(Surface) call
-    //
-    // This test verifies the loader path works end-to-end.
+fn test_vulkan_instance_creation() {
+    // Verify we can create a Vulkan instance with no extensions.
     let loader = unsafe { VkLoader::open().expect("VkLoader should load on Android") };
 
-    // vkCreateInstance and vkGetInstanceProcAddr are direct loader symbols.
-    let _create = loader.vkCreateInstance;
-    let _gipa = loader.vkGetInstanceProcAddr;
+    let app_name = std::ffi::CString::new("softisp-test").unwrap();
+    let app_info = VkApplicationInfo {
+        sType: VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        pNext: ptr::null(),
+        pApplicationName: app_name.as_ptr(),
+        applicationVersion: 1,
+        pEngineName: ptr::null(),
+        engineVersion: 1,
+        apiVersion: 0x0040_0000,
+    };
+    let create_info = VkInstanceCreateInfo {
+        sType: VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        pNext: ptr::null(),
+        flags: 0,
+        pApplicationInfo: &app_info,
+        enabledLayerCount: 0,
+        ppEnabledLayerNames: ptr::null(),
+        enabledExtensionCount: 0,
+        ppEnabledExtensionNames: ptr::null(),
+    };
+
+    let mut instance = 0u64;
+    let res = (loader.vkCreateInstance)(&create_info, ptr::null(), &mut instance);
+    assert_eq!(
+        res, VK_SUCCESS,
+        "vkCreateInstance should succeed without extensions"
+    );
+
+    if instance != 0 {
+        let raw = unsafe { loader.get_instance_proc(instance, "vkDestroyInstance") };
+        if !raw.is_null() {
+            let destroy: extern "C" fn(u64, *const c_void) = unsafe { std::mem::transmute(raw) };
+            destroy(instance, ptr::null());
+        }
+    }
 }
 
-/// Test drawing a solid color RGBA frame to an ANativeWindow.
-///
-/// This requires a real ANativeWindow (from an Android Activity's
-/// `onNativeWindowCreated` callback or a Java `Surface` via JNI),
-/// so it is gated behind `#[ignore]` and runs on-device with:
-/// `cargo test --test test_vulkan_display test_draw_rgba_frame_to_native_window -- --ignored --nocapture`
-///
-/// Note: `VK_KHR_display` (direct hardware surface without ANativeWindow)
-/// is NOT supported on Android — `vkCreateDisplaySurfaceKHR` is absent
-/// from the Android Vulkan loader.
 #[cfg(target_os = "android")]
 #[test]
 #[ignore]
@@ -72,14 +96,13 @@ fn test_draw_rgba_frame_to_native_window() {
     use std::os::raw::c_int;
 
     // Obtain a real ANativeWindow* from the Android runtime.
-    // In a NativeActivity, this comes from onNativeWindowCreated().
-    // In a JNI context, it comes from ANativeWindow_fromSurface().
     #[link(name = "android")]
     extern "C" {
         fn ANativeWindow_acquire(window: *mut c_void);
         fn ANativeWindow_release(window: *mut c_void);
         fn ANativeWindow_getWidth(window: *mut c_void) -> c_int;
         fn ANativeWindow_getHeight(window: *mut c_void) -> c_int;
+        fn ANativeWindow_getFormat(window: *mut c_void) -> c_int;
     }
 
     // 1. Create a 640x480 RGBA frame (solid red: 0xFFFF0000).
@@ -88,33 +111,32 @@ fn test_draw_rgba_frame_to_native_window() {
     let pixel: [u8; 4] = [255, 0, 0, 255];
     let _frame = vec![pixel; width * height];
 
-    // 2. The window must come from the Android runtime.
-    //    In a real test, set this from your NativeActivity's
-    //    onNativeWindowCreated() callback.
+    // 2. The window must come from:
+    //    - ANativeActivity.onNativeWindowCreated() callback, or
+    //    - JNI ANativeWindow_fromSurface(Surface) call
+    //    Set this from your Android app test harness.
     let window_ptr: *mut c_void = std::ptr::null_mut();
 
     if window_ptr.is_null() {
         eprintln!(
-            "No ANativeWindow available — skipping. \
-            Provide a valid ANativeWindow* from ANativeActivity.onNativeWindowCreated \
-            or ANativeWindow_fromSurface()."
+            "No ANativeWindow available — provide one from \
+            ANativeActivity.onNativeWindowCreated or ANativeWindow_fromSurface() via JNI."
         );
         return;
     }
 
-    // 3. Create the Vulkan display surface from the window.
+    // 3. Create the Vulkan surface from the window.
     let display = unsafe { VulkanDisplay::new_from_window(window_ptr) }
         .expect("VulkanDisplay::new_from_window should succeed");
+    assert_ne!(display.surface(), 0);
 
-    // 4. Verify the surface was created.
-    assert_ne!(display.surface(), 0); // VK_NULL_HANDLE
-
-    // 5. Verify we can resolve instance-level functions.
+    // 4. Query window properties.
     unsafe {
         ANativeWindow_acquire(window_ptr);
         let w = ANativeWindow_getWidth(window_ptr);
         let h = ANativeWindow_getHeight(window_ptr);
-        eprintln!("ANativeWindow: {}x{}", w, h);
+        let fmt = ANativeWindow_getFormat(window_ptr);
+        eprintln!("ANativeWindow: {}x{} format={}", w, h, fmt);
         ANativeWindow_release(window_ptr);
     }
 }
