@@ -12,6 +12,7 @@ pub mod adapter;
 pub mod buffer_pool;
 pub mod gralloc;
 pub mod util;
+pub mod vulkan_display;
 
 #[cfg(feature = "v4l2")]
 pub mod v4l2;

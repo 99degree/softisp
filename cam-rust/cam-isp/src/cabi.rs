@@ -34,9 +34,9 @@
 //! ```
 
 use crate::engine::OutputFormat;
-use crate::profile::{DemosaicQuality, PipelineLevel, PipelineProfile};
 use crate::pipeline::GraphComposer;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
+use crate::profile::{DemosaicQuality, PipelineLevel, PipelineProfile};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -351,7 +351,7 @@ pub unsafe extern "C" fn softisp_profile_set_rotate_mode(
         return SOFTISP_ERR_INVALID_INPUT;
     }
 
-    if mode < 0 || mode > 5 {
+    if !(0..=5).contains(&mode) {
         return SOFTISP_ERR_INVALID_INPUT;
     }
 
@@ -505,7 +505,7 @@ pub unsafe extern "C" fn softisp_compose_onnx_with_profile(
     let custom = *profile;
     let pipeline_profile: PipelineProfile = custom.into();
 
-    let force_mode = GLOBAL_OPSET_MODE.lock().unwrap().clone();
+    let force_mode = *GLOBAL_OPSET_MODE.lock().unwrap();
 
     let onnx = match compose_pipeline_with_mode(w, h, pipeline_profile, force_mode) {
         Ok(bytes) => bytes,
@@ -553,7 +553,7 @@ pub unsafe extern "C" fn softisp_compose_mnn_with_profile(
     let custom = *profile;
     let pipeline_profile: PipelineProfile = custom.into();
 
-    let force_mode = GLOBAL_OPSET_MODE.lock().unwrap().clone();
+    let force_mode = *GLOBAL_OPSET_MODE.lock().unwrap();
 
     let onnx = match compose_pipeline_with_mode(w, h, pipeline_profile, force_mode) {
         Ok(bytes) => bytes,
@@ -632,7 +632,7 @@ pub unsafe extern "C" fn softisp_compose_onnx(
         None => return SOFTISP_ERR_UNKNOWN_PROFILE,
     };
 
-    let force_mode = GLOBAL_OPSET_MODE.lock().unwrap().clone();
+    let force_mode = *GLOBAL_OPSET_MODE.lock().unwrap();
 
     let onnx = match compose_pipeline_with_mode(w, h, profile_enum, force_mode) {
         Ok(bytes) => bytes,
@@ -687,7 +687,7 @@ pub unsafe extern "C" fn softisp_compose_mnn(
         None => return SOFTISP_ERR_UNKNOWN_PROFILE,
     };
 
-    let force_mode = GLOBAL_OPSET_MODE.lock().unwrap().clone();
+    let force_mode = *GLOBAL_OPSET_MODE.lock().unwrap();
 
     let onnx = match compose_pipeline_with_mode(w, h, profile_enum, force_mode) {
         Ok(bytes) => bytes,
@@ -737,6 +737,12 @@ pub unsafe extern "C" fn softisp_set_opset_mode(mode: i32) -> i32 {
 /// Clear the global opset mode override.
 ///
 /// After calling this, blocks use their own `opset_mode()` again.
+///
+/// # Safety
+///
+/// This is an `unsafe extern "C"` function because it is callable from C.
+/// The caller must ensure no other thread is concurrently mutating the
+/// global opset mode. There are no pointer arguments to validate.
 #[no_mangle]
 pub unsafe extern "C" fn softisp_clear_opset_mode() -> i32 {
     let mut guard = GLOBAL_OPSET_MODE.lock().unwrap();
@@ -812,9 +818,18 @@ mod tests {
 
     #[test]
     fn test_cabi_opset_mode_switch() {
-        assert_eq!(unsafe { softisp_set_opset_mode(SOFTISP_OPSET_CUSTOM) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_set_opset_mode(SOFTISP_OPSET_PRIMITIVE) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_set_opset_mode(99) }, SOFTISP_ERR_INVALID_INPUT);
+        assert_eq!(
+            unsafe { softisp_set_opset_mode(SOFTISP_OPSET_CUSTOM) },
+            SOFTISP_OK
+        );
+        assert_eq!(
+            unsafe { softisp_set_opset_mode(SOFTISP_OPSET_PRIMITIVE) },
+            SOFTISP_OK
+        );
+        assert_eq!(
+            unsafe { softisp_set_opset_mode(99) },
+            SOFTISP_ERR_INVALID_INPUT
+        );
         assert_eq!(unsafe { softisp_clear_opset_mode() }, SOFTISP_OK);
     }
 
@@ -843,12 +858,24 @@ mod tests {
         assert!(!p.is_null());
 
         let flag = std::ffi::CString::new("use_fcs").unwrap();
-        assert_eq!(unsafe { softisp_profile_set_flag(p, flag.as_ptr(), 1) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_profile_set_flag(p, flag.as_ptr(), 0) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_profile_set_flag(p, flag.as_ptr(), 0) }, SOFTISP_OK);
+        assert_eq!(
+            unsafe { softisp_profile_set_flag(p, flag.as_ptr(), 1) },
+            SOFTISP_OK
+        );
+        assert_eq!(
+            unsafe { softisp_profile_set_flag(p, flag.as_ptr(), 0) },
+            SOFTISP_OK
+        );
+        assert_eq!(
+            unsafe { softisp_profile_set_flag(p, flag.as_ptr(), 0) },
+            SOFTISP_OK
+        );
 
         let bad = std::ffi::CString::new("no_such_flag").unwrap();
-        assert_eq!(unsafe { softisp_profile_set_flag(p, bad.as_ptr(), 1) }, SOFTISP_ERR_INVALID_INPUT);
+        assert_eq!(
+            unsafe { softisp_profile_set_flag(p, bad.as_ptr(), 1) },
+            SOFTISP_ERR_INVALID_INPUT
+        );
 
         unsafe { softisp_profile_free(p) };
     }
@@ -858,18 +885,45 @@ mod tests {
         let p = softisp_profile_create();
         assert!(!p.is_null());
 
-        assert_eq!(unsafe { softisp_profile_set_demosaic_quality(p, SOFTISP_DEMOSAIC_EDGE) }, SOFTISP_OK);
+        assert_eq!(
+            unsafe { softisp_profile_set_demosaic_quality(p, SOFTISP_DEMOSAIC_EDGE) },
+            SOFTISP_OK
+        );
         assert_eq!(unsafe { softisp_profile_set_rotate_mode(p, 2) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_profile_set_output_format(p, SOFTISP_OUTPUT_RGB) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_profile_set_eis_margin(p, 0.05) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_profile_set_stats_downscale_max(p, 1080) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_profile_set_pipeline_downscale_target(p, 1920) }, SOFTISP_OK);
-        assert_eq!(unsafe { softisp_profile_set_tiling(p, 2, 2, 2) }, SOFTISP_OK);
+        assert_eq!(
+            unsafe { softisp_profile_set_output_format(p, SOFTISP_OUTPUT_RGB) },
+            SOFTISP_OK
+        );
+        assert_eq!(
+            unsafe { softisp_profile_set_eis_margin(p, 0.05) },
+            SOFTISP_OK
+        );
+        assert_eq!(
+            unsafe { softisp_profile_set_stats_downscale_max(p, 1080) },
+            SOFTISP_OK
+        );
+        assert_eq!(
+            unsafe { softisp_profile_set_pipeline_downscale_target(p, 1920) },
+            SOFTISP_OK
+        );
+        assert_eq!(
+            unsafe { softisp_profile_set_tiling(p, 2, 2, 2) },
+            SOFTISP_OK
+        );
 
         // Invalid values
-        assert_eq!(unsafe { softisp_profile_set_demosaic_quality(p, 99) }, SOFTISP_ERR_INVALID_INPUT);
-        assert_eq!(unsafe { softisp_profile_set_rotate_mode(p, 99) }, SOFTISP_ERR_INVALID_INPUT);
-        assert_eq!(unsafe { softisp_profile_set_output_format(p, 99) }, SOFTISP_ERR_INVALID_INPUT);
+        assert_eq!(
+            unsafe { softisp_profile_set_demosaic_quality(p, 99) },
+            SOFTISP_ERR_INVALID_INPUT
+        );
+        assert_eq!(
+            unsafe { softisp_profile_set_rotate_mode(p, 99) },
+            SOFTISP_ERR_INVALID_INPUT
+        );
+        assert_eq!(
+            unsafe { softisp_profile_set_output_format(p, 99) },
+            SOFTISP_ERR_INVALID_INPUT
+        );
 
         unsafe { softisp_profile_free(p) };
     }
@@ -884,9 +938,8 @@ mod tests {
 
         let mut out_bytes: *mut u8 = std::ptr::null_mut();
         let mut out_len: usize = 0;
-        let rc = unsafe {
-            softisp_compose_onnx_with_profile(640, 480, p, &mut out_bytes, &mut out_len)
-        };
+        let rc =
+            unsafe { softisp_compose_onnx_with_profile(640, 480, p, &mut out_bytes, &mut out_len) };
         assert_eq!(rc, SOFTISP_OK);
         assert!(!out_bytes.is_null());
         assert!(out_len > 0);
