@@ -4,19 +4,19 @@
 //! surface and present APIs. These tests verify the module loads
 //! correctly and can resolve Vulkan function pointers.
 //!
-//! Key findings from on-device investigation:
+//! Note: `vkCreateAndroidSurfaceKHR` is an instance-extension function —
+//! it is NOT a direct symbol in `libvulkan.so`. It must be resolved via
+//! `vkGetInstanceProcAddr` after `vkCreateInstance`.
 //!
-//! - `vkCreateAndroidSurfaceKHR` is an instance-extension function —
-//!   NOT a direct symbol in `libvulkan.so`. Must be resolved via
-//!   `vkGetInstanceProcAddr` after `vkCreateInstance`.
-//! - `VK_KHR_android_surface` is NOT enumerated as available in the
-//!   Termux environment (requires Android framework window context).
-//! - `VK_KHR_display` IS enumerated but `vkCreateDisplaySurfaceKHR`
-//!   is NOT found (returns null via vkGetInstanceProcAddr, and the
-//!   function is absent from the loader binary). Display enumeration
-//!   returns 0 displays.
-//! - Therefore, actual screen presentation requires a real
-//!   `ANativeWindow*` from the Android app framework.
+//! For native display output, an `ANativeWindow*` must be obtained from
+//! the Android app framework:
+//!   - `ANativeActivity.onNativeWindowCreated()` callback, or
+//!   - JNI `ANativeWindow_fromSurface()` from a Java `Surface`
+//!
+//! A pure-native `libgui.so` / `SurfaceComposerClient` path was
+//! investigated: the symbols exist, but the binder call to SurfaceFlinger
+//! (`SurfaceComposerClient::getDefault()`) crashes from Termux due to
+//! missing system permissions (uid 10037, not system/surface_flinger).
 
 use std::ffi::c_void;
 use std::ptr;
@@ -36,8 +36,6 @@ fn test_vulkan_display_not_available_on_host() {
 #[cfg(target_os = "android")]
 #[test]
 fn test_vulkan_loader_loads() {
-    // On Android, libvulkan.so should be present and export the two
-    // direct loader symbols: vkCreateInstance and vkGetInstanceProcAddr.
     let result = unsafe { VkLoader::open() };
     assert!(
         result.is_ok(),
@@ -49,7 +47,6 @@ fn test_vulkan_loader_loads() {
 #[cfg(target_os = "android")]
 #[test]
 fn test_vulkan_instance_creation() {
-    // Verify we can create a Vulkan instance with no extensions.
     let loader = unsafe { VkLoader::open().expect("VkLoader should load on Android") };
 
     let app_name = std::ffi::CString::new("softisp-test").unwrap();
