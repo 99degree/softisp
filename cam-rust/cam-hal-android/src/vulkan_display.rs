@@ -10,8 +10,9 @@
 //! - No `ash`/bindgen dependency: we declare the handful of Vulkan structs we
 //!   need and resolve entry points from `libvulkan.so` at runtime (same dlsym
 //!   style as `adapter.rs` / `gralloc.rs`).
-//! - `vkCreateAndroidSurfaceKHR` is a loader symbol (not provided by MNN),
-//!   so we load the loader ourselves.
+//! - `vkCreateAndroidSurfaceKHR` is an instance-extension function: it is
+//!   NOT a direct symbol in `libvulkan.so`. It must be obtained via
+//!   `vkGetInstanceProcAddr` *after* the Vulkan instance is created.
 //! - Images are uploaded via a `HOST_VISIBLE` staging buffer →
 //!   `DEVICE_LOCAL` swapchain blit. This is the simplest correct path and
 //!   avoids needing a shared Vulkan device with MNN.
@@ -55,6 +56,8 @@ pub const VK_SUCCESS: VkResult = 0;
 pub const VK_NULL_HANDLE: u64 = 0;
 pub type VkStructureType = i32;
 pub const VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR: VkStructureType = 1000008000;
+pub const VK_STRUCTURE_TYPE_APPLICATION_INFO: VkStructureType = 0;
+pub const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: VkStructureType = 1;
 
 pub const VK_IMAGE_LAYOUT_UNDEFINED: i32 = 0;
 pub const VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: i32 = 3;
@@ -114,9 +117,13 @@ pub struct VkInstanceCreateInfo {
 
 // ── Loader entry points (dlsym from libvulkan.so) ──────────────────────────
 
+/// Loader provides only two direct symbols; everything else is obtained
+/// via `vkGetInstanceProcAddr` after instance creation.
 type PfnVkCreateInstance =
     extern "C" fn(*const VkInstanceCreateInfo, *const c_void, *mut VkInstance) -> VkResult;
 type PfnVkGetInstanceProcAddr = extern "C" fn(VkInstance, *const c_char) -> *const c_void;
+type PfnVkDestroyInstance = extern "C" fn(VkInstance, *const c_void);
+type PfnVkDestroySurfaceKHR = extern "C" fn(VkInstance, VkSurfaceKHR, *const c_void);
 type PfnVkCreateAndroidSurfaceKHR = extern "C" fn(
     VkInstance,
     *const VkAndroidSurfaceCreateInfoKHR,
@@ -128,7 +135,6 @@ type PfnVkCreateAndroidSurfaceKHR = extern "C" fn(
 pub struct VkLoader {
     pub vkCreateInstance: PfnVkCreateInstance,
     pub vkGetInstanceProcAddr: PfnVkGetInstanceProcAddr,
-    pub vkCreateAndroidSurfaceKHR: PfnVkCreateAndroidSurfaceKHR,
     pub handle: *mut c_void,
 }
 
@@ -137,6 +143,10 @@ unsafe impl Sync for VkLoader {}
 
 impl VkLoader {
     /// Load the Vulkan loader from `libvulkan.so`.
+    ///
+    /// Only `vkCreateInstance` and `vkGetInstanceProcAddr` are direct
+    /// symbols. All other functions (including `vkCreateAndroidSurfaceKHR`)
+    /// are resolved via `vkGetInstanceProcAddr` after the instance is created.
     ///
     /// # Safety
     /// Must be called on Android where `libvulkan.so` is present.
@@ -152,21 +162,30 @@ impl VkLoader {
         };
         let raw_create = sym("vkCreateInstance");
         let raw_gipa = sym("vkGetInstanceProcAddr");
-        let raw_surface = sym("vkCreateAndroidSurfaceKHR");
-        if raw_create.is_null() || raw_gipa.is_null() || raw_surface.is_null() {
+        if raw_create.is_null() || raw_gipa.is_null() {
             libc::dlclose(handle);
             return Err("missing Vulkan loader symbols".to_string());
         }
         let vkCreateInstance: PfnVkCreateInstance = std::mem::transmute(raw_create);
         let vkGetInstanceProcAddr: PfnVkGetInstanceProcAddr = std::mem::transmute(raw_gipa);
-        let vkCreateAndroidSurfaceKHR: PfnVkCreateAndroidSurfaceKHR =
-            std::mem::transmute(raw_surface);
         Ok(Self {
             vkCreateInstance,
             vkGetInstanceProcAddr,
-            vkCreateAndroidSurfaceKHR,
             handle,
         })
+    }
+
+    /// Resolve an instance-level function via `vkGetInstanceProcAddr`.
+    ///
+    /// Unlike `VulkanDisplay::get_proc`, this works for both core and
+    /// extension functions once an instance exists.
+    ///
+    /// # Safety
+    /// `instance` must be a valid VkInstance. `name` must be a valid Vulkan
+    /// function name for the given instance.
+    pub unsafe fn get_instance_proc(&self, instance: VkInstance, name: &str) -> *const c_void {
+        let c = std::ffi::CString::new(name).unwrap();
+        (self.vkGetInstanceProcAddr)(instance, c.as_ptr())
     }
 }
 
@@ -183,6 +202,9 @@ unsafe impl Send for VulkanDisplay {}
 impl VulkanDisplay {
     /// Create a Vulkan instance and an Android surface from `window`.
     ///
+    /// Creates the instance first, then resolves
+    /// `vkCreateAndroidSurfaceKHR` via `vkGetInstanceProcAddr`.
+    ///
     /// # Safety
     /// `window` must be a valid `ANativeWindow*` (from `android_app.window`).
     pub unsafe fn new_from_window(window: *mut c_void) -> Result<Self, String> {
@@ -194,16 +216,16 @@ impl VulkanDisplay {
 
         let app_name = std::ffi::CString::new("softisp-display").unwrap();
         let app_info = VkApplicationInfo {
-            sType: 0,
+            sType: VK_STRUCTURE_TYPE_APPLICATION_INFO,
             pNext: ptr::null(),
             pApplicationName: app_name.as_ptr(),
             applicationVersion: 1,
             pEngineName: ptr::null(),
             engineVersion: 1,
-            apiVersion: 0x0040_0000,
+            apiVersion: 0x0040_0000, // Vulkan 1.0
         };
         let create_info = VkInstanceCreateInfo {
-            sType: 1,
+            sType: VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             pNext: ptr::null(),
             flags: 0,
             pApplicationInfo: &app_info,
@@ -218,6 +240,19 @@ impl VulkanDisplay {
             return Err(format!("vkCreateInstance failed: {}", res));
         }
 
+        // Resolve vkCreateAndroidSurfaceKHR via the loader (instance proc addr).
+        // This is an instance-extension function, NOT a direct symbol.
+        let raw = loader.get_instance_proc(instance, "vkCreateAndroidSurfaceKHR");
+        if raw.is_null() {
+            let raw_destroy = loader.get_instance_proc(instance, "vkDestroyInstance");
+            if !raw_destroy.is_null() {
+                let destroy: PfnVkDestroyInstance = std::mem::transmute(raw_destroy);
+                destroy(instance, ptr::null());
+            }
+            return Err("vkCreateAndroidSurfaceKHR not found via vkGetInstanceProcAddr".into());
+        }
+        let vkCreateAndroidSurfaceKHR: PfnVkCreateAndroidSurfaceKHR = std::mem::transmute(raw);
+
         let surface_info = VkAndroidSurfaceCreateInfoKHR {
             sType: VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR,
             pNext: ptr::null(),
@@ -225,8 +260,7 @@ impl VulkanDisplay {
             window,
         };
         let mut surface = VK_NULL_HANDLE;
-        let res =
-            (loader.vkCreateAndroidSurfaceKHR)(instance, &surface_info, ptr::null(), &mut surface);
+        let res = (vkCreateAndroidSurfaceKHR)(instance, &surface_info, ptr::null(), &mut surface);
         if res != VK_SUCCESS || surface == VK_NULL_HANDLE {
             return Err(format!("vkCreateAndroidSurfaceKHR failed: {}", res));
         }
@@ -249,13 +283,12 @@ impl VulkanDisplay {
         self.instance
     }
 
-    /// dlsym a device-level function from the loader.
+    /// Resolve an instance-level function from the loader.
     ///
     /// # Safety
-    /// `name` must be a valid Vulkan function; return type must match.
+    /// `name` must be a valid Vulkan function name.
     pub unsafe fn get_proc(&self, name: &str) -> *const c_void {
-        let c = std::ffi::CString::new(name).unwrap();
-        (self.loader.vkGetInstanceProcAddr)(self.instance, c.as_ptr())
+        self.loader.get_instance_proc(self.instance, name)
     }
 }
 
@@ -263,17 +296,20 @@ impl Drop for VulkanDisplay {
     fn drop(&mut self) {
         unsafe {
             if self.surface != VK_NULL_HANDLE {
-                let f = self.get_proc("vkDestroySurfaceKHR");
-                if !f.is_null() {
-                    let f: extern "C" fn(VkInstance, VkSurfaceKHR, *const c_void) =
-                        std::mem::transmute(f);
+                let raw = self
+                    .loader
+                    .get_instance_proc(self.instance, "vkDestroySurfaceKHR");
+                if !raw.is_null() {
+                    let f: PfnVkDestroySurfaceKHR = std::mem::transmute(raw);
                     f(self.instance, self.surface, ptr::null());
                 }
             }
             if self.instance != VK_NULL_HANDLE {
-                let f = self.get_proc("vkDestroyInstance");
-                if !f.is_null() {
-                    let f: extern "C" fn(VkInstance, *const c_void) = std::mem::transmute(f);
+                let raw = self
+                    .loader
+                    .get_instance_proc(self.instance, "vkDestroyInstance");
+                if !raw.is_null() {
+                    let f: PfnVkDestroyInstance = std::mem::transmute(raw);
                     f(self.instance, ptr::null());
                 }
             }
