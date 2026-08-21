@@ -436,6 +436,19 @@ fn setup_cc_for_android(build: &mut cc::Build) {
         return;
     }
 
+    // When the build host is itself aarch64-linux-android (e.g. Termux on
+    // Android), the NDK's clang wrapper is a foreign x86_64 shell script that
+    // cannot execute on this host. The local toolchain (clang/clang++) already
+    // targets aarch64-linux-android with a working sysroot, so let cc::Build use
+    // it instead of forcing the NDK compiler.
+    let host_triple = std::env::var("CARGO_CFG_HOST_TRIPLE").unwrap_or_default();
+    if host_triple.contains("aarch64") && host_triple.contains("android") {
+        eprintln!(
+            "cc::Build: host is aarch64-linux-android; using local clang, skipping NDK compiler"
+        );
+        return;
+    }
+
     let ndk = match find_ndk() {
         Some(p) => p,
         None => {

@@ -128,7 +128,7 @@ MnnTensor mnn_session_get_input_v2(MnnInterpreter interpreter, MnnSession sessio
     return reinterpret_cast<MnnTensor>(tensor);
 }
 
-int mnn_session_get_input_count(MnnInterpreter interpreter, MnnSession session) {
+extern "C" int mnn_session_get_input_count(MnnInterpreter interpreter, MnnSession session) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!net || !sess) return 0;
@@ -136,7 +136,7 @@ int mnn_session_get_input_count(MnnInterpreter interpreter, MnnSession session) 
     return (int)inputs.size();
 }
 
-const char* mnn_session_get_input_name(MnnInterpreter interpreter, MnnSession session, int index) {
+extern "C" const char* mnn_session_get_input_name(MnnInterpreter interpreter, MnnSession session, int index) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!net || !sess) return nullptr;
