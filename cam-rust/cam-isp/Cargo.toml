@@ -100,22 +100,4 @@ required-features = ["mnn"]
 [[example]]
 name = "gen_api_docs"
 
-[[example]]
-name = "probe_pass1"
-required-features = ["mnn"]
 
-[[example]]
-name = "probe_unpack"
-required-features = ["mnn"]
-
-[[example]]
-name = "probe_chain"
-required-features = ["mnn"]
-
-[[example]]
-name = "probe_blocks"
-required-features = ["mnn"]
-
-[[example]]
-name = "probe_fix"
-required-features = ["mnn"]
