@@ -270,7 +270,7 @@ pub trait IspBlock: Send {
     /// - `Custom`: the block emits custom op types in ONNX; the consumer
     ///   must understand them.
     fn opset_mode(&self) -> BlockOpsetMode {
-        BlockOpsetMode::Primitive
+        BlockOpsetMode::Custom
     }
 }
 
