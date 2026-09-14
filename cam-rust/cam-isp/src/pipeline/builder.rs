@@ -1611,8 +1611,8 @@ mod tests {
     }
 
     #[test]
-    fn test_default_opsets_no_domain() {
-        // Default (no override) should not emit custom domain.
+    fn test_default_opsets_emit_domain() {
+        // Default mode emits isp domain via opset_mode = Custom.
         let onnx = PipelineBuilder::new(640, 480)
             .unpack()
             .display()
@@ -1620,7 +1620,6 @@ mod tests {
             .expect("compose should succeed");
         assert!(!onnx.is_empty());
         let s = String::from_utf8_lossy(&onnx);
-        assert!(!s.contains("\nisp\n") && !s.contains("\"isp\""),
-            "default mode should not emit isp domain: {}", s);
+        assert!(s.contains("isp"), "default should emit isp domain: {}", s);
     }
 }
