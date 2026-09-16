@@ -283,7 +283,6 @@ pub enum BlockOpsetMode {
     Custom,
 }
 
-
 /// Helper to build a chain of blocks as a Vec.
 pub struct PipelineBuilder {
     pub blocks: Vec<Box<dyn IspBlock>>,
@@ -671,12 +670,7 @@ impl GraphComposer {
             opset_imports.push(Proto::opset_domain(domain, *version));
         }
         let opset_refs: Vec<&[u8]> = opset_imports.iter().map(|o| o.as_slice()).collect();
-        let model = Proto::model_multi_opset(
-            11,
-            &opset_refs,
-            "cam_rust_graph_composer",
-            &graph,
-        );
+        let model = Proto::model_multi_opset(11, &opset_refs, "cam_rust_graph_composer", &graph);
 
         info!(
             "{}: model has {} opset imports",
@@ -1009,7 +1003,8 @@ impl GraphComposer {
         name: &str,
         force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, std::path::PathBuf, PipelineStats), String> {
-        let (onnx, stats, issues) = Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
+        let (onnx, stats, issues) =
+            Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
         if !issues.is_empty() {
             eprintln!("Warning: {} validation issues", issues.len());
             for issue in &issues {
@@ -1034,7 +1029,8 @@ impl GraphComposer {
         force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, PipelineStats, f64), String> {
         let t0 = std::time::Instant::now();
-        let (onnx, stats, _issues) = Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
+        let (onnx, stats, _issues) =
+            Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
         let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
         Ok((onnx, stats, elapsed_ms))
     }
@@ -1115,7 +1111,8 @@ impl GraphComposer {
         force_mode: Option<BlockOpsetMode>,
     ) -> Result<(Vec<u8>, PipelineStats, Vec<String>, f64), String> {
         let t0 = std::time::Instant::now();
-        let (onnx, stats, issues) = Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
+        let (onnx, stats, issues) =
+            Self::compose_full(blocks, aux_blocks, opset_version, force_mode)?;
         let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
         Ok((onnx, stats, issues, elapsed_ms))
     }
@@ -1298,7 +1295,8 @@ mod tests {
             Box::new(DemosaicCcmBlock::new(0)),
             Box::new(DisplayBlock::new(640)),
         ];
-        let (onnx, stats, issues) = GraphComposer::compose_full(&mut blocks, &[], 16, None).unwrap();
+        let (onnx, stats, issues) =
+            GraphComposer::compose_full(&mut blocks, &[], 16, None).unwrap();
         assert!(!onnx.is_empty());
         assert_eq!(stats.block_count, 3);
         assert!(
@@ -1461,18 +1459,38 @@ mod tests {
             }
         }
         impl IspBlock for CustomBlock {
-            fn id(&self) -> &str { &self.id }
-            fn tensor_ns(&self) -> String { "CustomBlock".to_string() }
-            fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-            fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-            fn prev(&self) -> Option<&Box<dyn IspBlock>> { None }
+            fn id(&self) -> &str {
+                &self.id
+            }
+            fn tensor_ns(&self) -> String {
+                "CustomBlock".to_string()
+            }
+            fn input_source(&self) -> Option<&str> {
+                Some(&self.input_source)
+            }
+            fn set_input_source(&mut self, name: &str) {
+                self.input_source = name.to_string();
+            }
+            fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+                None
+            }
             fn set_prev(&mut self, _block: Box<dyn IspBlock>) {}
-            fn next(&self) -> Option<&Box<dyn IspBlock>> { None }
+            fn next(&self) -> Option<&Box<dyn IspBlock>> {
+                None
+            }
             fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
-            fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-            fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-            fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
-            fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+            fn frame_tensor(&self) -> Option<&str> {
+                Some(&self.frame_tensor)
+            }
+            fn input_tensors(&self) -> Vec<String> {
+                vec![self.input_source.clone()]
+            }
+            fn output_tensors(&self) -> Vec<String> {
+                vec![self.frame_tensor.clone()]
+            }
+            fn graph_output_name(&self) -> Option<&str> {
+                Some(&self.frame_tensor)
+            }
             fn output_value_info(&self) -> Option<Vec<u8>> {
                 Some(Proto::value_info(
                     &self.frame_tensor,
@@ -1533,18 +1551,38 @@ mod tests {
             }
         }
         impl IspBlock for LoweringBlock {
-            fn id(&self) -> &str { &self.id }
-            fn tensor_ns(&self) -> String { "LoweringBlock".to_string() }
-            fn input_source(&self) -> Option<&str> { Some(&self.input_source) }
-            fn set_input_source(&mut self, name: &str) { self.input_source = name.to_string(); }
-            fn prev(&self) -> Option<&Box<dyn IspBlock>> { None }
+            fn id(&self) -> &str {
+                &self.id
+            }
+            fn tensor_ns(&self) -> String {
+                "LoweringBlock".to_string()
+            }
+            fn input_source(&self) -> Option<&str> {
+                Some(&self.input_source)
+            }
+            fn set_input_source(&mut self, name: &str) {
+                self.input_source = name.to_string();
+            }
+            fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+                None
+            }
             fn set_prev(&mut self, _block: Box<dyn IspBlock>) {}
-            fn next(&self) -> Option<&Box<dyn IspBlock>> { None }
+            fn next(&self) -> Option<&Box<dyn IspBlock>> {
+                None
+            }
             fn set_next(&mut self, _block: Box<dyn IspBlock>) {}
-            fn frame_tensor(&self) -> Option<&str> { Some(&self.frame_tensor) }
-            fn input_tensors(&self) -> Vec<String> { vec![self.input_source.clone()] }
-            fn output_tensors(&self) -> Vec<String> { vec![self.frame_tensor.clone()] }
-            fn graph_output_name(&self) -> Option<&str> { Some(&self.frame_tensor) }
+            fn frame_tensor(&self) -> Option<&str> {
+                Some(&self.frame_tensor)
+            }
+            fn input_tensors(&self) -> Vec<String> {
+                vec![self.input_source.clone()]
+            }
+            fn output_tensors(&self) -> Vec<String> {
+                vec![self.frame_tensor.clone()]
+            }
+            fn graph_output_name(&self) -> Option<&str> {
+                Some(&self.frame_tensor)
+            }
             fn output_value_info(&self) -> Option<Vec<u8>> {
                 Some(Proto::value_info(
                     &self.frame_tensor,
@@ -1583,7 +1621,10 @@ mod tests {
 
         let model_str = String::from_utf8_lossy(&model);
         // The custom opset domain should still be emitted
-        assert!(model_str.contains("isp"), "model should contain custom opset domain");
+        assert!(
+            model_str.contains("isp"),
+            "model should contain custom opset domain"
+        );
         // But the node op types should be lowered to primitives
         assert!(
             model_str.contains("\"Mul\"") || model_str.contains("Mul"),
