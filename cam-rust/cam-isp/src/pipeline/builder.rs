@@ -696,6 +696,126 @@ impl PipelineBuilder {
         self.blocks.iter().map(|b| b.id().to_string()).collect()
     }
 
+    /// Add `NormalizeBlcUnpackCfa` fused block (Normalize + BLC50 + UnpackCfa).
+    /// Emits `isp.unpack_blc` custom opset.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .add_fuse_normalize_blc_unpack_cfa()
+    ///     .display()
+    ///     .compose()
+    ///     .unwrap();
+    /// ```
+    pub fn add_fuse_normalize_blc_unpack_cfa(mut self) -> Self {
+        self.blocks.push(Box::new(NormalizeBlcUnpackCfa::new()));
+        self
+    }
+
+    /// Add fused block: Normalize + BLC50 + UnpackCfa + CFA + DemosaicCCM.
+    /// Emits `isp.unpack_packed` custom opset.
+    pub fn add_fuse_normalize_blc_unpack_cfa_demosaic(mut self) -> Self {
+        self.blocks.push(Box::new(
+            NormalizeBlcUnpackCfa::new()
+                .with_fast_unpack(true)
+                .with_concrete_dims(1920, 1080),
+        ));
+        self.blocks.push(Box::new(DemosaicCcmBlock::new(0)));
+        self
+    }
+
+    /// Add fused block: UnpackCfa + BLC.
+    /// Emits `isp.unpack_blc` custom opset.
+    pub fn add_fuse_unpack_cfa_blc(mut self) -> Self {
+        self.blocks.push(Box::new(NormalizeBlcUnpackCfa::new()));
+        self
+    }
+
+    /// Add `UnpackBlock` only — used as a no-op fused block placeholder.
+    /// Emits `isp.unpack_packed` when in custom opset mode.
+    pub fn add_fuse_unpack_cfa(mut self) -> Self {
+        self.blocks.push(Box::new(UnpackBlock::new()));
+        self
+    }
+
+    /// Add `NormalizeBlock` only — no-op fused block placeholder.
+    /// Emits `isp.normalize` when in custom opset mode.
+    pub fn add_fuse_normalize(mut self) -> Self {
+        self.blocks.push(Box::new(NormalizeBlock::new()));
+        self
+    }
+
+    /// Force MNN custom opset domain for all subsequent blocks.
+    /// When set, `compose()` emits `isp.*` domain-prefixed op types
+    /// instead of lowering to primitives.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .with_mnn_domain()
+    ///     .add_fuse_normalize_blc_unpack_cfa()
+    ///     .display()
+    ///     .compose()
+    ///     .unwrap();
+    /// ```
+    pub fn with_mnn_domain(mut self) -> Self {
+        self.force_mode = Some(BlockOpsetMode::Custom);
+        self
+    }
+
+    /// Enable `isp` opset for all blocks (alias for `with_mnn_domain`).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .with_isp_opsets()
+    ///     .add_fuse_normalize_blc_unpack_cfa()
+    ///     .display()
+    ///     .compose()
+    ///     .unwrap();
+    /// ```
+    pub fn with_isp_opsets(mut self) -> Self {
+        self.force_mode = Some(BlockOpsetMode::Custom);
+        self
+    }
+
+    /// Add a fused block by pattern name.
+    ///
+    /// Supported pattern names:
+    /// - `"normalize_blc_unpack_cfa"` → `add_fuse_normalize_blc_unpack_cfa`
+    /// - `"normalize_blc_unpack_cfa_demosaic"` → `add_fuse_normalize_blc_unpack_cfa_demosaic`
+    /// - `"unpack_cfa_blc"` → `add_fuse_unpack_cfa_blc`
+    /// - `"unpack_cfa"` → `add_fuse_unpack_cfa`
+    /// - `"normalize"` → `add_fuse_normalize`
+    ///
+    /// Unknown names are ignored.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// PipelineBuilder::new(1920, 1080)
+    ///     .add_fuse("normalize_blc_unpack_cfa")
+    ///     .display()
+    ///     .compose()
+    ///     .unwrap();
+    /// ```
+    pub fn add_fuse(mut self, pattern: &str) -> Self {
+        match pattern {
+            "normalize_blc_unpack_cfa" => self = self.add_fuse_normalize_blc_unpack_cfa(),
+            "normalize_blc_unpack_cfa_demosaic" => {
+                self = self.add_fuse_normalize_blc_unpack_cfa_demosaic()
+            }
+            "unpack_cfa_blc" => self = self.add_fuse_unpack_cfa_blc(),
+            "unpack_cfa" => self = self.add_fuse_unpack_cfa(),
+            "normalize" => self = self.add_fuse_normalize(),
+            _ => {}
+        }
+        self
+    }
+
     /// Remove a block by ID. Returns true if found and removed.
     pub fn remove_block(&mut self, id: &str) -> bool {
         if let Some(pos) = self.blocks.iter().position(|b| b.id() == id) {
@@ -1578,7 +1698,11 @@ mod tests {
             .expect("compose should succeed");
         assert!(!onnx.is_empty());
         let s = String::from_utf8_lossy(&onnx);
-        assert!(s.contains("isp"), "custom mode should emit isp domain: {}", s);
+        assert!(
+            s.contains("isp"),
+            "custom mode should emit isp domain: {}",
+            s
+        );
     }
 
     #[test]
@@ -1592,8 +1716,11 @@ mod tests {
             .expect("compose should succeed");
         assert!(!onnx.is_empty());
         let s = String::from_utf8_lossy(&onnx);
-        assert!(!s.contains("\nisp\n") && !s.contains("\"isp\""),
-            "primitive mode should not emit isp domain: {}", s);
+        assert!(
+            !s.contains("\nisp\n") && !s.contains("\"isp\""),
+            "primitive mode should not emit isp domain: {}",
+            s
+        );
     }
 
     #[test]
