@@ -34,6 +34,8 @@ pub struct NormalizeBlcUnpackCfa {
     pub use_fast_unpack: bool,
     /// Height downscale factor (1=none, 2=half)
     pub height_downscale: i64,
+    /// Override the emitted opset mode. When Some, takes priority over the default Custom.
+    pub forced_mode: Option<BlockOpsetMode>,
 }
 
 impl Default for NormalizeBlcUnpackCfa {
@@ -53,6 +55,7 @@ impl NormalizeBlcUnpackCfa {
             blc_offsets: [0.0; 4],
             use_fast_unpack: false,
             height_downscale: 1,
+            forced_mode: None,
         }
     }
 
@@ -80,6 +83,46 @@ impl NormalizeBlcUnpackCfa {
     pub fn with_height_downscale(mut self, factor: i64) -> Self {
         self.height_downscale = factor.max(1);
         self
+    }
+
+    /// Emit primitive ONNX ops instead of the fused isp.unpack_blc custom op.
+    pub fn force_primitive(mut self) -> Self {
+        self.forced_mode = Some(BlockOpsetMode::Primitive);
+        self
+    }
+
+    /// Build a fused block from a matched pattern run.
+    pub fn from_chain(chain: &[&dyn IspBlock]) -> Self {
+        let mut fused = Self::new();
+        if let Some(first) = chain.first() {
+            if let Some(src) = first.input_source() {
+                if !src.is_empty() {
+                    fused.input_source = src.to_string();
+                }
+            }
+        }
+        if let Some(last) = chain.last() {
+            if let Some(frame) = last.frame_tensor() {
+                fused.frame_tensor = frame.to_string();
+            }
+        }
+        fused
+    }
+
+    /// Emit the fused custom-domain isp.unpack_blc node.
+    fn emit_custom_node(&self) -> Vec<u8> {
+        let attrs = vec![
+            Proto::attribute_floats("blc_offsets", &self.blc_offsets),
+            Proto::attribute_float("sensor_max", self.sensor_max),
+            Proto::attribute_ints("height_downscale", &[self.height_downscale]),
+        ];
+        Proto::node_with_domain(
+            "unpack",
+            "isp",
+            &[&self.input_source],
+            &[&self.frame_tensor],
+            &attrs,
+        )
     }
 
     /// Emit primitive ONNX nodes for MNN when Custom opsets are not available.
@@ -192,7 +235,10 @@ impl IspBlock for NormalizeBlcUnpackCfa {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        self.emit_primitive_nodes()
+        match self.opset_mode() {
+            BlockOpsetMode::Custom => vec![self.emit_custom_node()],
+            BlockOpsetMode::Primitive => self.emit_primitive_nodes(),
+        }
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
@@ -320,7 +366,7 @@ impl IspBlock for NormalizeBlcUnpackCfa {
     }
 
     fn opset_mode(&self) -> BlockOpsetMode {
-        BlockOpsetMode::Custom
+        self.forced_mode.unwrap_or(BlockOpsetMode::Custom)
     }
 }
 
@@ -357,9 +403,16 @@ mod tests {
 
     #[test]
     fn test_normalize_blc_unpack_cfa_nodes() {
+        // Default (Custom) -> 1 fused isp.unpack_blc node.
         let mut b = NormalizeBlcUnpackCfa::new();
         b.set_input_source("raw_frame");
-        let nodes = b.nodes();
-        assert_eq!(nodes.len(), 5);
+        assert_eq!(b.opset_mode(), BlockOpsetMode::Custom);
+        assert_eq!(b.nodes().len(), 1);
+        // Primitive mode -> 5 primitive nodes.
+        let mut b2 = NormalizeBlcUnpackCfa::new();
+        b2.set_input_source("raw_frame");
+        b2 = b2.force_primitive();
+        assert_eq!(b2.opset_mode(), BlockOpsetMode::Primitive);
+        assert_eq!(b2.nodes().len(), 5);
     }
 }

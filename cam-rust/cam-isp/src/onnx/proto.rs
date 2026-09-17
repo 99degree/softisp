@@ -342,6 +342,43 @@ impl Proto {
         buf
     }
 
+    /// `onnx.NodeProto` with an explicit custom-op domain (MNN field 7).
+    ///
+    /// MNN's customized onnx.proto keeps `op_type` at field 4 (like `Proto::node`)
+    /// but also exposes the standard `domain` field at field 7.  Custom `isp.*`
+    /// Extra ops are dispatched by their domain+op_type pair — the MNN converter
+    /// only routes a node to `IspOpConverter` when `domain == "isp"` AND `op_type`
+    /// matches a registered ISP kernel.  `Proto::node()` intentionally omits the
+    /// domain so standard ONNX operators are unaffected; this helper sets it.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let n = Proto::node_with_domain("unpack", "isp", &["in"], &["out"], &[]);
+    /// ```
+    pub fn node_with_domain(
+        op_type: &str,
+        domain: &str,
+        inputs: &[&str],
+        outputs: &[&str],
+        attrs: &[Vec<u8>],
+    ) -> Vec<u8> {
+        let mut buf = Self::string(4, op_type);
+        for inp in inputs {
+            buf.extend_from_slice(&Self::raw_bytes(1, inp.as_bytes()));
+        }
+        for out in outputs {
+            buf.extend_from_slice(&Self::raw_bytes(2, out.as_bytes()));
+        }
+        for a in attrs {
+            buf.extend_from_slice(&Self::raw_bytes(5, a));
+        }
+        if !domain.is_empty() {
+            buf.extend_from_slice(&Self::string(7, domain));
+        }
+        buf
+    }
+
     /// `onnx.GraphProto`.
     pub fn graph(
         name: &str,
