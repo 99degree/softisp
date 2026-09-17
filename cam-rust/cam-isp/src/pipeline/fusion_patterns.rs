@@ -72,7 +72,6 @@ impl IspFusionPatterns {
             ["lsc", "colorspace"] => Some("isp.colorspace"),
             ["warp", "gamma"] => Some("isp.gamma"),
             ["display", "cfa"] => Some("isp.display"),
-            ["cfa", "bilateral"] => Some("isp.demosaic_edge"),
             ["fcs", "ldci"] => Some("isp.ldci"),
             ["fcs", "ldci", "ee"] => Some("isp.ee"),
             ["normalize"] => Some("isp.normalize"),
