@@ -411,6 +411,15 @@ impl GraphComposer {
             return Err("Empty pipeline".to_string());
         }
 
+        // 0. Auto-fusion prepass: detect contiguous primitive runs matching a
+        // supported MNN fusion pattern and replace them with a single fused
+        // block before node collection. Only the `normalize → blc50 →
+        // unpack_cfa` (and `blc` variant) chains are auto-replaced — their
+        // semantics are fully representable by `NormalizeBlcUnpackCfa`.
+        // Everything else passes through unchanged (conservative).
+        let fused_pipeline: Vec<&dyn IspBlock> = Self::auto_fuse_pipeline(pipeline);
+        let pipeline: &[&dyn IspBlock] = fused_pipeline.as_slice();
+
         // 1. Validate chain count
         let names: Vec<String> = pipeline
             .iter()
@@ -738,6 +747,57 @@ impl GraphComposer {
             let prev = blocks[i - 1].frame_tensor().unwrap_or("--").to_string();
             blocks[i].set_input_source(&prev);
         }
+    }
+
+    /// Auto-fusion prepass: scan for contiguous runs whose block IDs match a
+    /// supported MNN fusion pattern and replace each run with a single fused
+    /// block. Currently the only auto-fused pattern is
+    /// `normalize → blc50 → unpack_cfa` (or the `blc` variant), whose chain
+    /// semantics are fully representable by `NormalizeBlcUnpackCfa`.
+    ///
+    /// The fused block preserves the first block's graph input and the last
+    /// block's frame tensor so downstream wiring still resolves. All other
+    /// blocks pass through unchanged.
+    fn auto_fuse_pipeline<'a>(pipeline: &'a [&'a dyn IspBlock]) -> Vec<&'a dyn IspBlock> {
+        use crate::blocks::NormalizeBlcUnpackCfa;
+        use crate::pipeline::IspFusionPatterns;
+
+        let ids: Vec<&str> = pipeline.iter().map(|b| b.id()).collect();
+        let mut result: Vec<&dyn IspBlock> = Vec::with_capacity(pipeline.len());
+        let mut i = 0;
+        while i < pipeline.len() {
+            // Try the 3-block normalize → blc50/blc → unpack_cfa pattern.
+            let matched = i + 3 <= ids.len()
+                && ids[i] == "normalize"
+                && (ids[i + 1] == "blc50" || ids[i + 1] == "blc")
+                && ids[i + 2] == "unpack_cfa"
+                && IspFusionPatterns::match_fused(&ids[i..i + 3]).is_some();
+            if matched {
+                let chain: [&dyn IspBlock; 3] = [pipeline[i], pipeline[i + 1], pipeline[i + 2]];
+                let fused = NormalizeBlcUnpackCfa::from_chain(&chain);
+                info!(
+                    "{}: auto-fused {} + {} + {} → {}",
+                    Self::TAG,
+                    ids[i],
+                    ids[i + 1],
+                    ids[i + 2],
+                    fused.id()
+                );
+                // Leak the fused block into a 'static reference so it can be
+                // returned alongside the borrowed pipeline slices. The fused
+                // block owns no resources that escape the model (tensors are
+                // identified by name), so this is safe for the single
+                // compose_from_vec_with_mode pass.
+                let fused_ref: &'a dyn IspBlock = Box::leak(Box::new(fused));
+                result.push(fused_ref);
+
+                i += 3;
+            } else {
+                result.push(pipeline[i]);
+                i += 1;
+            }
+        }
+        result
     }
 
     /// Insert a BridgeIdentityBlock between every pair of consecutive blocks,
