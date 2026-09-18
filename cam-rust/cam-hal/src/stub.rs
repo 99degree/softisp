@@ -174,7 +174,8 @@ impl StubAdapter {
                 .unwrap_or_default()
                 .as_nanos() as u64;
             let mut rng = XorShift64 { state: seed };
-            for chunk in buf.chunks_exact_mut(2) {
+            let (chunks, _) = buf.as_chunks_mut::<2>();
+            for chunk in chunks {
                 let val = u16::from_le_bytes([chunk[0], chunk[1]]);
                 let noise = (rng.next() % 513) as i32 - 256; // ±256
                 let new_val = (val as i32 + noise).clamp(0, 65535) as u16;

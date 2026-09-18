@@ -61,10 +61,7 @@ struct Args {
     /// Optimization level for MNN conversion (0=none, 1=safe, 2=aggressive).
     #[arg(long, default_value_t = 1)]
     mnn_optimize: u8,
-
-
-
-/// Build the ISP pipeline for the given profile and compose the ONNX model.
+}
 fn build_pipeline(profile_name: &str, width: u32) -> Result<Vec<u8>, String> {
     let profile = match profile_name.to_lowercase().as_str() {
         "lite" => PipelineProfile::LITE,

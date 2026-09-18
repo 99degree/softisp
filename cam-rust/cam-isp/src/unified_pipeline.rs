@@ -851,7 +851,7 @@ impl UnifiedPipeline {
             // Sort by EV ascending (-2, 0, +2) and drain
             self.hdr_frames
                 .sort_by(|a, b| a.ev.partial_cmp(&b.ev).unwrap_or(std::cmp::Ordering::Equal));
-            let frames: Vec<crate::hdr::HdrFrame> = self.hdr_frames.drain(..).collect();
+            let frames: Vec<crate::hdr::HdrFrame> = std::mem::take(&mut self.hdr_frames);
 
             // Submit and wait for result (blocking)
             let rx = match queue.submit_frames(frames) {
