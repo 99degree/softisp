@@ -632,7 +632,9 @@ impl MnnEngine {
 
     #[allow(dead_code)]
     fn norm(buf: &[u8], max: f32) -> Vec<f32> {
-        buf.chunks_exact(2)
+        let (chunks, _) = buf.as_chunks::<2>();
+        chunks
+            .iter()
             .map(|c| (u16::from_ne_bytes([c[0], c[1]]) as f32 / max).clamp(0.0, 1.0))
             .collect()
     }
