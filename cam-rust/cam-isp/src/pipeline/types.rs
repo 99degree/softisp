@@ -395,7 +395,7 @@ impl GraphComposer {
     /// * `force_mode` — When `Some`, overrides every block's `opset_mode()`:
     ///   - `Primitive` → lower all custom op types to primitives
     ///   - `Custom` → emit custom op types verbatim
-    ///   When `None`, use each block's own `opset_mode()`.
+    ///     When `None`, use each block's own `opset_mode()`.
     pub fn compose_from_vec_with_mode(
         pipeline: &[&dyn IspBlock],
         aux_blocks: &[&dyn IspBlock],
