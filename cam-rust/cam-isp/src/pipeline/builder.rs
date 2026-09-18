@@ -78,7 +78,7 @@ pub struct PipelineBuilder {
     /// When `Some`, overrides every block's `opset_mode()`:
     /// - `Primitive` → lower all custom op types to primitives
     /// - `Custom` → emit custom op types verbatim
-    /// When `None`, use each block's own `opset_mode()`.
+    ///   When `None`, use each block's own `opset_mode()`.
     force_mode: Option<BlockOpsetMode>,
 }
 
