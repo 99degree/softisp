@@ -140,7 +140,9 @@ impl IspEngine for CpuEngine {
         // ── 1. RawInput: interpret as INT16 Bayer ──
         let expected = (width * height * 2) as usize;
         let raw: Vec<u16> = if buf.len() >= expected {
-            buf.chunks_exact(2)
+            let (chunks, _) = buf.as_chunks::<2>();
+            chunks
+                .iter()
                 .take((width * height) as usize)
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
                 .collect()

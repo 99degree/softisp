@@ -234,7 +234,8 @@ pub fn hsv_to_rgb_plane(h: &mut [f32], s: &mut [f32], v: &mut [f32]) {
 #[allow(dead_code)]
 pub fn rgb_to_hsv_interleaved(data: &mut [f32]) {
     assert_eq!(data.len() % 3, 0);
-    for pixel in data.chunks_exact_mut(3) {
+    let (pixels, _) = data.as_chunks_mut::<3>();
+    for pixel in pixels {
         let (h, s, v) = rgb_to_hsv_pixel(pixel[0], pixel[1], pixel[2]);
         pixel[0] = h / 360.0;
         pixel[1] = s;
@@ -247,7 +248,8 @@ pub fn rgb_to_hsv_interleaved(data: &mut [f32]) {
 #[allow(dead_code)]
 pub fn hsv_to_rgb_interleaved(data: &mut [f32]) {
     assert_eq!(data.len() % 3, 0);
-    for pixel in data.chunks_exact_mut(3) {
+    let (pixels, _) = data.as_chunks_mut::<3>();
+    for pixel in pixels {
         let (r, g, b) = hsv_to_rgb_pixel(pixel[0] * 360.0, pixel[1], pixel[2]);
         pixel[0] = r;
         pixel[1] = g;
