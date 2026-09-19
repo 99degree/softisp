@@ -43,6 +43,8 @@ pub struct CpuEngine {
     pub eis_engine: Mutex<EisEngine>,
     /// Auto-selected SIMD backend (Neon, SSE2, or Scalar).
     simd: &'static dyn SimdEngine,
+    /// Cached raw Bayer buffer to avoid reallocation when frame dimensions are unchanged.
+    raw_buffer: Mutex<Option<Vec<u16>>>,
 }
 
 impl Default for CpuEngine {
@@ -62,6 +64,7 @@ impl CpuEngine {
             af_engine: Mutex::new(AfState::default()),
             eis_engine: Mutex::new(EisEngine::new()),
             simd,
+            raw_buffer: Mutex::new(None),
         }
     }
 }
@@ -139,20 +142,64 @@ impl IspEngine for CpuEngine {
 
         // ── 1. RawInput: interpret as INT16 Bayer ──
         let expected = (width * height * 2) as usize;
-        let raw: Vec<u16> = if buf.len() >= expected {
-            let (chunks, _) = buf.as_chunks::<2>();
-            chunks
-                .iter()
-                .take((width * height) as usize)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect()
-        } else {
-            warn!(
-                "CpuEngine: input buffer too small ({} < {}), using simulated data",
-                buf.len(),
-                expected
-            );
-            generate_simulated_raw(width, height, buf)
+
+        // Use cached raw buffer if dimensions match to avoid reallocation
+        let raw: Vec<u16> = {
+            let mut cache = self.raw_buffer.lock().unwrap();
+            if let Some(mut cached) = cache.take() {
+                if cached.len() == (width * height) as usize {
+                    // Reuse cached buffer - fill it from input
+                    if buf.len() >= expected {
+                        let (chunks, _) = buf.as_chunks::<2>();
+                        for (i, c) in chunks.iter().take((width * height) as usize).enumerate() {
+                            cached[i] = u16::from_le_bytes([c[0], c[1]]);
+                        }
+                    } else {
+                        // Input too small, fall back to simulated data
+                        cached = generate_simulated_raw(width, height, buf);
+                    }
+                    *self.raw_buffer.lock().unwrap() = Some(cached.clone());
+                    cached
+                } else {
+                    // Dimensions changed, allocate new and cache it
+                    let raw: Vec<u16> = if buf.len() >= expected {
+                        let (chunks, _) = buf.as_chunks::<2>();
+                        chunks
+                            .iter()
+                            .take((width * height) as usize)
+                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                            .collect()
+                    } else {
+                        warn!(
+                            "CpuEngine: input buffer too small ({} < {}), using simulated data",
+                            buf.len(),
+                            expected
+                        );
+                        generate_simulated_raw(width, height, buf)
+                    };
+                    *self.raw_buffer.lock().unwrap() = Some(raw.clone());
+                    raw
+                }
+            } else {
+                // First frame, allocate and cache
+                let raw: Vec<u16> = if buf.len() >= expected {
+                    let (chunks, _) = buf.as_chunks::<2>();
+                    chunks
+                        .iter()
+                        .take((width * height) as usize)
+                        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                        .collect()
+                } else {
+                    warn!(
+                        "CpuEngine: input buffer too small ({} < {}), using simulated data",
+                        buf.len(),
+                        expected
+                    );
+                    generate_simulated_raw(width, height, buf)
+                };
+                *self.raw_buffer.lock().unwrap() = Some(raw.clone());
+                raw
+            }
         };
         let _t_input = t0.elapsed();
 
