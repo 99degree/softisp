@@ -204,7 +204,7 @@ impl BackendCapabilities {
         let lower = backend_name.to_lowercase();
         let (native_int16, fp16, gpu) = if lower.contains("cpu") || lower.contains("neon") {
             (true, false, false)
-        } else if lower.contains("vulkan") || lower.contains("opencl") || lower.contains("cl") {
+        } else if lower.contains("vulkan") {
             (true, true, true)
         } else {
             (false, false, false)

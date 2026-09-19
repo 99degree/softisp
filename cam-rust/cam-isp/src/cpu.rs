@@ -143,50 +143,22 @@ impl IspEngine for CpuEngine {
         // ── 1. RawInput: interpret as INT16 Bayer ──
         let expected = (width * height * 2) as usize;
 
-        // Use cached raw buffer if dimensions match to avoid reallocation
+        // Reuse cached raw buffer if dimensions match to avoid reallocation.
+        // On dimension mismatch (or first frame) a fresh Vec<u16> is allocated
+        // and cached for subsequent frames — the per-frame path then only does
+        // a lock + fill rather than a heap alloc.
+        let cached_len = (width * height) as usize;
         let raw: Vec<u16> = {
-            let mut cache = self.raw_buffer.lock().unwrap();
-            if let Some(mut cached) = cache.take() {
-                if cached.len() == (width * height) as usize {
-                    // Reuse cached buffer - fill it from input
-                    if buf.len() >= expected {
-                        let (chunks, _) = buf.as_chunks::<2>();
-                        for (i, c) in chunks.iter().take((width * height) as usize).enumerate() {
-                            cached[i] = u16::from_le_bytes([c[0], c[1]]);
-                        }
-                    } else {
-                        // Input too small, fall back to simulated data
-                        cached = generate_simulated_raw(width, height, buf);
-                    }
-                    *self.raw_buffer.lock().unwrap() = Some(cached.clone());
-                    cached
-                } else {
-                    // Dimensions changed, allocate new and cache it
-                    let raw: Vec<u16> = if buf.len() >= expected {
-                        let (chunks, _) = buf.as_chunks::<2>();
-                        chunks
-                            .iter()
-                            .take((width * height) as usize)
-                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                            .collect()
-                    } else {
-                        warn!(
-                            "CpuEngine: input buffer too small ({} < {}), using simulated data",
-                            buf.len(),
-                            expected
-                        );
-                        generate_simulated_raw(width, height, buf)
-                    };
-                    *self.raw_buffer.lock().unwrap() = Some(raw.clone());
-                    raw
-                }
-            } else {
-                // First frame, allocate and cache
-                let raw: Vec<u16> = if buf.len() >= expected {
+            let mut cache = self.raw_buffer.lock().expect("raw_buffer mutex poisoned");
+            // Determine whether we can reuse the existing allocation.
+            let reuse = cache.as_ref().is_some_and(|c| c.len() == cached_len);
+            if !reuse {
+                // Dimensions changed (or first frame): allocate fresh and cache it.
+                let allocated = if buf.len() >= expected {
                     let (chunks, _) = buf.as_chunks::<2>();
                     chunks
                         .iter()
-                        .take((width * height) as usize)
+                        .take(cached_len)
                         .map(|c| u16::from_le_bytes([c[0], c[1]]))
                         .collect()
                 } else {
@@ -197,8 +169,24 @@ impl IspEngine for CpuEngine {
                     );
                     generate_simulated_raw(width, height, buf)
                 };
-                *self.raw_buffer.lock().unwrap() = Some(raw.clone());
-                raw
+                let out = allocated.clone();
+                *cache = Some(allocated);
+                out
+            } else if buf.len() >= expected {
+                // Fast path: reuse cached buffer, refill in place.
+                let cached = cache.as_mut().expect("checked non-None above");
+                let (chunks, _) = buf.as_chunks::<2>();
+                let n = cached_len.min(chunks.len());
+                for (c, dst) in chunks.iter().zip(cached.iter_mut().take(n)) {
+                    *dst = u16::from_le_bytes([c[0], c[1]]);
+                }
+                cached[..n].to_vec()
+            } else {
+                // Cached but input too small this frame — fall back to simulate.
+                let simulated = generate_simulated_raw(width, height, buf);
+                let out = simulated.clone();
+                *cache = Some(simulated);
+                out
             }
         };
         let _t_input = t0.elapsed();
