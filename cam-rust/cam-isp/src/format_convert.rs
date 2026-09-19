@@ -62,7 +62,7 @@ impl FormatConvertEngine {
             .ok_or_else(|| crate::error::IspError::Mnn("fmt conv model load fail".into()))?;
 
         let session = interp
-            .create_session(MnnBackendType::Cpu, 2)
+            .create_session(MnnBackendType::Vulkan, 2)
             .ok_or_else(|| crate::error::IspError::Mnn("fmt conv session fail".into()))?;
 
         info!("FormatConvertEngine: ready ({} bytes ONNX)", onnx.len());
