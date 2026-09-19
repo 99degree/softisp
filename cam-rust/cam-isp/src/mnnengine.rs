@@ -1026,26 +1026,6 @@ impl IspEngine for MnnEngine {
                 }
             };
 
-            // Preload GPU backend libraries to register them with MNN.
-            // On real Android (not Termux), the proprietary Adreno/Mali driver
-            // will be accessible and Vulkan/OpenCL sessions will initialize.
-            // On Termux, GPU libs load but VulkanDevice init throws
-            // length_error("vector") due to Android linker namespace isolation.
-            unsafe {
-                let vk = libloading::os::unix::Library::new("libMNN_Vulkan.so");
-                if let Ok(lib) = vk {
-                    std::mem::forget(lib);
-                }
-                let cl = libloading::os::unix::Library::new("libMNN_CL.so");
-                if let Ok(lib) = cl {
-                    std::mem::forget(lib);
-                }
-                let gl = libloading::os::unix::Library::new("libMNN_GL.so");
-                if let Ok(lib) = gl {
-                    std::mem::forget(lib);
-                }
-            }
-
             if mnn_result.0.is_empty() {
                 error!("MNN model bytes are empty");
                 return Err(crate::error::IspError::Mnn("MNN model bytes empty".into()));
