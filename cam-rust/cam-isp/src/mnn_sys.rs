@@ -28,12 +28,7 @@ pub const MNN_MEMORY_AHARDWAREBUFFER: c_int = 14;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MnnBackendType {
-    Cpu = 0,
-    Opencl = 3,
-    Opengl = 6,
     Vulkan = 7,
-    Metal = 9,
-    Nn = 11,
 }
 
 // ── Model Info enum ──────────────────────────────────────────────────────
