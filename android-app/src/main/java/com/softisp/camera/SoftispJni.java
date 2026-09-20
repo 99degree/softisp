@@ -1,6 +1,7 @@
 package com.softisp.camera;
 
 import android.content.Context;
+import android.graphics.SurfaceTexture;
 import android.util.Log;
 
 public class SoftispJni {
