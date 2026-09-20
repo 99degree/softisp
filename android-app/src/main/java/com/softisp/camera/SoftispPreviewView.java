@@ -25,7 +25,6 @@ public class SoftispPreviewView extends TextureView implements TextureView.Surfa
     private Context context;
     private String cameraId;
     private AndroidCameraBridge androidCameraBridge;
-    private Surface previewSurface;
     private boolean isPreviewStarted = false;
     
     public SoftispPreviewView(Context context) {
@@ -81,32 +80,28 @@ public class SoftispPreviewView extends TextureView implements TextureView.Surfa
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int width, int height) {
         Log.i(TAG, "Surface texture available: " + width + "x" + height);
-        previewSurface = new Surface(surfaceTexture);
+        // Set the preview surface for native window
+        SoftispJni.setPreviewSurface(surfaceTexture);
+        // Start the frame processing bridge
         startCameraPreview();
     }
     
     @Override
     public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {
         Log.i(TAG, "Surface texture size changed: " + width + "x" + height);
-        // Reset the preview surface with new dimensions
-        if (previewSurface != null) {
-            previewSurface.release();
-        }
-        previewSurface = new Surface(surfaceTexture);
-        if (androidCameraBridge != null && isPreviewStarted) {
-            androidCameraBridge.stopPreview();
-            startCameraPreview();
-        }
+        // We don't need to do anything because the native window will handle the size change?
+        // But we should restart the preview? Actually, the surface texture is the same, so we don't need to restart.
+        // However, if the bridge is using the surface texture for something else, we might need to restart.
+        // We are not using the surface texture for the bridge anymore, so we do nothing.
     }
     
     @Override
     public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
         Log.i(TAG, "Surface texture destroyed");
+        // Clear the preview surface for native window
+        SoftispJni.setPreviewSurface(null);
+        // Stop the frame processing bridge
         stopCameraPreview();
-        if (previewSurface != null) {
-            previewSurface.release();
-            previewSurface = null;
-        }
         return true;
     }
     
@@ -116,8 +111,8 @@ public class SoftispPreviewView extends TextureView implements TextureView.Surfa
     }
     
     private void startCameraPreview() {
-        if (cameraId == null || previewSurface == null) {
-            Log.e(TAG, "Cannot start preview: cameraId=" + cameraId + ", previewSurface=" + (previewSurface != null ? "valid" : "null"));
+        if (cameraId == null) {
+            Log.e(TAG, "Cannot start preview: cameraId is null");
             return;
         }
         
@@ -128,8 +123,8 @@ public class SoftispPreviewView extends TextureView implements TextureView.Surfa
                 // Note: Frame processor will be set by the activity via setFrameProcessor()
             }
             
-            // Start the preview with our surface for display and the bridge's image reader for processing
-            androidCameraBridge.startPreview(previewSurface);
+            // Start the frame processing (without a display surface)
+            androidCameraBridge.startPreview();
             isPreviewStarted = true;
             Log.i(TAG, "Camera preview started");
         } catch (Exception e) {
