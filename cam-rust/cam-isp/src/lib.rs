@@ -126,6 +126,13 @@ pub fn init() {
 #[cfg(feature = "mnn")]
 pub mod mnn_sys;
 
+/// Initialize the ISP library for JNI.
+/// This function is called from JNI_OnLoad to ensure the library is initialized.
+#[no_mangle]
+pub extern "C" fn cam_isp_init() {
+    init();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
