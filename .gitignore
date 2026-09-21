@@ -53,6 +53,7 @@ Thumbs.db
 frames/
 *.o
 *.obj
+*.so
 !mnn_wrapper.o
 !mnn_convert_api.o
 *.mnn
