@@ -8,6 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 cam-types = { path = "../cam-types" }
+jni-dep = { package = "jni", version = "0.21", optional = true }
 serde = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
@@ -79,7 +80,8 @@ required-features = ["mnn"]
 
 [features]
 default = ["jni"]
-jni = []
+jni = ["dep:jni-dep"]
+
 legacy_exact_table = []
 mnn_buffer = []
 ort = ["dep:ort"]

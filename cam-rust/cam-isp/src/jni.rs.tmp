@@ -1,0 +1,1 @@
+Creating src/jni.rs with jni-rs macros; exporting cam_isp_init; removing C dependency
