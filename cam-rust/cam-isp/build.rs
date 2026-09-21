@@ -47,56 +47,13 @@ fn main() {
     #[cfg(feature = "mnn")]
     link_mnnconvert();
 
-    // Link JNI library for Android with JNI feature
+    // Link JNI library for Android with JNI feature (rust jni-rs, no C)
     #[cfg(all(target_os = "android", feature = "jni"))]
     {
-        println!("cargo:warning=!!! INSIDE JNI BLOCK !!!");
-        let jni_src = Path::new("src/jni.c");
-        if jni_src.exists() {
-            println!("cargo:warning=cargo:rerun-if-changed={}", jni_src.display());
-            let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-            let jni_obj = out_dir.join("jni.o");
-            let mut build = cc::Build::new();
-            build
-                .file(jni_src)
-                .flag_if_supported("-std=c99")
-                .include("src");
-            setup_cc_for_android(&mut build);
-            // Compile to object file by calling the compiler directly
-            let compiler = build.get_compiler();
-            let mut cmd = compiler.to_command();
-            cmd.arg("-c").arg(jni_src).arg("-o").arg(&jni_obj);
-            cmd.arg("-std=c99");
-            cmd.arg("-I").arg("src");
-            let output = cmd.output().expect("Failed to compile jni.c");
-            println!("cargo:warning=jni.c compile stdout: {}", String::from_utf8_lossy(&output.stdout));
-            println!("cargo:warning=jni.c compile stderr: {}", String::from_utf8_lossy(&output.stderr));
-            println!("cargo:warning=jni_obj exists: {}", jni_obj.exists());
-
-            // Create a version script to export JNI symbols
-            let version_script = out_dir.join("jni_version.ld");
-            std::fs::write(&version_script, r#"
-{
-  global:
-    JNI_OnLoad;
-    Java_com_softisp_camera_SoftispJni_setPreviewSurface;
-  local:
-    *;
-};
-"#).expect("Failed to write version script");
-
-            // Link the JNI object file directly into the shared library
-            println!("cargo:warning=EMITTING LINK ARG: {}", jni_obj.display());
-            println!("cargo:rustc-link-arg={}", jni_obj.display());
-            
-            // Use the version script to export JNI symbols
-            println!("cargo:warning=EMITTING VERSION SCRIPT: {}", version_script.display());
-            println!("cargo:rustc-link-arg=-Wl,--version-script={}", version_script.display());
-            
-            // Disable garbage collection
-            println!("cargo:warning=EMITTING NO-GC-SECTIONS");
-            println!("cargo:rustc-link-arg=-Wl,--no-gc-sections");
-        }
+        println!("cargo:warning=!!! JNI BLOCK (rust jni-rs, no jni.c) !!!");
+        // jni-rs handles JNI_OnLoad / Java_* via rust macros; no C compile needed.
+        // jni.c removed; using jni.rs (jni-rs)
+        // no version script, no jni.o needed
     }
 
     // Emit NDK linker flags for Android targets
