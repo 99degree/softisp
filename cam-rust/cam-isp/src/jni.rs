@@ -77,3 +77,15 @@ pub fn native_window() -> Option<jlong> {
 pub fn attach_jvm() -> Option<JNIEnv<'static>> {
     JVM.get().and_then(|vm| vm.attach_current_thread().ok())
 }
+
+/// Run one ISP pipeline step (dummy Bayer → process → render to window).
+/// Called from Java: `SoftispJni.pipelineStep(width, height)`.
+#[no_mangle]
+pub extern "system" fn Java_com_softisp_camera_SoftispJni_pipelineStep(
+    _env: JNIEnv,
+    _class: JClass,
+    width: i32,
+    height: i32,
+) {
+    let _ = crate::bridge::pipeline_step(width as u32, height as u32);
+}
