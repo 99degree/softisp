@@ -28,12 +28,15 @@
 use std::path::{Path, PathBuf};
 
 fn main() {
+    println!("cargo:warning=HELLO FROM BUILD SCRIPT");
     // Emit rerun-if-changed for all env vars that affect the build
-    println!("cargo:rerun-if-env-changed=MNN_DIR");
-    println!("cargo:rerun-if-env-changed=MNN_INCLUDE_DIR");
-    println!("cargo:rerun-if-env-changed=MNN_LIB_DIR");
-    println!("cargo:rerun-if-env-changed=MNN_CONVERT_DIR");
-    println!("cargo:rerun-if-env-changed=ANDROID_NDK_HOME");
+    println!("cargo:warning=DEBUG: target_os = {}", std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "not set".to_string()));
+    println!("cargo:warning=DEBUG: feature jni = {}", if cfg!(feature = "jni") { "yes" } else { "no" });
+    println!("cargo:warning=cargo:rerun-if-env-changed=MNN_DIR");
+    println!("cargo:warning=cargo:rerun-if-env-changed=MNN_INCLUDE_DIR");
+    println!("cargo:warning=cargo:rerun-if-env-changed=MNN_LIB_DIR");
+    println!("cargo:warning=cargo:rerun-if-env-changed=MNN_CONVERT_DIR");
+    println!("cargo:warning=cargo:rerun-if-env-changed=ANDROID_NDK_HOME");
 
     #[cfg(feature = "ort")]
     link_onnxruntime();
@@ -44,8 +47,106 @@ fn main() {
     #[cfg(feature = "mnn")]
     link_mnnconvert();
 
+    // Link JNI library for Android with JNI feature
+    #[cfg(all(target_os = "android", feature = "jni"))]
+    {
+        println!("cargo:warning=!!! INSIDE JNI BLOCK !!!");
+        let jni_src = Path::new("src/jni.c");
+        if jni_src.exists() {
+            println!("cargo:warning=cargo:rerun-if-changed={}", jni_src.display());
+            let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+            let jni_obj = out_dir.join("jni.o");
+            let mut build = cc::Build::new();
+            build
+                .file(jni_src)
+                .flag_if_supported("-std=c99")
+                .include("src");
+            setup_cc_for_android(&mut build);
+            // Compile to object file by calling the compiler directly
+            let compiler = build.get_compiler();
+            let mut cmd = compiler.to_command();
+            cmd.arg("-c").arg(jni_src).arg("-o").arg(&jni_obj);
+            cmd.arg("-std=c99");
+            cmd.arg("-I").arg("src");
+            let output = cmd.output().expect("Failed to compile jni.c");
+            println!("cargo:warning=jni.c compile stdout: {}", String::from_utf8_lossy(&output.stdout));
+            println!("cargo:warning=jni.c compile stderr: {}", String::from_utf8_lossy(&output.stderr));
+            println!("cargo:warning=jni_obj exists: {}", jni_obj.exists());
+
+            // Create a version script to export JNI symbols
+            let version_script = out_dir.join("jni_version.ld");
+            std::fs::write(&version_script, r#"
+{
+  global:
+    JNI_OnLoad;
+    Java_com_softisp_camera_SoftispJni_setPreviewSurface;
+  local:
+    *;
+};
+"#).expect("Failed to write version script");
+
+            // Link the JNI object file directly into the shared library
+            println!("cargo:warning=EMITTING LINK ARG: {}", jni_obj.display());
+            println!("cargo:rustc-link-arg={}", jni_obj.display());
+            
+            // Use the version script to export JNI symbols
+            println!("cargo:warning=EMITTING VERSION SCRIPT: {}", version_script.display());
+            println!("cargo:rustc-link-arg=-Wl,--version-script={}", version_script.display());
+            
+            // Disable garbage collection
+            println!("cargo:warning=EMITTING NO-GC-SECTIONS");
+            println!("cargo:rustc-link-arg=-Wl,--no-gc-sections");
+        }
+    }
+
     // Emit NDK linker flags for Android targets
+    #[cfg(target_os = "android")]
     setup_ndk_linker();
+}
+
+/// Link JNI library for Android.
+fn link_jni() {
+    println!("cargo:warning=In link_jni");
+    let abi_dir = abi_dir();
+    println!("cargo:warning=abi_dir = {}", abi_dir.display());
+    let jni_src = Path::new("src/jni.c");
+    println!("cargo:warning=jni_src = {}", jni_src.display());
+    println!("cargo:warning=jni_src.exists() = {}", jni_src.exists());
+    if jni_src.exists() {
+        println!("cargo:warning=cargo:rerun-if-changed={}", jni_src.display());
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        println!("cargo:warning=out_dir = {}", out_dir.display());
+        let mut build = cc::Build::new();
+        build
+            .file(jni_src)
+            // We are compiling C, not C++
+            .flag_if_supported("-std=c99")
+            .include("src"); // in case we have headers in src
+        setup_cc_for_android(&mut build);
+        build.compile("jni");
+
+        let src = out_dir.join("libjni.a");
+        let dst = abi_dir.join("libjni.a");
+        println!("cargo:warning=src = {}", src.display());
+        println!("cargo:warning=dst = {}", dst.display());
+        if let Some(parent) = dst.parent() {
+            println!("cargo:warning=creating parent dir: {}", parent.display());
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if src.exists() {
+            println!("cargo:warning=copying from {} to {}", src.display(), dst.display());
+            let _ = std::fs::copy(&src, &dst);
+            println!("cargo:warning=cargo:rerun-if-changed={}", dst.display());
+        } else {
+            println!("cargo:warning=warning: source file does not exist: {}", src.display());
+        }
+    }
+
+    println!("cargo:warning=cargo:rustc-link-search=native={}", abi_dir.display());
+    println!("cargo:warning=cargo:rustc-link-arg=-Wl,--whole-archive");
+    println!("cargo:warning=cargo:rustc-link-lib=static=jni");
+println!("cargo:warning=cargo:rustc-link-lib=static=c++_static");
+    println!("cargo:warning=cargo:rustc-link-arg=-Wl,--no-whole-archive");
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -101,7 +202,7 @@ fn setup_ndk_linker() {
     // Link against NDK system libraries
     println!("cargo:rustc-link-lib=log");
     println!("cargo:rustc-link-lib=android");
-    println!("cargo:rustc-link-lib=c++_shared");
+    println!("cargo:rustc-link-lib=c++_static");
     println!("cargo:rustc-link-lib=mediandk");
 
     eprintln!(
@@ -251,17 +352,17 @@ fn abi_suffix() -> String {
 
     if os == "android" {
         match arch.as_str() {
-            "aarch64" | "arm64" => "aarch64-v8a".to_string(),
+            "aarch64" | "arm64" => "arm64-v8a".to_string(),
             "arm" | "armv7" => "armeabi-v7a".to_string(),
             "x86_64" => "x86_64".to_string(),
             "x86" | "i686" => "x86".to_string(),
             "riscv64" => "riscv64".to_string(),
             other => {
                 eprintln!(
-                    "warning: unknown Android ABI arch '{}', defaulting to aarch64-v8a",
+                    "warning: unknown Android ABI arch '{}', defaulting to armeabi-v7a",
                     other
                 );
-                "aarch64-v8a".to_string()
+                "armeabi-v7a".to_string()
             }
         }
     } else {
@@ -436,19 +537,20 @@ fn setup_cc_for_android(build: &mut cc::Build) {
         return;
     }
 
-    // When the build host is itself aarch64-linux-android (e.g. Termux on
-    // Android), the NDK's clang wrapper is a foreign x86_64 shell script that
-    // cannot execute on this host. The local toolchain (clang/clang++) already
-    // targets aarch64-linux-android with a working sysroot, so let cc::Build use
-    // it instead of forcing the NDK compiler.
-    let host_triple = std::env::var("CARGO_CFG_HOST_TRIPLE").unwrap_or_default();
-    if host_triple.contains("aarch64") && host_triple.contains("android") {
-        eprintln!(
-            "cc::Build: host is aarch64-linux-android; using local clang, skipping NDK compiler"
-        );
+    let host = std::env::var("CARGO_CFG_HOST_TRIPLE")
+        .unwrap_or_else(|_| std::env::var("HOST").unwrap_or_default());
+    eprintln!("setup_cc_for_android: target_os = {}, host = {}", target_os, host);
+    if host.contains("android") {
+        // Building for Android on an Android host (e.g., Termux): use the system compiler.
+        let target_triple = std::env::var("TARGET").unwrap_or_default();
+        build.target(&target_triple);
+        // The system compiler is already configured for the Android target.
+        // No additional sysroot or library flags needed here as the compiler driver handles them.
         return;
     }
 
+    // Otherwise, we are cross-compiling for Android from a non-Android host: use the NDK toolchain.
+    eprintln!("setup_cc_for_android: target_os={}, host={}", target_os, host);
     let ndk = match find_ndk() {
         Some(p) => p,
         None => {
@@ -457,12 +559,12 @@ fn setup_cc_for_android(build: &mut cc::Build) {
         }
     };
 
-    let host = ndk_host();
+    let host_triple = ndk_host();
     let toolchain = ndk
         .join("toolchains")
         .join("llvm")
         .join("prebuilt")
-        .join(host);
+        .join(host_triple);
     let triple = target_ndk_triple();
     let api = ndk_api_level();
 
