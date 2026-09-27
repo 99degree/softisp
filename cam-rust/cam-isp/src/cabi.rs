@@ -750,6 +750,26 @@ pub unsafe extern "C" fn softisp_clear_opset_mode() -> i32 {
     SOFTISP_OK
 }
 
+// ── C ABI: native window (Android) ──────────────────────────────────
+
+/// Set the active ANativeWindow* for rendering output.
+///
+/// # Safety
+///
+/// `window` must be a valid ANativeWindow* or null.
+/// The library acquires the new window (if non-null) and releases the old one.
+#[no_mangle]
+pub unsafe extern "C" fn softisp_set_native_window(window: *mut std::ffi::c_void) -> i32 {
+    crate::set_native_window(window);
+    SOFTISP_OK
+}
+
+/// Release the active ANativeWindow and set it to null.
+#[no_mangle]
+pub extern "C" fn softisp_release_native_window() {
+    crate::release_native_window();
+}
+
 // ── C ABI: memory & info ──────────────────────────────────────────────────
 
 /// Free a buffer returned by `softisp_compose_onnx` or `softisp_compose_mnn`.

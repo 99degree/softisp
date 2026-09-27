@@ -179,6 +179,13 @@ public class SoftispJni {
     public static native void setPreviewSurface(SurfaceTexture surfaceTexture);
 
     /**
+     * Release the native window previously set via setPreviewSurface or
+     * startNativeCamera, freeing the ANativeWindow refcount through the
+     * softisp C ABI.
+     */
+    public static native void releasePreviewSurface();
+
+    /**
      * Get a human-readable error string for an error code.
      * 
      * @param code Error code from any native function

@@ -98,9 +98,7 @@ public class SoftispPreviewView extends TextureView implements TextureView.Surfa
     @Override
     public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
         Log.i(TAG, "Surface texture destroyed");
-        // Clear the preview surface for native window
-        SoftispJni.setPreviewSurface(null);
-        // Stop the frame processing bridge
+        SoftispJni.releasePreviewSurface();
         stopCameraPreview();
         return true;
     }

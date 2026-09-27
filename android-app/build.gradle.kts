@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    kotlin("android")
 }
 
 android {
@@ -35,10 +34,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
-
     ndkVersion = "29.0.14206865"
 
     buildFeatures {
@@ -58,6 +53,16 @@ android {
     externalNativeBuild {
         cmake {
             // No special flags needed
+        }
+    }
+}
+
+configurations.all {
+    resolutionStrategy {
+        eachDependency {
+            if (requested.group == "org.jetbrains.kotlin") {
+                useVersion("1.9.0")
+            }
         }
     }
 }

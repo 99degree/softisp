@@ -30,8 +30,14 @@ use std::path::{Path, PathBuf};
 fn main() {
     println!("cargo:warning=HELLO FROM BUILD SCRIPT");
     // Emit rerun-if-changed for all env vars that affect the build
-    println!("cargo:warning=DEBUG: target_os = {}", std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "not set".to_string()));
-    println!("cargo:warning=DEBUG: feature jni = {}", if cfg!(feature = "jni") { "yes" } else { "no" });
+    println!(
+        "cargo:warning=DEBUG: target_os = {}",
+        std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "not set".to_string())
+    );
+    println!(
+        "cargo:warning=DEBUG: feature jni = {}",
+        if cfg!(feature = "jni") { "yes" } else { "no" }
+    );
     println!("cargo:warning=cargo:rerun-if-env-changed=MNN_DIR");
     println!("cargo:warning=cargo:rerun-if-env-changed=MNN_INCLUDE_DIR");
     println!("cargo:warning=cargo:rerun-if-env-changed=MNN_LIB_DIR");
@@ -91,18 +97,28 @@ fn link_jni() {
             let _ = std::fs::create_dir_all(parent);
         }
         if src.exists() {
-            println!("cargo:warning=copying from {} to {}", src.display(), dst.display());
+            println!(
+                "cargo:warning=copying from {} to {}",
+                src.display(),
+                dst.display()
+            );
             let _ = std::fs::copy(&src, &dst);
             println!("cargo:warning=cargo:rerun-if-changed={}", dst.display());
         } else {
-            println!("cargo:warning=warning: source file does not exist: {}", src.display());
+            println!(
+                "cargo:warning=warning: source file does not exist: {}",
+                src.display()
+            );
         }
     }
 
-    println!("cargo:warning=cargo:rustc-link-search=native={}", abi_dir.display());
+    println!(
+        "cargo:warning=cargo:rustc-link-search=native={}",
+        abi_dir.display()
+    );
     println!("cargo:warning=cargo:rustc-link-arg=-Wl,--whole-archive");
     println!("cargo:warning=cargo:rustc-link-lib=static=jni");
-println!("cargo:warning=cargo:rustc-link-lib=static=c++_static");
+    println!("cargo:warning=cargo:rustc-link-lib=static=c++_static");
     println!("cargo:warning=cargo:rustc-link-arg=-Wl,--no-whole-archive");
 }
 
@@ -496,7 +512,10 @@ fn setup_cc_for_android(build: &mut cc::Build) {
 
     let host = std::env::var("CARGO_CFG_HOST_TRIPLE")
         .unwrap_or_else(|_| std::env::var("HOST").unwrap_or_default());
-    eprintln!("setup_cc_for_android: target_os = {}, host = {}", target_os, host);
+    eprintln!(
+        "setup_cc_for_android: target_os = {}, host = {}",
+        target_os, host
+    );
     if host.contains("android") {
         // Building for Android on an Android host (e.g., Termux): use the system compiler.
         let target_triple = std::env::var("TARGET").unwrap_or_default();
@@ -507,7 +526,10 @@ fn setup_cc_for_android(build: &mut cc::Build) {
     }
 
     // Otherwise, we are cross-compiling for Android from a non-Android host: use the NDK toolchain.
-    eprintln!("setup_cc_for_android: target_os={}, host={}", target_os, host);
+    eprintln!(
+        "setup_cc_for_android: target_os={}, host={}",
+        target_os, host
+    );
     let ndk = match find_ndk() {
         Some(p) => p,
         None => {
