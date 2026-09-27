@@ -93,7 +93,19 @@ pub mod temporal;
 pub mod cabi;
 
 use log::info;
+use std::os::raw::c_void;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Once;
+
+/// Active native window (ANativeWindow*) cast from Surface.
+/// Stored as an atomic pointer-sized integer for thread-safe access.
+static WINDOW: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_os = "android")]
+extern "C" {
+    fn ANativeWindow_acquire(window: *mut c_void);
+    fn ANativeWindow_release(window: *mut c_void);
+}
 
 /// Initialize the ISP library — registers all built-in engines.
 /// Safe to call multiple times.
@@ -125,6 +137,43 @@ pub fn init() {
 // MNN FFI bindings (only compiled when `mnn` feature is enabled)
 #[cfg(feature = "mnn")]
 pub mod mnn_sys;
+
+/// Set the active native window.
+///
+/// # Safety
+///
+/// The window pointer must be a valid ANativeWindow* or null.
+///
+/// This function acquires the new window (if non-null) and releases the old one.
+pub unsafe fn set_native_window(window: *mut c_void) {
+    let old = WINDOW.swap(window as usize, Ordering::AcqRel);
+    if old != 0 {
+        // Release the old window if it was set.
+        ANativeWindow_release(old as *mut c_void);
+    }
+    if window as usize != 0 {
+        // Acquire the new window if it is not null.
+        ANativeWindow_acquire(window);
+    }
+}
+
+/// Retrieve the active native window pointer.
+///
+/// Returns null if no window has been set.
+pub fn native_window() -> *mut c_void {
+    WINDOW.load(Ordering::Acquire) as *mut c_void
+}
+
+/// Release the active native window and set it to null.
+pub fn release_native_window() {
+    let old = WINDOW.swap(0, Ordering::AcqRel);
+    if old != 0 {
+        // Release the window if it was set.
+        unsafe {
+            ANativeWindow_release(old as *mut c_void);
+        }
+    }
+}
 
 /// Initialize the ISP library for JNI.
 /// This function is called from JNI_OnLoad to ensure the library is initialized.
