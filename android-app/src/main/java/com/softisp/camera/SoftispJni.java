@@ -13,7 +13,7 @@ public class SoftispJni {
 
     /**
      * Compose an ONNX model for the given profile and resolution.
-     * 
+     *
      * @param width Image width in pixels
      * @param height Image height in pixels
      * @param profile Profile name: "LITE", "MED", "HEAVY", "PRO", "UNIFIED", "HDR", "TEST"
@@ -27,7 +27,7 @@ public class SoftispJni {
 
     /**
      * Create a new custom pipeline profile with default values.
-     * 
+     *
      * @return Opaque handle (pointer) to the profile, or 0 on failure.
      *         Must be freed with {@link #profileFree(long)}.
      */
@@ -35,7 +35,7 @@ public class SoftispJni {
 
     /**
      * Free a custom pipeline profile handle.
-     * 
+     *
      * @param handle Handle returned by {@link #profileCreate()}
      */
     public static native void profileFree(long handle);
@@ -50,7 +50,7 @@ public class SoftispJni {
 
     /**
      * Set a boolean feature flag on a custom profile.
-     * 
+     *
      * @param handle Profile handle from {@link #profileCreate()}
      * @param flag Flag name (e.g., "use_fcs", "use_ldci", "use_ee", "use_warp",
      *             "use_unsharp", "use_lsc", "use_hdr", "use_zone_stats",
@@ -66,7 +66,7 @@ public class SoftispJni {
 
     /**
      * Set the demosaic quality on a custom profile.
-     * 
+     *
      * @param handle Profile handle
      * @param quality {@link DemosaicQuality#STANDARD}, {@link DemosaicQuality#HQ_LINEAR}, or {@link DemosaicQuality#EDGE}
      * @return {@link SoftispError#OK} on success
@@ -75,7 +75,7 @@ public class SoftispJni {
 
     /**
      * Set the rotation mode on a custom profile.
-     * 
+     *
      * @param handle Profile handle
      * @param mode 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip
      * @return {@link SoftispError#OK} on success
@@ -84,7 +84,7 @@ public class SoftispJni {
 
     /**
      * Set the output pixel format on a custom profile.
-     * 
+     *
      * @param handle Profile handle
      * @param format One of {@link OutputFormat} constants
      * @return {@link SoftispError#OK} on success
@@ -93,7 +93,7 @@ public class SoftispJni {
 
     /**
      * Set the EIS margin fraction on a custom profile.
-     * 
+     *
      * @param handle Profile handle
      * @param margin Margin fraction (e.g., 0.05 for 5% border)
      * @return {@link SoftispError#OK} on success
@@ -102,7 +102,7 @@ public class SoftispJni {
 
     /**
      * Set the stats downscale max dimension on a custom profile.
-     * 
+     *
      * @param handle Profile handle
      * @param maxPx Maximum dimension in pixels for stats computation (0 = auto)
      * @return {@link SoftispError#OK} on success
@@ -111,7 +111,7 @@ public class SoftispJni {
 
     /**
      * Set the pipeline downscale target on a custom profile.
-     * 
+     *
      * @param handle Profile handle
      * @param maxPx Maximum dimension in pixels for pipeline (0 = no downscale)
      * @return {@link SoftispError#OK} on success
@@ -120,7 +120,7 @@ public class SoftispJni {
 
     /**
      * Set tiled rendering parameters on a custom profile.
-     * 
+     *
      * @param handle Profile handle
      * @param tileCountX Number of tiles in X dimension
      * @param tileCountY Number of tiles in Y dimension
@@ -131,7 +131,7 @@ public class SoftispJni {
 
     /**
      * Compose an ONNX model using a custom pipeline profile.
-     * 
+     *
      * @param width Image width
      * @param height Image height
      * @param handle Custom profile handle
@@ -146,7 +146,7 @@ public class SoftispJni {
 
     /**
      * Set the global opset mode for ONNX emission.
-     * 
+     *
      * @param mode {@link OpsetMode#PRIMITIVE} or {@link OpsetMode#CUSTOM}
      * @return {@link SoftispError#OK} on success
      */
@@ -154,7 +154,7 @@ public class SoftispJni {
 
     /**
      * Clear the global opset mode override.
-     * 
+     *
      * @return {@link SoftispError#OK} on success
      */
     public static native int clearOpsetMode();
@@ -165,7 +165,7 @@ public class SoftispJni {
 
     /**
      * Get the softisp library version string.
-     * 
+     *
      * @return Version string (e.g., "cam-isp 0.1.0 GPL-3.0-or-later")
      */
     public static native String version();
@@ -186,8 +186,20 @@ public class SoftispJni {
     public static native void releasePreviewSurface();
 
     /**
+     * Start native camera output to the given surface.
+     *
+     * @param surface The Surface from TextureView/SurfaceView
+     */
+    public static native void startNativeCamera(SurfaceTexture surface);
+
+    /**
+     * Stop native camera output.
+     */
+    public static native void stopNativeCamera();
+
+    /**
      * Get a human-readable error string for an error code.
-     * 
+     *
      * @param code Error code from any native function
      * @return Error description string
      */

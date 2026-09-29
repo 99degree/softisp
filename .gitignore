@@ -124,7 +124,7 @@ cam-rust/cam-isp/examples/check_onnx_sizes.rs
 ~/android-sdk/
 
 # Android AOSP build artifacts
-AndroidManifest.xml
+
 META-INF/
 *.aar
 *.aar.zip
