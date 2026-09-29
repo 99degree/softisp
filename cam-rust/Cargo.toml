@@ -12,6 +12,7 @@ members = [
     "cam-binder",
     "cam-app",
     "cam-disp",
+    "cam-camera-app",
 ]
 
 [workspace.dependencies]

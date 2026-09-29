@@ -1,253 +1,117 @@
-#Copyright (c) 2019-2020 <>< Charles Lohr - Under the MIT/x11 or NewBSD License you choose.
-# NO WARRANTY! NO GUARANTEE OF SUPPORT! USE AT YOUR OWN RISK
-
-all : makecapk.apk
-
-.PHONY : push run
-
-# WARNING WARNING WARNING!  YOU ABSOLUTELY MUST OVERRIDE THE PROJECT NAME
-# you should also override these parameters, get your own signatre file and make your own manifest.
-APPNAME?=cnfgtest
-LABEL?=$(APPNAME)
-APKFILE ?= $(APPNAME).apk
-PACKAGENAME?=org.yourorg.$(APPNAME)
-RAWDRAWANDROID?=.
-RAWDRAWANDROIDSRCS=$(RAWDRAWANDROID)/android_native_app_glue.c
-SRC?=test.c
-BUILD_DIR?=.
-
-#We've tested it with android version 22, 24, 28, 29, 30, 32 and 34.
-#You can target something like Android 28, but if you set ANDROIDVERSION to say 22, then
-#Your app should (though not necessarily) support all the way back to Android 22.
-ANDROIDVERSION?=26
-ANDROIDTARGET?=$(ANDROIDVERSION)
-CFLAGS?=-ffunction-sections -Os -fdata-sections -Wall -fvisibility=hidden
-LDFLAGS?=-Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/output.map -s
-ANDROID_FULLSCREEN?=y
-ADB?=adb
-UNAME := $(shell uname)
-
-# For really tight compiles....
-CFLAGS += -fvisibility=hidden
-LDFLAGS += -s
-
-# For C++
-# LDFLAGS += -static-libstdc++
-# $(NDK)/toolchains/llvm/prebuilt/$(OS_NAME)/sysroot/usr/lib/aarch64-linux-android/libc.a
-
-ANDROID_FULLSCREEN?=y
-ADB?=adb
-UNAME := $(shell uname)
-
-
-ANDROIDSRCS:= $(SRC) $(RAWDRAWANDROIDSRCS)
-
-#if you have a custom Android Home location you can add it to this list.
-#This makefile will select the first present folder.
-
-
-ifeq ($(UNAME), Linux)
-OS_NAME = linux-x86_64
-endif
-ifeq ($(UNAME), Darwin)
-OS_NAME = darwin-x86_64
-endif
-ifeq ($(OS), Windows_NT)
-OS_NAME = windows-x86_64
-endif
-
-# Search list for where to try to find the SDK
-SDK_LOCATIONS += $(ANDROID_HOME) $(ANDROID_SDK_ROOT) ~/Android/Sdk $(HOME)/Library/Android/sdk
-
-#Just a little Makefile witchcraft to find the first SDK_LOCATION that exists
-#Then find an ndk folder and build tools folder in there.
-ANDROIDSDK?=$(firstword $(foreach dir, $(SDK_LOCATIONS), $(basename $(dir) ) ) )
-NDK?=$(firstword $(ANDROID_NDK) $(ANDROID_NDK_HOME) $(wildcard $(ANDROIDSDK)/ndk/*) $(wildcard $(ANDROIDSDK)/ndk-bundle/*) )
-BUILD_TOOLS?=$(lastword $(wildcard $(ANDROIDSDK)/build-tools/*) )
-
-# fall back to default Android SDL installation location if valid NDK was not found
-ifeq ($(NDK),)
-ANDROIDSDK := ~/Android/Sdk
-endif
-
-# Verify if directories are detected
-ifeq ($(ANDROIDSDK),)
-$(error ANDROIDSDK directory not found)
-endif
-
-AAPT?=$(firstword $(wildcard $(ANDROIDSDK)/build-tools/*/aapt) aapt)
-ZIPALIGN?=$(firstword $(wildcard $(ANDROIDSDK)/build-tools/*/zipalign) zipalign)
-APKSIGNER?=$(firstword $(wildcard $(ANDROIDSDK)/build-tools/*/apksigner) apksigner)
-KEYTOOL?=$(firstword $(wildcard $(ANDROIDSDK)/build-tools/*/keytool) keytool)
-
-ifeq ($(AAPT),)
-$(error AAPT not found under ANDROIDSDK/build-tools or PATH)
-endif
-
-# On Termux/Android hosts, prefer host-native tools when the SDK build-tools
-# binaries are x86-only and not executable on this device.
-AAPT:=/data/data/com.termux/files/usr/bin/aapt
-ZIPALIGN:=/data/data/com.termux/files/usr/bin/zipalign
-APKSIGNER:=/data/data/com.termux/files/usr/bin/apksigner
-KEYTOOL:=/data/data/com.termux/files/usr/bin/keytool
-
-ANDROID_JAR?=$(ANDROIDSDK)/platforms/android-$(ANDROIDVERSION)/android.jar
-ifeq ($(ANDROID_JAR),)
-ANDROID_JAR?=$(firstword $(wildcard $(ANDROIDSDK)/platforms/android-*/android.jar))
-endif
-ifeq ($(ANDROID_JAR),)
-$(error No android.jar found under $(ANDROIDSDK)/platforms)
-endif
-
-# Pick the highest available platform jar when the exact minSdk platform is absent.
-ifneq ($(wildcard $(ANDROID_JAR)),)
-  # exact match exists; keep it
-else
-  ANDROID_JAR := $(lastword $(sort $(wildcard $(ANDROIDSDK)/platforms/android-*/android.jar)))
-endif
-ifeq ($(ANDROID_JAR),)
-$(error No android.jar found under $(ANDROIDSDK)/platforms)
-endif
-
-testsdk :
-	@echo "SDK:\t\t" $(ANDROIDSDK)
-	@echo "NDK:\t\t" $(NDK)
-	@echo "AAPT:\t\t" $(AAPT)
-	@echo "ZIPALIGN:\t" $(ZIPALIGN)
-	@echo "APKSIGNER:\t" $(APKSIGNER)
-	@echo "android.jar:\t" $(ANDROID_JAR)
-
-CFLAGS+=-Os -DANDROID -DAPPNAME=\"$(APPNAME)\"
-ifeq (ANDROID_FULLSCREEN,y)
-CFLAGS +=-DANDROID_FULLSCREEN
-endif
-CFLAGS+= -I$(RAWDRAWANDROID)/rawdraw -fPIC -I$(RAWDRAWANDROID) -DANDROIDVERSION=$(ANDROIDVERSION)
-LDFLAGS += -lm -lGLESv3 -lEGL -landroid -llog -lOpenSLES
-LDFLAGS += -shared -uANativeActivity_onCreate
-
-CC:=./clang-wrapper
-CC_ARM64:=$(CC)
-CC_ARM32:=$(CC)
-CC_x86:=$(CC)
-CC_x86_64:=$(CC)
-
-SYSROOT_FLAG:=--sysroot=/data/data/com.termux/files/home/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot
-CFLAGS += $(SYSROOT_FLAG)
-
-
-# Work around lld auto-requesting -l:libunwind.a on this host/NDK combo.
-UNWIND_LIBUNWIND_A:=
-NDK29 = /data/data/com.termux/files/home/android-sdk/ndk/29.0.14206865
-CLANG_LIB = $(NDK29)/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64
-ifneq ($(wildcard $(CLANG_LIB)/libunwind.a),)
-UNWIND_LIBUNWIND_A += -L$(CLANG_LIB) -unwindlib=none -fno-unwind-tables -fno-asynchronous-unwind-tables
-endif
-
-# Which binaries to build? Just comment/uncomment these lines:
-DEFAULT_TARGETS += $(BUILD_DIR)/makecapk/lib/arm64-v8a/lib$(APPNAME).so
-# DEFAULT_TARGETS += $(BUILD_DIR)/makecapk/lib/armeabi-v7a/lib$(APPNAME).so
-# DEFAULT_TARGETS += $(BUILD_DIR)/makecapk/lib/x86/lib$(APPNAME).so
-# DEFAULT_TARGETS += $(BUILD_DIR)/makecapk/lib/x86_64/lib$(APPNAME).so
-
-TARGETS ?= $(DEFAULT_TARGETS)
-
-CFLAGS_ARM64:=-m64
-CFLAGS_ARM32:=-mfloat-abi=softfp -m32
-CFLAGS_x86:=-march=i686 -mssse3 -mfpmath=sse -m32
-CFLAGS_x86_64:=-march=x86-64 -msse4.2 -mpopcnt -m64
-STOREPASS?=password
-DNAME:="CN=example.com, OU=ID, O=Example, L=Doe, S=John, C=GB"
-KEYSTOREFILE:=my-release-key.keystore
-ALIASNAME?=standkey
-
-keystore : $(KEYSTOREFILE)
-
-$(KEYSTOREFILE) :
-	$(KEYTOOL) -genkey -v -keystore $(KEYSTOREFILE) -alias $(ALIASNAME) -keyalg RSA -keysize 2048 -validity 10000 -storepass $(STOREPASS) -keypass $(STOREPASS) -dname $(DNAME)
-
-folders:
-	mkdir -p $(BUILD_DIR)/makecapk/lib/arm64-v8a
-	mkdir -p $(BUILD_DIR)/makecapk/lib/armeabi-v7a
-	mkdir -p $(BUILD_DIR)/makecapk/lib/x86
-	mkdir -p $(BUILD_DIR)/makecapk/lib/x86_64
-
-$(BUILD_DIR)/makecapk/lib/arm64-v8a/lib$(APPNAME).so : $(ANDROIDSRCS)
-	mkdir -p $(BUILD_DIR)/makecapk/lib/arm64-v8a
-	$(CC_ARM64) $(CFLAGS) $(CFLAGS_ARM64) $(UNWIND_LIBUNWIND_A) -o $@ $^ -L$(NDK)/toolchains/llvm/prebuilt/$(OS_NAME)/sysroot/usr/lib/aarch64-linux-android/$(ANDROIDVERSION) $(LDFLAGS)
-
-$(BUILD_DIR)/makecapk/lib/armeabi-v7a/lib$(APPNAME).so : $(ANDROIDSRCS)
-	mkdir -p $(BUILD_DIR)/makecapk/lib/armeabi-v7a
-	$(CC_ARM32) $(CFLAGS) $(CFLAGS_ARM32) $(UNWIND_LIBUNWIND_A) -o $@ $^ -L$(NDK)/toolchains/llvm/prebuilt/$(OS_NAME)/sysroot/usr/lib/arm-linux-androideabi/$(ANDROIDVERSION) $(LDFLAGS)
-
-$(BUILD_DIR)/makecapk/lib/x86/lib$(APPNAME).so : $(ANDROIDSRCS)
-	mkdir -p $(BUILD_DIR)/makecapk/lib/x86
-	$(CC_x86) $(CFLAGS) $(CFLAGS_x86) $(UNWIND_LIBUNWIND_A) -o $@ $^ -L$(NDK)/toolchains/llvm/prebuilt/$(OS_NAME)/sysroot/usr/lib/i686-linux-android/$(ANDROIDVERSION) $(LDFLAGS)
-
-$(BUILD_DIR)/makecapk/lib/x86_64/lib$(APPNAME).so : $(ANDROIDSRCS)
-	mkdir -p $(BUILD_DIR)/makecapk/lib/x86_64
-	$(CC_x86) $(CFLAGS) $(CFLAGS_x86_64) $(UNWIND_LIBUNWIND_A) -o $@ $^ -L$(NDK)/toolchains/llvm/prebuilt/$(OS_NAME)/sysroot/usr/lib/x86_64-linux-android/$(ANDROIDVERSION) $(LDFLAGS)
-
-#We're really cutting corners.  You should probably use resource files.. Replace android:label="@string/app_name" and add a resource file.
-#Then do this -S Sources/res on the aapt line.
-#For icon support, add -S makecapk/res to the aapt line.  also,  android:icon="@mipmap/icon" to your application line in the manifest.
-#If you want to strip out about 800 bytes of data you can remove the icon and strings.
-
-#Notes for the past:  These lines used to work, but don't seem to anymore.  Switched to newer jarsigner.
-#(zipalign -c -v 8 makecapk.apk)||true #This seems to not work well.
-#jarsigner -verify -verbose -certs makecapk.apk
-
-# help/doc:
-# All .apk's that are produced:
+# Package a Rust cdylib into an installable APK.
 #
-# temp.apk
-# 	Contains android jar file, res, and assets
-# makecapk.apk
-#	temp.apk + resources.arsc(compressed res) + Manifest, all compressed
-# $(APKFILE)
-# 	zipalign'ed and signed makecapk.apk
+# The native side of com.softisp.camera lives in cam-rust/cam-camera-app; this
+# Makefile only drives `cargo apk2`, which compiles the crate, generates
+# AndroidManifest.xml from the crate's [package.metadata.android] table, and
+# signs the result. There is no C or C++ in the build.
+#
+#   make            build cam-rust/cam-rust/target/release/apk/softisp-camera.apk
+#   make push       install the APK on the connected device
+#   make run        install, then launch the camera activity
+#   make logs       tail the crash log the app writes to the app's log dir
+#   make clean      remove build output
+#
+# Host requirements (all satisfied on this Termux device):
+#   * cargo + cargo-apk2
+#   * ANDROID_SDK_ROOT pointing at an SDK with platform android-34 + build-tools
+#   * ANDROID_NDK_HOME pointing at an NDK
+# On Termux the NDK's own clang/llvm-* binaries are x86_64 and cannot run here,
+# so the NDK toolchain dir is shimmed with symlinks to the Termux equivalents
+# and build-tools are shimmed the same way. `toolchain` does that automatically.
 
-makecapk.apk : $(TARGETS) $(EXTRA_ASSETS_TRIGGER) $(BUILD_DIR)/AndroidManifest.xml $(KEYSTOREFILE)
-	mkdir -p $(BUILD_DIR)/makecapk/assets
-	cp -r Sources/assets/* $(BUILD_DIR)/makecapk/assets
-	rm -rf $(BUILD_DIR)/temp.apk
-	$(AAPT) package -f -F $(BUILD_DIR)/temp.apk -I $(ANDROID_JAR) -M $(BUILD_DIR)/AndroidManifest.xml -S Sources/res -A $(BUILD_DIR)/makecapk/assets -v --target-sdk-version $(ANDROIDTARGET)
-	unzip -o $(BUILD_DIR)/temp.apk -d $(BUILD_DIR)/makecapk
-	rm -rf $(BUILD_DIR)/makecapk.apk
-	# We use -4 here for the compression ratio, as it's a good balance of speed and size. -9 will make a slightly smaller executable but takes longer to build
-	cd $(BUILD_DIR)/makecapk && zip -D4r ../makecapk.apk . && zip -D0r ../makecapk.apk ./resources.arsc ./AndroidManifest.xml
-	# jarsigner is only necessary when targetting Android < 7.0
-	#jarsigner -sigalg SHA1withRSA -digestalg SHA1 -verbose -keystore $(KEYSTOREFILE) -storepass $(STOREPASS) $(BUILD_DIR)/makecapk.apk $(ALIASNAME)
-	rm -rf $(BUILD_DIR)/$(APKFILE)
-	$(ZIPALIGN) -v 4 $(BUILD_DIR)/makecapk.apk $(BUILD_DIR)/$(APKFILE)
-	#Using the apksigner in this way is only required on Android 30+
-	$(APKSIGNER) sign --key-pass pass:$(STOREPASS) --ks-pass pass:$(STOREPASS) --ks $(KEYSTOREFILE) $(BUILD_DIR)/$(APKFILE)
-	rm -rf $(BUILD_DIR)/temp.apk
-	rm -rf $(BUILD_DIR)/makecapk.apk
-	@ls -l $(BUILD_DIR)/$(APKFILE)
+CARGO        ?= cargo
+CARGO_APK2   ?= cargo-apk2
+ADAPTER      := $(shell command -v $(CARGO_APK2) 2>/dev/null)
 
-manifest: $(BUILD_DIR)/AndroidManifest.xml
+TARGET       ?= aarch64-linux-android
+PROFILE      ?= release
 
-$(BUILD_DIR)/AndroidManifest.xml :
-	mkdir -p $(BUILD_DIR)
-	rm -rf $(BUILD_DIR)/AndroidManifest.xml
-	PACKAGENAME=$(PACKAGENAME) \
-		ANDROIDVERSION=22 \
-		ANDROIDTARGET=$(ANDROIDTARGET) \
-		APPNAME=$(APPNAME) \
-		LABEL=$(LABEL) envsubst '$$ANDROIDTARGET $$ANDROIDVERSION $$APPNAME $$PACKAGENAME $$LABEL' \
-		< AndroidManifest.xml.template > $(BUILD_DIR)/AndroidManifest.xml
+WORKSPACE    := $(abspath ../cam-rust)
+APK_DIR      := $(WORKSPACE)/target/$(PROFILE)/apk
+APK_NAME     := softisp-camera
+APK          := $(APK_DIR)/$(APK_NAME).apk
 
+# `cargo apk2` resolves the NDK host tools through ANDROID_NDK_ROOT, and dexes
+# the generated R.java with whatever JDK JAVA_HOME points at. Its bundled R8
+# refuses class files above major version 55 (Java 11), and a JDK 17 javac
+# still emits major 61, so the JDK is pinned to whatever is at most 17 here.
+# This overrides any inherited JAVA_HOME, which on Termux defaults to 21.
+NDK          ?= $(HOME)/android-sdk/ndk/29.0.14206865
+SDK_ROOT     ?= $(HOME)/android-sdk
+JVM_ROOT     := /data/data/com.termux/files/usr/lib/jvm
+JAVA_HOME    := $(firstword $(wildcard $(JVM_ROOT)/java-11-openjdk $(JVM_ROOT)/java-17-openjdk))
+ifeq ($(JAVA_HOME),)
+  $(error No JDK 11 or 17 found under $(JVM_ROOT); cargo-apk2's R8 cannot dex newer class files)
+endif
+ANDROID_NDK_ROOT  ?= $(NDK)
+export ANDROID_NDK_ROOT
+export JAVA_HOME
+export HOST = aarch64-unknown-linux-android
 
-uninstall :
-	($(ADB) uninstall $(PACKAGENAME))||true
+.PHONY: all build toolchain push run logs uninstall clean check-tests
 
-push : makecapk.apk
-	@echo "Installing" $(PACKAGENAME)
-	$(ADB) install -r $(BUILD_DIR)/$(APKFILE)
+all: build
 
-run : push
-	$(eval ACTIVITYNAME:=$(shell $(AAPT) dump badging $(BUILD_DIR)/$(APKFILE) | grep "launchable-activity" | cut -f 2 -d"'"))
-	$(ADB) shell am start -n $(PACKAGENAME)/$(ACTIVITYNAME)
+build: toolchain
+	@echo "==> cargo apk2 build --release --target $(TARGET)"
+	$(CARGO) apk2 build --release --target $(TARGET) \
+		--manifest-path $(WORKSPACE)/Cargo.toml -p cam-camera-app
+	@echo "==> built $(APK)"
+	@ls -l $(APK)
 
-clean :
-	rm -rf $(BUILD_DIR)/AndroidManifest.xml $(BUILD_DIR)/temp.apk $(BUILD_DIR)/makecapk.apk $(BUILD_DIR)/makecapk $(BUILD_DIR)/$(APKFILE)
+# Termux hosts are aarch64, so the NDK's prebuilt/linux-x86_64 binaries are the
+# wrong architecture. ndk-build2 picks that directory from $HOST, so shim it with
+# symlinks to the Termux LLVM tools, and do the same for build-tools, whose
+# aapt/aapt2/zipalign are also x86_64. Everything here is idempotent.
+toolchain:
+	@BINDIR=$(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin; \
+	for t in clang clang++ llvm-ar llvm-readelf llvm-strip llvm-objcopy llvm-objdump llvm-nm; do \
+		if [ -e /data/data/com.termux/files/usr/bin/$$t ] && [ ! -L $$BINDIR/$$t ]; then \
+			mv $$BINDIR/$$t $$BINDIR/$$t.ndk-x86_64 2>/dev/null || true; \
+		fi; \
+		if [ -e /data/data/com.termux/files/usr/bin/$$t ]; then \
+			ln -sfn /data/data/com.termux/files/usr/bin/$$t $$BINDIR/$$t; \
+		fi; \
+	done; \
+	ANDROIDDIR=$(NDK)/toolchains/llvm/prebuilt/android; \
+	if [ -d $(NDK)/toolchains/llvm/prebuilt/linux-x86_64 ]; then \
+		mkdir -p $$ANDROIDDIR; \
+		for e in bin lib include sysroot AndroidVersion.txt BUILD_INFO; do \
+			[ -e $(NDK)/toolchains/llvm/prebuilt/linux-x86_64/$$e ] && \
+				ln -sfn ../linux-x86_64/$$e $$ANDROIDDIR/$$e; \
+		done; \
+	fi; \
+	BT=$$SDK_ROOT/build-tools; \
+	NEWBT=$$BT/34.0.0-termux; \
+	if [ ! -d $$NEWBT ]; then cp -a $$BT/34.0.0 $$NEWBT; fi; \
+	for t in aapt aapt2 zipalign apksigner; do \
+		if [ -e /data/data/com.termux/files/usr/bin/$$t ]; then \
+			ln -sfn /data/data/com.termux/files/usr/bin/$$t $$NEWBT/$$t; \
+		fi; \
+	done; \
+	echo "==> toolchain shims ready"
+
+push: build
+	@echo "==> installing $(APK_NAME)"
+	@mkdir -p /data/local/tmp
+	cp $(APK) /data/local/tmp/$(APK_NAME).apk
+	pm install -r /data/local/tmp/$(APK_NAME).apk || adb install -r /data/local/tmp/$(APK_NAME).apk
+
+run: push
+	am start -n com.softisp.camera/android.app.NativeActivity || \
+		adb shell am start -n com.softisp.camera/android.app.NativeActivity
+
+logs:
+	@tail -f /sdcard/download/softisp-app.log 2>/dev/null || \
+		tail -f $(HOME)/storage/shared/Download/softisp-app.log 2>/dev/null || \
+		echo "no crash log found yet"
+
+uninstall:
+	pm uninstall com.softisp.camera || adb uninstall com.softisp.camera
+
+check-tests:
+	cd $(WORKSPACE) && cargo test -p cam-camera-app --lib
+
+clean:
+	cd $(WORKSPACE) && cargo clean -p cam-camera-app
+	rm -f /data/local/tmp/$(APK_NAME).apk
