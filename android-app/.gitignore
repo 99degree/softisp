@@ -1,0 +1,5 @@
+*.keystore
+makecapk/
+cnfgtest.apk
+AndroidManifest.xml
+output.map
