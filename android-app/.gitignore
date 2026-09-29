@@ -3,3 +3,6 @@ makecapk/
 cnfgtest.apk
 AndroidManifest.xml
 output.map
+cnfa/
+rawdraw/
+cnfgtest.apk.idsig
