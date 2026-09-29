@@ -1,8 +1,14 @@
+# Signing material must never be committed; generate it once with
+#   keytool -genkey -v -keystore my-release-key.keystore -alias app \
+#           -keyalg RSA -keysize 2048 -validity 10000
 *.keystore
+
+# cargo-apk2 output (see the Makefile)
+target/
+*.apk
+*.apk.idsig
+
+# Legacy rawdrawandroid scaffolding, kept ignored in case it is restored
 makecapk/
-cnfgtest.apk
-AndroidManifest.xml
 output.map
-cnfa/
-rawdraw/
-cnfgtest.apk.idsig
+AndroidManifest.xml

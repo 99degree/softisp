@@ -1,0 +1,80 @@
+[package]
+name = "cam-camera-app"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "cam_camera_app"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cam-isp = { path = "../cam-isp" }
+cam-types = { path = "../cam-types" }
+log = { workspace = true }
+# NativeActivity lifecycle, input queue and ANativeWindow handling.
+android-activity = { version = "0.6.1", features = ["native-activity"] }
+# Raw ACamera* / AImageReader* bindings. Pinned to the same version
+# android-activity uses so both crates agree on the NDK ABI; `media` adds
+# AImageReader, which camera2 capture needs.
+ndk-sys = { version = "0.6", features = ["media"] }
+
+[features]
+default = []
+
+# ── APK packaging (cargo-apk2) ───────────────────────────────────────────
+
+[package.metadata.android]
+apk_name = "softisp-camera"
+# Application ID. `package` is the `<manifest package>` attribute; the app id is
+# the first dotted segment, so it must start with `com.softisp.camera`.
+package = "com.softisp.camera"
+# Icon + string resources live with the rest of the app scaffolding.
+resources = "../../android-app/Sources/res"
+
+[package.metadata.android.sdk]
+min_sdk_version = 24
+target_sdk_version = 34
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.camera"
+required = true
+
+# Required for `ACameraManager_openCamera`.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.CAMERA"
+
+# The crash log lives in the public Download directory. Scoped storage makes
+# the bare permission a no-op from API 29 on, so it is capped at API 28; the
+# app falls back to app-private storage on newer releases and copies out via
+# SAF/adb.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.WRITE_EXTERNAL_STORAGE"
+max_sdk_version = 28
+
+[package.metadata.android.signing.release]
+# A throwaway key for local installs. Override both of these before shipping.
+path = "../../android-app/my-release-key.keystore"
+keystore_password = "password"
+
+[package.metadata.android.application]
+label = "SoftISP Camera"
+has_code = false
+debuggable = false
+theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+icon = "@mipmap/icon"
+# `android.app.lib_name` is what NativeActivity dlopen()s; it must match the
+# `cam_camera_app` library name in Cargo.toml.
+[[package.metadata.android.application.meta_data]]
+name = "android.app.lib_name"
+value = "cam_camera_app"
+
+# Rotation, density and UI-mode changes are absorbed here so the activity is
+# not recreated mid-preview; `ConfigChangeTracker` re-allocates buffers.
+[[package.metadata.android.application.activity]]
+name = "android.app.NativeActivity"
+exported = true
+config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection"
+
+[[package.metadata.android.application.activity.intent_filter]]
+actions = ["android.intent.action.MAIN"]
+categories = ["android.intent.category.LAUNCHER"]
