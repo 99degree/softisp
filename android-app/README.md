@@ -28,7 +28,8 @@ cam-rust/cam-camera-app/     the app itself, all Rust
   src/camera.rs              NDK camera2 capture (RAW16, YUV fallback)
   src/pipeline.rs            RawFrame → cam-isp ProcessParams
   src/preview.rs             ISP output → ANativeWindow
-  src/crashlog.rs            /sdcard/download/softisp-app.log
+  src/crashlog.rs            rotating log file with panic hook
+  src/storage.rs             writability probe + permission guidance
 ```
 
 The manifest, permissions, activity and signing key are declared in
@@ -84,14 +85,30 @@ native runtime library bundled into the APK.
 
 ## Crash log
 
-Every `log` record at warn/error level, every ISP or camera error, and every
-panic is appended to `/sdcard/download/softisp-app.log`, rotated once past
-512 KB to `softisp-app.log.1`. The same records go to logcat.
+Every ISP or camera error and every panic is appended to
+`/sdcard/download/softisp-app.log`, rotated once past 512 KB to
+`softisp-app.log.1`. The same records go to logcat under the `softisp` tag.
 
-`WRITE_EXTERNAL_STORAGE` is a no-op under scoped storage from API 29 on, so the
-manifest caps it at API 28. On newer releases the path is unwritable and
-`crashlog` falls back to logcat; use `adb logcat` or pull the app's private
-files directory if you need the log there.
+That directory is not always writable, and which permission is needed depends
+on the API level:
+
+| API | Permission | How it is granted |
+|-----|-----------|-------------------|
+| ≤ 29 | `WRITE_EXTERNAL_STORAGE` | runtime; a `NativeActivity` cannot show the dialog, so grant it with `adb shell pm grant com.softisp.camera android.permission.WRITE_EXTERNAL_STORAGE` |
+| ≥ 30 | `MANAGE_EXTERNAL_STORAGE` | Settings → Apps → SoftISP Camera → **All files access** |
+
+`storage::probe` re-tests the mandated path at startup. If it is unwritable the
+log falls back to the app's external directory (no permission needed, so there
+is always somewhere to write) and the first WARN line of the log names the
+exact grant to make: the active path is recorded as the very first line, e.g.
+
+```
+06-21 09:14:02.881 INFO  [boot]      0ms log file: /storage/emulated/0/Android/data/com.softisp.camera/files/softisp-app.log
+06-21 09:14:02.883 WARN  [storage]   2ms /sdcard/download/softisp-app.log unavailable: Permission denied (...); the log went to the app's external directory — grant 'All files access' for com.softisp.camera in Settings to use this path
+```
+
+So `adb logcat`, or `adb pull /sdcard/Download/softisp-app.log` once the grant
+is made, always shows what the app was doing.
 
 ## Permissions
 
