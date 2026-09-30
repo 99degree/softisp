@@ -21,10 +21,14 @@
 
 CARGO        ?= cargo
 CARGO_APK2   ?= cargo-apk2
-ADAPTER      := $(shell command -v $(CARGO_APK2) 2>/dev/null)
 
 TARGET       ?= aarch64-linux-android
 PROFILE      ?= release
+# ISP backend. `mnn` selects the Vulkan MNN engine and bundles libMNN*.so plus
+# the libvulkan.so ICD loader into the APK; `cpu` leaves the pipeline on the
+# NEON/SIMD backend and produces a much smaller APK.
+ENGINE       ?= mnn
+FEATURE      := $(if $(filter cpu,$(ENGINE)),,mnn)
 
 WORKSPACE    := $(abspath ../cam-rust)
 APK_DIR      := $(WORKSPACE)/target/$(PROFILE)/apk
@@ -53,11 +57,12 @@ export HOST = aarch64-unknown-linux-android
 all: build
 
 build: toolchain
-	@echo "==> cargo apk2 build --release --target $(TARGET)"
-	$(CARGO) apk2 build --release --target $(TARGET) \
+	@echo "==> cargo apk2 build --release --target $(TARGET) (engine: $(ENGINE))"
+	$(CARGO) apk2 build --release --target $(TARGET) $(if $(FEATURE),--features $(FEATURE),) \
 		--manifest-path $(WORKSPACE)/Cargo.toml -p cam-camera-app
 	@echo "==> built $(APK)"
 	@ls -l $(APK)
+	@$(SDK_ROOT)/build-tools/34.0.0-termux/aapt list $(APK) 2>/dev/null | grep '\.so' || unzip -l $(APK) | grep '\.so'
 
 # Termux hosts are aarch64, so the NDK's prebuilt/linux-x86_64 binaries are the
 # wrong architecture. ndk-build2 picks that directory from $HOST, so shim it with
@@ -101,10 +106,18 @@ run: push
 	am start -n com.softisp.camera/android.app.NativeActivity || \
 		adb shell am start -n com.softisp.camera/android.app.NativeActivity
 
+# The spec path first, then the app's external directory, which is where the
+# log lands when the storage permission has not been granted. Termux can read
+# both, so no adb round trip is needed.
+LOG_PATHS := /sdcard/download/softisp-app.log \
+             /storage/emulated/0/Android/data/com.softisp.camera/files/softisp-app.log
+
 logs:
-	@tail -f /sdcard/download/softisp-app.log 2>/dev/null || \
-		tail -f $(HOME)/storage/shared/Download/softisp-app.log 2>/dev/null || \
-		echo "no crash log found yet"
+	@found=0; \
+	for p in $(LOG_PATHS); do \
+		if [ -f "$$p" ]; then echo "==> $$p"; tail -f "$$p"; found=1; break; fi; \
+	done; \
+	if [ $$found -eq 0 ]; then echo "no log found yet; checked: $(LOG_PATHS)"; fi
 
 uninstall:
 	pm uninstall com.softisp.camera || adb uninstall com.softisp.camera
