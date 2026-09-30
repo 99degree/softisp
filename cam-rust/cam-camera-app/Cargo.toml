@@ -20,6 +20,12 @@ ndk-sys = { version = "0.6", features = ["media"] }
 
 [features]
 default = []
+# Vulkan MNN inference. This is what the camera app actually wants on a phone:
+# libMNN_Vulkan.so runs the block chain on the GPU, where the CPU engine is
+# roughly 3x slower on Conv-heavy stages. Requires the runtime libraries under
+# `runtime_libs` to be bundled, which is why the feature is not default: the
+# `mnn` engine in cam-isp links them directly rather than dlopen-ing them.
+mnn = ["cam-isp/mnn"]
 
 # ── APK packaging (cargo-apk2) ───────────────────────────────────────────
 
@@ -30,6 +36,12 @@ apk_name = "softisp-camera"
 package = "com.softisp.camera"
 # Icon + string resources live with the rest of the app scaffolding.
 resources = "../../android-app/Sources/res"
+# Runtime native libraries copied into lib/<abi>/ by cargo-apk2. MNN's Vulkan
+# backend is dlopen-ed by the engine, and the ICD loader is not on the Termux
+# search path, so all three have to ship inside the APK. The directory uses
+# cargo-apk2's `<name>/<abi>` layout, hence the arm64-v8a symlink next to the
+# build.rs-generated aarch64-v8a one.
+runtime_libs = "../lib"
 
 [package.metadata.android.sdk]
 min_sdk_version = 24
@@ -43,13 +55,29 @@ required = true
 [[package.metadata.android.uses_permission]]
 name = "android.permission.CAMERA"
 
-# The crash log lives in the public Download directory. Scoped storage makes
-# the bare permission a no-op from API 29 on, so it is capped at API 28; the
-# app falls back to app-private storage on newer releases and copies out via
-# SAF/adb.
+# The crash log lives in the public Download directory.
+#
+# API 29 and below: WRITE_EXTERNAL_STORAGE is a runtime permission.
+# API 30 and above: scoped storage is mandatory, and the only route to the
+# public Download directory is the "all files access" special access
+# (MANAGE_EXTERNAL_STORAGE), which the user grants from Settings. A
+# NativeActivity has no Activity object to show that dialog, so it cannot
+# self-request the grant; storage::probe re-tests the path at startup and
+# logs exactly which grant is missing.
+#
+# `requestLegacyExternalStorage` is deliberately absent: cargo-apk2 serialises it
+# as a child element rather than the `android:` attribute Android reads, and
+# targetSdk 34 would ignore it regardless.
 [[package.metadata.android.uses_permission]]
 name = "android.permission.WRITE_EXTERNAL_STORAGE"
-max_sdk_version = 28
+max_sdk_version = 29
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.READ_EXTERNAL_STORAGE"
+max_sdk_version = 29
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.MANAGE_EXTERNAL_STORAGE"
 
 [package.metadata.android.signing.release]
 # A throwaway key for local installs. Override both of these before shipping.
@@ -68,11 +96,11 @@ icon = "@mipmap/icon"
 name = "android.app.lib_name"
 value = "cam_camera_app"
 
-# Rotation, density and UI-mode changes are absorbed here so the activity is
-# not recreated mid-preview; `ConfigChangeTracker` re-allocates buffers.
 [[package.metadata.android.application.activity]]
 name = "android.app.NativeActivity"
 exported = true
+# Rotation, density and UI-mode changes are absorbed here so the activity is
+# not recreated mid-preview; ConfigChangeTracker re-allocates the buffers.
 config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection"
 
 [[package.metadata.android.application.activity.intent_filter]]

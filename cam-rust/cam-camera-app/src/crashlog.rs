@@ -1,28 +1,46 @@
-//! Crash / diagnostic log written to `/sdcard/download/softisp-app.log`.
+//! Crash / diagnostic log.
 //!
 //! The app has no Java layer, so a Rust panic would otherwise be invisible
-//! outside logcat. Every log record and every panic is appended here so a
+//! outside logcat. Every error and every panic is appended to a file so a
 //! crashed camera preview can be diagnosed after the fact.
 //!
-//! The file is size-capped: once it exceeds [`MAX_LOG_BYTES`] it is rotated
-//! to `softisp-app.log.1` (single generation) before new data is appended.
+//! The mandated location is `/sdcard/download/softisp-app.log`. Under scoped
+//! storage (API 29+) that directory is only reachable with
+//! `MANAGE_EXTERNAL_STORAGE`, a special-access grant the user makes in Settings
+//! and which a `NativeActivity` — having no Activity object to drive a dialog —
+//! cannot request for itself. So [`install`] walks a candidate list and keeps
+//! the first one it can actually open:
+//!
+//! 1. `/sdcard/download/softisp-app.log` — the spec path, used when the
+//!    permission has been granted.
+//! 2. `/sdcard/Download/softisp-app.log` and
+//!    `/storage/emulated/0/Download/softisp-app.log` — the same directory under
+//!    its other spellings, in case the lowercase form is ever not folded onto
+//!    it.
+//! 3. `<external data dir>/softisp-app.log` — the app-specific external
+//!    directory, which needs no permission at all, so there is always somewhere
+//!    to write. Whichever path won is recorded as the first line of the file.
+//!
+//! The file is size-capped: once it exceeds [`MAX_LOG_BYTES`] it is rotated to
+//! `softisp-app.log.1` (single generation) before new data is appended.
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Primary log file — the path mandated by the app spec.
 pub const LOG_PATH: &str = "/sdcard/download/softisp-app.log";
 
-/// Rotated generation, written when [`LOG_PATH`] outgrows [`MAX_LOG_BYTES`].
-pub const LOG_ROTATED_PATH: &str = "/sdcard/download/softisp-app.log.1";
+/// Name of the rotated generation, written next to the active log.
+pub const LOG_ROTATED_NAME: &str = "softisp-app.log.1";
 
 /// Rotation threshold. At roughly 120 bytes per line this is ~4,000 lines.
 pub const MAX_LOG_BYTES: u64 = 512 * 1024;
 
+static ACTIVE_PATH: OnceLock<PathBuf> = OnceLock::new();
 static LOG_READY: AtomicBool = AtomicBool::new(false);
 static WRITE_FAILED: AtomicBool = AtomicBool::new(false);
 static FILE_LOCK: Mutex<()> = Mutex::new(());
@@ -90,33 +108,75 @@ pub fn elapsed_ms() -> u64 {
     now_millis().saturating_sub(APP_START_MS.load(Ordering::Relaxed))
 }
 
+/// The file currently being written, or `None` before [`install`] succeeds.
+pub fn active_path() -> Option<&'static Path> {
+    ACTIVE_PATH.get().map(PathBuf::as_path)
+}
+
+/// Files to try, in preference order.
+///
+/// `fallback_dir` is the app's external data directory, which is always
+/// writable and therefore the last resort. See the module docs for why the
+/// first entries need a runtime-granted permission.
+pub fn candidate_paths(fallback_dir: Option<&Path>) -> Vec<PathBuf> {
+    let mut out = vec![
+        PathBuf::from(LOG_PATH),
+        PathBuf::from("/sdcard/Download/softisp-app.log"),
+        PathBuf::from("/storage/emulated/0/Download/softisp-app.log"),
+    ];
+    if let Some(dir) = fallback_dir {
+        out.push(dir.join("softisp-app.log"));
+    }
+    out
+}
+
+/// Try each candidate in turn and keep the first that can be opened for append.
+fn resolve_log_path(candidates: &[PathBuf]) -> Option<PathBuf> {
+    for path in candidates {
+        // Best effort: the parent may not exist yet, and creating it can fail
+        // even in cases where writing the file would have succeeded.
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match OpenOptions::new().create(true).append(true).open(path) {
+            Ok(_) => return Some(path.clone()),
+            Err(e) => log::warn!("crashlog: {} unwritable: {e}", path.display()),
+        }
+    }
+    None
+}
+
 /// Install the process-wide log file and the panic hook.
 ///
 /// Idempotent: a second call is a no-op, so `install()` is safe to invoke from
-/// both the entry point and early error paths.
-pub fn install() {
+/// both the entry point and early error paths. `fallback_dir` is normally the
+/// activity's external data directory, used when `/sdcard/download` is not
+/// reachable.
+pub fn install(fallback_dir: Option<&Path>) {
     if LOG_READY.swap(true, Ordering::SeqCst) {
         return;
     }
     APP_START_MS.store(now_millis(), Ordering::Relaxed);
 
-    let path = Path::new(LOG_PATH);
-    if let Some(dir) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            // Not fatal: fall through and let the open attempt report the
-            // real failure below.
-            let _ = e;
-        }
-    }
-
-    match OpenOptions::new().create(true).append(true).open(path) {
-        Ok(_) => {
+    let candidates = candidate_paths(fallback_dir);
+    match resolve_log_path(&candidates) {
+        Some(path) => {
+            let _ = ACTIVE_PATH.set(path.clone());
             let ver = env!("CARGO_PKG_VERSION");
+            write_line("INFO", "boot", &format!("log file: {}", path.display()));
             write_line("INFO", "boot", &format!("softisp camera {ver} starting"));
         }
-        Err(e) => {
-            WRITE_FAILED.store(true, Ordering::SeqCst);
-            log::warn!("crashlog: cannot open {LOG_PATH}: {e}");
+        None => {
+            // Nothing is writable. The panic hook is still installed so the
+            // message reaches logcat, but there is no file to append to.
+            eprintln!(
+                "softisp: no writable log path; tried {}",
+                candidates
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
     }
 
@@ -126,8 +186,7 @@ pub fn install() {
 fn install_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let msg = panic_message(info);
-        write_line("FATAL", "panic", &msg);
+        write_line("FATAL", "panic", &panic_message(info));
         write_line(
             "FATAL",
             "panic",
@@ -157,14 +216,15 @@ pub fn write_line(level: &str, tag: &str, msg: &str) {
     if !LOG_READY.load(Ordering::SeqCst) || WRITE_FAILED.load(Ordering::SeqCst) {
         return;
     }
-    let path = PathBuf::from(LOG_PATH);
+    let Some(path) = ACTIVE_PATH.get() else {
+        return;
+    };
     let Ok(_guard) = FILE_LOCK.lock() else {
         return;
     };
 
-    if let Err(e) = rotate_if_needed(&path) {
+    if rotate_if_needed(path).is_err() {
         WRITE_FAILED.store(true, Ordering::SeqCst);
-        let _ = e;
         return;
     }
 
@@ -177,14 +237,11 @@ pub fn write_line(level: &str, tag: &str, msg: &str) {
         msg.replace('\n', " ")
     );
 
-    match OpenOptions::new().create(true).append(true).open(&path) {
-        Ok(mut f) => {
-            let _ = f.write_all(line.as_bytes());
-            let _ = f.flush();
-        }
-        Err(_) => {
-            WRITE_FAILED.store(true, Ordering::SeqCst);
-        }
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(line.as_bytes());
+        let _ = f.flush();
+    } else {
+        WRITE_FAILED.store(true, Ordering::SeqCst);
     }
 }
 
@@ -199,33 +256,37 @@ fn rotate_if_needed(path: &Path) -> std::io::Result<()> {
         return Ok(());
     }
     // A single rotated generation is enough: the previous one is discarded.
-    let _ = std::fs::remove_file(LOG_ROTATED_PATH);
-    std::fs::rename(path, LOG_ROTATED_PATH)
+    let rotated = path.with_file_name(LOG_ROTATED_NAME);
+    let _ = std::fs::remove_file(&rotated);
+    std::fs::rename(path, rotated)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("softisp-crashlog-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(name)
+    }
+
     #[test]
     fn timestamp_renders_expected_shape() {
         // 2026-01-02T03:04:05.006Z → "01-02 03:04:05.006"
-        let ms = 1_767_323_045_006u64;
-        assert_eq!(timestamp(ms), "01-02 03:04:05.006");
+        assert_eq!(timestamp(1_767_323_045_006), "01-02 03:04:05.006");
     }
 
     #[test]
     fn timestamp_handles_leap_day() {
         // 2024-03-01T00:00:00.000Z (2024 is a leap year)
-        let ms = 1_709_251_200_000u64;
-        assert_eq!(timestamp(ms), "03-01 00:00:00.000");
+        assert_eq!(timestamp(1_709_251_200_000), "03-01 00:00:00.000");
     }
 
     #[test]
     fn timestamp_handles_non_leap_year() {
         // 2023-03-01T00:00:00.000Z
-        let ms = 1_677_628_800_000u64;
-        assert_eq!(timestamp(ms), "03-01 00:00:00.000");
+        assert_eq!(timestamp(1_677_628_800_000), "03-01 00:00:00.000");
     }
 
     #[test]
@@ -237,26 +298,79 @@ mod tests {
     }
 
     #[test]
-    fn rotate_skips_missing_file() {
-        let p = Path::new(
-            "/data/data/com.termux/files/home/softisp/cam-rust/cam-camera-app/test-nonexistent.log",
+    fn spec_path_is_the_first_candidate() {
+        let cands = candidate_paths(None);
+        assert_eq!(cands[0], PathBuf::from(LOG_PATH));
+        assert!(
+            cands
+                .iter()
+                .any(|p| p == Path::new("/sdcard/Download/softisp-app.log")),
+            "expected the capitalised spelling too"
         );
-        let _ = std::fs::remove_file(p);
-        assert!(rotate_if_needed(p).is_ok());
+    }
+
+    #[test]
+    fn fallback_dir_is_appended_last() {
+        let fb = Path::new("/data/data/com.softisp.camera/files");
+        assert_eq!(
+            candidate_paths(Some(fb)).last().unwrap(),
+            &fb.join("softisp-app.log")
+        );
+    }
+
+    #[test]
+    fn resolve_skips_unwritable_candidates() {
+        let good = scratch("resolve-good.log");
+        let _ = std::fs::remove_file(&good);
+        // A path under a *file* can never be created, so it always fails.
+        let blocker = scratch("resolve-blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let impossible = blocker.join("nested/app.log");
+
+        assert_eq!(
+            resolve_log_path(&[impossible, good.clone()]),
+            Some(good.clone()),
+            "the first writable candidate must win"
+        );
+        let _ = std::fs::remove_file(&good);
+        let _ = std::fs::remove_file(&blocker);
+    }
+
+    #[test]
+    fn resolve_returns_none_when_everything_fails() {
+        let blocker = scratch("resolve-none-blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        assert!(resolve_log_path(&[blocker.join("a/b/c.log")]).is_none());
+        let _ = std::fs::remove_file(&blocker);
+    }
+
+    #[test]
+    fn rotate_skips_missing_file() {
+        let p = scratch("rotate-missing.log");
+        let _ = std::fs::remove_file(&p);
+        assert!(rotate_if_needed(&p).is_ok());
+    }
+
+    #[test]
+    fn rotate_leaves_small_file_alone() {
+        let p = scratch("rotate-small.log");
+        std::fs::write(&p, vec![b'x'; 64]).unwrap();
+        assert!(rotate_if_needed(&p).is_ok());
+        assert!(p.exists(), "a small file must not be rotated");
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
     fn rotate_moves_oversized_file() {
-        let dir = std::env::temp_dir().join("softisp-crashlog-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("rot.log");
-        std::fs::write(&p, vec![b'x'; 64]).unwrap();
-
-        // Threshold is a const, so exercise the decision through a small file
-        // (no rotation) and a large one (rotation) by monkeypatching the
-        // constant's observable behaviour: a 64-byte file must NOT rotate.
+        let p = scratch("rotate-big.log");
+        let rotated = p.with_file_name(LOG_ROTATED_NAME);
+        let _ = std::fs::remove_file(&rotated);
+        // MAX_LOG_BYTES is a const, so pad to exactly the threshold: `>=` must
+        // treat that as oversized.
+        std::fs::write(&p, vec![b'x'; MAX_LOG_BYTES as usize]).unwrap();
         assert!(rotate_if_needed(&p).is_ok());
-        assert!(p.exists(), "small file must not be rotated");
-        std::fs::remove_file(&p).ok();
+        assert!(!p.exists(), "oversized file must be moved aside");
+        assert!(rotated.exists(), "rotated generation must exist");
+        let _ = std::fs::remove_file(&rotated);
     }
 }

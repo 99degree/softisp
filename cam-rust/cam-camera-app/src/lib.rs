@@ -10,17 +10,21 @@ pub mod camera;
 pub mod crashlog;
 pub mod pipeline;
 pub mod preview;
+pub mod storage;
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use android_activity::ndk::native_window::NativeWindow;
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use cam_isp::engine::{select_engine_by_name, IspEngine};
+use cam_isp::profile::PipelineProfile;
 
 use camera::CameraSession;
 use crashlog::write_line;
 use pipeline::{FrameStager, PipelineConfig};
 use preview::WindowTarget;
+use storage::Access;
 
 /// Frames processed between two stat lines. At 30 fps this is one line per
 /// second: frequent enough to spot a stall, sparse enough to stay readable.
@@ -52,11 +56,35 @@ struct Preview {
 }
 
 impl Preview {
-    fn new() -> Result<Self, String> {
-        // "cpu" is explicit: the MNN backend needs its own native runtime,
-        // which is not shipped inside this APK.
-        let engine = select_engine_by_name("cpu").ok_or("no ISP engine available")?;
+    /// Build an engine and its block chain for `target_width` pixels wide.
+    ///
+    /// `engine_name` is passed straight to
+    /// [`cam_isp::engine::select_engine_by_name`], so `"cpu"`, `"mnn_vulkan"`
+    /// or `"auto"` all work; the choice is a build-time matter of whether the
+    /// `mnn` feature (and its bundled native runtime) is present.
+    fn new(engine_name: &str, target_width: u32) -> Result<Self, String> {
+        let mut engine: Box<dyn IspEngine> = select_engine_by_name(engine_name)
+            .ok_or_else(|| format!("no ISP engine matching '{engine_name}'"))?;
         log::info!("ISP engine: {}", engine.backend_name());
+
+        // The chain comes from the same profile the desktop tooling uses, so
+        // preview and benchmarks exercise identical blocks.
+        let profile = PipelineProfile::MED;
+        let mut blocks = profile.build_blocks(target_width, camera::BGGR);
+        if blocks.is_empty() {
+            return Err(format!("profile {} produced no blocks", profile.label));
+        }
+        let head = blocks.remove(0);
+        let aux = profile.build_aux_blocks(target_width as i64 * 9 / 16, target_width as i64);
+        blocks.extend(aux);
+        engine
+            .build(head, blocks, None, 21)
+            .map_err(|e| format!("engine.build failed: {e}"))?;
+        log::info!(
+            "pipeline built: profile {} at {target_width}px",
+            profile.label
+        );
+
         Ok(Self {
             engine,
             session: None,
@@ -143,28 +171,43 @@ impl Preview {
     }
 }
 
+/// ISP backend requested at build time.
+///
+/// `mnn` builds name the Vulkan MNN engine, whose runtime libraries are bundled
+/// into the APK's `lib/arm64-v8a` by `runtime_libs`; without that feature the
+/// crate has no MNN code compiled in, so the CPU engine is the only choice.
+#[cfg(feature = "mnn")]
+const ENGINE_NAME: &str = "mnn_vulkan";
+#[cfg(not(feature = "mnn"))]
+const ENGINE_NAME: &str = "cpu";
+
 /// Entry point the `NativeActivity` glue spawns on its own thread.
 ///
 /// This symbol has the Rust ABI, not the C one, and may be called again if the
 /// activity is recreated.
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
-    crashlog::install();
-    log::info!(
-        "softisp camera starting (sdk {})",
-        AndroidApp::sdk_version()
-    );
+    // The external data directory needs no runtime permission, so it is the
+    // guaranteed-writable fallback when /sdcard/download is out of reach.
+    let fallback = app.external_data_path();
+    crashlog::install(fallback.as_deref());
+    let sdk = AndroidApp::sdk_version();
+    log::info!("softisp camera starting (sdk {sdk}, engine {ENGINE_NAME})");
+    if let Some(p) = crashlog::active_path() {
+        log::info!("log file: {}", p.display());
+    }
+    // Recording why the spec path was skipped turns a silent log-location
+    // change into something the user can act on.
+    if crashlog::active_path() != Some(Path::new(crashlog::LOG_PATH)) {
+        write_line("WARN", "storage", &storage_note(sdk, fallback.as_deref()));
+    }
 
-    let mut preview = match Preview::new() {
-        Ok(p) => p,
-        Err(e) => {
-            write_line("FATAL", "engine", &e);
-            return;
-        }
-    };
     let mut exit = false;
     let mut window: Option<NativeWindow> = None;
     let mut resized = ConfigChangeTracker::default();
+    // Built once the window reports a size, since the block chain is sized
+    // from the preview's output width.
+    let mut preview: Option<Preview> = None;
 
     while !exit {
         app.poll_events(Some(POLL_TIMEOUT), |event| {
@@ -197,18 +240,26 @@ fn android_main(app: AndroidApp) {
         let Some(win) = window.as_ref() else {
             continue;
         };
-        let (w, h) = (win.width(), win.height());
-        let target = match WindowTarget::new(win, w, h) {
-            Ok(t) => t,
-            Err(e) => {
-                log::trace!("window not ready: {e}");
-                continue;
+        let (w, h) = (win.width() as u32, win.height() as u32);
+        if preview.is_none() {
+            match Preview::new(ENGINE_NAME, w) {
+                Ok(p) => preview = Some(p),
+                Err(e) => {
+                    write_line("FATAL", "engine", &e);
+                    return;
+                }
             }
+        }
+        let (Some(preview), Ok(target)) =
+            (preview.as_mut(), WindowTarget::new(win, w as i32, h as i32))
+        else {
+            log::trace!("window not ready");
+            continue;
         };
         preview.render_once(&target);
     }
 
-    let frames = preview.frames;
+    let frames = preview.as_ref().map_or(0, |p| p.frames);
     log::info!("exiting after {frames} frames");
     write_line("INFO", "exit", &format!("processed {frames} frames"));
 }
@@ -227,4 +278,33 @@ impl ConfigChangeTracker {
         self.last = size;
         changed
     }
+}
+
+/// Explain, in the log, why the mandated `/sdcard/download` path was skipped.
+///
+/// Re-probes the spec path so the message reports the live error rather than a
+/// guess, and names the concrete grant the user needs.
+fn storage_note(sdk: i32, fallback: Option<&Path>) -> String {
+    let spec = Path::new(crashlog::LOG_PATH);
+    let (access, reason) = storage::probe(spec, false);
+    let mut note = match access {
+        Access::Writable => format!("{} became writable after startup", spec.display()),
+        Access::Denied => {
+            let why = reason.unwrap_or_else(|| "unknown reason".into());
+            let grant = if sdk >= 30 {
+                "grant 'All files access' for com.softisp.camera in Settings"
+            } else {
+                "grant android.permission.WRITE_EXTERNAL_STORAGE"
+            };
+            format!(
+                "{} unavailable: {why}; the log went to the app's external \
+                 directory — {grant} to use this path",
+                spec.display()
+            )
+        }
+    };
+    if let Some(dir) = fallback {
+        note.push_str(&format!(" (fallback: {})", dir.display()));
+    }
+    note
 }
