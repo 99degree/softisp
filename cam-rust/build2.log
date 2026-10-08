@@ -1,0 +1,37 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /data/data/com.termux/files/home/softisp/cam-rust/cam-isp/Cargo.toml
+workspace: /data/data/com.termux/files/home/softisp/cam-rust/Cargo.toml
+   Compiling cam-isp v0.1.0 (/data/data/com.termux/files/home/softisp/cam-rust/cam-isp)
+warning: function `link_jni` is never used
+   --> cam-isp/build.rs:106:4
+    |
+106 | fn link_jni() {
+    |    ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `cam-isp` (build script) generated 1 warning
+warning: cam-isp@0.1.0: HELLO FROM BUILD SCRIPT
+warning: cam-isp@0.1.0: DEBUG: target_os = android
+warning: cam-isp@0.1.0: DEBUG: feature jni = yes
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=MNN_DIR
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=MNN_INCLUDE_DIR
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=MNN_LIB_DIR
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=MNN_CONVERT_DIR
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=ANDROID_NDK_HOME
+warning: cam-isp@0.1.0: !!! INSIDE JNI BLOCK !!!
+warning: cam-isp@0.1.0: About to emit JNI linker arguments
+warning: cam-isp@0.1.0: Emitted JNI linker arguments
+warning: cam-isp@0.1.0: Linking JNI library (Android + jni feature)
+warning: cam-isp@0.1.0: abi_dir = /data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a
+warning: cam-isp@0.1.0: jni_src = src/jni.c
+warning: cam-isp@0.1.0: jni_src.exists() = true
+warning: cam-isp@0.1.0: cargo:rerun-if-changed=src/jni.c
+warning: cam-isp@0.1.0: out_dir = /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-cbdeb4bb4f8c6c4f/out
+warning: cam-isp@0.1.0: src = /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-cbdeb4bb4f8c6c4f/out/libjni.a
+warning: cam-isp@0.1.0: dst = /data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a/libjni.a
+warning: cam-isp@0.1.0: creating parent dir: /data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a
+warning: cam-isp@0.1.0: copying from /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-cbdeb4bb4f8c6c4f/out/libjni.a to /data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a/libjni.a
+warning: cam-isp@0.1.0: cargo:rerun-if-changed=/data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a/libjni.a
+warning: cam-isp@0.1.0: About to emit linker argument for c++_static
+    Finished `release` profile [optimized] target(s) in 33.90s

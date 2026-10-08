@@ -1,0 +1,25 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /data/data/com.termux/files/home/softisp/cam-rust/cam-isp/Cargo.toml
+workspace: /data/data/com.termux/files/home/softisp/cam-rust/Cargo.toml
+   Compiling libc v0.2.186
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling cfg-if v1.0.4
+   Compiling zerocopy v0.8.52
+   Compiling serde_core v1.0.228
+   Compiling thiserror v2.0.18
+   Compiling find-msvc-tools v0.1.9
+   Compiling getrandom v0.4.2
+   Compiling serde v1.0.228
+   Compiling zmij v1.0.21
+   Compiling shlex v2.0.1
+   Compiling rustix v1.1.4
+error: failed to run custom build command for `zerocopy v0.8.52`
+
+Caused by:
+  could not execute process `/data/data/com.termux/files/home/softisp/cam-rust/target/release/build/zerocopy-e828d18622b2be6a/build-script-build` (never executed)
+
+Caused by:
+  Text file busy (os error 26)
+warning: build failed, waiting for other jobs to finish...

@@ -1,0 +1,21 @@
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Directory '/data/data/com.termux/files/home/softisp' does not contain a Gradle build.
+
+A Gradle build should contain a 'settings.gradle' or 'settings.gradle.kts' file in its root directory. It may also contain a 'build.gradle' or 'build.gradle.kts' file.
+
+To create a new Gradle build in this directory run 'gradlew init'
+
+For more information about the 'init' task, please refer to https://docs.gradle.org/8.7/userguide/build_init_plugin.html in the Gradle documentation.
+
+For more details on creating a Gradle build, please refer to https://docs.gradle.org/8.7/userguide/tutorial_using_tasks.html in the Gradle documentation.
+
+* Try:
+> Run gradlew init to create a new Gradle build in this directory.
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 917ms

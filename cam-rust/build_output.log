@@ -1,0 +1,5 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /data/data/com.termux/files/home/softisp/cam-rust/cam-isp/Cargo.toml
+workspace: /data/data/com.termux/files/home/softisp/cam-rust/Cargo.toml
+   Compiling cam-isp v0.1.0 (/data/data/com.termux/files/home/softisp/cam-rust/cam-isp)
+    Finished `release` profile [optimized] target(s) in 45.09s

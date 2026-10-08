@@ -1,0 +1,77 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /data/data/com.termux/files/home/softisp/cam-rust/cam-isp/Cargo.toml
+workspace: /data/data/com.termux/files/home/softisp/cam-rust/Cargo.toml
+   Compiling libc v0.2.186
+   Compiling zerocopy v0.8.52
+   Compiling proc-macro2 v1.0.106
+   Compiling serde v1.0.228
+   Compiling getrandom v0.4.2
+   Compiling cc v1.2.63
+   Compiling rustix v1.1.4
+   Compiling thiserror v2.0.18
+   Compiling zmij v1.0.21
+   Compiling bitflags v2.13.0
+   Compiling linux-raw-sys v0.12.1
+   Compiling serde_json v1.0.150
+   Compiling quote v1.0.45
+   Compiling memchr v2.8.1
+   Compiling syn v2.0.117
+   Compiling getrandom v0.2.17
+   Compiling errno v0.3.14
+   Compiling rand_core v0.6.4
+   Compiling fastrand v2.4.1
+   Compiling itoa v1.0.18
+   Compiling once_cell v1.21.4
+   Compiling libloading v0.8.9
+   Compiling log v0.4.32
+   Compiling cam-isp v0.1.0 (/data/data/com.termux/files/home/softisp/cam-rust/cam-isp)
+warning: linker stderr: clang version 21.1.8
+         Target: aarch64-unknown-linux-android24
+         Thread model: posix
+         InstalledDir: /data/data/com.termux/files/usr/bin
+          "/data/data/com.termux/files/usr/bin/ld.lld" --sysroot=/data/data/com.termux/files/usr/bin/../.. -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --no-rosegment --hash-style=gnu -rpath=/data/data/com.termux/files/usr/bin/../../usr/lib --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-5678e76952258cad/build_script_build-5678e76952258cad /data/data/com.termux/files/usr/bin/../../usr/lib/crtbegin_dynamic.o -L/data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-5678e76952258cad/rustc1P4ZYB/raw-dylibs -L/data/data/com.termux/files/usr/bin/../../usr/lib -L/system/lib64 /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-5678e76952258cad/rustc1P4ZYB/symbols.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-5678e76952258cad/build_script_build-5678e76952258cad.build_script_build.d1bfd556e029264f-cgu.0.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-5678e76952258cad/build_script_build-5678e76952258cad.5nd3nm83bff601lokdyytpxzt.rcgu.o --as-needed -Bstatic /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libcc-bebdced1a270f723.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libfind_msvc_tools-74181444aeb8a89b.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libshlex-f103a8345c455409.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libstd-a796977e015769ec.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libpanic_unwind-1cb3799f109e65b7.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libobject-3a70651e1b751048.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libmemchr-b96a63c4b302b1fa.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libaddr2line-68ae4f149daa2c10.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libgimli-febfa920a6b1dbbf.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libcfg_if-06c98b0e682fefdd.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/librustc_demangle-4ea6096e9e4b8828.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libstd_detect-88ee9491936e3e30.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libhashbrown-c59b28cbaa2fdaed.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/librustc_std_workspace_alloc-ad36e7203c11f80f.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libminiz_oxide-f10fe9b4ddff2ee9.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libadler2-078c38be4b2e43ef.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libunwind-560ded74d39882c5.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/liblibc-ff2bd725d11559b7.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/librustc_std_workspace_core-1e807979b273caf8.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/liballoc-ccaa2563dc8f73dd.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libcore-c1ed290911883eee.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libcompiler_builtins-26f1ecdef980f1c1.rlib -Bdynamic -ldl -llog -lunwind -ldl -lm -lc --eh-frame-hdr -z noexecstack --gc-sections -z relro -z now --strip-debug /data/data/com.termux/files/usr/bin/../../usr/lib/crtend_android.o
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `cam-isp` (build script) generated 1 warning
+warning: cam-isp@0.1.0: HELLO FROM BUILD SCRIPT
+warning: cam-isp@0.1.0: DEBUG: target_os = android
+warning: cam-isp@0.1.0: DEBUG: feature jni = yes
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=MNN_DIR
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=MNN_INCLUDE_DIR
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=MNN_LIB_DIR
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=MNN_CONVERT_DIR
+warning: cam-isp@0.1.0: cargo:rerun-if-env-changed=ANDROID_NDK_HOME
+warning: cam-isp@0.1.0: Linking JNI library (Android + jni feature)
+warning: cam-isp@0.1.0: In link_jni
+warning: cam-isp@0.1.0: abi_dir = /data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a
+warning: cam-isp@0.1.0: jni_src = src/jni.c
+warning: cam-isp@0.1.0: jni_src.exists() = true
+warning: cam-isp@0.1.0: cargo:rerun-if-changed=src/jni.c
+warning: cam-isp@0.1.0: out_dir = /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-ed6b75176ccccad4/out
+warning: cam-isp@0.1.0: src = /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-ed6b75176ccccad4/out/libjni.a
+warning: cam-isp@0.1.0: dst = /data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a/libjni.a
+warning: cam-isp@0.1.0: creating parent dir: /data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a
+warning: cam-isp@0.1.0: copying from /data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-ed6b75176ccccad4/out/libjni.a to /data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a/libjni.a
+warning: cam-isp@0.1.0: cargo:rerun-if-changed=/data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a/libjni.a
+warning: cam-isp@0.1.0: cargo:rustc-link-search=native=/data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a
+warning: cam-isp@0.1.0: cargo:rustc-link-arg=-Wl,--whole-archive
+warning: cam-isp@0.1.0: cargo:rustc-link-lib=static=jni
+warning: cam-isp@0.1.0: cargo:rustc-link-arg=-Wl,--no-whole-archive
+   Compiling tempfile v3.27.0
+   Compiling serde_derive v1.0.228
+   Compiling thiserror-impl v2.0.18
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.6
+   Compiling cam-types v0.1.0 (/data/data/com.termux/files/home/softisp/cam-rust/cam-types)
+warning: linker stderr: clang version 21.1.8
+         Target: aarch64-unknown-linux-android24
+         Thread model: posix
+         InstalledDir: /data/data/com.termux/files/usr/bin
+          "/data/data/com.termux/files/usr/bin/ld.lld" --sysroot=/data/data/com.termux/files/usr/bin/../.. -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --no-rosegment --hash-style=gnu -rpath=/data/data/com.termux/files/usr/bin/../../usr/lib --eh-frame-hdr -m aarch64linux -shared -o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libcam_isp.so /data/data/com.termux/files/usr/bin/../../usr/lib/crtbegin_so.o -L/data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/rustcKPH6mP/raw-dylibs -L/data/data/com.termux/files/home/softisp/cam-rust/target/release/build/cam-isp-ed6b75176ccccad4/out -L/data/data/com.termux/files/home/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/data/data/com.termux/files/home/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib -L/data/data/com.termux/files/usr/bin/../../usr/lib -L/system/lib64 --version-script=/data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/rustcKPH6mP/list --undefined-version /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/rustcKPH6mP/symbols.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.00.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.01.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.02.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.03.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.04.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.05.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.06.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.07.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.08.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.09.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.10.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.11.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.12.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.13.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.14.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.cam_isp.81e0e18d2782f7f-cgu.15.rcgu.o /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/cam_isp.0j2t0n8hlr7zgy1op01yvxu2c.rcgu.o --as-needed -Bstatic -ljni -Bdynamic -llog -landroid -lc++_shared -lmediandk -Bstatic /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/librand-2531f813db12f689.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/librand_chacha-427577793567d562.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libppv_lite86-7609ed3b3a691004.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libzerocopy-70979783ea51616f.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/librand_core-19e7b03ab1e53d1f.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libgetrandom-23f7eadb027be931.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/liblibc-485c01ec0b8ab14f.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libcfg_if-cd90e6bb651e542b.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libcam_types-1dde4de6383f3ba9.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libserde-180f5a437e30fa0c.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/libserde_core-61c4a007d57e357e.rlib /data/data/com.termux/files/home/softisp/cam-rust/target/release/deps/liblog-85c73790685d1562.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libstd-a796977e015769ec.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libpanic_unwind-1cb3799f109e65b7.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libobject-3a70651e1b751048.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libmemchr-b96a63c4b302b1fa.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libaddr2line-68ae4f149daa2c10.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libgimli-febfa920a6b1dbbf.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libcfg_if-06c98b0e682fefdd.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/librustc_demangle-4ea6096e9e4b8828.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libstd_detect-88ee9491936e3e30.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libhashbrown-c59b28cbaa2fdaed.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/librustc_std_workspace_alloc-ad36e7203c11f80f.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libminiz_oxide-f10fe9b4ddff2ee9.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libadler2-078c38be4b2e43ef.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libunwind-560ded74d39882c5.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/liblibc-ff2bd725d11559b7.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/librustc_std_workspace_core-1e807979b273caf8.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/liballoc-ccaa2563dc8f73dd.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libcore-c1ed290911883eee.rlib /data/data/com.termux/files/usr/lib/rustlib/aarch64-linux-android/lib/libcompiler_builtins-26f1ecdef980f1c1.rlib -Bdynamic -ldl -llog -lunwind -ldl -lm -lc --eh-frame-hdr -z noexecstack --gc-sections -z relro -z now -O1 --strip-debug /data/data/com.termux/files/usr/bin/../../usr/lib/crtend_so.o
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `cam-isp` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 1m 09s
