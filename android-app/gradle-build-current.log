@@ -1,0 +1,253 @@
+
+> Configure project :
+WARNING: The option setting 'android.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2' is experimental.
+
+> Task :preBuild UP-TO-DATE
+> Task :preDebugBuild UP-TO-DATE
+> Task :mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :dataBindingMergeDependencyArtifactsDebug UP-TO-DATE
+> Task :generateDebugResValues UP-TO-DATE
+> Task :generateDebugResources UP-TO-DATE
+> Task :mergeDebugResources UP-TO-DATE
+> Task :packageDebugResources UP-TO-DATE
+> Task :parseDebugLocalResources UP-TO-DATE
+> Task :dataBindingGenBaseClassesDebug UP-TO-DATE
+> Task :generateDebugBuildConfig UP-TO-DATE
+> Task :checkDebugAarMetadata UP-TO-DATE
+> Task :mapDebugSourceSetPaths UP-TO-DATE
+> Task :createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :extractDeepLinksDebug UP-TO-DATE
+> Task :processDebugMainManifest UP-TO-DATE
+> Task :processDebugManifest UP-TO-DATE
+> Task :processDebugManifestForPackage UP-TO-DATE
+> Task :processDebugResources UP-TO-DATE
+> Task :compileDebugKotlin NO-SOURCE
+> Task :javaPreCompileDebug UP-TO-DATE
+
+> Task :compileDebugJavaWithJavac FAILED
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:27: error: interface expected here
+public class AndroidCameraBridge implements CameraDevice.StateCallback, ImageReader.OnImageAvailableListener {
+                                                        ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:60: error: method get in class CameraCharacteristics cannot be applied to given types;
+            StreamConfigurationMap streamMap = characteristics.get(StreamConfigurationMap.class);
+                                                              ^
+  required: Key<T>
+  found:    Class<StreamConfigurationMap>
+  reason: cannot infer type-variable(s) T
+    (argument mismatch; Class<StreamConfigurationMap> cannot be converted to Key<T>)
+  where T is a type-variable:
+    T extends Object declared in method <T>get(Key<T>)
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:96: error: no suitable method found for openCamera(String,AndroidCameraBridge,Handler)
+                cameraManager.openCamera(cameraId, this, cameraHandler);
+                             ^
+    method CameraManager.openCamera(String,StateCallback,Handler) is not applicable
+      (argument mismatch; AndroidCameraBridge cannot be converted to StateCallback)
+    method CameraManager.openCamera(String,Executor,StateCallback) is not applicable
+      (argument mismatch; AndroidCameraBridge cannot be converted to Executor)
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:110: error: method does not override or implement a method from a supertype
+    @Override
+    ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:120: error: cannot find symbol
+                Integer sensorMaxInt = characteristics.get(CameraCharacteristics.SENSOR_INFO_MAX_ANALOG_SENSITIVITY);
+                                                                                ^
+  symbol:   variable SENSOR_INFO_MAX_ANALOG_SENSITIVITY
+  location: class CameraCharacteristics
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:131: error: cannot find symbol
+            captureBuilder.addTarget(surface);
+                                     ^
+  symbol:   variable surface
+  location: class AndroidCameraBridge
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:134: error: cannot find symbol
+                Arrays.asList(surface, imageReader.getSurface()),
+                              ^
+  symbol:   variable surface
+  location: class AndroidCameraBridge
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:164: error: method does not override or implement a method from a supertype
+    @Override
+    ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/AndroidCameraBridge.java:171: error: method does not override or implement a method from a supertype
+    @Override
+    ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/CameraActivity.java:45: error: <anonymous com.softisp.camera.CameraActivity$1> is not abstract and does not override abstract method onError(String) in CameraProcessor
+        frameProcessor = new CameraProcessor() {
+                                               ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/CameraActivity.java:62: error: cannot find symbol
+        switchCameraButton = findViewById(R.id.switch_camera_button);
+                                              ^
+  symbol:   variable switch_camera_button
+  location: class id
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/CameraActivity.java:92: error: cannot find symbol
+        ProcessCameraProvider.getInstance().getOrCreateProvider(new ProcessCameraProvider.Provider() {
+                                                                                         ^
+  symbol:   class Provider
+  location: class ProcessCameraProvider
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/CameraActivity.java:93: error: method does not override or implement a method from a supertype
+            @Override
+            ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/CameraActivity.java:106: error: cannot find symbol
+                    provider.bind(cameraSelector, preview);
+                            ^
+  symbol:   method bind(CameraSelector,Preview)
+  location: variable provider of type ProcessCameraProvider
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/CameraActivity.java:92: error: method getInstance in class ProcessCameraProvider cannot be applied to given types;
+        ProcessCameraProvider.getInstance().getOrCreateProvider(new ProcessCameraProvider.Provider() {
+                             ^
+  required: Context
+  found:    no arguments
+  reason: actual and formal argument lists differ in length
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/MainActivity.java:61: error: <anonymous com.softisp.camera.MainActivity$1> is not abstract and does not override abstract method onError(String) in CameraProcessor
+        compositeProcessor = new CameraProcessor() {
+                                                   ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/MainActivity.java:78: error: cannot find symbol
+            app.initializeSoftispEngine("auto", 1023.0f, 0);
+               ^
+  symbol:   method initializeSoftispEngine(String,float,int)
+  location: variable app of type SoftispCameraApplication
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/MainActivity.java:109: error: <anonymous com.softisp.camera.MainActivity$2> is not abstract and does not override abstract method onError(String) in CameraProcessor
+        return new CameraProcessor() {
+                                     ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/MainActivity.java:123: error: <anonymous com.softisp.camera.MainActivity$3> is not abstract and does not override abstract method onError(String) in CameraProcessor
+        return new CameraProcessor() {
+                                     ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraService.java:64: error: non-static variable this cannot be referenced from a static context
+            return SoftispCameraService.this;
+                                       ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:44: error: cannot find symbol
+        } catch (IOException e) {
+                 ^
+  symbol:   class IOException
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:62: error: cannot find symbol
+            Toast.makeText(context, debugInfo, Toast.LENGTH_SHORT).show();
+                                               ^
+  symbol:   variable Toast
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:62: error: cannot find symbol
+            Toast.makeText(context, debugInfo, Toast.LENGTH_SHORT).show();
+            ^
+  symbol:   variable Toast
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:70: error: cannot find symbol
+            Toast.makeText(context, "Frame processed successfully", Toast.LENGTH_SHORT).show();
+                                                                    ^
+  symbol:   variable Toast
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:70: error: cannot find symbol
+            Toast.makeText(context, "Frame processed successfully", Toast.LENGTH_SHORT).show();
+            ^
+  symbol:   variable Toast
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:78: error: cannot find symbol
+            Toast.makeText(context, "Error: " + error, Toast.LENGTH_LONG).show();
+                                                       ^
+  symbol:   variable Toast
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:78: error: cannot find symbol
+            Toast.makeText(context, "Error: " + error, Toast.LENGTH_LONG).show();
+            ^
+  symbol:   variable Toast
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:154: error: incompatible types: int cannot be converted to Paint
+                    canvas.drawPoint(x, y, color);
+                                           ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:174: error: cannot find symbol
+        drawText(canvas, "Format: " + getFormatString(format), 10, 90);
+                                                      ^
+  symbol:   variable format
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:212: error: cannot find symbol
+        int y = canvas.getHeight() - 60 - (activeProcessors.size() * 30);
+                                           ^
+  symbol:   variable activeProcessors
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:226: error: cannot find symbol
+        int y = canvas.getHeight() - 30 - (activeProcessors.size() * 30);
+                                           ^
+  symbol:   variable activeProcessors
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispDebugProcessor.java:245: error: cannot find symbol
+        switch (format) {
+                ^
+  symbol:   variable format
+  location: class SoftispDebugProcessor
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:208: error: cannot find symbol
+                    public void onOpened(@NonNull CameraDevice camera) {
+                                          ^
+  symbol: class NonNull
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:216: error: cannot find symbol
+                    public void onDisconnected(@NonNull CameraDevice camera) {
+                                                ^
+  symbol: class NonNull
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:224: error: cannot find symbol
+                    public void onError(@NonNull CameraDevice camera, int error) {
+                                         ^
+  symbol: class NonNull
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:253: error: cannot find symbol
+                public void onConfigured(@NonNull android.hardware.camera2.CameraCaptureSession session) {
+                                          ^
+  symbol: class NonNull
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:286: error: cannot find symbol
+                public void onConfigureFailed(@NonNull android.hardware.camera2.CameraCaptureSession session) {
+                                               ^
+  symbol: class NonNull
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:251: error: <anonymous com.softisp.camera.SoftispCameraBridge$2> is not abstract and does not override abstract method onError(CameraDevice,int) in StateCallback
+            cameraDevice.createCaptureSession(surfaces, new CameraDevice.StateCallback() {
+                                                                                         ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:252: error: method does not override or implement a method from a supertype
+                @Override
+                ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:268: error: package CameraCaptureSession does not exist
+                            new CameraCaptureSession.CaptureCallback() {
+                                                    ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:270: error: cannot find symbol
+                                public void onCaptureCompleted(@NonNull CameraCaptureSession session,
+                                                                        ^
+  symbol: class CameraCaptureSession
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:270: error: cannot find symbol
+                                public void onCaptureCompleted(@NonNull CameraCaptureSession session,
+                                                                ^
+  symbol: class NonNull
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:271: error: cannot find symbol
+                                                             @NonNull CaptureRequest request,
+                                                              ^
+  symbol: class NonNull
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:272: error: cannot find symbol
+                                                             @NonNull TotalCaptureResult result) {
+                                                              ^
+  symbol: class NonNull
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:269: error: method does not override or implement a method from a supertype
+                                @Override
+                                ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:285: error: method does not override or implement a method from a supertype
+                @Override
+                ^
+/data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/SoftispCameraBridge.java:251: error: incompatible types: <anonymous android.hardware.camera2.CameraDevice.StateCallback> cannot be converted to android.hardware.camera2.CameraCaptureSession.StateCallback
+            cameraDevice.createCaptureSession(surfaces, new CameraDevice.StateCallback() {
+                                                        ^
+Note: /data/data/com.termux/files/home/softisp/android-app/src/main/java/com/softisp/camera/CameraFrameProcessorView.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: Some messages have been simplified; recompile with -Xdiags:verbose to get full output
+47 errors
+3 warnings
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileDebugJavaWithJavac'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --info option to get more log output.
+> Run with --scan to get full insights.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.7/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 6s
+17 actionable tasks: 1 executed, 16 up-to-date

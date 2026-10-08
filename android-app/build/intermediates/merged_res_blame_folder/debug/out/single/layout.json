@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "com.softisp.camera-mergeDebugResources-26:/layout/activity_camera.xml",
+        "source": "com.softisp.camera-main-29:/layout/activity_camera.xml"
+    },
+    {
+        "merged": "com.softisp.camera-mergeDebugResources-26:/layout/activity_main.xml",
+        "source": "com.softisp.camera-main-29:/layout/activity_main.xml"
+    }
+]

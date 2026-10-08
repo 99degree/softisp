@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@android:color/background_dark">
+
+    <FrameLayout
+        android:id="@+id/preview_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@android:color/black">
+
+        <com.softisp.camera.CameraFrameProcessorView
+            android:id="@+id/preview_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <LinearLayout
+            android:id="@+id/controls_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:orientation="horizontal"
+            android:padding="8dp"
+            android:background="#80000000">
+
+            <Button
+                android:id="@+id/enable_camera_button"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="Enable Camera"
+                android:layout_marginEnd="4dp"
+                android:textColor="@android:color/white"
+                android:backgroundTint="@color/color_primary" />
+
+            <Button
+                android:id="@+id/toggle_processing_button"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="Toggle Processing"
+                android:layout_marginStart="4dp"
+                android:textColor="@android:color/white"
+                android:backgroundTint="@color/color_secondary" />
+
+        </LinearLayout>
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/status_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="SoftISP Camera"
+        android:textColor="@android:color/white"
+        android:textSize="16sp"
+        android:padding="8dp"
+        android:background="@android:color/background_dark" />
+
+</LinearLayout>

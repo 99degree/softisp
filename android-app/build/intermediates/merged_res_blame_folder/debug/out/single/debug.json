@@ -1,0 +1,30 @@
+[
+    {
+        "merged": "com.softisp.camera-merged_res-27:/mipmap-xxxhdpi_ic_launcher.xml.flat",
+        "source": "com.softisp.camera-main-29:/mipmap-xxxhdpi/ic_launcher.xml"
+    },
+    {
+        "merged": "com.softisp.camera-merged_res-27:/mipmap-hdpi_ic_launcher.xml.flat",
+        "source": "com.softisp.camera-main-29:/mipmap-hdpi/ic_launcher.xml"
+    },
+    {
+        "merged": "com.softisp.camera-merged_res-27:/layout_activity_main.xml.flat",
+        "source": "com.softisp.camera-main-29:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.softisp.camera-merged_res-27:/mipmap-xhdpi_ic_launcher.xml.flat",
+        "source": "com.softisp.camera-main-29:/mipmap-xhdpi/ic_launcher.xml"
+    },
+    {
+        "merged": "com.softisp.camera-merged_res-27:/mipmap-xxhdpi_ic_launcher.xml.flat",
+        "source": "com.softisp.camera-main-29:/mipmap-xxhdpi/ic_launcher.xml"
+    },
+    {
+        "merged": "com.softisp.camera-merged_res-27:/layout_activity_camera.xml.flat",
+        "source": "com.softisp.camera-main-29:/layout/activity_camera.xml"
+    },
+    {
+        "merged": "com.softisp.camera-merged_res-27:/mipmap-mdpi_ic_launcher.xml.flat",
+        "source": "com.softisp.camera-main-29:/mipmap-mdpi/ic_launcher.xml"
+    }
+]
