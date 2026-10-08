@@ -20,7 +20,7 @@
 
 use crate::engine::OutputFormat;
 use crate::onnx::proto::Proto;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{BlockOpsetMode, IspBlock};
 
 /// DisplayBlock — final format conversion + tone mapping.
 ///
@@ -51,6 +51,8 @@ pub struct DisplayBlock {
     /// Workgroup tuning for Vulkan dispatch: (size_x, size_y).
     /// Default (0,0) = MNN auto-tune; recommended: (32,8) for 4K.
     pub workgroup_size: (u32, u32),
+    /// Opset mode override (set by profile builder).
+    pub opset_mode_override: Option<BlockOpsetMode>,
 }
 
 impl DisplayBlock {
@@ -69,6 +71,7 @@ impl DisplayBlock {
             pack_two_pixels: true,
             postprocess_output: None,
             workgroup_size: (0, 0), // auto-tune
+            opset_mode_override: None,
         }
     }
 
@@ -182,10 +185,22 @@ impl DisplayBlock {
     }
 }
 
+/// Builder methods for DisplayBlock
 impl DisplayBlock {
     /// Set Vulkan shader workgroup size: (size_x, size_y).
     pub fn workgroup(mut self, size_x: u32, size_y: u32) -> Self {
         self.workgroup_size = (size_x, size_y);
+        self
+    }
+
+    /// Set opset mode for this block (0=Primitive, 1=Custom, 2=MnnIspMin).
+    pub fn with_opset_mode(mut self, mode: i32) -> Self {
+        self.opset_mode_override = Some(match mode {
+            0 => crate::pipeline::BlockOpsetMode::Primitive,
+            1 => crate::pipeline::BlockOpsetMode::Custom,
+            2 => crate::pipeline::BlockOpsetMode::MnnIspMin,
+            _ => crate::pipeline::BlockOpsetMode::Primitive,
+        });
         self
     }
 
@@ -202,6 +217,51 @@ impl DisplayBlock {
     /// AGRB (ABGR) output: `[1,4,H,W]` float32 `[0,255]`.
     pub fn agbr(self) -> Self {
         self.with_output_format(OutputFormat::Abgr)
+    }
+
+    /// Emit MNN ISP min opset nodes — uses isp.display fused shader
+    /// that handles rotation + format conversion + gamma + BCS in one dispatch.
+    fn emit_mnn_isp_min_nodes(&self) -> Vec<Vec<u8>> {
+        let _ns = self.tensor_ns();
+        let inp = self.effective_input();
+        let final_output = &self.frame_tensor;
+
+        // Build attributes for the isp.display shader
+        let mut attrs = Vec::new();
+        
+        // Rotation attributes
+        attrs.push(Proto::attribute_int("rotate_mode", self.rotate_mode as i64));
+        
+        // Format attributes
+        attrs.push(Proto::attribute_int("output_format", self.output_format as i64));
+        
+        // Packing attributes
+        attrs.push(Proto::attribute_int("pack_two_pixels", if self.pack_two_pixels { 1 } else { 0 }));
+        
+        // Concrete dimensions for Slice initializers
+        if let (Some(h), Some(w)) = (self.in_h, self.in_w) {
+            attrs.push(Proto::attribute_int("in_h", h));
+            attrs.push(Proto::attribute_int("in_w", w));
+        }
+        
+        // Workgroup size
+        attrs.push(Proto::attribute_int("workgroup_x", self.workgroup_size.0 as i64));
+        attrs.push(Proto::attribute_int("workgroup_y", self.workgroup_size.1 as i64));
+
+        // Post-process output
+        if self.postprocess_output.is_some() {
+            attrs.push(Proto::attribute_int("has_postprocess", 1));
+        }
+
+        vec![
+            Proto::node_with_domain(
+                "display",
+                "isp",
+                &[&inp],
+                &[final_output],
+                &attrs,
+            ),
+        ]
     }
 }
 
@@ -722,6 +782,18 @@ impl IspBlock for DisplayBlock {
             ));
         }
         defaults
+    }
+
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        Some(&["isp.display"])
+    }
+
+    fn custom_opsets(&self) -> Vec<(String, i64)> {
+        vec![("isp".to_string(), 1)]
+    }
+
+    fn opset_mode(&self) -> BlockOpsetMode {
+        self.opset_mode_override.unwrap_or(BlockOpsetMode::Custom)
     }
 }
 
