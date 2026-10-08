@@ -281,6 +281,10 @@ pub enum BlockOpsetMode {
     Primitive,
     /// Emit custom op types in ONNX; consumer must understand them.
     Custom,
+    /// Emit MNN ISP minimum opset — fused isp.* ops matching MNN's
+    /// IspChainFusion patterns (e.g., isp.demosaic_g2_ccm, isp.ldci_a).
+    /// This is the DEFAULT for MNN Vulkan backend.
+    MnnIspMin,
 }
 
 /// Helper to build a chain of blocks as a Vec.
@@ -514,9 +518,11 @@ impl GraphComposer {
             // Determine whether to lower custom op types for this block.
             // - If force_mode is set, it overrides per-block opset_mode().
             // - Otherwise, use the block's own opset_mode().
+            // MnnIspMin mode: emit exact MNN isp.* opset names (no lowering).
             let should_lower = match force_mode {
                 Some(BlockOpsetMode::Primitive) => true,
                 Some(BlockOpsetMode::Custom) => false,
+                Some(BlockOpsetMode::MnnIspMin) => false,
                 None => blk.opset_mode() == BlockOpsetMode::Primitive,
             };
             // Lowering pass: for blocks in Primitive mode, rewrite custom

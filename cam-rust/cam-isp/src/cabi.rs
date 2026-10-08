@@ -50,6 +50,7 @@ pub const SOFTISP_ERR_UNKNOWN_PROFILE: i32 = 4;
 /// Opset mode for ONNX emission.
 pub const SOFTISP_OPSET_PRIMITIVE: i32 = 0;
 pub const SOFTISP_OPSET_CUSTOM: i32 = 1;
+pub const SOFTISP_OPSET_MNN_ISP_MIN: i32 = 2;
 
 // Output format constants (mirrors softisp_api.h).
 pub const SOFTISP_OUTPUT_FLOAT_RGB: i32 = 0;
@@ -209,6 +210,7 @@ fn parse_opset_mode(mode: i32) -> Option<BlockOpsetMode> {
     match mode {
         SOFTISP_OPSET_PRIMITIVE => Some(BlockOpsetMode::Primitive),
         SOFTISP_OPSET_CUSTOM => Some(BlockOpsetMode::Custom),
+        SOFTISP_OPSET_MNN_ISP_MIN => Some(BlockOpsetMode::MnnIspMin),
         _ => None,
     }
 }
