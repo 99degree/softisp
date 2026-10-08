@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-06-21T12:00:00Z",
+  "task": "Implement proper camera capture using Camera2 API with JNI integration between Rust engine (libcam_isp.so) and Android Java code",
+  "changes": {
+    "android_app_manifest": "Removed invalid SoftispBufferProvider and surfacetextureview references, fixed theme",
+    "build_gradle": "Added NDK configuration, abiFilters, CameraX dependencies, and proper build types",
+    "cmake_lists": "Fixed Rust .so linkage, added copy_rust_lib script execution, proper target linking",
+    "proguard_rules": "Removed invalid void* syntax, corrected JNI method signatures to match Rust C ABI exports",
+    "styles_xml": "Removed deprecated windowDisplayMode attribute",
+    "java_files": [
+      "MainActivity.java: Fixed syntax and imports, added proper CameraProcessor interface usage",
+      "SoftispPreviewView.java: Rewrote with Camera2 API using TextureView",
+      "AndroidCameraBridge.java: Rewrote with Camera2 API StateCallback and ImageListener",
+      "SoftispJni.java: Updated native method declarations to match Rust C ABI exports (model composition and profile management)",
+      "SoftispCameraApplication.java: Changed to use Java methods instead of JNI for engine initialization and frame processing (stub implementation)",
+      "SoftispJni.cpp: Updated JNI implementations to wrap Rust C ABI functions (softisp_* symbols)",
+      "softisp_api.h: Updated C header to match Rust C ABI exports",
+      "SoftispJni.h: Simplified to documentation-only header"
+    ],
+    "cpp_files": [
+      "AndroidHalBridge.h/cpp: Kept as placeholder (not used in current flow)",
+      "copy_rust_lib.sh.in: Updated to copy Rust .so and MNN dependencies to jniLibs"
+    ]
+  },
+  "verification": {
+    "rust_library_build": "Successfully built cam-rust/cam-isp with 'cabi rectifier' features",
+    "library_copy": "libcam_isp.so copied to jniLibs/arm64-v8a/",
+    "symbol_match": "JNI implementations match Rust C ABI exports (verified via nm and diff)",
+    "no_external_files": "git status shows no external files staged",
+    "manifest_valid": "AndroidManifest.xml contains correct permissions, features, and components"
+  },
+  "remaining_work": [
+    "Actual frame processing integration (requires MNN runtime and camera frames)",
+    "Testing on Android device or emulator",
+    "Performance optimization and power tuning"
+  ]
+}
