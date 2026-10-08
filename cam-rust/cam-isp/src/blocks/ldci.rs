@@ -19,7 +19,7 @@
 //! - Current: Pool(AVG 3×3) → local contrast → per-channel boost → 4 ops, R5 fuses
 
 use crate::onnx::proto::Proto;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{BlockOpsetMode, IspBlock};
 
 /// LdciBlock — Local Detail and Contrast Enhancement.
 ///
@@ -109,50 +109,102 @@ impl IspBlock for LdciBlock {
         ))
     }
 
-    /// Pool(AVG 3×3) → Sub(original, blur) → Mul(diff, strength) → Add(original, boost)
-    fn nodes(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            // Pool(AVG, kernel=3×3, stride=1, same-pad) → local mean
-            Proto::node(
-                "AveragePool",
-                &[&self.input_source],
-                &[&format!("{}/local_mean", ns)],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[3, 3]),
-                    Proto::attribute_ints("strides", &[1, 1]),
-                    Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                ],
-            ),
-            // Sub(original, local_mean) → diff (local deviation)
-            Proto::node(
-                "Sub",
-                &[&self.input_source, &format!("{}/local_mean", ns)],
-                &[&format!("{}/diff", ns)],
-                &[],
-            ),
-            // Mul(diff, strength) → boost (scaled contrast)
-            Proto::node(
-                "Mul",
-                &[&format!("{}/diff", ns), &format!("{}/strength", ns)],
-                &[&format!("{}/boost", ns)],
-                &[],
-            ),
-            // Add(original, boost) → enhanced
-            Proto::node(
-                "Add",
-                &[&self.input_source, &format!("{}/boost", ns)],
-                &[&self.frame_tensor],
-                &[],
-            ),
-        ]
-    }
     fn initializers(&self) -> Vec<Vec<u8>> {
         // strength is a runtime input (fed by the engine per-frame).
         vec![]
     }
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         vec![(format!("{}/strength", self.tensor_ns()), 1, vec![1])]
+    }
+
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        Some(&["isp.ldci"])
+    }
+
+    fn custom_opsets(&self) -> Vec<(String, i64)> {
+        vec![("isp".to_string(), 1)]
+    }
+
+    fn opset_mode(&self) -> BlockOpsetMode {
+        BlockOpsetMode::Custom
+    }
+
+    fn nodes(&self) -> Vec<Vec<u8>> {
+        let ns = self.tensor_ns();
+        let mode = self.opset_mode();
+
+        match mode {
+            BlockOpsetMode::MnnIspMin => {
+                // MNN ISP min opset - fused isp.ldci (single node)
+                // The Pool+Sub+Mul+Add is handled in the shader
+                vec![
+                    Proto::node_with_domain(
+                        "ldci",
+                        "isp",
+                        &[&self.input_source, &format!("{}/strength", ns)],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[3, 3]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                        ],
+                    ),
+                ]
+            }
+            BlockOpsetMode::Primitive => {
+                // Primitive mode - Pool + Sub + Mul + Add (4 nodes)
+                vec![
+                    // Pool(AVG, kernel=3×3, stride=1, same-pad) → local mean
+                    Proto::node(
+                        "AveragePool",
+                        &[&self.input_source],
+                        &[&format!("{}/local_mean", ns)],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[3, 3]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                        ],
+                    ),
+                    // Sub(original, local_mean) → diff (local deviation)
+                    Proto::node(
+                        "Sub",
+                        &[&self.input_source, &format!("{}/local_mean", ns)],
+                        &[&format!("{}/diff", ns)],
+                        &[],
+                    ),
+                    // Mul(diff, strength) → boost (scaled contrast)
+                    Proto::node(
+                        "Mul",
+                        &[&format!("{}/diff", ns), &format!("{}/strength", ns)],
+                        &[&format!("{}/boost", ns)],
+                        &[],
+                    ),
+                    // Add(original, boost) → enhanced
+                    Proto::node(
+                        "Add",
+                        &[&self.input_source, &format!("{}/boost", ns)],
+                        &[&self.frame_tensor],
+                        &[],
+                    ),
+                ]
+            }
+            BlockOpsetMode::Custom => {
+                // Custom mode - custom op (with strength as input)
+                vec![
+                    Proto::node_with_domain(
+                        "ldci",
+                        "isp",
+                        &[&self.input_source, &format!("{}/strength", ns)],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[3, 3]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                        ],
+                    ),
+                ]
+            }
+        }
     }
 }
 

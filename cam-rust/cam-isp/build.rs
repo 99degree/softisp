@@ -48,10 +48,10 @@ fn main() {
     link_onnxruntime();
 
     #[cfg(feature = "mnn")]
-    link_mnn();
-
-    #[cfg(feature = "mnn")]
-    link_mnnconvert();
+    {
+        link_mnn();
+        link_mnnconvert();
+    }
 
     // Link JNI library for Android with JNI feature (rust jni-rs, no C)
     #[cfg(all(target_os = "android", feature = "jni"))]
@@ -64,7 +64,12 @@ fn main() {
 
     // Emit NDK linker flags for Android targets
     #[cfg(target_os = "android")]
-    setup_ndk_linker();
+    {
+        setup_ndk_linker();
+        // Embed rpath so binary finds libraries at runtime
+        let abi_dir = abi_dir();
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
+    }
 }
 
 /// Link JNI library for Android.
@@ -325,7 +330,7 @@ fn abi_suffix() -> String {
 
     if os == "android" {
         match arch.as_str() {
-            "aarch64" | "arm64" => "arm64-v8a".to_string(),
+            "aarch64" | "arm64" => "aarch64-v8a".to_string(),
             "arm" | "armv7" => "armeabi-v7a".to_string(),
             "x86_64" => "x86_64".to_string(),
             "x86" | "i686" => "x86".to_string(),
@@ -452,8 +457,7 @@ fn link_mnn() {
     } else {
         println!("cargo:rustc-link-lib=stdc++");
     }
-    // Embed rpath so binary finds libMNN.so at runtime
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
+    // rpath is emitted in main() to avoid duplicate entries
 }
 
 /// Link MNNConvertDeps (model conversion support).

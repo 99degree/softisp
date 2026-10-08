@@ -133,6 +133,9 @@ pub struct PipelineProfile {
     pub tile_overlap: u32,
     /// Output pixel format.
     pub output_format: OutputFormat,
+    /// Opset mode for ONNX emission: 0=Primitive, 1=Custom, 2=MnnIspMin.
+    /// Default is 0 (Primitive) for maximum compatibility.
+    pub opset_mode: i32,
 }
 
 impl PipelineProfile {
@@ -174,6 +177,7 @@ impl PipelineProfile {
         tile_count_y: 1,
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
+        opset_mode: 0, // Primitive by default
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -214,6 +218,7 @@ impl PipelineProfile {
         tile_count_y: 1,
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
+        opset_mode: 0, // Primitive by default
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -254,6 +259,7 @@ impl PipelineProfile {
         tile_count_y: 1,
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
+        opset_mode: 0, // Primitive by default
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -294,6 +300,7 @@ impl PipelineProfile {
         tile_count_y: 1,
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
+        opset_mode: 0, // Primitive by default
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -335,6 +342,7 @@ impl PipelineProfile {
         tile_count_y: 1,
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
+        opset_mode: 0, // Primitive by default
     };
 
     /// Unified profile — full ISP pipeline with all blocks enabled.
@@ -378,6 +386,7 @@ impl PipelineProfile {
         tile_count_y: 2,
         tile_overlap: 2,
         output_format: OutputFormat::PackedRgb,
+        opset_mode: 2, // MnnIspMin for Vulkan GPU backend
     };
 
     /// HDR profile — multi-exposure burst with async HDR merge.
@@ -429,6 +438,7 @@ impl PipelineProfile {
         tile_count_y: 1,
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
+        opset_mode: 0, // Primitive by default
     };
 
     /// All built-in profiles.
@@ -478,6 +488,7 @@ impl PipelineProfile {
         tile_count_x: u32, // horizontal tile count (e.g., 2 for 4K→4K)
         tile_count_y: u32, // vertical tile count (e.g., 2 for 4K→4K)
         tile_overlap: u32, // overlap pixels between tiles for convolution
+        opset_mode: i32, // 0=Primitive, 1=Custom, 2=MnnIspMin
     ) -> Self {
         Self {
             label,
@@ -516,6 +527,7 @@ impl PipelineProfile {
             tile_count_y,              // vertical tile count
             tile_overlap,              // overlap pixels
             output_format: OutputFormat::PackedRgb,
+            opset_mode,
         }
     }
 
@@ -623,6 +635,7 @@ mod tests {
             1,     // tile_count_x
             1,     // tile_count_y
             0,     // tile_overlap
+            0,     // opset_mode: Primitive
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -671,6 +684,7 @@ mod tests {
             1,     // tile_count_x
             1,     // tile_count_y
             0,     // tile_overlap
+            0,     // opset_mode: Primitive
         );
         let blocks = p.build_blocks(128, 0);
         assert_eq!(

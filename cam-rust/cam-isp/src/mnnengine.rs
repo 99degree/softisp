@@ -1710,7 +1710,7 @@ macro_rules! register_mnn_engine {
     };
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "mnn"))]
 mod tests {
     use super::*;
 

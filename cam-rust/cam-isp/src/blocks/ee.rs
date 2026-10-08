@@ -28,7 +28,7 @@
 //! through MNN's session input API (not currently implemented).
 
 use crate::onnx::proto::Proto;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{BlockOpsetMode, IspBlock};
 
 /// EeBlock — Edge Enhancement via separable 3×3 convolution.
 ///
@@ -118,29 +118,6 @@ impl IspBlock for EeBlock {
         ))
     }
 
-    /// Single Conv(3×3, group=3, unsharp) matching R4 → isp.ee
-    fn nodes(&self) -> Vec<Vec<u8>> {
-        let ns = self.tensor_ns();
-        vec![
-            // R4 detects: Conv(3×3, unsharp kernel, outputCount=3)
-            // pads=[1,1,1,1] for 3×3 same-size convolution
-            Proto::node(
-                "Conv",
-                &[
-                    &self.input_source,
-                    &format!("{}/kernel_ee", ns),
-                    &format!("{}/bias_ee", ns),
-                ],
-                &[&self.frame_tensor],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[3, 3]),
-                    Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                    Proto::attribute_ints("strides", &[1, 1]),
-                    Proto::attribute_int("group", 3),
-                ],
-            ),
-        ]
-    }
     fn initializers(&self) -> Vec<Vec<u8>> {
         vec![]
     }
@@ -165,6 +142,80 @@ impl IspBlock for EeBlock {
                     .collect::<Vec<u8>>(),
             ),
         ]
+    }
+
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        Some(&["isp.ee"])
+    }
+
+    fn custom_opsets(&self) -> Vec<(String, i64)> {
+        vec![("isp".to_string(), 1)]
+    }
+
+    fn opset_mode(&self) -> BlockOpsetMode {
+        BlockOpsetMode::Custom
+    }
+
+    fn nodes(&self) -> Vec<Vec<u8>> {
+        let ns = self.tensor_ns();
+        let mode = self.opset_mode();
+
+        match mode {
+            BlockOpsetMode::MnnIspMin => {
+                // MNN ISP min opset - fused isp.ee (single node)
+                vec![
+                    Proto::node_with_domain(
+                        "ee",
+                        "isp",
+                        &[&self.input_source, &format!("{}/kernel_ee", ns), &format!("{}/bias_ee", ns)],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[3, 3]),
+                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_int("group", 3),
+                        ],
+                    ),
+                ]
+            }
+            BlockOpsetMode::Primitive => {
+                // Primitive mode - standard Conv
+                vec![
+                    Proto::node(
+                        "Conv",
+                        &[
+                            &self.input_source,
+                            &format!("{}/kernel_ee", ns),
+                            &format!("{}/bias_ee", ns),
+                        ],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[3, 3]),
+                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_int("group", 3),
+                        ],
+                    ),
+                ]
+            }
+            BlockOpsetMode::Custom => {
+                // Custom mode - custom op
+                vec![
+                    Proto::node_with_domain(
+                        "ee",
+                        "isp",
+                        &[&self.input_source, &format!("{}/kernel_ee", ns), &format!("{}/bias_ee", ns)],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[3, 3]),
+                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_int("group", 3),
+                        ],
+                    ),
+                ]
+            }
+        }
     }
 }
 

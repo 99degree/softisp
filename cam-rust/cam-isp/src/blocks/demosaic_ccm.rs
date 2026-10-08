@@ -1,5 +1,5 @@
 use crate::onnx::proto::Proto;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{BlockOpsetMode, IspBlock};
 
 /// Fused Demosaic + CCM block — single Conv1×1 with runtime‑fused weights.
 ///
@@ -237,34 +237,85 @@ impl IspBlock for DemosaicCcmBlock {
         Some(Proto::value_info(&self.frame_tensor, &dims, 1))
     }
 
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        Some(&["isp.demosaic_ccm"])
+    }
+
+    fn custom_opsets(&self) -> Vec<(String, i64)> {
+        vec![("isp".to_string(), 1)]
+    }
+
+    fn opset_mode(&self) -> BlockOpsetMode {
+        BlockOpsetMode::Custom
+    }
+
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let inp = self.effective_input();
-        vec![
-            // Single Conv1×1 with runtime-fused weights.
-            // Weights are pre-divided by sensor_max and incorporate BLC+WB.
-            Proto::node(
-                "Conv",
-                &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
-                &[&format!("{}/conv_out", ns)],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[1, 1]),
-                    Proto::attribute_ints("strides", &[1, 1]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                ],
-            ),
-            // Clip to [0, 1]
-            Proto::node(
-                "Clip",
-                &[
-                    &format!("{}/conv_out", ns),
-                    &format!("{}/zero", ns),
-                    &format!("{}/one", ns),
-                ],
-                &[&self.frame_tensor],
-                &[],
-            ),
-        ]
+        
+        // Determine mode - use block's own mode
+        let mode = self.opset_mode();
+        
+        match mode {
+            BlockOpsetMode::MnnIspMin => {
+                // MNN ISP min opset - fused demosaic_ccm (single node, no clip)
+                // The Clip is handled in the shader
+                vec![
+                    Proto::node_with_domain(
+                        "demosaic_ccm",
+                        "isp",
+                        &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[1, 1]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                        ],
+                    ),
+                ]
+            }
+            BlockOpsetMode::Primitive => {
+                // Primitive mode - standard Conv + Clip
+                vec![
+                    Proto::node(
+                        "Conv",
+                        &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
+                        &[&format!("{}/conv_out", ns)],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[1, 1]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                        ],
+                    ),
+                    Proto::node(
+                        "Clip",
+                        &[
+                            &format!("{}/conv_out", ns),
+                            &format!("{}/zero", ns),
+                            &format!("{}/one", ns),
+                        ],
+                        &[&self.frame_tensor],
+                        &[],
+                    ),
+                ]
+            }
+            BlockOpsetMode::Custom => {
+                // Custom mode - custom op with Clip (for non-MNN backends)
+                vec![
+                    Proto::node_with_domain(
+                        "demosaic_ccm",
+                        "isp",
+                        &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
+                        &[&self.frame_tensor],
+                        &[
+                            Proto::attribute_ints("kernel_shape", &[1, 1]),
+                            Proto::attribute_ints("strides", &[1, 1]),
+                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                        ],
+                    ),
+                ]
+            }
+        }
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {

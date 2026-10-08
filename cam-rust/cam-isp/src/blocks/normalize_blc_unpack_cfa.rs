@@ -179,6 +179,23 @@ impl NormalizeBlcUnpackCfa {
             ),
         ]
     }
+
+    /// Emit MNN ISP minimum opset node — uses exact isp.crop_blc_norm_cfa op type
+    /// matching MNN's IspChainFusion pattern (isp.crop_blc_norm_cfa shader).
+    fn emit_mnn_isp_min_node(&self) -> Vec<u8> {
+        let attrs = vec![
+            Proto::attribute_floats("blc_offsets", &self.blc_offsets),
+            Proto::attribute_float("sensor_max", self.sensor_max),
+            Proto::attribute_ints("height_downscale", &[self.height_downscale]),
+        ];
+        Proto::node_with_domain(
+            "crop_blc_norm_cfa",  // MNN isp.crop_blc_norm_cfa op type
+            "isp",
+            &[&self.input_source],
+            &[&self.frame_tensor],
+            &attrs,
+        )
+    }
 }
 
 impl IspBlock for NormalizeBlcUnpackCfa {
@@ -237,6 +254,7 @@ impl IspBlock for NormalizeBlcUnpackCfa {
     fn nodes(&self) -> Vec<Vec<u8>> {
         match self.opset_mode() {
             BlockOpsetMode::Custom => vec![self.emit_custom_node()],
+            BlockOpsetMode::MnnIspMin => vec![self.emit_mnn_isp_min_node()],
             BlockOpsetMode::Primitive => self.emit_primitive_nodes(),
         }
     }

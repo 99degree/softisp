@@ -233,7 +233,8 @@ impl PipelineProfile {
         blocks.push(Box::new(
             DisplayBlock::new(target_width)
                 .with_rotate(self.rotate_mode)
-                .with_output_format(self.output_format),
+                .with_output_format(self.output_format)
+                .with_opset_mode(self.opset_mode),
         ));
 
         info!("  blocks: {} total", blocks.len());
