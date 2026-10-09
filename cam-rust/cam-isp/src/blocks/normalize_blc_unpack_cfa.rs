@@ -189,7 +189,7 @@ impl NormalizeBlcUnpackCfa {
             Proto::attribute_ints("height_downscale", &[self.height_downscale]),
         ];
         Proto::node_with_domain(
-            "crop_blc_norm_cfa",  // MNN isp.crop_blc_norm_cfa op type
+            "crop_blc_norm_cfa", // MNN isp.crop_blc_norm_cfa op type
             "isp",
             &[&self.input_source],
             &[&self.frame_tensor],

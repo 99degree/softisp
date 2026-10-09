@@ -47,9 +47,8 @@ fn main() {
         link_mnnconvert();
     }
 
-    // The `jni` feature is pure Rust (jni-rs): JNI_OnLoad and the Java_*
-    // entry points are `#[no_mangle]` functions, so there is no C source to
-    // compile and no extra library to link here.
+    // No JNI library is linked: the app has no Java layer, and the crate
+    // exposes only the C ABI in `cabi.rs` plus the Rust entry points.
 
     // Emit NDK linker flags for Android targets
     #[cfg(target_os = "android")]
