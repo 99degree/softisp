@@ -36,6 +36,8 @@ pub struct DemosaicCcmBlock {
     pub concrete_w: Option<i64>,
     /// Sensor max value for de-normalizing INT16 input.
     pub sensor_max: f32,
+    /// Override the emitted opset mode. When `None`, defaults to `Custom`.
+    pub forced_mode: Option<BlockOpsetMode>,
 }
 
 impl DemosaicCcmBlock {
@@ -52,7 +54,14 @@ impl DemosaicCcmBlock {
             concrete_h: None,
             concrete_w: None,
             sensor_max: 1023.0,
+            forced_mode: None,
         }
+    }
+
+    /// Select the emitted opset mode (Primitive, Custom, or MnnIspMin).
+    pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
+        self.forced_mode = Some(mode);
+        self
     }
 
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
@@ -246,33 +255,31 @@ impl IspBlock for DemosaicCcmBlock {
     }
 
     fn opset_mode(&self) -> BlockOpsetMode {
-        BlockOpsetMode::Custom
+        self.forced_mode.unwrap_or(BlockOpsetMode::Custom)
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let inp = self.effective_input();
-        
+
         // Determine mode - use block's own mode
         let mode = self.opset_mode();
-        
+
         match mode {
             BlockOpsetMode::MnnIspMin => {
                 // MNN ISP min opset - fused demosaic_ccm (single node, no clip)
                 // The Clip is handled in the shader
-                vec![
-                    Proto::node_with_domain(
-                        "demosaic_ccm",
-                        "isp",
-                        &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[1, 1]),
-                            Proto::attribute_ints("strides", &[1, 1]),
-                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                        ],
-                    ),
-                ]
+                vec![Proto::node_with_domain(
+                    "demosaic_ccm",
+                    "isp",
+                    &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
+                    &[&self.frame_tensor],
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[1, 1]),
+                        Proto::attribute_ints("strides", &[1, 1]),
+                        Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                    ],
+                )]
             }
             BlockOpsetMode::Primitive => {
                 // Primitive mode - standard Conv + Clip
@@ -301,19 +308,17 @@ impl IspBlock for DemosaicCcmBlock {
             }
             BlockOpsetMode::Custom => {
                 // Custom mode - custom op with Clip (for non-MNN backends)
-                vec![
-                    Proto::node_with_domain(
-                        "demosaic_ccm",
-                        "isp",
-                        &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[1, 1]),
-                            Proto::attribute_ints("strides", &[1, 1]),
-                            Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                        ],
-                    ),
-                ]
+                vec![Proto::node_with_domain(
+                    "demosaic_ccm",
+                    "isp",
+                    &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
+                    &[&self.frame_tensor],
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[1, 1]),
+                        Proto::attribute_ints("strides", &[1, 1]),
+                        Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                    ],
+                )]
             }
         }
     }
@@ -364,7 +369,28 @@ mod tests {
     fn test_demosaic_ccm_block_ops() {
         let block = DemosaicCcmBlock::new(2);
         let nodes = block.nodes();
-        assert_eq!(nodes.len(), 2, "Should produce 2 nodes: Conv, Clip");
+        // Default Custom mode emits the single fused isp.demosaic_ccm node.
+        assert_eq!(nodes.len(), 1, "Custom mode should produce 1 fused node");
+    }
+
+    #[test]
+    fn test_demosaic_ccm_primitive_block_ops() {
+        let block = DemosaicCcmBlock::new(2).with_opset_mode(BlockOpsetMode::Primitive);
+        let nodes = block.nodes();
+        assert_eq!(
+            nodes.len(),
+            2,
+            "Primitive should produce 2 nodes: Conv, Clip"
+        );
+    }
+
+    #[test]
+    fn test_demosaic_ccm_mnn_isp_min_block_ops() {
+        let block = DemosaicCcmBlock::new(2).with_opset_mode(BlockOpsetMode::MnnIspMin);
+        let nodes = block.nodes();
+        assert_eq!(nodes.len(), 1, "MnnIspMin should produce 1 fused node");
+        let s = String::from_utf8_lossy(&nodes[0]);
+        assert!(s.contains("isp"), "fused node should carry isp domain");
     }
 
     #[test]

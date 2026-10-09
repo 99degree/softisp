@@ -41,6 +41,8 @@ pub struct EeBlock {
     pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String,
     pub input_source: String,
+    /// Override the emitted opset mode. When `None`, defaults to `Custom`.
+    pub forced_mode: Option<BlockOpsetMode>,
 }
 impl Default for EeBlock {
     fn default() -> Self {
@@ -56,7 +58,14 @@ impl EeBlock {
             next: None,
             frame_tensor: "EeBlock/frame".into(),
             input_source: String::new(),
+            forced_mode: None,
         }
+    }
+
+    /// Select the emitted opset mode (Primitive, Custom, or MnnIspMin).
+    pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
+        self.forced_mode = Some(mode);
+        self
     }
 }
 impl IspBlock for EeBlock {
@@ -153,7 +162,7 @@ impl IspBlock for EeBlock {
     }
 
     fn opset_mode(&self) -> BlockOpsetMode {
-        BlockOpsetMode::Custom
+        self.forced_mode.unwrap_or(BlockOpsetMode::Custom)
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -163,57 +172,59 @@ impl IspBlock for EeBlock {
         match mode {
             BlockOpsetMode::MnnIspMin => {
                 // MNN ISP min opset - fused isp.ee (single node)
-                vec![
-                    Proto::node_with_domain(
-                        "ee",
-                        "isp",
-                        &[&self.input_source, &format!("{}/kernel_ee", ns), &format!("{}/bias_ee", ns)],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[3, 3]),
-                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                            Proto::attribute_ints("strides", &[1, 1]),
-                            Proto::attribute_int("group", 3),
-                        ],
-                    ),
-                ]
+                vec![Proto::node_with_domain(
+                    "ee",
+                    "isp",
+                    &[
+                        &self.input_source,
+                        &format!("{}/kernel_ee", ns),
+                        &format!("{}/bias_ee", ns),
+                    ],
+                    &[&self.frame_tensor],
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[3, 3]),
+                        Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                        Proto::attribute_ints("strides", &[1, 1]),
+                        Proto::attribute_int("group", 3),
+                    ],
+                )]
             }
             BlockOpsetMode::Primitive => {
                 // Primitive mode - standard Conv
-                vec![
-                    Proto::node(
-                        "Conv",
-                        &[
-                            &self.input_source,
-                            &format!("{}/kernel_ee", ns),
-                            &format!("{}/bias_ee", ns),
-                        ],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[3, 3]),
-                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                            Proto::attribute_ints("strides", &[1, 1]),
-                            Proto::attribute_int("group", 3),
-                        ],
-                    ),
-                ]
+                vec![Proto::node(
+                    "Conv",
+                    &[
+                        &self.input_source,
+                        &format!("{}/kernel_ee", ns),
+                        &format!("{}/bias_ee", ns),
+                    ],
+                    &[&self.frame_tensor],
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[3, 3]),
+                        Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                        Proto::attribute_ints("strides", &[1, 1]),
+                        Proto::attribute_int("group", 3),
+                    ],
+                )]
             }
             BlockOpsetMode::Custom => {
                 // Custom mode - custom op
-                vec![
-                    Proto::node_with_domain(
-                        "ee",
-                        "isp",
-                        &[&self.input_source, &format!("{}/kernel_ee", ns), &format!("{}/bias_ee", ns)],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[3, 3]),
-                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                            Proto::attribute_ints("strides", &[1, 1]),
-                            Proto::attribute_int("group", 3),
-                        ],
-                    ),
-                ]
+                vec![Proto::node_with_domain(
+                    "ee",
+                    "isp",
+                    &[
+                        &self.input_source,
+                        &format!("{}/kernel_ee", ns),
+                        &format!("{}/bias_ee", ns),
+                    ],
+                    &[&self.frame_tensor],
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[3, 3]),
+                        Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                        Proto::attribute_ints("strides", &[1, 1]),
+                        Proto::attribute_int("group", 3),
+                    ],
+                )]
             }
         }
     }
@@ -244,6 +255,19 @@ mod tests {
         let nodes = b.nodes();
         // Conv(3x3 unsharp) = 1 node
         assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_ee_primitive_emit_onnx() {
+        let mut b = EeBlock::new().with_opset_mode(BlockOpsetMode::Primitive);
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        assert_eq!(nodes.len(), 1);
+        let s = String::from_utf8_lossy(&nodes[0]);
+        assert!(
+            !s.contains("isp"),
+            "primitive mode should not carry the isp domain"
+        );
     }
 
     #[test]

@@ -32,6 +32,8 @@ pub struct LdciBlock {
     pub next: Option<Box<dyn IspBlock>>,
     pub frame_tensor: String,
     pub input_source: String,
+    /// Override the emitted opset mode. When `None`, defaults to `Custom`.
+    pub forced_mode: Option<BlockOpsetMode>,
 }
 impl Default for LdciBlock {
     fn default() -> Self {
@@ -47,7 +49,14 @@ impl LdciBlock {
             next: None,
             frame_tensor: "LdciBlock/frame".into(),
             input_source: String::new(),
+            forced_mode: None,
         }
+    }
+
+    /// Select the emitted opset mode (Primitive, Custom, or MnnIspMin).
+    pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
+        self.forced_mode = Some(mode);
+        self
     }
 }
 impl IspBlock for LdciBlock {
@@ -126,7 +135,7 @@ impl IspBlock for LdciBlock {
     }
 
     fn opset_mode(&self) -> BlockOpsetMode {
-        BlockOpsetMode::Custom
+        self.forced_mode.unwrap_or(BlockOpsetMode::Custom)
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
@@ -137,19 +146,17 @@ impl IspBlock for LdciBlock {
             BlockOpsetMode::MnnIspMin => {
                 // MNN ISP min opset - fused isp.ldci (single node)
                 // The Pool+Sub+Mul+Add is handled in the shader
-                vec![
-                    Proto::node_with_domain(
-                        "ldci",
-                        "isp",
-                        &[&self.input_source, &format!("{}/strength", ns)],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[3, 3]),
-                            Proto::attribute_ints("strides", &[1, 1]),
-                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                        ],
-                    ),
-                ]
+                vec![Proto::node_with_domain(
+                    "ldci",
+                    "isp",
+                    &[&self.input_source, &format!("{}/strength", ns)],
+                    &[&self.frame_tensor],
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[3, 3]),
+                        Proto::attribute_ints("strides", &[1, 1]),
+                        Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                    ],
+                )]
             }
             BlockOpsetMode::Primitive => {
                 // Primitive mode - Pool + Sub + Mul + Add (4 nodes)
@@ -190,19 +197,17 @@ impl IspBlock for LdciBlock {
             }
             BlockOpsetMode::Custom => {
                 // Custom mode - custom op (with strength as input)
-                vec![
-                    Proto::node_with_domain(
-                        "ldci",
-                        "isp",
-                        &[&self.input_source, &format!("{}/strength", ns)],
-                        &[&self.frame_tensor],
-                        &[
-                            Proto::attribute_ints("kernel_shape", &[3, 3]),
-                            Proto::attribute_ints("strides", &[1, 1]),
-                            Proto::attribute_ints("pads", &[1, 1, 1, 1]),
-                        ],
-                    ),
-                ]
+                vec![Proto::node_with_domain(
+                    "ldci",
+                    "isp",
+                    &[&self.input_source, &format!("{}/strength", ns)],
+                    &[&self.frame_tensor],
+                    &[
+                        Proto::attribute_ints("kernel_shape", &[3, 3]),
+                        Proto::attribute_ints("strides", &[1, 1]),
+                        Proto::attribute_ints("pads", &[1, 1, 1, 1]),
+                    ],
+                )]
             }
         }
     }
@@ -222,8 +227,28 @@ mod tests {
         let mut b = LdciBlock::new();
         b.set_input_source("in/frame");
         let nodes = b.nodes();
+        // Default Custom mode emits the single fused isp.ldci node.
+        assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_ldci_primitive_emits_four_nodes() {
+        let mut b = LdciBlock::new().with_opset_mode(BlockOpsetMode::Primitive);
+        b.set_input_source("in/frame");
         // AvgPool + Sub + Mul + Add = 4 nodes
+        let nodes = b.nodes();
         assert_eq!(nodes.len(), 4);
+    }
+
+    #[test]
+    fn test_ldci_mnn_isp_min_emits_fused_node() {
+        let mut b = LdciBlock::new().with_opset_mode(BlockOpsetMode::MnnIspMin);
+        b.set_input_source("in/frame");
+        let nodes = b.nodes();
+        assert_eq!(nodes.len(), 1);
+        // The fused node carries the isp domain.
+        let s = String::from_utf8_lossy(&nodes[0]);
+        assert!(s.contains("isp"), "fused node should carry isp domain");
     }
 
     #[test]

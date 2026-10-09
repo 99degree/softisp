@@ -228,40 +228,50 @@ impl DisplayBlock {
 
         // Build attributes for the isp.display shader
         let mut attrs = Vec::new();
-        
+
         // Rotation attributes
         attrs.push(Proto::attribute_int("rotate_mode", self.rotate_mode as i64));
-        
+
         // Format attributes
-        attrs.push(Proto::attribute_int("output_format", self.output_format as i64));
-        
+        attrs.push(Proto::attribute_int(
+            "output_format",
+            self.output_format as i64,
+        ));
+
         // Packing attributes
-        attrs.push(Proto::attribute_int("pack_two_pixels", if self.pack_two_pixels { 1 } else { 0 }));
-        
+        attrs.push(Proto::attribute_int(
+            "pack_two_pixels",
+            if self.pack_two_pixels { 1 } else { 0 },
+        ));
+
         // Concrete dimensions for Slice initializers
         if let (Some(h), Some(w)) = (self.in_h, self.in_w) {
             attrs.push(Proto::attribute_int("in_h", h));
             attrs.push(Proto::attribute_int("in_w", w));
         }
-        
+
         // Workgroup size
-        attrs.push(Proto::attribute_int("workgroup_x", self.workgroup_size.0 as i64));
-        attrs.push(Proto::attribute_int("workgroup_y", self.workgroup_size.1 as i64));
+        attrs.push(Proto::attribute_int(
+            "workgroup_x",
+            self.workgroup_size.0 as i64,
+        ));
+        attrs.push(Proto::attribute_int(
+            "workgroup_y",
+            self.workgroup_size.1 as i64,
+        ));
 
         // Post-process output
         if self.postprocess_output.is_some() {
             attrs.push(Proto::attribute_int("has_postprocess", 1));
         }
 
-        vec![
-            Proto::node_with_domain(
-                "display",
-                "isp",
-                &[&inp],
-                &[final_output],
-                &attrs,
-            ),
-        ]
+        vec![Proto::node_with_domain(
+            "display",
+            "isp",
+            &[&inp],
+            &[final_output],
+            &attrs,
+        )]
     }
 }
 
@@ -365,6 +375,13 @@ impl IspBlock for DisplayBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
+        // MNN ISP min mode fuses rotation, format conversion, gamma and BCS
+        // into the single `isp.display` dispatch, so the per-step nodes below
+        // do not apply.
+        if self.opset_mode() == BlockOpsetMode::MnnIspMin {
+            return self.emit_mnn_isp_min_nodes();
+        }
+
         let ns = self.tensor_ns();
         let scale = format!("{}/scale", ns);
         let final_output = &self.frame_tensor;

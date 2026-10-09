@@ -145,22 +145,28 @@ impl MetadataEntry {
 
     pub fn to_int32_slice(&self) -> Vec<i32> {
         self.value
-            .chunks_exact(4)
-            .map(|c| i32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| i32::from_ne_bytes(*c))
             .collect()
     }
 
     pub fn to_int64_slice(&self) -> Vec<i64> {
         self.value
-            .chunks_exact(8)
-            .map(|c| i64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| i64::from_ne_bytes(*c))
             .collect()
     }
 
     pub fn to_float_slice(&self) -> Vec<f32> {
         self.value
-            .chunks_exact(4)
-            .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_ne_bytes(*c))
             .collect()
     }
 }

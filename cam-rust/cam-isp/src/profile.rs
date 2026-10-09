@@ -488,7 +488,7 @@ impl PipelineProfile {
         tile_count_x: u32, // horizontal tile count (e.g., 2 for 4K→4K)
         tile_count_y: u32, // vertical tile count (e.g., 2 for 4K→4K)
         tile_overlap: u32, // overlap pixels between tiles for convolution
-        opset_mode: i32, // 0=Primitive, 1=Custom, 2=MnnIspMin
+        opset_mode: i32,  // 0=Primitive, 1=Custom, 2=MnnIspMin
     ) -> Self {
         Self {
             label,
