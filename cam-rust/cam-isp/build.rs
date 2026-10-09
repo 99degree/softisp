@@ -28,21 +28,15 @@
 use std::path::{Path, PathBuf};
 
 fn main() {
-    println!("cargo:warning=HELLO FROM BUILD SCRIPT");
     // Emit rerun-if-changed for all env vars that affect the build
-    println!(
-        "cargo:warning=DEBUG: target_os = {}",
-        std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "not set".to_string())
-    );
-    println!(
-        "cargo:warning=DEBUG: feature jni = {}",
-        if cfg!(feature = "jni") { "yes" } else { "no" }
-    );
-    println!("cargo:warning=cargo:rerun-if-env-changed=MNN_DIR");
-    println!("cargo:warning=cargo:rerun-if-env-changed=MNN_INCLUDE_DIR");
-    println!("cargo:warning=cargo:rerun-if-env-changed=MNN_LIB_DIR");
-    println!("cargo:warning=cargo:rerun-if-env-changed=MNN_CONVERT_DIR");
-    println!("cargo:warning=cargo:rerun-if-env-changed=ANDROID_NDK_HOME");
+    println!("cargo:rerun-if-env-changed=MNN_DIR");
+    // These were prefixed with `cargo:warning=`, which makes cargo print them
+    // and ignore the directive entirely, so the build never re-ran when the
+    // MNN paths changed.
+    println!("cargo:rerun-if-env-changed=MNN_INCLUDE_DIR");
+    println!("cargo:rerun-if-env-changed=MNN_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=MNN_CONVERT_DIR");
+    println!("cargo:rerun-if-env-changed=ANDROID_NDK_HOME");
 
     #[cfg(feature = "ort")]
     link_onnxruntime();
@@ -53,14 +47,9 @@ fn main() {
         link_mnnconvert();
     }
 
-    // Link JNI library for Android with JNI feature (rust jni-rs, no C)
-    #[cfg(all(target_os = "android", feature = "jni"))]
-    {
-        println!("cargo:warning=!!! JNI BLOCK (rust jni-rs, no jni.c) !!!");
-        // jni-rs handles JNI_OnLoad / Java_* via rust macros; no C compile needed.
-        // jni.c removed; using jni.rs (jni-rs)
-        // no version script, no jni.o needed
-    }
+    // The `jni` feature is pure Rust (jni-rs): JNI_OnLoad and the Java_*
+    // entry points are `#[no_mangle]` functions, so there is no C source to
+    // compile and no extra library to link here.
 
     // Emit NDK linker flags for Android targets
     #[cfg(target_os = "android")]
@@ -70,61 +59,6 @@ fn main() {
         let abi_dir = abi_dir();
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
     }
-}
-
-/// Link JNI library for Android.
-fn link_jni() {
-    println!("cargo:warning=In link_jni");
-    let abi_dir = abi_dir();
-    println!("cargo:warning=abi_dir = {}", abi_dir.display());
-    let jni_src = Path::new("src/jni.c");
-    println!("cargo:warning=jni_src = {}", jni_src.display());
-    println!("cargo:warning=jni_src.exists() = {}", jni_src.exists());
-    if jni_src.exists() {
-        println!("cargo:warning=cargo:rerun-if-changed={}", jni_src.display());
-        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-        println!("cargo:warning=out_dir = {}", out_dir.display());
-        let mut build = cc::Build::new();
-        build
-            .file(jni_src)
-            // We are compiling C, not C++
-            .flag_if_supported("-std=c99")
-            .include("src"); // in case we have headers in src
-        setup_cc_for_android(&mut build);
-        build.compile("jni");
-
-        let src = out_dir.join("libjni.a");
-        let dst = abi_dir.join("libjni.a");
-        println!("cargo:warning=src = {}", src.display());
-        println!("cargo:warning=dst = {}", dst.display());
-        if let Some(parent) = dst.parent() {
-            println!("cargo:warning=creating parent dir: {}", parent.display());
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if src.exists() {
-            println!(
-                "cargo:warning=copying from {} to {}",
-                src.display(),
-                dst.display()
-            );
-            let _ = std::fs::copy(&src, &dst);
-            println!("cargo:warning=cargo:rerun-if-changed={}", dst.display());
-        } else {
-            println!(
-                "cargo:warning=warning: source file does not exist: {}",
-                src.display()
-            );
-        }
-    }
-
-    println!(
-        "cargo:warning=cargo:rustc-link-search=native={}",
-        abi_dir.display()
-    );
-    println!("cargo:warning=cargo:rustc-link-arg=-Wl,--whole-archive");
-    println!("cargo:warning=cargo:rustc-link-lib=static=jni");
-    println!("cargo:warning=cargo:rustc-link-lib=static=c++_static");
-    println!("cargo:warning=cargo:rustc-link-arg=-Wl,--no-whole-archive");
 }
 
 // ═══════════════════════════════════════════════════════════════════

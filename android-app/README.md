@@ -24,6 +24,7 @@ android-app/                 packaging only
   Sources/res/               launcher icon + strings
   .gitignore
 cam-rust/cam-camera-app/     the app itself, all Rust
+  AndroidManifest.xml        shipped verbatim (see "Manifest" below)
   src/lib.rs                 event loop, lifecycle, wiring
   src/camera.rs              NDK camera2 capture (RAW16, YUV fallback)
   src/pipeline.rs            RawFrame → cam-isp ProcessParams
@@ -32,9 +33,22 @@ cam-rust/cam-camera-app/     the app itself, all Rust
   src/storage.rs             writability probe + permission guidance
 ```
 
-The manifest, permissions, activity and signing key are declared in
-`cam-rust/cam-camera-app/Cargo.toml` under `[package.metadata.android]`;
-`cargo apk2` turns that table into `AndroidManifest.xml`.
+## Manifest
+
+The manifest is hand-written and shipped as-is, via
+`manifest_override = "AndroidManifest.xml"` in
+`cam-rust/cam-camera-app/Cargo.toml`. `cargo-apk2` 1.4.2 serialises
+`android:allowNativeHeapPointerTagging` and
+`android:requestLegacyExternalStorage` as *child elements* of `<application>`
+rather than attributes (the `@` prefix that tells quick-xml to emit an
+attribute is missing from the serde rename in `ndk-build2`), and it emits them
+even when the fields are unset. Supplying the file whole avoids the bug and
+keeps every attribute under review.
+
+`[package.metadata.android]` still declares the application id, SDK range,
+resources, runtime libraries, signing key and the activity list; that table
+remains the source of truth for what `cargo-apk2` needs in memory. The two must
+be kept in step, which is what `make verify-manifest` checks.
 
 ## Building
 
@@ -44,6 +58,13 @@ make run        # install, then launch the camera
 make logs       # tail the crash log
 make clean
 ```
+
+`make build` also runs `make verify-manifest`, which asserts the packaged
+manifest with `aapt dump xmltree`: application id, `android.app.lib_name`,
+the exported `NativeActivity` with its LAUNCHER filter, min/target SDK and the
+permissions. A manifest that parses but has lost `lib_name` produces an app
+that installs and then dies in `dlopen` with nothing in logcat, so the check is
+part of the build rather than a separate step.
 
 `make toolchain` (run automatically) shims the Android SDK for this host. On
 Termux/aarch64 the NDK's `prebuilt/linux-x86_64` binaries and the
