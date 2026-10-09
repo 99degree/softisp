@@ -18,6 +18,13 @@ android-activity = { version = "0.6.1", features = ["native-activity"] }
 # AImageReader, which camera2 capture needs.
 ndk-sys = { version = "0.6", features = ["media"] }
 
+# Routes log:: macros to logcat. The app has no Java layer, so without a logger
+# the `log::info!`/`log::warn!` calls — including crashlog's own path failures —
+# are silently discarded. Android-only: `cargo test` builds this crate for the
+# host too, where the logger is a no-op (see `init_logger`).
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = { workspace = true }
+
 [features]
 default = []
 # Vulkan MNN inference. This is what the camera app actually wants on a phone:
@@ -31,9 +38,19 @@ mnn = ["cam-isp/mnn"]
 
 [package.metadata.android]
 apk_name = "softisp-camera"
-# Application ID. `package` is the `<manifest package>` attribute; the app id is
-# the first dotted segment, so it must start with `com.softisp.camera`.
+# Application ID, kept in sync with the `<manifest package>` in the override
+# below. It is still needed here even though the manifest is hand-written:
+# ndk-build2 renames the unaligned APK to `manifest.package` while running
+# `aapt2 optimize`, so the field must be present and usable as a filename.
 package = "com.softisp.camera"
+# The manifest is supplied whole rather than generated. cargo-apk2 1.4.2 emits
+# `android:allowNativeHeapPointerTagging` and `android:requestLegacyExternalStorage`
+# as child elements of `<application>` instead of attributes (quick-xml needs an
+# `@` prefix in the serde rename, which ndk-build2 1.4.2 omits), and every entry
+# is emitted even when unset. See the header of AndroidManifest.xml; that file is
+# the source of truth for the shipped manifest, and this table stays the source
+# of truth for what cargo-apk2 needs in memory (activity list, target SDK).
+manifest_override = "AndroidManifest.xml"
 # Icon + string resources live with the rest of the app scaffolding.
 resources = "../../android-app/Sources/res"
 # Runtime native libraries copied into lib/<abi>/ by cargo-apk2. MNN's Vulkan
@@ -90,18 +107,23 @@ has_code = false
 debuggable = false
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
 icon = "@mipmap/icon"
-# `android.app.lib_name` is what NativeActivity dlopen()s; it must match the
-# `cam_camera_app` library name in Cargo.toml.
-[[package.metadata.android.application.meta_data]]
-name = "android.app.lib_name"
-value = "cam_camera_app"
 
 [[package.metadata.android.application.activity]]
 name = "android.app.NativeActivity"
 exported = true
 # Rotation, density and UI-mode changes are absorbed here so the activity is
-# not recreated mid-preview; ConfigChangeTracker re-allocates the buffers.
+# not recreated mid-preview: lib.rs re-takes the window and reallocates the
+# presentation buffers on the resulting resize events.
 config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection"
+#
+# `android.app.lib_name` is what NativeActivity dlopen()s; it must match the
+# `cam_camera_app` library name in Cargo.toml. It belongs to the *activity*:
+# NativeActivity.onCreate reads `getActivityInfo(...).metaData`, so a
+# meta-data entry on <application> is never seen and libname falls back to
+# "main", crashing onCreate with "Unable to find native library main".
+[[package.metadata.android.application.activity.meta_data]]
+name = "android.app.lib_name"
+value = "cam_camera_app"
 
 [[package.metadata.android.application.activity.intent_filter]]
 actions = ["android.intent.action.MAIN"]

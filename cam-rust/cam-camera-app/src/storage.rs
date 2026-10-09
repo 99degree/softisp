@@ -81,11 +81,6 @@ pub fn probe(path: &Path, keep: bool) -> (Access, Option<String>) {
     }
 }
 
-/// A one-line summary of a failed probe, ready for the crash log.
-pub fn describe(path: &Path, reason: &str) -> String {
-    format!("{} is not writable: {reason}", path.display())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,12 +136,5 @@ mod tests {
         let p = base.join("deep/app.log");
         assert_eq!(probe(&p, false).0, Access::Writable);
         let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn describe_names_the_path() {
-        let msg = describe(Path::new("/sdcard/download/softisp-app.log"), "denied");
-        assert!(msg.contains("/sdcard/download/softisp-app.log"));
-        assert!(msg.contains("denied"));
     }
 }
