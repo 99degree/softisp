@@ -52,7 +52,7 @@ export ANDROID_NDK_ROOT
 export JAVA_HOME
 export HOST = aarch64-unknown-linux-android
 
-.PHONY: all build toolchain push run logs uninstall clean check-tests
+.PHONY: all build toolchain verify-manifest push run logs uninstall clean check-tests
 
 all: build
 
@@ -63,6 +63,49 @@ build: toolchain
 	@echo "==> built $(APK)"
 	@ls -l $(APK)
 	@$(SDK_ROOT)/build-tools/34.0.0-termux/aapt list $(APK) 2>/dev/null | grep '\.so' || unzip -l $(APK) | grep '\.so'
+	@$(MAKE) --no-print-directory verify-manifest
+
+# cargo-apk2 1.4.2 serialises two `<application>` fields without the quick-xml
+# `@` attribute prefix (ndk-build2 bug), so the manifest is supplied whole via
+# `manifest_override`. This asserts the packaged result, because a manifest that
+# parses but is missing `lib_name` produces an app that installs and then dies
+# in `NativeActivity.onCreate` with "Unable to find native library main" — an
+# app that looks installed but never starts.
+#
+# `lib_name` must sit on `<activity>`, not `<application>`: NativeActivity reads
+# `getActivityInfo(...).metaData`, which never carries application-level entries.
+# aapt's xmltree indents by nesting depth, so the placement is asserted by
+# checking the entry appears after `<activity>` at a deeper indent.
+verify-manifest:
+	@AAPT=$(SDK_ROOT)/build-tools/34.0.0-termux/aapt; \
+	$$AAPT dump xmltree $(APK) AndroidManifest.xml > /dev/null 2>&1 || { \
+		echo "==> aapt unavailable; skipping manifest assertions"; exit 0; \
+	}; \
+	dump=$$($$AAPT dump xmltree $(APK) AndroidManifest.xml 2>/dev/null); \
+	fail=0; \
+	for pat in \
+		'package="com.softisp.camera"' \
+		'android.app.NativeActivity' \
+		'android.intent.category.LAUNCHER' \
+		'uses-sdk' \
+		'minSdkVersion' \
+		'targetSdkVersion' \
+		'android.permission.CAMERA' \
+		'android.permission.MANAGE_EXTERNAL_STORAGE'; do \
+		echo "$$dump" | grep -q "$$pat" || { echo "MISSING: $$pat"; fail=1; }; \
+	done; \
+	act=$$(echo "$$dump" | awk '/E: activity/{found=1} found'); \
+	if [ -z "$$act" ]; then \
+		echo "MISSING: <activity>"; fail=1; \
+	elif ! echo "$$act" | grep -q 'android.app.lib_name'; then \
+		echo "MISSING: android.app.lib_name on <activity> (an <application>-level"; \
+		echo "         entry is invisible to NativeActivity and yields libname=main)"; \
+		fail=1; \
+	elif ! echo "$$act" | grep -q 'cam_camera_app'; then \
+		echo "MISSING: cam_camera_app value for android.app.lib_name"; fail=1; \
+	fi; \
+	if [ $$fail -ne 0 ]; then echo "==> manifest check FAILED"; exit 1; fi; \
+	echo "==> manifest OK"
 
 # Termux hosts are aarch64, so the NDK's prebuilt/linux-x86_64 binaries are the
 # wrong architecture. ndk-build2 picks that directory from $HOST, so shim it with
@@ -86,7 +129,7 @@ toolchain:
 				ln -sfn ../linux-x86_64/$$e $$ANDROIDDIR/$$e; \
 		done; \
 	fi; \
-	BT=$$SDK_ROOT/build-tools; \
+	BT=$(SDK_ROOT)/build-tools; \
 	NEWBT=$$BT/34.0.0-termux; \
 	if [ ! -d $$NEWBT ]; then cp -a $$BT/34.0.0 $$NEWBT; fi; \
 	for t in aapt aapt2 zipalign apksigner; do \

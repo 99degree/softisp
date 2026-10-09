@@ -15,11 +15,9 @@ type Rect = android_activity::ndk_sys::ARect;
 /// Bytes per pixel in the `R8G8B8A8_UNORM` buffer the window is configured for.
 const BYTES_PER_PIXEL: usize = 4;
 
-/// A window configured for RGBA8888 buffers of a fixed size.
+/// A window configured for RGBA8888 buffers.
 pub struct WindowTarget<'a> {
     window: &'a NativeWindow,
-    width: i32,
-    height: i32,
 }
 
 impl<'a> WindowTarget<'a> {
@@ -37,21 +35,7 @@ impl<'a> WindowTarget<'a> {
         window
             .set_buffers_geometry(width, height, Some(HardwareBufferFormat::R8G8B8A8_UNORM))
             .map_err(|e| format!("set_buffers_geometry({width}x{height}) -> {e}"))?;
-        Ok(Self {
-            window,
-            width,
-            height,
-        })
-    }
-
-    /// Buffer width this target requested.
-    pub fn width(&self) -> i32 {
-        self.width
-    }
-
-    /// Buffer height this target requested.
-    pub fn height(&self) -> i32 {
-        self.height
+        Ok(Self { window })
     }
 
     /// Blit `src` (BGRA, `src_w`×`src_h`) into the window, scaling to fit.

@@ -42,6 +42,22 @@ const POLL_TIMEOUT: Duration = Duration::from_millis(100);
 /// preview instead of letting latency grow without bound.
 const FRAME_BUDGET: Duration = Duration::from_millis(500);
 
+/// Route `log::` records to logcat.
+///
+/// The app has no Java layer, and the default `log` implementation discards
+/// everything, which would make the engine/block-chain diagnostics invisible.
+/// `android_logger` is a target dependency pulled in only for Android (see
+/// Cargo.toml), so on the host this compiles to nothing and the tests stay
+/// hermetic.
+fn init_logger() {
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("softisp"),
+    );
+}
+
 /// The last successfully processed frame, kept to repaint the surface.
 type LastFrame = (Vec<u8>, u32, u32);
 
@@ -106,11 +122,17 @@ impl Preview {
         match CameraSession::open_default() {
             Ok(s) => {
                 let raw = s.is_raw();
+                // The sensor's own white level matters: normalisation divides
+                // by it, so a hardcoded 10-bit value clips a sensor that
+                // actually saturates higher.
                 self.config = PipelineConfig {
-                    sensor_max: 1023.0,
+                    sensor_max: s.sensor_max(),
                     bayer_pattern: s.bayer_pattern(),
                 };
-                log::info!("camera open (raw={raw})");
+                log::info!(
+                    "camera open (raw={raw}, sensor_max={})",
+                    self.config.sensor_max
+                );
                 self.session = Some(s);
             }
             Err(e) => write_line("ERROR", "camera", &e),
@@ -190,7 +212,15 @@ fn android_main(app: AndroidApp) {
     // The external data directory needs no runtime permission, so it is the
     // guaranteed-writable fallback when /sdcard/download is out of reach.
     let fallback = app.external_data_path();
+    init_logger();
     crashlog::install(fallback.as_deref());
+
+    // Register the ISP engines and builtin blocks before anything selects one.
+    // The registry starts empty: without this call `select_engine_by_name`
+    // matches nothing, and the first frame dies with "no ISP engine matching
+    // ...". It is idempotent, so a recreated activity may call it again.
+    cam_isp::init();
+
     let sdk = AndroidApp::sdk_version();
     log::info!("softisp camera starting (sdk {sdk}, engine {ENGINE_NAME})");
     if let Some(p) = crashlog::active_path() {
@@ -204,7 +234,6 @@ fn android_main(app: AndroidApp) {
 
     let mut exit = false;
     let mut window: Option<NativeWindow> = None;
-    let mut resized = ConfigChangeTracker::default();
     // Built once the window reports a size, since the block chain is sized
     // from the preview's output width.
     let mut preview: Option<Preview> = None;
@@ -213,7 +242,12 @@ fn android_main(app: AndroidApp) {
         app.poll_events(Some(POLL_TIMEOUT), |event| {
             match event {
                 PollEvent::Main(MainEvent::Destroy) => exit = true,
-                PollEvent::Main(MainEvent::InitWindow { .. }) => window = app.native_window(),
+                // A resize or config change re-runs InitWindow on some
+                // framework versions and not on others, so all three
+                // re-take the window rather than trusting one of them.
+                PollEvent::Main(MainEvent::InitWindow { .. })
+                | PollEvent::Main(MainEvent::WindowResized { .. })
+                | PollEvent::Main(MainEvent::ConfigChanged { .. }) => window = app.native_window(),
                 PollEvent::Main(MainEvent::TerminateWindow { .. }) => window = None,
                 PollEvent::Main(MainEvent::InputAvailable) => {
                     // The preview owns the whole surface, so input has no
@@ -231,16 +265,16 @@ fn android_main(app: AndroidApp) {
         if exit {
             break;
         }
-        // Rotation and density changes are absorbed by the manifest's
-        // `configChanges`; re-take the window so the presentation buffers are
-        // allocated at the new size instead of stretching stale ones.
-        if resized.changed(&app) {
-            window = app.native_window();
-        }
         let Some(win) = window.as_ref() else {
             continue;
         };
         let (w, h) = (win.width() as u32, win.height() as u32);
+        // A freshly created surface reports 0×0 until the activity is laid
+        // out. Sizing a block chain to zero pixels divides by zero inside the
+        // profile builder, so wait for a real geometry instead.
+        if w == 0 || h == 0 {
+            continue;
+        }
         if preview.is_none() {
             match Preview::new(ENGINE_NAME, w) {
                 Ok(p) => preview = Some(p),
@@ -262,22 +296,6 @@ fn android_main(app: AndroidApp) {
     let frames = preview.as_ref().map_or(0, |p| p.frames);
     log::info!("exiting after {frames} frames");
     write_line("INFO", "exit", &format!("processed {frames} frames"));
-}
-
-/// Tracks the window size so a resize re-allocates the presentation buffers.
-#[derive(Default)]
-struct ConfigChangeTracker {
-    last: Option<(i32, i32)>,
-}
-
-impl ConfigChangeTracker {
-    /// `true` when the window size changed since the previous call.
-    fn changed(&mut self, app: &AndroidApp) -> bool {
-        let size = app.native_window().map(|w| (w.width(), w.height()));
-        let changed = self.last.is_some() && self.last != size;
-        self.last = size;
-        changed
-    }
 }
 
 /// Explain, in the log, why the mandated `/sdcard/download` path was skipped.

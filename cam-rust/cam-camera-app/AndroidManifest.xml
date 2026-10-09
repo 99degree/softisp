@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hand-written manifest, shipped verbatim via `manifest_override`.
+
+  Why this file exists
+  ====================
+  cargo-apk2 1.4.2 (via ndk-build2 1.4.2) serialises two Application fields
+  without the quick-xml "@" attribute prefix:
+
+      #[serde(rename(serialize = "android:allowNativeHeapPointerTagging"))]
+      #[serde(rename(serialize = "android:requestLegacyExternalStorage"))]
+
+  The "@" is what tells quick-xml to emit an attribute; without it those two
+  become child elements of application:
+
+      <application ...>
+        <android:allowNativeHeapPointerTagging/>
+        <android:requestLegacyExternalStorage/>
+
+  Both are Option<bool> with no skip_serializing_if, so they are emitted even
+  when unset in Cargo.toml, and both are invalid in that position per the
+  manifest schema. Supplying the manifest whole sidesteps the bug.
+
+  Keeping the two in sync
+  =======================
+  [package.metadata.android] in Cargo.toml remains the source of truth for what
+  cargo-apk2 needs in memory: the package id (used to name the intermediate APK
+  during aapt2 optimize), target_sdk_version (used to pick android.jar) and the
+  activity list (suppresses the "no activities defined" warning). This file must
+  mirror it, plus the two attributes cargo-apk2 gets wrong. `make
+  verify-manifest` asserts the packaged result after every build.
+
+  versionCode/versionName are not injected into an override, so they are written
+  out here. 16777472 is cargo-apk2's VersionCode encoding of crate version
+  0.1.0: (apk_id << 24) | (major << 16) | (minor << 8) | patch, apk_id = 1.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.softisp.camera"
+    android:versionCode="16777472"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34"/>
+
+    <uses-feature android:name="android.hardware.camera" android:required="true"/>
+
+    <!-- Required for ACameraManager_openCamera. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!--
+      The crash log lives in the public Download directory.
+
+      API 29 and below: WRITE_EXTERNAL_STORAGE is a runtime permission.
+      API 30 and above: scoped storage is mandatory, and the only route to the
+      public Download directory is the "all files access" special access
+      (MANAGE_EXTERNAL_STORAGE), which the user grants from Settings. A
+      NativeActivity has no Activity object to show that dialog, so it cannot
+      self-request the grant; storage::probe re-tests the path at startup and
+      logs exactly which grant is missing.
+
+      requestLegacyExternalStorage is deliberately absent: it is ignored at
+      targetSdk 34, so it would only imply a behaviour that does not happen.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"/>
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"/>
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+
+    <application
+        android:label="SoftISP Camera"
+        android:hasCode="false"
+        android:debuggable="false"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+        android:icon="@mipmap/icon">
+
+        <!-- Rotation, density and UI-mode changes are absorbed here so the
+             activity is not recreated mid-preview: lib.rs re-takes the window
+             and reallocates the presentation buffers on the resize events. -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:label="SoftISP Camera"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection">
+            <!-- android.app.lib_name is what NativeActivity dlopen()s, and it
+                 must match the cam_camera_app library name in Cargo.toml.
+
+                 It has to hang off <activity>, not <application>:
+                 NativeActivity.onCreate calls
+                 getPackageManager().getActivityInfo(...).metaData, and the
+                 activity entry carries no application-level meta-data. Placed
+                 on <application> the value is invisible, libname stays at its
+                 "main" default, and the process dies in onCreate with
+                 "Unable to find native library main". -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="cam_camera_app"/>
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

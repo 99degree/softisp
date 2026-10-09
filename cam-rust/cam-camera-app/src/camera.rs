@@ -59,6 +59,7 @@ pub struct CameraSession {
     session_output: *mut sys::ACaptureSessionOutput,
     output_container: *mut sys::ACaptureSessionOutputContainer,
     bayer_pattern: i32,
+    sensor_max: f32,
     raw: bool,
 }
 
@@ -84,6 +85,7 @@ impl CameraSession {
             session_output: null_mut(),
             output_container: null_mut(),
             bayer_pattern: BGGR,
+            sensor_max: DEFAULT_WHITE_LEVEL as f32,
             raw: true,
         };
 
@@ -161,6 +163,7 @@ impl CameraSession {
                 Ok(()) => {
                     self.raw = true;
                     self.bayer_pattern = info.bayer_pattern;
+                    self.sensor_max = info.sensor_max;
                     return Ok(());
                 }
                 Err(e) => {
@@ -187,6 +190,7 @@ impl CameraSession {
         self.start_capture(w, h, sys::AIMAGE_FORMATS::AIMAGE_FORMAT_YUV_420_888)?;
         self.raw = false;
         self.bayer_pattern = info.bayer_pattern;
+        self.sensor_max = info.sensor_max;
         Ok(())
     }
 
@@ -327,18 +331,34 @@ impl CameraSession {
         self.raw
     }
 
+    /// Full-well capacity the sensor reported, or the 10-bit default.
+    pub fn sensor_max(&self) -> f32 {
+        self.sensor_max
+    }
+
     /// Acquire the next queued frame and copy its pixels out as RAW `u16`.
     ///
     /// Returns `Ok(None)` when the queue is empty — the caller should redraw
     /// the previous frame rather than stall.
     pub fn next_frame(&self) -> CamResult<Option<RawFrame>> {
         let mut image: *mut sys::AImage = null_mut();
-        let status = unsafe { sys::AImageReader_acquireNextImage(self.reader, &mut image) };
-        if image.is_null() || status == sys::media_status_t::AMEDIA_IMGREADER_NO_BUFFER_AVAILABLE {
-            return Ok(None);
-        }
+        // `acquireLatestImage` drops everything but the newest queued frame, so
+        // a stalled consumer resumes on the current scene rather than working
+        // through a backlog of stale ones.
+        let status = unsafe { sys::AImageReader_acquireLatestImage(self.reader, &mut image) };
         if status != sys::media_status_t::AMEDIA_OK {
-            return Err(format!("AImageReader_acquireNextImage -> {}", status.0));
+            // A non-OK status can still hand back an image; deleting it here is
+            // what keeps the reader's buffer count from draining.
+            if !image.is_null() {
+                unsafe { sys::AImage_delete(image) };
+            }
+            if status == sys::media_status_t::AMEDIA_IMGREADER_NO_BUFFER_AVAILABLE {
+                return Ok(None);
+            }
+            return Err(format!("AImageReader_acquireLatestImage -> {}", status.0));
+        }
+        if image.is_null() {
+            return Ok(None);
         }
         // Every path below drops the guard, which closes the image exactly once.
         let guard = ImageGuard(image);
