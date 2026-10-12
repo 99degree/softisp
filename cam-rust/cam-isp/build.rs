@@ -53,10 +53,17 @@ fn main() {
     // Emit NDK linker flags for Android targets
     #[cfg(target_os = "android")]
     {
-        setup_ndk_linker();
-        // Embed rpath so binary finds libraries at runtime
+        // Only call setup_ndk_linker when mnn or ort features are enabled
+        // because they require C++ standard library and NDK libraries
+        #[cfg(any(feature = "mnn", feature = "ort"))]
+        {
+            setup_ndk_linker();
+        }
+        // Embed rpath so binary finds libraries at runtime - our lib dir FIRST
         let abi_dir = abi_dir();
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
+        // Also add the standard Android library paths as fallback
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/apex/com.android.runtime/lib64/bionic");
     }
 }
 
@@ -113,7 +120,7 @@ fn setup_ndk_linker() {
     // Link against NDK system libraries
     println!("cargo:rustc-link-lib=log");
     println!("cargo:rustc-link-lib=android");
-    println!("cargo:rustc-link-lib=c++_static");
+    println!("cargo:rustc-link-lib=c++_shared");
     println!("cargo:rustc-link-lib=mediandk");
 
     eprintln!(
@@ -375,14 +382,42 @@ fn link_mnn() {
         }
     }
 
+    // Compile Vulkan initialization helper to force MNN Vulkan backend registration
+    let vulkan_init_src = Path::new("mnn_sys/mnn_vulkan_init.cpp");
+    if vulkan_init_src.exists() {
+        println!("cargo:rerun-if-changed=mnn_sys/mnn_vulkan_init.cpp");
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        let mut build = cc::Build::new();
+        build.cpp(true).std("c++17").file(vulkan_init_src);
+        // Add MNN include directory
+        let mnn_include = mnn_include_dir();
+        build.include(&mnn_include);
+        setup_cc_for_android(&mut build);
+        build.compile("mnn_vulkan_init");
+        let src = out_dir.join("libmnn_vulkan_init.a");
+        let dst = abi_dir.join("libmnn_vulkan_init.a");
+        if src.exists() {
+            std::fs::copy(&src, &dst).ok();
+        }
+    }
+
     println!("cargo:rustc-link-search=native={}", abi_dir.display());
     // Also search MNN_LIB_DIR directly
     let mnn_lib = mnn_lib_src();
     println!("cargo:rustc-link-search=native={}", mnn_lib.display());
+    // Link static libraries with --whole-archive to preserve constructors
+    // Must wrap the static libs with --whole-archive/--no-whole-archive in the link command
+    // Use -Wl,-whole-archive -lmnn_wrapper -Wl,-no-whole-archive pattern
+    println!("cargo:rustc-link-arg=-Wl,--whole-archive");
     println!("cargo:rustc-link-lib=static=mnn_wrapper");
     println!("cargo:rustc-link-lib=static=mnn_vulkan_stubs");
+    println!("cargo:rustc-link-lib=static=mnn_vulkan_init");
+    println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+    // Export dynamic symbols from static libraries so MNNConvertDeps can find them
+    println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=MNN_Vulkan");
+    println!("cargo:rustc-link-lib=MNN_Express");
     // Link C++ standard library: libc++_shared on Android, libstdc++ on Linux
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "android" {
@@ -430,8 +465,9 @@ fn link_mnnconvert() {
 
     println!("cargo:rustc-link-search=native={}", abi_dir.display());
     println!("cargo:rustc-link-lib=static=mnn_convert_api");
-    println!("cargo:rustc-link-lib=MNNConvertDeps");
+    // MNNConvertDeps depends on MNN_Express for Eltwise registration symbols
     println!("cargo:rustc-link-lib=MNN_Express");
+    println!("cargo:rustc-link-lib=MNNConvertDeps");
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -28,6 +28,13 @@ use cam_types::{FrameFormat, ToneParams};
 #[cfg(feature = "mnn")]
 pub use crate::mnn_sys::*;
 
+// BinaryAddToEltwise merge pass registration is provided as a strong
+// C++ definition in mnn_sys/mnn_vulkan_stubs.cpp (with visibility("default"))
+// so the dynamic linker can resolve the mangled symbol
+// `_Z34ensureBinaryAddToEltwiseRegisteredv` for MNNConvertDeps at load time.
+// See that file for details; no Rust-side declaration is needed because
+// nothing in the Rust code calls the pass directly.
+
 // ── Backend ─────────────────────────────────────────────────────────────
 
 /// The MNN inference backend. Only Vulkan is supported: the whole pipeline
