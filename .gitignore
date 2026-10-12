@@ -136,3 +136,6 @@ proguard.txt
 .arch_patch.txt
 docs/architecture/PIPELINE_BLOCKS.md.bak
 .lancedb_agent_index/
+
+# Analysis scratch (moved, not deleted — pending review)
+.trash_*

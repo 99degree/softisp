@@ -35,3 +35,26 @@ void MNNVulkanHotSwapConstBuffer(void* session, const char* name,
 }
 
 }  // extern "C"
+
+// Ensure BinaryAddToEltwise merge pass registration is initialized.
+// This symbol is referenced by MNNConvertDeps via PostConverter.cpp.
+// The converter's CMake builds with -fvisibility=hidden, so the symbol
+// from MNN_Express (built with default visibility) may not be visible.
+// Provide a STRONG C++ definition here (with C++ linkage so it gets the
+// correct mangling _Z34ensureBinaryAddToEltwiseRegisteredv) so the
+// dynamic linker can resolve it for MNNConvertDeps at load time.
+// The actual pass body is a no-op (see MNN express/BinaryAddToEltwise.cpp:110-118)
+// because the ISP pass0 pipeline never emits Int8ToFloat+Convert+ADD patterns.
+__attribute__((visibility("default")))
+void ensureBinaryAddToEltwiseRegistered() {
+    // Intentional no-op - the merge pass is not needed for ISP pass0
+}
+
+// Also provide the namespaced version (C++ linkage) for direct calls
+namespace MNN {
+namespace Express {
+void ensureBinaryAddToEltwiseRegistered() {
+    // Intentional no-op - the merge pass is not needed for ISP pass0
+}
+} // namespace Express
+} // namespace MNN
