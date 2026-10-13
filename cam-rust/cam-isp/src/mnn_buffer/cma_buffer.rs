@@ -487,7 +487,21 @@ impl CMABufferInfo {
     fn allocate_malloc(size: usize, alignment: BufferAlignment) -> io::Result<Self> {
         let aligned_size = Self::align_up(size, alignment as usize);
 
-        let ptr = unsafe { libc::aligned_alloc(alignment as usize, aligned_size) as *mut u8 };
+        // NOTE: aligned_alloc is unavailable in the Android NDK sysroot (the
+        // linker fails with "undefined symbol: aligned_alloc"); posix_memalign
+        // is the portable equivalent available on every target we ship.
+        let mut ptr: *mut u8 = std::ptr::null_mut();
+        let ret = unsafe {
+            libc::posix_memalign(
+                &mut ptr as *mut *mut u8 as *mut *mut libc::c_void,
+                alignment as usize,
+                aligned_size,
+            )
+        };
+
+        if ret != 0 {
+            return Err(io::Error::from_raw_os_error(ret));
+        }
 
         if ptr.is_null() {
             return Err(io::Error::last_os_error());
