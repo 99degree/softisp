@@ -12,6 +12,7 @@ members = [
     "cam-binder",
     "cam-app",
     "cam-disp",
+    "cam-camera-app",
 ]
 
 [workspace.dependencies]
@@ -20,7 +21,6 @@ log = "0.4"
 thiserror = "2"
 env_logger = "0.10"
 android_logger = "0.14"
-jni = { version = "0.21" }
 
 [profile.dev]
 debug = true
