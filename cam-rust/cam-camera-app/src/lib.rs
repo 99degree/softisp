@@ -268,7 +268,20 @@ fn android_main(app: AndroidApp) {
         let Some(win) = window.as_ref() else {
             continue;
         };
+        // Diagnostic proxy: report that we got an ANativeWindow from the
+        // activity glue and what geometry it claims, then hand off to the
+        // original path unchanged. This proves the lifecycle callback that
+        // allocates the surface is firing before any ISP or camera code runs.
+        write_line(
+            "WARN",
+            "window",
+            &format!(
+                "InitWindow callback reached: NativeWindow ptr={:p}",
+                win.ptr().as_ptr()
+            ),
+        );
         let (w, h) = (win.width() as u32, win.height() as u32);
+        write_line("WARN", "window", &format!("window geometry {w}x{h}"));
         // A freshly created surface reports 0×0 until the activity is laid
         // out. Sizing a block chain to zero pixels divides by zero inside the
         // profile builder, so wait for a real geometry instead.
