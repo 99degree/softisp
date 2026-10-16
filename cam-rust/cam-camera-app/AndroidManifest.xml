@@ -71,7 +71,7 @@
     <application
         android:label="SoftISP Camera"
         android:hasCode="false"
-        android:debuggable="false"
+        android:debuggable="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
         android:icon="@mipmap/icon">
 
