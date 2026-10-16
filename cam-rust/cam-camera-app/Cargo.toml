@@ -104,7 +104,7 @@ keystore_password = "password"
 [package.metadata.android.application]
 label = "SoftISP Camera"
 has_code = false
-debuggable = false
+debuggable = true
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
 icon = "@mipmap/icon"
 
