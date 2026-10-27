@@ -315,26 +315,19 @@ impl OnnxModelComposer {
         input_value_infos: Vec<Vec<u8>>,
         output_value_infos: Vec<Vec<u8>>,
     ) -> Vec<u8> {
-        // Build graph bytes
-        let mut graph = Vec::new();
-        // Nodes
-        for node in &nodes {
-            graph.extend_from_slice(&Proto::raw_bytes(1, node));
-        }
-        // Name
-        graph.extend_from_slice(&Proto::string(1, "isp_graph"));
-        // Inputs
-        for vi in &input_value_infos {
-            graph.extend_from_slice(&Proto::raw_bytes(11, vi));
-        }
-        // Outputs
-        for vi in &output_value_infos {
-            graph.extend_from_slice(&Proto::raw_bytes(11, vi));
-        }
-        // Initializers
-        for init in &initializers {
-            graph.extend_from_slice(&Proto::raw_bytes(5, init));
-        }
+        // Build graph bytes using the canonical ONNX GraphProto field layout:
+        //   field 1 = node, field 2 = name, field 5 = initializer,
+        //   field 11 = input, field 12 = output, field 13 = value_info.
+        // (compose_model previously wrote name as field 1, colliding with nodes,
+        //  and used field 11 for both inputs and outputs — corrupting the protobuf.)
+        let graph = Proto::graph(
+            "isp_graph",
+            &nodes,
+            &input_value_infos,
+            &output_value_infos,
+            &initializers,
+            &[],
+        );
 
         // Build opset
         let opset = Proto::opset("", 13);
