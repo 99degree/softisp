@@ -506,7 +506,15 @@ impl GraphComposer {
         }
 
         let mut all_nodes = Vec::new();
-        let mut all_initializers = Vec::new();
+        // GraphProto field 5 (initializer) stays empty: every baked constant
+        // was migrated to a runtime graph input (see `extra_inputs()`), and
+        // the engine writes the payload into the MNN Input tensor before
+        // inference.  Emitting the raw payload bytes here would (a) break the
+        // ONNX schema — field 5 expects a serialized `TensorProto`, not a raw
+        // blob — and (b) shadow the graph input in MNN's converter, which
+        // only creates an `OpType_Input` op for a graph input that has no
+        // matching initializer.
+        let all_initializers: Vec<Vec<u8>> = Vec::new();
         let mut graph_inputs = Vec::new();
         let mut all_outputs = Vec::new();
         let mut value_infos = Vec::new();
@@ -538,7 +546,6 @@ impl GraphComposer {
                 }
             }
             all_nodes.extend(nodes);
-            all_initializers.extend(blk.extra_input_defaults().into_iter().map(|(_, data)| data));
 
             // Intermediate tensor value info for type inference (→ field 13)
             // Only for non-Identity blocks

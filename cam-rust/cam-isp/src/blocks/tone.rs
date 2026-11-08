@@ -160,6 +160,12 @@ impl IspBlock for ToneBlock {
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
         vec![
+            // `contrast` and `brightness` are node inputs (Mul/Add), so they
+            // must be declared as graph inputs — an undeclared input is
+            // dropped by MNN's ONNX importer ("has empty input") and the
+            // optimizer then trips over the half-connected op.
+            (format!("{}/contrast", ns).to_string(), 1, vec![1]),
+            (format!("{}/brightness", ns).to_string(), 1, vec![1]),
             (format!("{}/zero", ns).to_string(), 1, vec![]),
             (format!("{}/one", ns).to_string(), 1, vec![]),
         ]
@@ -168,6 +174,14 @@ impl IspBlock for ToneBlock {
     fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let ns = self.tensor_ns();
         vec![
+            (
+                format!("{}/contrast", ns).to_string(),
+                self.contrast.to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/brightness", ns).to_string(),
+                self.brightness.to_ne_bytes().to_vec(),
+            ),
             (
                 format!("{}/zero", ns).to_string(),
                 (0.0f32).to_ne_bytes().to_vec(),
@@ -213,7 +227,11 @@ mod tests {
     fn test_tone_initializers() {
         let b = ToneBlock::new();
         let inits = b.extra_input_defaults();
-        assert_eq!(inits.len(), 2);
+        // contrast + brightness (Mul/Add node inputs) + zero/one (Clip bounds)
+        assert_eq!(inits.len(), 4);
+        let names: Vec<&str> = inits.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"ToneBlock/contrast"));
+        assert!(names.contains(&"ToneBlock/brightness"));
     }
 
     #[test]

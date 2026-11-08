@@ -167,7 +167,24 @@ impl IspBlock for CfaBlock {
     fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/w", ns).to_string(), vec![]),
+            // Conv weights [4, 1, 2, 2] — 4 filters, 1 input channel, 2x2
+            // kernel. Each filter picks one quad position:
+            //   filter 0 (TL): [[1,0],[0,0]]
+            //   filter 1 (TR): [[0,1],[0,0]]
+            //   filter 2 (BL): [[0,0],[1,0]]
+            //   filter 3 (BR): [[0,0],[0,1]]
+            (
+                format!("{}/w", ns).to_string(),
+                [
+                    1.0f32, 0.0, 0.0, 0.0, // TL
+                    0.0, 1.0, 0.0, 0.0, // TR
+                    0.0, 0.0, 1.0, 0.0, // BL
+                    0.0, 0.0, 0.0, 1.0, // BR
+                ]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>(),
+            ),
             (
                 format!("{}/b", ns).to_string(),
                 [0f32; 4]
@@ -356,7 +373,22 @@ impl IspBlock for CfaBlockPacked {
     fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/w", ns).to_string(), vec![]),
+            // Conv weights [4, 2, 2, 1] — 4 filters, 2 input channels
+            // (even/odd), 2x1 kernel. Row-major [oc][ic][kh][kw]:
+            //   oc0: even @ (0,0)   oc1: odd  @ (0,0)
+            //   oc2: even @ (1,0)   oc3: odd  @ (1,0)
+            (
+                format!("{}/w", ns).to_string(),
+                [
+                    1.0f32, 0.0, 0.0, 0.0, // oc0: even @ (0,0)
+                    0.0, 0.0, 1.0, 0.0, // oc1: odd  @ (0,0)
+                    0.0, 1.0, 0.0, 0.0, // oc2: even @ (1,0)
+                    0.0, 0.0, 0.0, 1.0, // oc3: odd  @ (1,0)
+                ]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>(),
+            ),
             (
                 format!("{}/b", ns).to_string(),
                 [0f32; 4]
