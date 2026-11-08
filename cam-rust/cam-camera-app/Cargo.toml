@@ -51,8 +51,8 @@ package = "com.softisp.camera"
 # the source of truth for the shipped manifest, and this table stays the source
 # of truth for what cargo-apk2 needs in memory (activity list, target SDK).
 manifest_override = "AndroidManifest.xml"
-# Icon + string resources live with the rest of the app scaffolding.
-resources = "../../android-app/Sources/res"
+# Icon + string resources live in Sources/res next to this crate.
+resources = "Sources/res"
 # Runtime native libraries copied into lib/<abi>/ by cargo-apk2. MNN's Vulkan
 # backend is dlopen-ed by the engine, and the ICD loader is not on the Termux
 # search path, so all three have to ship inside the APK. The directory uses
