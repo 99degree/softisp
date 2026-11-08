@@ -12,6 +12,7 @@ pub mod pipeline;
 pub mod preview;
 pub mod storage;
 
+use std::ffi::c_void;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -19,6 +20,7 @@ use android_activity::ndk::native_window::NativeWindow;
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use cam_isp::engine::{select_engine_by_name, IspEngine};
 use cam_isp::profile::PipelineProfile;
+use cam_isp::{release_native_window, set_native_window};
 
 use camera::CameraSession;
 use crashlog::write_line;
@@ -247,8 +249,22 @@ fn android_main(app: AndroidApp) {
                 // re-take the window rather than trusting one of them.
                 PollEvent::Main(MainEvent::InitWindow { .. })
                 | PollEvent::Main(MainEvent::WindowResized { .. })
-                | PollEvent::Main(MainEvent::ConfigChanged { .. }) => window = app.native_window(),
-                PollEvent::Main(MainEvent::TerminateWindow { .. }) => window = None,
+                | PollEvent::Main(MainEvent::ConfigChanged { .. }) => {
+                    if let Some(win) = app.native_window() {
+                        // Hand the ANativeWindow to cam-isp so it can render
+                        // output into this surface. This is called before any
+                        // ISP processing happens, so the window is ready when
+                        // the first frame arrives.
+                        unsafe { set_native_window(win.ptr().as_ptr() as *mut c_void) };
+                        window = Some(win);
+                    }
+                }
+                PollEvent::Main(MainEvent::TerminateWindow { .. }) => {
+                    // Drop the surface: release the ANativeWindow ref held by
+                    // cam-isp so the surface can be destroyed cleanly.
+                    release_native_window();
+                    window = None;
+                }
                 PollEvent::Main(MainEvent::InputAvailable) => {
                     // The preview owns the whole surface, so input has no
                     // effect. Drain the queue anyway: leaving events pending
