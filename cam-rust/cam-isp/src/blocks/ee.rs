@@ -142,7 +142,17 @@ impl IspBlock for EeBlock {
     fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/kernel_ee", ns).to_string(), vec![]),
+            // Unsharp kernel: center 3.0, neighbours -0.5 (sum = 1, no DC
+            // shift), replicated for all 3 depthwise channels.
+            (
+                format!("{}/kernel_ee", ns).to_string(),
+                [0.0f32, -0.5, 0.0, -0.5, 3.0, -0.5, 0.0, -0.5, 0.0]
+                    .iter()
+                    .cycle()
+                    .take(27)
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
             (
                 format!("{}/bias_ee", ns).to_string(),
                 [0.0f32; 3]
@@ -173,7 +183,7 @@ impl IspBlock for EeBlock {
             BlockOpsetMode::MnnIspMin => {
                 // MNN ISP min opset - fused isp.ee (single node)
                 vec![Proto::node_with_domain(
-                    "ee",
+                    "isp.ee",
                     "isp",
                     &[
                         &self.input_source,
@@ -210,7 +220,7 @@ impl IspBlock for EeBlock {
             BlockOpsetMode::Custom => {
                 // Custom mode - custom op
                 vec![Proto::node_with_domain(
-                    "ee",
+                    "isp.ee",
                     "isp",
                     &[
                         &self.input_source,

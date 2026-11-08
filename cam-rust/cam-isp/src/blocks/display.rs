@@ -266,7 +266,7 @@ impl DisplayBlock {
         }
 
         vec![Proto::node_with_domain(
-            "display",
+            "isp.display",
             "isp",
             &[&inp],
             &[final_output],

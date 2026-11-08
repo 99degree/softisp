@@ -270,7 +270,7 @@ impl IspBlock for DemosaicCcmBlock {
                 // MNN ISP min opset - fused demosaic_ccm (single node, no clip)
                 // The Clip is handled in the shader
                 vec![Proto::node_with_domain(
-                    "demosaic_ccm",
+                    "isp.demosaic_ccm",
                     "isp",
                     &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
                     &[&self.frame_tensor],
@@ -309,7 +309,7 @@ impl IspBlock for DemosaicCcmBlock {
             BlockOpsetMode::Custom => {
                 // Custom mode - custom op with Clip (for non-MNN backends)
                 vec![Proto::node_with_domain(
-                    "demosaic_ccm",
+                    "isp.demosaic_ccm",
                     "isp",
                     &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
                     &[&self.frame_tensor],

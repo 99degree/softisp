@@ -147,7 +147,7 @@ impl IspBlock for LdciBlock {
                 // MNN ISP min opset - fused isp.ldci (single node)
                 // The Pool+Sub+Mul+Add is handled in the shader
                 vec![Proto::node_with_domain(
-                    "ldci",
+                    "isp.ldci",
                     "isp",
                     &[&self.input_source, &format!("{}/strength", ns)],
                     &[&self.frame_tensor],
@@ -198,7 +198,7 @@ impl IspBlock for LdciBlock {
             BlockOpsetMode::Custom => {
                 // Custom mode - custom op (with strength as input)
                 vec![Proto::node_with_domain(
-                    "ldci",
+                    "isp.ldci",
                     "isp",
                     &[&self.input_source, &format!("{}/strength", ns)],
                     &[&self.frame_tensor],

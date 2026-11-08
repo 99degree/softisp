@@ -193,10 +193,29 @@ impl IspBlock for CcmBlock {
     fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/matrix", ns).to_string(), vec![]),
-            (format!("{}/bias", ns).to_string(), vec![]),
-            (format!("{}/zero", ns).to_string(), vec![]),
-            (format!("{}/one", ns).to_string(), vec![]),
+            // Conv weights [out_ch, in_ch, 1, 1] — row-major.
+            (
+                format!("{}/matrix", ns).to_string(),
+                self.matrix
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/bias", ns).to_string(),
+                self.bias
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                format!("{}/zero", ns).to_string(),
+                (0.0f32).to_ne_bytes().to_vec(),
+            ),
+            (
+                format!("{}/one", ns).to_string(),
+                (1.0f32).to_ne_bytes().to_vec(),
+            ),
         ]
     }
 }
