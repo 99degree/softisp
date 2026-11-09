@@ -74,6 +74,7 @@ fn main() {
 /// Emit `cargo:rustc-link-lib` and `cargo:rustc-link-search` for the NDK
 /// sysroot libraries when cross-compiling for Android. This ensures the
 /// linker can find libc++, liblog, libandroid, etc.
+#[allow(dead_code)]
 fn setup_ndk_linker() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "android" {
@@ -191,6 +192,7 @@ fn find_ndk() -> Option<PathBuf> {
 }
 
 /// Map CARGO_CFG_TARGET_ARCH to NDK arch name.
+#[allow(dead_code)]
 fn target_ndk_arch() -> &'static str {
     match std::env::var("CARGO_CFG_TARGET_ARCH")
         .unwrap_or_default()
