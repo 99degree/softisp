@@ -367,8 +367,9 @@ fn android_main(app: AndroidApp) {
                         // (a &NativeWindow) which lives for the duration of the
                         // activity. NativeWindow is Send+Sync and its pointer
                         // is stable while the window is active.
-                        let t =
-                            unsafe { std::mem::transmute::<WindowTarget<'_>, WindowTarget<'static>>(t) };
+                        let t = unsafe {
+                            std::mem::transmute::<WindowTarget<'_>, WindowTarget<'static>>(t)
+                        };
                         target.insert(t)
                     }
                     Err(e) => {
