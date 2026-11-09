@@ -71,6 +71,8 @@ struct Preview {
     config: PipelineConfig,
     last_frame: Option<LastFrame>,
     frames: u64,
+    /// When true, display raw camera frame (grayscale) instead of ISP output
+    show_raw: bool,
 }
 
 impl Preview {
@@ -113,6 +115,7 @@ impl Preview {
             },
             last_frame: None,
             frames: 0,
+            show_raw: false,
         })
     }
 
@@ -179,23 +182,33 @@ impl Preview {
         match cam.next_frame() {
             Ok(Some(frame)) => {
                 let staged = self.stager.stage(&frame);
-                let params =
-                    self.config
-                        .params(frame.width, frame.height, staged, frame.timestamp_ns);
-                match self.engine.process(&params) {
-                    Ok(out) => {
-                        self.frames += 1;
-                        if let Err(e) = target.present(&out.data, out.width, out.height) {
-                            log::trace!("present: {e}");
-                        }
-                        self.last_frame = Some((out.data, out.width, out.height));
+                
+                if self.show_raw {
+                    // Display raw camera frame as grayscale
+                    let raw_bgra = self.raw_to_grayscale_bgra(&frame);
+                    if let Err(e) = target.present(&raw_bgra, frame.width, frame.height) {
+                        log::trace!("present raw: {e}");
                     }
-                    Err(e) => {
-                        write_line("ERROR", "isp", &format!("process failed: {e}"));
-                        // ISP failed — repaint the last good frame so the UI
-                        // never goes blank.
-                        if let Some((data, w, h)) = self.last_frame.as_ref() {
-                            let _ = target.present(data, *w, *h);
+                    self.last_frame = Some((raw_bgra, frame.width, frame.height));
+                } else {
+                    let params =
+                        self.config
+                            .params(frame.width, frame.height, staged, frame.timestamp_ns);
+                    match self.engine.process(&params) {
+                        Ok(out) => {
+                            self.frames += 1;
+                            if let Err(e) = target.present(&out.data, out.width, out.height) {
+                                log::trace!("present: {e}");
+                            }
+                            self.last_frame = Some((out.data, out.width, out.height));
+                        }
+                        Err(e) => {
+                            write_line("ERROR", "isp", &format!("process failed: {e}"));
+                            // ISP failed — repaint the last good frame so the UI
+                            // never goes blank.
+                            if let Some((data, w, h)) = self.last_frame.as_ref() {
+                                let _ = target.present(data, *w, *h);
+                            }
                         }
                     }
                 }
@@ -226,6 +239,31 @@ impl Preview {
                 &format!("{} frames processed, last {w}x{h}", self.frames),
             );
         }
+    }
+
+    /// Convert raw u16 Bayer frame to grayscale BGRA for display
+    fn raw_to_grayscale_bgra(&self, frame: &crate::camera::RawFrame) -> Vec<u8> {
+        let w = frame.width as usize;
+        let h = frame.height as usize;
+        let mut bgra = vec![0u8; w * h * 4];
+        // Find min/max for auto-contrast
+        let mut min_val = u16::MAX;
+        let mut max_val = u16::MIN;
+        for &sample in &frame.data {
+            min_val = min_val.min(sample);
+            max_val = max_val.max(sample);
+        }
+        let range = (max_val.saturating_sub(min_val)).max(1) as u32;
+        for (i, &sample) in frame.data.iter().enumerate() {
+            let normalized = ((sample.saturating_sub(min_val)) as u32 * 255) / range;
+            let gray = normalized as u8;
+            let idx = i * 4;
+            bgra[idx] = gray;     // B
+            bgra[idx + 1] = gray; // G
+            bgra[idx + 2] = gray; // R
+            bgra[idx + 3] = 255;  // A
+        }
+        bgra
     }
 }
 
@@ -346,7 +384,11 @@ fn android_main(app: AndroidApp) {
         }
         if preview.is_none() {
             match Preview::new(ENGINE_NAME, w) {
-                Ok(p) => preview = Some(p),
+                Ok(mut p) => {
+                    // Show raw camera feed by default to verify camera is working
+                    p.show_raw = true;
+                    preview = Some(p);
+                }
                 Err(e) => {
                     write_line("FATAL", "engine", &e);
                     return;
