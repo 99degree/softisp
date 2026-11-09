@@ -26,7 +26,7 @@ ndk-sys = { version = "0.6", features = ["media"] }
 android_logger = { workspace = true }
 
 [features]
-default = []
+default = ["mnn"]
 # Vulkan MNN inference. This is what the camera app actually wants on a phone:
 # libMNN_Vulkan.so runs the block chain on the GPU, where the CPU engine is
 # roughly 3x slower on Conv-heavy stages. Requires the runtime libraries under
