@@ -217,7 +217,7 @@ impl PipelineProfile {
         tile_count_x: 1,
         tile_count_y: 1,
         tile_overlap: 0,
-        output_format: OutputFormat::PackedRgb,
+        output_format: OutputFormat::Bgra,
         opset_mode: 0, // Primitive by default
     };
 
