@@ -117,6 +117,10 @@ impl Preview {
     }
 
     /// Open the camera on first use, and remember what the sensor reported.
+    ///
+    /// Retries on every call until it succeeds, so a transient camera
+    /// open failure (e.g. sensor still initializing) doesn't leave the
+    /// preview blank forever.
     fn ensure_camera(&mut self) {
         if self.session.is_some() {
             return;
@@ -137,7 +141,27 @@ impl Preview {
                 );
                 self.session = Some(s);
             }
-            Err(e) => write_line("ERROR", "camera", &e),
+            Err(e) => {
+                // Don't spam the log — only log once every ~1 second.
+                static mut LAST_CAMERA_ERROR: Option<Instant> = None;
+                let now = Instant::now();
+                let should_log = unsafe {
+                    match LAST_CAMERA_ERROR {
+                        None => {
+                            LAST_CAMERA_ERROR = Some(now);
+                            true
+                        }
+                        Some(t) if now.duration_since(t).as_secs() >= 1 => {
+                            LAST_CAMERA_ERROR = Some(now);
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                if should_log {
+                    write_line("ERROR", "camera", &e);
+                }
+            }
         }
     }
 
