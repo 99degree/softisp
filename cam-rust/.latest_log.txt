@@ -1,0 +1,18 @@
+=== spec log ===
+2026-11-05 00:33:14.439049506 +0800 1512
+
+10-27 07:35:43.663 INFO  [boot]      40ms log file: /sdcard/download/softisp-app.log
+10-27 07:35:43.668 INFO  [boot]      45ms softisp camera 0.1.0 starting
+10-27 07:35:43.739 WARN  [window]     116ms InitWindow callback reached: NativeWindow ptr=0xb400007901a232b0
+10-27 07:35:43.746 WARN  [window]     123ms window geometry 1080x2298
+10-27 07:35:43.802 FATAL [engine]     179ms engine.build failed: conversion error: convert: ONNX→MNN buffer convert failed: failed to parse ONNX protobuf from memory
+10-27 19:04:17.452 INFO  [boot]      38ms log file: /sdcard/download/softisp-app.log
+10-27 19:04:17.459 INFO  [boot]      45ms softisp camera 0.1.0 starting
+10-27 19:04:17.535 WARN  [window]     121ms InitWindow callback reached: NativeWindow ptr=0xb400007901a2ff10
+10-27 19:04:17.541 WARN  [window]     127ms window geometry 1080x2298
+10-27 19:04:17.606 FATAL [engine]     192ms engine.build failed: conversion error: convert: ONNX→MNN buffer convert failed: failed to parse ONNX protobuf from memory
+11-04 16:33:14.283 INFO  [boot]      20ms log file: /sdcard/download/softisp-app.log
+11-04 16:33:14.290 INFO  [boot]      27ms softisp camera 0.1.0 starting
+11-04 16:33:14.365 WARN  [window]     102ms InitWindow callback reached: NativeWindow ptr=0xb400007901a2ff10
+11-04 16:33:14.372 WARN  [window]     109ms window geometry 1080x2298
+11-04 16:33:14.447 FATAL [engine]     184ms engine.build failed: conversion error: convert: ONNX→MNN buffer convert failed: failed to parse ONNX protobuf from memory
