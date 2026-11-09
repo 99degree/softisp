@@ -1011,8 +1011,15 @@ impl IspBlock for CalibrationBlock {
                 &[&c_all],
                 &[P::attribute_int("axis", 1)],
             ),
-            // 16. Reshape [1,24,1,1] → [1,24]
-            P::node("Reshape", &[&c_all, "CalibrationBlock/shape"], &[out], &[]),
+            // 16. Squeeze [1,24,1,1] → [1,24] (drop trailing singleton axes).
+            // Squeeze reads axes from the attribute, so no runtime shape input
+            // is needed (avoids MNN's "need input content" error for Reshape).
+            P::node(
+                "Squeeze",
+                &[&c_all],
+                &[out],
+                &[P::attribute_ints("axes", &[2, 3])],
+            ),
         ]
     }
 
