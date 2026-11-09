@@ -239,6 +239,11 @@ fn android_main(app: AndroidApp) {
     // Built once the window reports a size, since the block chain is sized
     // from the preview's output width.
     let mut preview: Option<Preview> = None;
+    // Reused WindowTarget across frames so surface buffers are configured
+    // only once per window lifetime, not every frame. Recreating it each
+    // iteration re-runs set_buffers_geometry and causes the compositor to
+    // drop/delay frames, so we keep it stable until the window is replaced.
+    let mut target: Option<WindowTarget<'static>> = None;
 
     while !exit {
         app.poll_events(Some(POLL_TIMEOUT), |event| {
@@ -285,9 +290,7 @@ fn android_main(app: AndroidApp) {
             continue;
         };
         // Diagnostic proxy: report that we got an ANativeWindow from the
-        // activity glue and what geometry it claims, then hand off to the
-        // original path unchanged. This proves the lifecycle callback that
-        // allocates the surface is firing before any ISP or camera code runs.
+        // activity glue and what geometry it claims.
         write_line(
             "WARN",
             "window",
@@ -313,13 +316,32 @@ fn android_main(app: AndroidApp) {
                 }
             }
         }
-        let (Some(preview), Ok(target)) =
-            (preview.as_mut(), WindowTarget::new(win, w as i32, h as i32))
-        else {
-            log::trace!("window not ready");
-            continue;
+        // Create the WindowTarget once per window lifetime (not every frame).
+        // Re-running set_buffers_geometry each iteration forces the compositor
+        // to reallocate/reconfigure surface buffers, which causes frame drops
+        // and can crash the Vulkan/Gralloc path.
+        let target: &mut WindowTarget<'static> = match target.as_mut() {
+            Some(t) => t,
+            None => {
+                let t = WindowTarget::new(win, w as i32, h as i32);
+                match t {
+                    Ok(t) => {
+                        // SAFETY: WindowTarget<'static> borrows `win`
+                        // (a &NativeWindow) which lives for the duration of the
+                        // activity. NativeWindow is Send+Sync and its pointer
+                        // is stable while the window is active.
+                        let t =
+                            unsafe { std::mem::transmute::<WindowTarget<'_>, WindowTarget<'static>>(t) };
+                        target.insert(t)
+                    }
+                    Err(e) => {
+                        log::trace!("window target not ready: {e}");
+                        continue;
+                    }
+                }
+            }
         };
-        preview.render_once(&target);
+        preview.as_mut().unwrap().render_once(target);
     }
 
     let frames = preview.as_ref().map_or(0, |p| p.frames);
