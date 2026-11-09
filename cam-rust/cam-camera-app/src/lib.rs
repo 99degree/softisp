@@ -36,7 +36,7 @@ const STATS_INTERVAL_FRAMES: u64 = 30;
 ///
 /// A finite timeout keeps the preview ticking even when the camera produces
 /// nothing, so the surface is repainted instead of freezing.
-const POLL_TIMEOUT: Duration = Duration::from_millis(100);
+const POLL_TIMEOUT: Duration = Duration::from_millis(10);
 
 /// Wall-clock budget for one capture + ISP + present pass.
 ///
@@ -142,6 +142,9 @@ impl Preview {
     }
 
     /// Capture one frame, run the ISP, and present it to `target`.
+    ///
+    /// Never breaks the loop on transient errors — if ISP fails we still
+    /// repaint the last good frame so the UI never goes blank.
     fn render_once(&mut self, target: &WindowTarget<'_>) {
         self.ensure_camera();
         let Some(cam) = self.session.as_ref() else {
@@ -163,12 +166,19 @@ impl Preview {
                         }
                         self.last_frame = Some((out.data, out.width, out.height));
                     }
-                    Err(e) => write_line("ERROR", "isp", &format!("process failed: {e}")),
+                    Err(e) => {
+                        write_line("ERROR", "isp", &format!("process failed: {e}"));
+                        // ISP failed — repaint the last good frame so the UI
+                        // never goes blank.
+                        if let Some((data, w, h)) = self.last_frame.as_ref() {
+                            let _ = target.present(data, *w, *h);
+                        }
+                    }
                 }
             }
             Ok(None) => {
-                // Nothing queued: repaint so the surface survives a resize
-                // instead of showing a stale buffer.
+                // Nothing queued: repaint the last good frame so the surface
+                // survives instead of showing a stale/blank buffer.
                 if let Some((data, w, h)) = self.last_frame.as_ref() {
                     let _ = target.present(data, *w, *h);
                 }
@@ -268,6 +278,9 @@ fn android_main(app: AndroidApp) {
                     // Drop the surface: release the ANativeWindow ref held by
                     // cam-isp so the surface can be destroyed cleanly.
                     release_native_window();
+                    // Drop the cached WindowTarget so its NativeWindow borrow
+                    // is released before the window is destroyed by the framework.
+                    target = None;
                     window = None;
                 }
                 PollEvent::Main(MainEvent::InputAvailable) => {
