@@ -82,7 +82,7 @@ impl Preview {
     /// [`cam_isp::engine::select_engine_by_name`], so `"cpu"`, `"mnn_vulkan"`
     /// or `"auto"` all work; the choice is a build-time matter of whether the
     /// `mnn` feature (and its bundled native runtime) is present.
-    fn new(engine_name: &str, target_width: u32) -> Result<Self, String> {
+    fn new(engine_name: &str, target_width: u32, sensor_height: u32) -> Result<Self, String> {
         let mut engine: Box<dyn IspEngine> = select_engine_by_name(engine_name)
             .ok_or_else(|| format!("no ISP engine matching '{engine_name}'"))?;
         log::info!("ISP engine: {}", engine.backend_name());
@@ -90,19 +90,21 @@ impl Preview {
         // The chain comes from the same profile the desktop tooling uses, so
         // preview and benchmarks exercise identical blocks.
         let profile = PipelineProfile::MED;
-        let mut blocks = profile.build_blocks(target_width, camera::BGGR);
+        let mut blocks = profile.build_blocks(target_width, sensor_height, camera::BGGR);
         if blocks.is_empty() {
             return Err(format!("profile {} produced no blocks", profile.label));
         }
         let head = blocks.remove(0);
-        let aux = profile.build_aux_blocks(target_width as i64 * 9 / 16, target_width as i64);
+        let aux = profile.build_aux_blocks(sensor_height as i64, target_width as i64);
         blocks.extend(aux);
         engine
             .build(head, blocks, None, 21)
             .map_err(|e| format!("engine.build failed: {e}"))?;
         log::info!(
-            "pipeline built: profile {} at {target_width}px",
-            profile.label
+            "pipeline built: profile {} at {}x{}px",
+            profile.label,
+            target_width,
+            sensor_height
         );
 
         Ok(Self {
@@ -383,7 +385,7 @@ fn android_main(app: AndroidApp) {
             continue;
         }
         if preview.is_none() {
-            match Preview::new(ENGINE_NAME, w) {
+            match Preview::new(ENGINE_NAME, w, h) {
                 Ok(mut p) => {
                     // Show raw camera feed by default to verify camera is working
                     p.show_raw = true;
