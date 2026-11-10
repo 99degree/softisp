@@ -96,23 +96,52 @@ impl CameraSession {
 
         // First, enumerate all cameras and log their capabilities
         log::info!("=== Enumerating all cameras ===");
+        let mut raw_supported_ids = Vec::new();
+        let mut yuv_only_ids = Vec::new();
         for id in &ids {
             if let Ok(info) = session.read_sensor_info_for_id(id) {
                 log::info!(
                     "Camera '{}': {}x{}, bayer={}, max={}, raw_supported={}",
-                    id, info.width, info.height, info.bayer_pattern,
-                    info.sensor_max, info.raw_supported
+                    id,
+                    info.width,
+                    info.height,
+                    info.bayer_pattern,
+                    info.sensor_max,
+                    info.raw_supported
                 );
+                if info.raw_supported {
+                    raw_supported_ids.push(id.clone());
+                } else {
+                    yuv_only_ids.push(id.clone());
+                }
             }
         }
 
+        // Try RAW16 cameras first
         let mut last_err = String::from("no camera could be opened");
-        for id in &ids {
+        for id in &raw_supported_ids {
             match session.try_open(id) {
-                Ok(()) => return Ok(session),
+                Ok(()) => {
+                    log::info!("Opened RAW16 camera: {id}");
+                    return Ok(session);
+                }
                 Err(e) => {
-                    log::warn!("camera '{id}' unusable: {e}");
-                    last_err = format!("camera '{id}': {e}");
+                    log::warn!("RAW16 camera '{id}' failed: {e}");
+                    last_err = format!("RAW16 camera '{id}': {e}");
+                }
+            }
+        }
+
+        // Fall back to YUV cameras if no RAW16 camera worked
+        for id in &yuv_only_ids {
+            match session.try_open(id) {
+                Ok(()) => {
+                    log::info!("Opened YUV fallback camera: {id}");
+                    return Ok(session);
+                }
+                Err(e) => {
+                    log::warn!("YUV camera '{id}' failed: {e}");
+                    last_err = format!("YUV camera '{id}': {e}");
                 }
             }
         }
