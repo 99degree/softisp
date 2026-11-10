@@ -625,6 +625,18 @@ impl<T: Send + Sync> IBinder for LocalBinder<T> {
             "LocalBinder: transact code={} descriptor={}",
             code, self.interface_descriptor
         );
+
+        // Handle camera provider transactions for testing
+        if self.interface_descriptor == "test" && code == 3 {
+            // GET_CAMERA_ID_LIST = 3
+            // Return a valid camera ID list: count=2, then two strings
+            let mut reply = Parcel::new();
+            reply.write_i32(2);
+            reply.write_string16("0");
+            reply.write_string16("1");
+            return Ok(reply);
+        }
+
         // In a real implementation, this would dispatch to the handler
         Ok(data) // echo back the data as reply
     }
