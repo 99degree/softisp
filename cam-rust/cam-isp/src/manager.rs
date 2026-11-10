@@ -132,7 +132,7 @@ impl PipelineManager {
         );
 
         // 1. Build main chain blocks
-        let blocks = profile.build_blocks(target_w, self.bayer_pattern);
+        let blocks = profile.build_blocks(target_w, h as u32, self.bayer_pattern);
 
         // 2. Build aux blocks (stats — branched off from main pipeline)
         let aux_blocks = profile.build_aux_blocks(h, w);

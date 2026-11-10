@@ -184,7 +184,7 @@ impl Preview {
         match cam.next_frame() {
             Ok(Some(frame)) => {
                 let staged = self.stager.stage(&frame);
-                
+
                 if self.show_raw {
                     // Display raw camera frame as grayscale
                     let raw_bgra = self.raw_to_grayscale_bgra(&frame);
@@ -260,10 +260,10 @@ impl Preview {
             let normalized = ((sample.saturating_sub(min_val)) as u32 * 255) / range;
             let gray = normalized as u8;
             let idx = i * 4;
-            bgra[idx] = gray;     // B
+            bgra[idx] = gray; // B
             bgra[idx + 1] = gray; // G
             bgra[idx + 2] = gray; // R
-            bgra[idx + 3] = 255;  // A
+            bgra[idx + 3] = 255; // A
         }
         bgra
     }

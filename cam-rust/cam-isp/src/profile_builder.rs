@@ -11,16 +11,21 @@ use log::info;
 
 impl PipelineProfile {
     /// Build an ordered list of ISP blocks according to this profile.
-    pub fn build_blocks(&self, target_width: u32, bayer_pattern: i32) -> Vec<Box<dyn IspBlock>> {
+    pub fn build_blocks(
+        &self,
+        target_width: u32,
+        sensor_height: u32,
+        bayer_pattern: i32,
+    ) -> Vec<Box<dyn IspBlock>> {
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
         info!(
-            "build_blocks: profile={}, target_width={}, bayer_pattern={}",
-            self.label, target_width, bayer_pattern
+            "build_blocks: profile={}, target_width={}, sensor_height={}, bayer_pattern={}",
+            self.label, target_width, sensor_height, bayer_pattern
         );
         let full_w = target_width as i64;
         let packed_w = (target_width / 2) as i64;
 
-        let concrete_h = (target_width as f64 / 16.0 * 9.0).round() as i64;
+        let concrete_h = sensor_height as i64;
         assert!(
             concrete_h > 0,
             "{} profile: concrete_h must be > 0, got {} for width {}",
@@ -351,7 +356,7 @@ impl PipelineProfile {
 
     /// Count total blocks (main + aux) for estimate purposes.
     pub fn block_count(&self) -> usize {
-        self.build_blocks(128, 0).len() + self.build_aux_blocks(128, 128).len()
+        self.build_blocks(128, 72, 0).len() + self.build_aux_blocks(72, 128).len()
     }
 
     /// Estimate ONNX node count for this profile.

@@ -82,7 +82,7 @@ mod tests {
     fn test_fused_pipeline_cpu() {
         crate::init();
         let profile = PipelineProfile::LITE;
-        let blocks = profile.build_blocks(32, 0);
+        let blocks = profile.build_blocks(32, 18, 0);
         let pipeline =
             FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()));
         assert!(pipeline.is_ok(), "Build failed: {:?}", pipeline.err());
@@ -103,7 +103,7 @@ mod tests {
     fn test_fused_pipeline_into_engine() {
         crate::init();
         let profile = PipelineProfile::LITE;
-        let blocks = profile.build_blocks(32, 0);
+        let blocks = profile.build_blocks(32, 18, 0);
         let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()))
             .unwrap();
         let _engine = pipe.into_engine();
@@ -117,7 +117,7 @@ mod tests {
         }
         crate::init();
         let profile = PipelineProfile::MED;
-        let blocks = profile.build_blocks(32, 0);
+        let blocks = profile.build_blocks(32, 18, 0);
         let pipe = FusedPipeline::build(blocks);
         assert!(pipe.is_ok(), "MED profile build failed: {:?}", pipe.err());
         let p = pipe.unwrap();
@@ -129,7 +129,7 @@ mod tests {
     fn test_fused_pipeline_process() {
         crate::init();
         let profile = PipelineProfile::LITE;
-        let blocks = profile.build_blocks(32, 0);
+        let blocks = profile.build_blocks(32, 18, 0);
         let pipe = FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()))
             .unwrap();
         let raw = vec![0u8; 32 * 32 * 2];
@@ -148,7 +148,7 @@ mod tests {
             (PipelineProfile::PRO, "PRO"),
         ];
         for (profile, name) in profiles {
-            let blocks = profile.build_blocks(64, 0);
+            let blocks = profile.build_blocks(64, 36, 0);
             let pipe =
                 FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()));
             assert!(
@@ -179,7 +179,7 @@ mod tests {
     fn test_fused_pipeline_process_bayer() {
         crate::init();
         let profile = PipelineProfile::LITE;
-        let blocks = profile.build_blocks(64, 0);
+        let blocks = profile.build_blocks(64, 36, 0);
         let mut pipe =
             FusedPipeline::build_with_engine(blocks, Box::new(crate::cpu::CpuEngine::new()))
                 .unwrap();

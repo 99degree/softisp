@@ -291,7 +291,11 @@ impl SmartPipelineBuilder {
 
     /// Build blocks for a profile.
     fn build_blocks_for_profile(&mut self, profile: &PipelineProfile) -> Vec<Box<dyn IspBlock>> {
-        let blocks = profile.build_blocks(self.config.width, self.config.bayer_pattern);
+        let blocks = profile.build_blocks(
+            self.config.width,
+            self.config.height,
+            self.config.bayer_pattern,
+        );
 
         // Estimate complexity based on block count and types
         self.estimated_complexity = blocks.len() as f64 / 20.0; // Normalize to 20 blocks max

@@ -576,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_build_blocks_lite() {
-        let blocks = PipelineProfile::LITE.build_blocks(128, 0);
+        let blocks = PipelineProfile::LITE.build_blocks(128, 72, 0);
         // LITE: 24 main blocks + 23 identity bridges = 47
         assert_eq!(
             blocks.len(),
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_build_blocks_heavy() {
-        let blocks = PipelineProfile::HEAVY.build_blocks(128, 0);
+        let blocks = PipelineProfile::HEAVY.build_blocks(128, 72, 0);
         // HEAVY: 24 main + 1 DPC + 24 identity bridges = 49
         assert_eq!(
             blocks.len(),
@@ -686,7 +686,7 @@ mod tests {
             0,     // tile_overlap
             0,     // opset_mode: Primitive
         );
-        let blocks = p.build_blocks(128, 0);
+        let blocks = p.build_blocks(128, 72, 0);
         assert_eq!(
             blocks.len(),
             45,
