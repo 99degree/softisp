@@ -10,6 +10,7 @@ use crate::pipeline::IspBlock;
 /// Avoids Slice op which MNN doesn't handle.
 ///
 /// For the packed even/odd split (`[1,2,H,W/2]`) use [`CfaBlockPacked`].
+#[derive(Debug)]
 pub struct CfaBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -204,7 +205,9 @@ impl IspBlock for CfaBlock {
 /// same `[1,4,H/2,W/2]` output with the same quad→channel mapping as
 /// [`CfaBlock`]. This avoids interleaving even/odd back into one `[1,1,H,W]`
 /// tensor (which previously needed rank/baked-dim Reshape tricks that broke
+/// tensor (which previously needed rank/baked-dim Reshape tricks that broke
 /// MNN resizeSession).
+#[derive(Debug)]
 pub struct CfaBlockPacked {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

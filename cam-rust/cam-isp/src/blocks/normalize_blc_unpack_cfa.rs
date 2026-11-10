@@ -18,6 +18,7 @@ use crate::pipeline::{BlockOpsetMode, IspBlock};
 /// This block supports both `Primitive` and `Custom` opset modes:
 /// - Primitive: emits standard ONNX ops (Cast, Div, Sub, Clip, Conv)
 /// - Custom: emits `isp.unpack_blc` Extra op with SPIR-V shader
+#[derive(Debug)]
 pub struct NormalizeBlcUnpackCfa {
     /// Input tensor name (e.g., "raw_frame")
     pub input_source: String,

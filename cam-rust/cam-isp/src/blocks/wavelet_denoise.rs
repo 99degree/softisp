@@ -26,6 +26,7 @@ use crate::pipeline::IspBlock;
 /// Decomposes the image into frequency subbands, applies soft thresholding
 /// to the detail subbands, then reconstructs. Removes noise while
 /// preserving edges better than spatial filters.
+#[derive(Debug)]
 pub struct WaveletDenoiseBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

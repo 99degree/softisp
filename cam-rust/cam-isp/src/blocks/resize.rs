@@ -13,6 +13,7 @@ use crate::pipeline::IspBlock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 static RESIZE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Debug)]
 pub struct ResizeBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

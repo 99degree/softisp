@@ -13,6 +13,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// UnpackBlock — engine-split even/odd Bayer lanes, INT32 → FLOAT32.
+#[derive(Debug)]
 pub struct UnpackBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

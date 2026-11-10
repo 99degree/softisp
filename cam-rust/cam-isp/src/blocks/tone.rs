@@ -5,6 +5,7 @@ use crate::pipeline::IspBlock;
 ///
 /// Simple per-pixel tone curve: `clip(x * mul + add)`. All parameters
 /// are hot-swappable at runtime via `hot_swap_const_buffer()`.
+#[derive(Debug)]
 pub struct ToneBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

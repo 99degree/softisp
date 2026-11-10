@@ -56,6 +56,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// RuntimeWarpBlock — CPU grid + GPU warp.
+#[derive(Debug)]
 pub struct RuntimeWarpBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

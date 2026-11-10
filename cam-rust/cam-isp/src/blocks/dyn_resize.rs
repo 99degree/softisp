@@ -18,6 +18,7 @@ use crate::pipeline::IspBlock;
 /// ONNX Resize with bilinear interpolation. Scale factors stored as
 /// initializers can be updated at runtime via `hot_swap_const_buffer()`
 /// without rebuilding the MNN model.
+#[derive(Debug)]
 pub struct DynResizeBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

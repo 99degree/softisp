@@ -11,6 +11,7 @@ use crate::pipeline::IspBlock;
 ///
 /// For non-binned sensors where binning would lose too much resolution.
 /// Only one of UnpackCfaBlock or DemosaicInterpBlock should be used.
+#[derive(Debug)]
 pub struct DemosaicInterpBlock {
     id: String,
     prev: Option<Box<dyn IspBlock>>,

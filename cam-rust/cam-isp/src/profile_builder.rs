@@ -19,8 +19,8 @@ impl PipelineProfile {
     ) -> Vec<Box<dyn IspBlock>> {
         let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
         info!(
-            "build_blocks: profile={}, target_width={}, sensor_height={}, bayer_pattern={}",
-            self.label, target_width, sensor_height, bayer_pattern
+            "build_blocks: profile={}, target_width={}, sensor_height={}, bayer_pattern={}, input_type={}",
+            self.label, target_width, sensor_height, bayer_pattern, self.input_type
         );
         let full_w = target_width as i64;
         let packed_w = (target_width / 2) as i64;
@@ -40,47 +40,97 @@ impl PipelineProfile {
             packed_w,
             target_width
         );
-        if self.force_input16 {
-            // Pure 16-bit raw input [1,1,H,W] INT16 — no packed tensor, no
-            // split. MNN's converter upcasts the INT16 input to FLOAT32, and
-            // the engine converts the u16 buffer to f32 (RawFloat mode).
-            // UnpackCfaBlock casts INT16→FLOAT32 and extracts the 4 Bayer
-            // quadrants via a stride-2 conv → [1,4,H/2,W/2].
-            blocks.push(Box::new(
-                RawInput16Block::new()
-                    .with_concrete_width(full_w)
-                    .with_concrete_height(concrete_h),
-            ));
-            blocks.push(Box::new(
-                crate::blocks::UnpackCfaBlock::new()
-                    .with_mode(crate::blocks::UnpackMode::NativeInt16)
-                    .with_fast_unpack(true) // Conv-based extract (unpack_w/unpack_b)
-                    .with_concrete_dims(concrete_h, full_w),
-            ));
-        } else if self.use_unpack {
-            // Packed 2×int16-as-int32 input [1,2,H,W/2]: engine splits the u16
-            // pairs into even/odd lanes on the host; the graph only needs a
-            // Vulkan-safe Cast INT32→FLOAT32 (UnpackBlock).
-            blocks.push(Box::new(
-                RawInputPackedBlock::new()
-                    .with_concrete_width(full_w) // full sensor width; block halves it
-                    .with_concrete_height(concrete_h),
-            ));
-            blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
-            blocks.push(Box::new(NormalizeBlock::new()));
-            // UnpackBlock splits packed INT32 into even/odd channels [1,2,H,W/2];
-            // CfaBlockPacked consumes them as 2 conv input channels (kernel
-            // [2,1], stride [2,1]) instead of an interleaved [1,1,H,W] tensor —
-            // keeps every op rank-4 and resize-safe for MNN resizeSession.
-            blocks.push(Box::new(CfaBlockPacked::new()));
-        } else {
-            blocks.push(Box::new(
-                RawInputBlock::new()
-                    .with_concrete_width(full_w)
-                    .with_concrete_height(concrete_h),
-            ));
-            blocks.push(Box::new(NormalizeBlock::new()));
-            blocks.push(Box::new(CfaBlock::new()));
+
+        // Handle different input types
+        match self.input_type {
+            "yuv" => {
+                // YUV input path: YUV input block -> YuvToRgbBlock
+                info!("  Using YUV input pipeline");
+                blocks.push(Box::new(
+                    Yuv420InputBlock::new()
+                        .with_concrete_width(full_w)
+                        .with_concrete_height(concrete_h),
+                ));
+                blocks.push(Box::new(YuvToRgbBlock::new()));
+            }
+            "raw" => {
+                // Standard RAW Bayer pipeline
+                if self.force_input16 {
+                    // Pure 16-bit raw input [1,1,H,W] INT16 — no packed tensor, no
+                    // split. MNN's converter upcasts the INT16 input to FLOAT32, and
+                    // the engine converts the u16 buffer to f32 (RawFloat mode).
+                    // UnpackCfaBlock casts INT16→FLOAT32 and extracts the 4 Bayer
+                    // quadrants via a stride-2 conv → [1,4,H/2,W/2].
+                    blocks.push(Box::new(
+                        RawInput16Block::new()
+                            .with_concrete_width(full_w)
+                            .with_concrete_height(concrete_h),
+                    ));
+                    blocks.push(Box::new(
+                        crate::blocks::UnpackCfaBlock::new()
+                            .with_mode(crate::blocks::UnpackMode::NativeInt16)
+                            .with_fast_unpack(true) // Conv-based extract (unpack_w/unpack_b)
+                            .with_concrete_dims(concrete_h, full_w),
+                    ));
+                } else if self.use_unpack {
+                    // Packed 2×int16-as-int32 input [1,2,H,W/2]: engine splits the u16
+                    // pairs into even/odd lanes on the host; the graph only needs a
+                    // Vulkan-safe Cast INT32→FLOAT32 (UnpackBlock).
+                    blocks.push(Box::new(
+                        RawInputPackedBlock::new()
+                            .with_concrete_width(full_w) // full sensor width; block halves it
+                            .with_concrete_height(concrete_h),
+                    ));
+                    blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
+                    blocks.push(Box::new(NormalizeBlock::new()));
+                    // UnpackBlock splits packed INT32 into even/odd channels [1,2,H,W/2];
+                    // CfaBlockPacked consumes them as 2 conv input channels (kernel
+                    // [2,1], stride [2,1]) instead of an interleaved [1,1,H,W] tensor —
+                    // keeps every op rank-4 and resize-safe for MNN resizeSession.
+                    blocks.push(Box::new(CfaBlockPacked::new()));
+                } else {
+                    blocks.push(Box::new(
+                        RawInputBlock::new()
+                            .with_concrete_width(full_w)
+                            .with_concrete_height(concrete_h),
+                    ));
+                    blocks.push(Box::new(NormalizeBlock::new()));
+                    blocks.push(Box::new(CfaBlock::new()));
+                }
+            }
+            _ => {
+                // Default to RAW pipeline for backward compatibility
+                if self.force_input16 {
+                    blocks.push(Box::new(
+                        RawInput16Block::new()
+                            .with_concrete_width(full_w)
+                            .with_concrete_height(concrete_h),
+                    ));
+                    blocks.push(Box::new(
+                        crate::blocks::UnpackCfaBlock::new()
+                            .with_mode(crate::blocks::UnpackMode::NativeInt16)
+                            .with_fast_unpack(true)
+                            .with_concrete_dims(concrete_h, full_w),
+                    ));
+                } else if self.use_unpack {
+                    blocks.push(Box::new(
+                        RawInputPackedBlock::new()
+                            .with_concrete_width(full_w)
+                            .with_concrete_height(concrete_h),
+                    ));
+                    blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
+                    blocks.push(Box::new(NormalizeBlock::new()));
+                    blocks.push(Box::new(CfaBlockPacked::new()));
+                } else {
+                    blocks.push(Box::new(
+                        RawInputBlock::new()
+                            .with_concrete_width(full_w)
+                            .with_concrete_height(concrete_h),
+                    ));
+                    blocks.push(Box::new(NormalizeBlock::new()));
+                    blocks.push(Box::new(CfaBlock::new()));
+                }
+            }
         }
 
         if self.use_bad_pixel {

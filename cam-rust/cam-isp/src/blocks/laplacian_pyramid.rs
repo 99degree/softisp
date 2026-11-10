@@ -23,6 +23,7 @@ use crate::pipeline::IspBlock;
 /// LaplacianPyramidBlock — multi-scale Laplacian pyramid decomposition.
 ///
 /// Decomposes image into frequency bands for HDR merge and multi-scale processing.
+#[derive(Debug)]
 pub struct LaplacianPyramidBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,
