@@ -210,9 +210,10 @@ impl UnifiedPipeline {
 
         let profile = config.profile;
         let target_width = config.target_width;
+        let target_height = (target_width * 9 / 16).max(1);
 
         // Build pipeline blocks (wire_blocks_with_identities called inside build_blocks)
-        let mut blocks = profile.build_blocks(target_width, config.bayer_pattern);
+        let mut blocks = profile.build_blocks(target_width, target_height, config.bayer_pattern);
 
         let head = blocks.remove(0);
 
