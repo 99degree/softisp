@@ -94,6 +94,18 @@ impl CameraSession {
             return Err("no cameras reported by ACameraManager".into());
         }
 
+        // First, enumerate all cameras and log their capabilities
+        log::info!("=== Enumerating all cameras ===");
+        for id in &ids {
+            if let Ok(info) = session.read_sensor_info_for_id(id) {
+                log::info!(
+                    "Camera '{}': {}x{}, bayer={}, max={}, raw_supported={}",
+                    id, info.width, info.height, info.bayer_pattern,
+                    info.sensor_max, info.raw_supported
+                );
+            }
+        }
+
         let mut last_err = String::from("no camera could be opened");
         for id in &ids {
             match session.try_open(id) {
@@ -105,6 +117,12 @@ impl CameraSession {
             }
         }
         Err(last_err)
+    }
+
+    /// Read sensor info for a specific camera ID without opening it.
+    fn read_sensor_info_for_id(&self, id: &str) -> CamResult<SensorInfo> {
+        let c_id = CString::new(id).map_err(|_| "camera id contains a NUL".to_string())?;
+        self.read_sensor_info(c_id.as_ptr())
     }
 
     /// Camera IDs reported by the manager, as owned strings.
