@@ -15,6 +15,7 @@ use crate::pipeline::IspBlock;
 ///
 /// ONNX subgraph: AvgPool → Sub → Mul(strength) → Add(input).
 /// Strength: 0.0=no effect, 0.5=moderate, 1.0=aggressive.
+#[derive(Debug)]
 pub struct SharpenBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

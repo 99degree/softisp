@@ -13,6 +13,7 @@
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
+#[derive(Debug)]
 pub struct UnpackBayerToFp16Block {
     id: String,
     input_source: String,

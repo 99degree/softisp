@@ -80,6 +80,7 @@ impl DemosaicAlgo {
     }
 }
 
+#[derive(Debug)]
 pub struct BayerDemosaicBlock {
     id: String,
     prev: Option<Box<dyn IspBlock>>,

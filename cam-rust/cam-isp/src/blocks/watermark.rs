@@ -16,6 +16,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// WatermarkBlock — overlay text or image watermark.
+#[derive(Debug)]
 pub struct WatermarkBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

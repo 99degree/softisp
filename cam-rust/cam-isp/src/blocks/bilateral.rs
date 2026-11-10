@@ -6,6 +6,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// Bilateral filter block — edge-preserving smoothing.
+#[derive(Debug)]
 pub struct BilateralBlock {
     /// Spatial sigma (controls smoothing radius).
     pub sigma_spatial: f32,

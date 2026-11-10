@@ -6,6 +6,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// Vignetting correction block.
+#[derive(Debug)]
 pub struct VignettingBlock {
     /// Image width.
     pub width: u32,

@@ -28,6 +28,7 @@ use crate::pipeline::IspBlock;
 /// ONNX subgraph: Mul(scale) → Add(bias) → Clip(min, max).
 /// Parametric S-curve for shadow/highlight adjustment.
 /// Fuse target R3b (Mul+Add).
+#[derive(Debug)]
 pub struct FcsBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

@@ -26,6 +26,7 @@ use crate::pipeline::{BlockOpsetMode, IspBlock};
 /// ONNX subgraph: AvgPool → Sub → Mul → Add + Mul+Add for contrast.
 /// Enhances local texture independently of global exposure.
 /// Fuse target R4 (AvgPool+Sub+Mul+Add).
+#[derive(Debug)]
 pub struct LdciBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

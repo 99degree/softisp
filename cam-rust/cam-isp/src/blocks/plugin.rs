@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Enables dynamic extensions without recompilation. The loaded model
 /// is converted to MNN and runs on the selected backend (Vulkan/CPU).
+#[derive(Debug)]
 pub struct PluginBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

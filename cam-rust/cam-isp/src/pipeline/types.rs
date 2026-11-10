@@ -133,7 +133,7 @@ impl IspFrame {
 /// Blocks form a linked list via `[next]`/`[prev]`, defining the frame buffer flow.
 /// GraphComposer takes the head block and traverses via `[next]`.
 #[allow(clippy::borrowed_box)]
-pub trait IspBlock: Send {
+pub trait IspBlock: Send + std::fmt::Debug {
     /// Unique block identifier.
     fn id(&self) -> &str;
 
@@ -1517,6 +1517,7 @@ mod tests {
 
     #[test]
     fn test_custom_opset_emits_domain() {
+        #[derive(Debug)]
         struct CustomBlock {
             id: String,
             input_source: String,
@@ -1609,6 +1610,7 @@ mod tests {
     fn test_custom_opset_lowering_primitive_mode() {
         // A block in Primitive mode that declares custom op types and emits
         // custom nodes. The lowering pass should rewrite them to primitives.
+        #[derive(Debug)]
         struct LoweringBlock {
             id: String,
             input_source: String,

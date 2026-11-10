@@ -39,6 +39,7 @@ pub enum BayerPattern {
 }
 
 /// Simplified debayer block supporting multiple modes.
+#[derive(Debug)]
 pub struct BayerProcBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

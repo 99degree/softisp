@@ -23,6 +23,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// SuperResBlock — multi-frame super-resolution via contrast-weighted fusion.
+#[derive(Debug)]
 pub struct SuperResBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,
