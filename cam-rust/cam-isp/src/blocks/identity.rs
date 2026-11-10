@@ -7,6 +7,7 @@ use crate::pipeline::IspBlock;
 
 /// Identity block — just passes input to output.
 /// Used for TEST profile to quickly verify ONNX pipeline path.
+#[derive(Debug)]
 pub struct IdentityBlock {
     id: String,
     prev: Option<Box<dyn IspBlock>>,
@@ -123,6 +124,7 @@ impl IspBlock for IdentityBlock {
 /// a no-op but produces a **distinct MNN op type**, so bridge boundaries are
 /// instantly recognizable in the MNN opset — they never collide with natural
 /// `Identity` ops that blocks may generate internally.
+#[derive(Debug)]
 pub struct BridgeIdentityBlock {
     id: String,
     prev: Option<Box<dyn IspBlock>>,
@@ -230,6 +232,7 @@ impl IspBlock for BridgeIdentityBlock {
 }
 
 /// Fast demosaic block — bilinear only for TEST profile.
+#[derive(Debug)]
 pub struct FastDemosaicBlock {
     id: String,
     prev: Option<Box<dyn IspBlock>>,

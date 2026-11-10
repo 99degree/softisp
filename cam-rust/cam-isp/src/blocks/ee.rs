@@ -35,6 +35,7 @@ use crate::pipeline::{BlockOpsetMode, IspBlock};
 /// ONNX subgraph: Conv(3×3, groups=3) → Add(input).
 /// Enhances local contrast while avoiding overshoot artifacts.
 /// Fuse target R3a (Conv 3×3 group=3).
+#[derive(Debug)]
 pub struct EeBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

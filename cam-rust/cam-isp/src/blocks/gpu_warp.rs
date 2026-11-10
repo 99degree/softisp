@@ -46,6 +46,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// GpuWarpBlock — fully GPU-accelerated grid computation + warp.
+#[derive(Debug)]
 pub struct GpuWarpBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

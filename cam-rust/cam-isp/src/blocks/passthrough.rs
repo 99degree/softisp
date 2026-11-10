@@ -9,6 +9,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// PassthroughBlock — identity pass-through with a descriptive name.
+#[derive(Debug)]
 pub struct PassthroughBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

@@ -28,6 +28,7 @@ use crate::pipeline::IspBlock;
 ///
 /// Applies gamma curve with optional shadow lift.
 /// Formula: `exp(gamma * log(x))` with configurable gamma value (2.2 typical).
+#[derive(Debug)]
 pub struct GammaBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

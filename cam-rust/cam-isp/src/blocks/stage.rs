@@ -8,6 +8,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// StageBlock — marks a named pipeline stage.
+#[derive(Debug)]
 pub struct StageBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

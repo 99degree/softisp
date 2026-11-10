@@ -11,6 +11,7 @@
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
+#[derive(Debug)]
 pub struct PyramidBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

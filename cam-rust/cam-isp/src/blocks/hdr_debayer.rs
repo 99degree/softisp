@@ -19,6 +19,7 @@ use crate::pipeline::IspBlock;
 /// HdrDebayerBlock — multi-exposure HDR Bayer merge.
 ///
 /// Combines short and long exposures into a single HDR raw frame.
+#[derive(Debug)]
 pub struct HdrDebayerBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

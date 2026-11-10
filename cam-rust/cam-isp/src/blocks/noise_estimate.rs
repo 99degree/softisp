@@ -22,6 +22,7 @@ use crate::pipeline::IspBlock;
 ///
 /// Computes local variance via Laplacian filter for noise-aware processing
 /// downstream. Outputs a single-channel noise map matching input dimensions.
+#[derive(Debug)]
 pub struct NoiseEstimateBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

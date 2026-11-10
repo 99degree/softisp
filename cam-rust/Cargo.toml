@@ -10,7 +10,6 @@ members = [
     "cam-onnx",
     "cam-motion",
     "cam-binder",
-    "cam-app",
     "cam-disp",
     "cam-camera-app",
 ]

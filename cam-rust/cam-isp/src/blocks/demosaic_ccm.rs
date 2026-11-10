@@ -23,6 +23,7 @@ use crate::pipeline::{BlockOpsetMode, IspBlock};
 ///   GRBG (1): R=TR, G=avg(TL,BR), B=BL
 ///   GBRG (2): R=BL, G=avg(TL,BR), B=TR
 ///   BGGR (3): R=BR, G=avg(TR,BL), B=TL
+#[derive(Debug)]
 pub struct DemosaicCcmBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

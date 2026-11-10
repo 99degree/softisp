@@ -24,6 +24,7 @@ use crate::pipeline::IspBlock;
 ///
 /// Merges multiple exposures using exposure-weighted blending.
 /// Inputs: [overexposed, normal, underexposed] as separate channels.
+#[derive(Debug)]
 pub struct HdrMergeBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

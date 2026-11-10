@@ -44,6 +44,7 @@
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
+#[derive(Debug)]
 pub struct AdaptiveDownscaleBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

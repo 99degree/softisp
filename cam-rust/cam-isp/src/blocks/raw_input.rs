@@ -28,6 +28,7 @@ use crate::pipeline::IspBlock;
 macro_rules! impl_raw_input_block {
     ($struct:ident, $id:literal, $ns:literal, $frame:literal, $elem:expr, $channels:expr, $width_div:expr, $doc:literal) => {
         #[doc = $doc]
+        #[derive(Debug)]
         pub struct $struct {
             pub id: String,
             pub prev: Option<Box<dyn IspBlock>>,

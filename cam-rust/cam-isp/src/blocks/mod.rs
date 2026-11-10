@@ -86,6 +86,8 @@ pub mod vignetting;
 mod warp;
 mod watermark;
 mod wavelet_denoise;
+mod yuv_input;
+mod yuv_to_rgb;
 
 pub use adaptive_downscale::AdaptiveDownscaleBlock;
 pub use aspect_crop::AspectCropBlock;
@@ -143,6 +145,8 @@ pub use vignetting::VignettingBlock;
 pub use warp::*;
 pub use watermark::WatermarkBlock;
 pub use wavelet_denoise::WaveletDenoiseBlock;
+pub use yuv_input::{Nv12InputBlock, Nv21InputBlock, Yuv420InputBlock};
+pub use yuv_to_rgb::{YuvColorSpace, YuvToRgbBlock};
 
 /// Register all built-in blocks with the engine registry.
 /// Called by `cam_isp::init()`.

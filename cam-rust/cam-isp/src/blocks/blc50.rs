@@ -16,6 +16,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// Blc50Block — 50Hz FPN subtraction via dark frame.
+#[derive(Debug)]
 pub struct Blc50Block {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

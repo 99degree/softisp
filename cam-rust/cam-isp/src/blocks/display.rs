@@ -27,6 +27,7 @@ use crate::pipeline::{BlockOpsetMode, IspBlock};
 /// Converts float32 RGB `[0,1]` → RGBA/ARGB/AGBR `[0,255]` via Conv(1×1)
 /// with channel permutation weights. Supports sRGB gamma encoding.
 /// Output format selected at build time via `.rgba()`, `.argb()`, `.agbr()`.
+#[derive(Debug)]
 pub struct DisplayBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

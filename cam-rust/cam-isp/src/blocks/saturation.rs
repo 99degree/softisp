@@ -6,6 +6,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// Saturation control block.
+#[derive(Debug)]
 pub struct SaturationBlock {
     /// Saturation factor (0.0 = grayscale, 1.0 = normal, >1.0 = boosted).
     pub saturation: f32,

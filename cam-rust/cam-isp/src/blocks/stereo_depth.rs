@@ -24,6 +24,7 @@ use crate::pipeline::IspBlock;
 ///
 /// Computes disparity map from left/right stereo pair using sum-of-absolute-
 /// differences with configurable search range and block window size.
+#[derive(Debug)]
 pub struct StereoDepthBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

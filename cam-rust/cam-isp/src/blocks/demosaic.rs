@@ -16,6 +16,7 @@ use crate::pipeline::IspBlock;
 ///
 /// @param bayer_pattern Android color filter arrangement:
 ///   0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR. Default 2 (GBRG — common on Qualcomm).
+#[derive(Debug)]
 pub struct DemosaicBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

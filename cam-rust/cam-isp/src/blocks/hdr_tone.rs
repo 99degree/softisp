@@ -40,6 +40,7 @@ pub enum ToneOperator {
 ///
 /// Applies Reinhard, ACES, or Uncharted2 operator to compress HDR luminance
 /// into SDR display range.
+#[derive(Debug)]
 pub struct HdrToneBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

@@ -26,6 +26,7 @@ use crate::pipeline::IspBlock;
 /// so kernels adapt to landscape vs portrait orientation automatically.
 ///
 /// Used for multi-illuminant AWB.  48 zones (6×8) is typical for FHD.
+#[derive(Debug)]
 pub struct ZoneStatsBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -156,6 +157,7 @@ impl IspBlock for ZoneStatsBlock {
 
 /// Global channel means — ReduceMean over spatial dims.
 /// Output: `[1, 3]` flat tensor of (mean_R, mean_G, mean_B).
+#[derive(Debug)]
 pub struct ChannelMeansBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -289,6 +291,7 @@ impl IspBlock for ChannelMeansBlock {
 ///
 /// Used by AE for exposure metering and tone mapping.
 /// All statistics are derived from luminance: L = 0.299R + 0.587G + 0.114B
+#[derive(Debug)]
 pub struct ToneStatsBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -548,6 +551,7 @@ impl IspBlock for ToneStatsBlock {
 /// 256×H×W intermediate = 2GB at FHD).  Use this coarse version for
 /// AE clipping detection and use the Rust software path for full 256-bin
 /// when higher resolution is needed.
+#[derive(Debug)]
 pub struct CoarseHistogramBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,
@@ -796,7 +800,8 @@ impl IspBlock for CoarseHistogramBlock {
 ///   `[22]`    frame_min      — min across all quads
 ///   `[23]`    frame_max      — max across all quads
 ///
-/// Graph: var = E`[X²]` - E`[X]`² (linearity of variance)
+/// Graph: var = E[X²] - E[X]² (linearity of variance)
+#[derive(Debug)]
 pub struct CalibrationBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

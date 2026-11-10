@@ -27,6 +27,7 @@ use crate::pipeline::IspBlock;
 /// Blends current frame with previous denoised frame using motion-adaptive
 /// weighting. Higher threshold = less denoising, lower = more aggressive.
 /// Typical range: 0.02–0.05.
+#[derive(Debug)]
 pub struct TemporalDenoiseBlock {
     pub id: String,
     pub prev_block: Option<Box<dyn IspBlock>>,

@@ -25,6 +25,7 @@ pub enum UnpackMode {
     NativeInt16,
 }
 
+#[derive(Debug)]
 pub struct UnpackCfaBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

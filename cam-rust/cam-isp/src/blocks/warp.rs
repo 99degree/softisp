@@ -93,6 +93,7 @@ use crate::pipeline::IspBlock;
 /// All operations share the same output pixel loop via GridSample.
 /// Adding lens shading correction costs ~0% extra GPU time.
 /// Typical latency: 0.5-2ms for 1080p on Snapdragon 8 Gen 2.
+#[derive(Debug)]
 pub struct WarpGridBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

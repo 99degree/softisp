@@ -87,9 +87,27 @@ impl Preview {
             .ok_or_else(|| format!("no ISP engine matching '{engine_name}'"))?;
         log::info!("ISP engine: {}", engine.backend_name());
 
-        // The chain comes from the same profile the desktop tooling uses, so
-        // preview and benchmarks exercise identical blocks.
-        let profile = PipelineProfile::MED;
+        // We need to determine the input type based on camera capabilities.
+        // First, open a temporary session to check camera capabilities.
+        let temp_session = CameraSession::open_default()
+            .map_err(|e| format!("failed to open camera for capability check: {e}"))?;
+
+        let has_raw = temp_session.is_raw();
+        let sensor_max = temp_session.sensor_max();
+        let bayer_pattern = temp_session.bayer_pattern();
+
+        // Determine profile based on camera capabilities
+        let profile = if has_raw {
+            log::info!("Camera supports RAW16, using RAW Bayer pipeline");
+            PipelineProfile::MED
+        } else {
+            log::info!("Camera only supports YUV, using YUV input pipeline");
+            PipelineProfile::YUV
+        };
+
+        // Store the session for reuse
+        let session = Some(temp_session);
+
         let mut blocks = profile.build_blocks(target_width, sensor_height, camera::BGGR);
         if blocks.is_empty() {
             return Err(format!("profile {} produced no blocks", profile.label));
@@ -109,11 +127,11 @@ impl Preview {
 
         Ok(Self {
             engine,
-            session: None,
+            session,
             stager: FrameStager::new(),
             config: PipelineConfig {
-                sensor_max: 1023.0,
-                bayer_pattern: camera::BGGR,
+                sensor_max,
+                bayer_pattern,
             },
             last_frame: None,
             frames: 0,

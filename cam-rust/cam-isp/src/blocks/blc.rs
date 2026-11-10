@@ -6,6 +6,7 @@ use crate::pipeline::IspBlock;
 /// Subtracts black level offset per Bayer channel.
 /// Supports multiple instances via `with_instance()` for pipeline stages
 /// like DPC + black level in a single model.
+#[derive(Debug)]
 pub struct BlcBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

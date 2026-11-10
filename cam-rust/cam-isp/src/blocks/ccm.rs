@@ -10,6 +10,7 @@ use crate::pipeline::IspBlock;
 ///
 /// Applies user-configurable color correction matrix to transform
 /// sensor RGB → sRGB. Parameters hot-swappable at runtime.
+#[derive(Debug)]
 pub struct CcmBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

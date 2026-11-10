@@ -9,6 +9,7 @@ use crate::pipeline::IspBlock;
 ///
 /// Input:  INT16  [1,1,H,W]  (native Bayer — ONNX elem_type 5)
 /// Output: FLOAT32 [1,1,H,W]  (BLC-corrected)
+#[derive(Debug)]
 pub struct UnpackBlc16Block {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

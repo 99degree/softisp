@@ -32,6 +32,7 @@ pub enum ColorSpace {
 }
 
 /// Color space conversion block.
+#[derive(Debug)]
 pub struct ColorSpaceBlock {
     /// Conversion type.
     pub conversion: ColorSpace,

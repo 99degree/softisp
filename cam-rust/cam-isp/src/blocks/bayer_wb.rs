@@ -13,6 +13,7 @@ use crate::pipeline::IspBlock;
 ///
 /// When gains are identity (all 1.0), the block emits a passthrough
 /// Identity node to avoid breaking MNN's ISP fusion chain.
+#[derive(Debug)]
 pub struct BayerWbBlock {
     pub id: String,
     pub prev: Option<Box<dyn IspBlock>>,

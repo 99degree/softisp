@@ -44,6 +44,8 @@ pub struct PipelineProfile {
     pub label: &'static str,
     /// Feature level for controller gating.
     pub level: PipelineLevel,
+    /// Input type: "raw" for Bayer RAW, "yuv" for YUV formats.
+    pub input_type: &'static str,
     /// Enable packed INT32 input with UnpackBlock for true zero-copy.
     /// When true (default), RawInputBlock uses INT32 at half-width and
     /// UnpackBlock is injected after it. When false, uses legacy FLOAT path.
@@ -143,6 +145,7 @@ impl PipelineProfile {
     pub const LITE: Self = Self {
         label: "LITE",
         level: PipelineLevel::Lite,
+        input_type: "raw",
         use_unpack: true,
         force_input16: false,
         use_fcs: false,
@@ -184,6 +187,7 @@ impl PipelineProfile {
     pub const MED: Self = Self {
         label: "MED",
         level: PipelineLevel::Medium,
+        input_type: "raw",
         use_unpack: true,
         force_input16: false,
         use_fcs: false,
@@ -225,6 +229,7 @@ impl PipelineProfile {
     pub const HEAVY: Self = Self {
         label: "HEAVY",
         level: PipelineLevel::Heavy,
+        input_type: "raw",
         use_unpack: true,
         force_input16: false,
         use_fcs: true,
@@ -266,6 +271,7 @@ impl PipelineProfile {
     pub const PRO: Self = Self {
         label: "PRO",
         level: PipelineLevel::Pro,
+        input_type: "raw",
         use_unpack: true,
         force_input16: false,
         use_fcs: true,
@@ -308,6 +314,7 @@ impl PipelineProfile {
     pub const TEST: Self = Self {
         label: "TEST",
         level: PipelineLevel::Lite,
+        input_type: "raw",
         use_unpack: true,
         force_input16: false,
         use_bad_pixel: false,
@@ -352,6 +359,7 @@ impl PipelineProfile {
     pub const UNIFIED: Self = Self {
         label: "UNIFIED",
         level: PipelineLevel::Heavy,
+        input_type: "raw",
         use_unpack: false,
         force_input16: false,
         use_fcs: true,
@@ -404,6 +412,7 @@ impl PipelineProfile {
     pub const HDR: Self = Self {
         label: "HDR",
         level: PipelineLevel::Heavy,
+        input_type: "raw",
         use_unpack: true,
         force_input16: false,
         use_fcs: true,
@@ -441,6 +450,50 @@ impl PipelineProfile {
         opset_mode: 0, // Primitive by default
     };
 
+    /// YUV input profile — for cameras that only provide YUV_420_888/NV12/NV21 output.
+    /// Uses YUV input blocks (Yuv420InputBlock/Nv12InputBlock/Nv21InputBlock)
+    /// followed by YuvToRgbBlock for YUV→RGB conversion.
+    pub const YUV: Self = Self {
+        label: "YUV",
+        level: PipelineLevel::Medium,
+        input_type: "yuv",
+        use_unpack: false,
+        force_input16: false,
+        use_fcs: false,
+        use_ldci: false,
+        use_ee: true,
+        use_bad_pixel: true,
+        demosaic_quality: DemosaicQuality::Standard,
+        use_local_contrast: false,
+        use_unsharp: true,
+        use_lsc: false,
+        use_warp: false,
+        use_hdr: false,
+        rotate_mode: 0,
+        use_zone_stats: true,    // zone stats for multi-illuminant AWB
+        use_channel_means: true, // channel means for grey-world AWB
+        use_tone_stats: true,    // tone stats for AE metering
+        use_histogram: false,    // skip histogram
+        stats_downscale_max: 0,  // full resolution
+        pipeline_downscale_target: 0,
+        eis_margin: 0.0,
+        use_bilateral: false,
+        use_saturation: true,
+        use_vignetting: false,
+        use_colorspace: false,
+        use_gamma: false,
+        use_sharpen: false,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
+        output_format: OutputFormat::Bgra,
+        opset_mode: 0, // Primitive by default
+    };
+
     /// All built-in profiles.
     pub const ALL: [Self; 7] = [
         Self::LITE,
@@ -456,6 +509,7 @@ impl PipelineProfile {
     pub const fn custom(
         label: &'static str,
         level: PipelineLevel,
+        input_type: &'static str,
         use_unpack: bool,
         use_fcs: bool,
         use_ldci: bool,
@@ -493,6 +547,7 @@ impl PipelineProfile {
         Self {
             label,
             level,
+            input_type,
             use_unpack,
             force_input16: false,
             use_fcs,
@@ -603,6 +658,7 @@ mod tests {
         let p = PipelineProfile::custom(
             "CUSTOM",
             PipelineLevel::Pro,
+            "raw",
             true,
             true,
             true,
@@ -652,6 +708,7 @@ mod tests {
         let p = PipelineProfile::custom(
             "LEGACY",
             PipelineLevel::Lite,
+            "raw",
             false,
             false,
             false,
