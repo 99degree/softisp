@@ -373,6 +373,9 @@ mod tests {
 
     #[test]
     fn test_factory_double_register() {
+        // Ensure clean state first
+        let _ = CameraProviderFactory::new().unregister();
+
         let factory = CameraProviderFactory::new();
         assert!(factory.register().is_ok());
         assert!(factory.register().is_err()); // already registered
