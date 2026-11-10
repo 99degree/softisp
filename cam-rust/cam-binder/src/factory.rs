@@ -358,12 +358,18 @@ mod tests {
 
     #[test]
     fn test_factory_creation() {
+        // Ensure clean state first
+        let _ = CameraProviderFactory::new().unregister();
+        
         let factory = CameraProviderFactory::new();
         assert!(!factory.is_registered());
     }
 
     #[test]
     fn test_factory_register_unregister() {
+        // Ensure clean state first
+        let _ = CameraProviderFactory::new().unregister();
+        
         let factory = CameraProviderFactory::new();
         assert!(factory.register().is_ok());
         assert!(factory.is_registered());
