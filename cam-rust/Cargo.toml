@@ -20,6 +20,10 @@ log = "0.4"
 thiserror = "2"
 env_logger = "0.10"
 android_logger = "0.14"
+# NativeActivity lifecycle + ANativeWindow (cam-camera-app).
+android-activity = { version = "0.6.1", features = ["native-activity"] }
+# Raw ACamera* / AImageReader* NDK bindings (cam-camera-app).
+ndk-sys = { version = "0.6", features = ["media"] }
 
 [profile.dev]
 debug = true

@@ -11,12 +11,8 @@ crate-type = ["cdylib", "rlib"]
 cam-isp = { path = "../cam-isp" }
 cam-types = { path = "../cam-types" }
 log = { workspace = true }
-# NativeActivity lifecycle, input queue and ANativeWindow handling.
-android-activity = { version = "0.6.1", features = ["native-activity"] }
-# Raw ACamera* / AImageReader* bindings. Pinned to the same version
-# android-activity uses so both crates agree on the NDK ABI; `media` adds
-# AImageReader, which camera2 capture needs.
-ndk-sys = { version = "0.6", features = ["media"] }
+android-activity = { workspace = true }
+ndk-sys = { workspace = true }
 
 # Routes log:: macros to logcat. The app has no Java layer, so without a logger
 # the `log::info!`/`log::warn!` calls — including crashlog's own path failures —
