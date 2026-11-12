@@ -26,9 +26,22 @@ android-activity = { version = "0.6.1", features = ["native-activity"] }
 ndk-sys = { version = "0.6", features = ["media"] }
 
 [profile.dev]
-debug = true
-overflow-checks = true
+debug = 1
+overflow-checks = false
 
 [profile.test]
-debug = true
-overflow-checks = true
+debug = 1
+overflow-checks = false
+
+# APK release profile — tuned for low-RAM devices (Termux/Android).
+# debug = 1 keeps line-number tables without full DWARF, cutting peak RSS
+# during codegen and linking by roughly half. overflow-checks off reduces
+# generated code size. codegen-units = 1 lowers parallel memory pressure at
+# the cost of slightly longer build time — acceptable on memory-constrained
+# hosts where the APK is actually produced.
+[profile.release]
+opt-level = 2
+debug = 1
+overflow-checks = false
+codegen-units = 1
+panic = "abort"
