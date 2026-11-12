@@ -23,8 +23,31 @@ export ANDROID_HOME=/data/data/com.termux/files/home/android-sdk
 ```bash
 cd /data/data/com.termux/files/home/softisp/cam-rust
 
-# Build the APK with cargo-apk2
+# Build the APK with cargo-apk2 (default debug profile).
 cargo apk2 build -p cam-camera-app
+```
+
+### Low-RAM build (Termux / memory-constrained hosts)
+
+On devices with limited RAM, the default `debug = true` profile produces
+large DWARF debug info and `overflow-checks = true` inflates codegen,
+both of which can push peak RSS past available memory and OOM the linker.
+
+Build with the `release` profile instead (added in `cam-rust/Cargo.toml`):
+```bash
+cd /data/data/com.termux/files/home/softisp/cam-rust
+
+# Release profile: debug = 1, no overflow checks, codegen-units = 1.
+cargo apk2 build -p cam-camera-app --release
+```
+
+The `release` profile uses `opt-level = 2`, `debug = 1` (line tables only,
+no full DWARF), `overflow-checks = false`, `codegen-units = 1`, and
+`panic = "abort"`. This cuts peak RSS during codegen/linking roughly in
+half at the cost of a slower single-threaded codegen pass — acceptable on
+memory-constrained hosts.
+
+The APK will be at `target/release/apk/softisp-camera.apk`.
 ```
 
 The APK will be at `target/debug/apk/softisp-camera.apk`.
