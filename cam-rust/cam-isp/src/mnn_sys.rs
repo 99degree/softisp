@@ -90,6 +90,15 @@ extern "C" {
     pub fn mnn_tensor_get_host_data(tensor: *mut c_void) -> *mut f32;
     pub fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
     pub fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
+    pub fn mnn_tensor_upload(
+        tensor: *mut c_void,
+        data: *const c_void,
+        bytes: usize,
+        type_code: c_int,
+        type_bits: c_int,
+        shape: *const c_int,
+        ndim: c_int,
+    ) -> c_int;
     pub fn mnn_tensor_set_shape(
         interpreter: *mut c_void,
         session: *mut c_void,
@@ -586,6 +595,73 @@ impl MnnTensorSafe {
     /// Get the size of the tensor data in bytes.
     pub fn data_size(&self) -> usize {
         unsafe { mnn_tensor_get_data_size(self.inner) }
+    }
+
+    /// Upload host f32 values into this tensor for the next inference.
+    ///
+    /// Unlike [`Self::as_bytes_mut`], which writes into a host mapping the
+    /// Vulkan backend never reads, this performs the host→device transfer, so
+    /// the values actually reach the graph. Returns `false` if the tensor
+    /// cannot take `vals` (wrong element count).
+    pub fn upload_f32(&self, vals: &[f32]) -> bool {
+        self.upload_f32_shaped(&self.shape(), vals)
+    }
+
+    /// Upload host f32 values using an explicit logical shape.
+    ///
+    /// Scalars are the reason this exists: MNN reports a rank-0 tensor's shape
+    /// as an empty list, and a buffer view of `[]` has no elements, so the
+    /// round trip through [`Self::shape`] loses the one value these tensors
+    /// exist to carry. Callers that know the logical shape pass it here.
+    pub fn upload_f32_shaped(&self, shape: &[i32], vals: &[f32]) -> bool {
+        let own;
+        let dims = if shape.is_empty() {
+            // A rank-0 tensor still holds exactly one element.
+            own = [1i32];
+            &own[..]
+        } else {
+            shape
+        };
+        let elems: i64 = dims.iter().map(|d| *d as i64).product();
+        if elems != vals.len() as i64 {
+            return false;
+        }
+        let ret = unsafe {
+            mnn_tensor_upload(
+                self.inner,
+                vals.as_ptr() as *const c_void,
+                std::mem::size_of_val(vals),
+                2, // halide_type_float
+                32,
+                dims.as_ptr(),
+                dims.len() as i32,
+            )
+        };
+        ret == 0
+    }
+
+    /// Upload raw host bytes (e.g. a serialized f32 buffer) into this tensor.
+    ///
+    /// `bits` selects the host element width: 32 for f32/int32, 16 for
+    /// half/int16. Returns `false` on a shape mismatch.
+    pub fn upload_bytes(&self, data: &[u8], code: i32, bits: i32) -> bool {
+        let mut shape = self.shape();
+        if shape.is_empty() {
+            // Rank-0 scalars report no dims but still hold one element.
+            shape.push(1);
+        }
+        let ret = unsafe {
+            mnn_tensor_upload(
+                self.inner,
+                data.as_ptr() as *const c_void,
+                data.len(),
+                code,
+                bits,
+                shape.as_ptr(),
+                shape.len() as i32,
+            )
+        };
+        ret == 0
     }
 }
 

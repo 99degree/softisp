@@ -73,9 +73,10 @@ mod tests {
     use super::*;
     use crate::profile::PipelineProfile;
 
-    /// Returns true if running in CI (GitHub Actions, etc.).
-    fn is_ci() -> bool {
-        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    /// Whether the MNN Vulkan path can run here: the feature must be compiled
+    /// in *and* a driver must exist to hand out a device.
+    fn gpu_available() -> bool {
+        cfg!(feature = "mnn") && crate::gpu_probe::vulkan_available()
     }
 
     #[test]
@@ -111,8 +112,7 @@ mod tests {
 
     #[test]
     fn test_fused_pipeline_build() {
-        if is_ci() {
-            eprintln!("Skipping on CI — requires MNN converter runtime");
+        if !gpu_available() {
             return;
         }
         crate::init();

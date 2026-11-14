@@ -58,6 +58,8 @@ pub use warp_engine::GpuWarpParams;
 
 pub mod auto_profile;
 pub mod frame_rate;
+#[cfg(test)]
+pub mod gpu_probe;
 pub mod pipeline_builder;
 pub mod pipeline_builder_smart;
 pub mod pipeline_config;
