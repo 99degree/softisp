@@ -12,7 +12,7 @@ fn main() {
         .format_timestamp_millis()
         .init();
 
-    let mut blocks = PipelineProfile::LITE.build_blocks(8, 2);
+    let mut blocks = PipelineProfile::LITE.build_blocks(8, 2, 0);
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx_model = GraphComposer::compose_from_vec(&block_refs, &[], 16).unwrap();
     std::fs::write("test_lite.onnx", &onnx_model).unwrap();

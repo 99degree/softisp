@@ -222,7 +222,7 @@ fn compose_pipeline_with_mode(
     profile: PipelineProfile,
     force_mode: Option<BlockOpsetMode>,
 ) -> Result<Vec<u8>, String> {
-    let blocks = profile.build_blocks(w, 0);
+    let blocks = profile.build_blocks(w, 0, 0);
     let mut pipeline = blocks;
     pipeline.push(Box::new(crate::blocks::DisplayBlock::new(h)));
     GraphComposer::wire_blocks(&mut pipeline);

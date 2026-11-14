@@ -22,7 +22,7 @@ fn main() {
     for (prof_name, mut profile) in profiles {
         for (fmt_name, fmt) in formats {
             profile.output_format = fmt;
-            let mut blocks = profile.build_blocks(sizes[1].1, 0); // FHD
+            let mut blocks = profile.build_blocks(sizes[1].1, 0, 0); // FHD
             cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
             let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
             let onnx =

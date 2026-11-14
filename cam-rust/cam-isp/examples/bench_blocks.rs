@@ -317,7 +317,7 @@ fn main() {
         1,     // tile_count_y
         0,     // tile_overlap
     );
-    let all_blocks = profile.build_blocks(w, 0);
+    let all_blocks = profile.build_blocks(w, 0, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile
     let block_names: Vec<String> = all_blocks.iter().map(|b| b.id().to_string()).collect();
     drop(all_blocks);

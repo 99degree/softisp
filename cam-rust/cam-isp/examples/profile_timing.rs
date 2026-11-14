@@ -14,7 +14,7 @@ fn main() {
         profile.output_format = OutputFormat::FloatRgb;
 
         // Build at HD
-        let mut blocks = profile.build_blocks(1280, 0);
+        let mut blocks = profile.build_blocks(1280, 0, 0);
         cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
         let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> =
             blocks.iter().map(|b| b.as_ref()).collect();

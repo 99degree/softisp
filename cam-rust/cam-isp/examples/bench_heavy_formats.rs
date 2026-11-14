@@ -13,7 +13,7 @@ use std::time::Instant;
 
 fn bench_heavy(name: &str, w: u32, h: u32, fmt: OutputFormat, iters: u32) {
     let profile = PipelineProfile::HEAVY;
-    let blocks = profile.build_blocks(w, 0); // RGGB
+    let blocks = profile.build_blocks(w, 0, 0); // RGGB
     let block_count = blocks.len();
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = cam_isp::pipeline::GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();

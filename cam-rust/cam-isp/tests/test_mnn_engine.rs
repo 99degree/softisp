@@ -21,7 +21,7 @@ fn build_test_mnn(prefix: &str) -> Result<String, String> {
     use cam_isp::profile::PipelineProfile;
     use std::path::Path;
 
-    let blocks = PipelineProfile::TEST.build_blocks(64, 0);
+    let blocks = PipelineProfile::TEST.build_blocks(64, 0, 0);
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let model =
         GraphComposer::compose_from_vec(&refs, &[], 16).map_err(|e| format!("compose: {}", e))?;
@@ -263,7 +263,7 @@ fn test_mnn_engine_lite_profile() {
     use std::path::Path;
 
     // Build LITE profile ONNX model
-    let blocks = PipelineProfile::LITE.build_blocks(64, 0);
+    let blocks = PipelineProfile::LITE.build_blocks(64, 0, 0);
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let model = GraphComposer::compose_from_vec(&refs, &[], 16).expect("LITE compose");
 
@@ -358,7 +358,7 @@ fn build_profile_mnn(
     use cam_isp::pipeline::GraphComposer;
     use std::path::Path;
 
-    let blocks = profile.build_blocks(target_width, 0);
+    let blocks = profile.build_blocks(target_width, 0, 0);
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let model = GraphComposer::compose_from_vec(&refs, &[], 16)?;
 

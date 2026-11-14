@@ -316,6 +316,10 @@ impl MnnEngine {
         // Skip GPU benchmark — rapid-fire inference can crash Vulkan drivers
         // on some devices. Use static priorities instead.
         Self::register_with_defaults();
+
+        // Ensure Vulkan backend is registered (forces MNNVulkanFuseRegister and
+        // manual runtime creator registration). This is a no-op if already called.
+        unsafe { crate::mnn_sys::ensure_mnn_vulkan_registered() };
     }
 
     /// Fallback: register with static default priorities (no benchmark).

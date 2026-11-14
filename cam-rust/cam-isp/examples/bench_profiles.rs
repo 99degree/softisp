@@ -17,7 +17,7 @@ fn main() {
 
     for (prof_name, mut profile) in profiles {
         profile.output_format = OutputFormat::FloatRgb; // Fastest for perf
-        let mut blocks = profile.build_blocks(sizes[1].1, 0); // FHD sizes
+        let mut blocks = profile.build_blocks(sizes[1].1, 0, 0); // FHD sizes
         GraphComposer::wire_blocks(&mut blocks);
         let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> =
             blocks.iter().map(|b| b.as_ref()).collect();
