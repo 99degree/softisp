@@ -293,6 +293,28 @@ impl MnnEngine {
         self.preserve_input_type
     }
 
+    /// Narrow the graph's `f32 [0,255]` output to `u8` bytes.
+    ///
+    /// `DisplayBlock` emits every non-`Float*` format as FLOAT: the Conv(1×1)
+    /// already applies the 255 scale and the channel permutation, but ONNX has
+    /// no way to hand a `u8` consumer its bytes. The narrowing happens here so
+    /// the returned buffer is exactly `W*H*channels` bytes, which is what
+    /// `WindowTarget::present` and the HAL bridges read.
+    ///
+    /// Values are clamped to `[0,255]` before truncation: Vulkan FP16 kernels
+    /// can overshoot slightly on saturated pixels, and an unclamped cast
+    /// wraps negatives to ~255 instead of 0.
+    fn f32_to_u8(raw: &[u8]) -> Vec<u8> {
+        // A `Vec<u8>` only guarantees byte alignment, so reading it as `[f32]`
+        // would be UB. Decode each element by value instead — the compiler
+        // lowers `from_le_bytes` to a single unaligned load on aarch64.
+        raw.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b).clamp(0.0, 255.0) as u8)
+            .collect()
+    }
+
     /// Start background GPU hang watchdog.
     /// Triggers CPU fallback when GPU execution exceeds threshold.
     pub fn start_watchdog(&self) {
@@ -1502,16 +1524,27 @@ impl IspEngine for MnnEngine {
             let oh = p.target_height as usize;
             let ow = tw as usize;
             let n_valid = n.max(0) as usize;
-            let bpp = p.output_format.bytes_per_pixel();
-            let n_bytes = oh * ow * bpp;
-            // Trim Vec to actual data written by MNN
-            let n_bytes_actual = n_valid.min(n_bytes / bpp) * bpp;
+            // The ONNX graph emits f32 for every format except `PackedRgb`
+            // (INT32) — including the plain `Bgra`/`Rgba`/… formats, whose
+            // Conv(1×1) output is `f32 [0,255]`. Size the tensor elements
+            // from the *graph's* element width, not from the narrow byte
+            // layout the consumer expects.
+            let graph_elem = if p.output_format.is_fp16() { 2 } else { 4 };
+            let channels = p.output_format.channel_count();
+            let out_elems = n_valid.min(oh * ow * channels);
+            let raw_bytes = out_elems * graph_elem;
             unsafe {
-                out_bytes.set_len(n_bytes_actual);
+                out_bytes.set_len(raw_bytes);
             }
 
-            // All conversion is done by the ONNX graph — just return raw bytes.
-            let data_out = out_bytes;
+            // Narrow f32 `[0,255]` → u8 in place for the display formats.
+            // The graph does all colour work; this is only the type cast the
+            // ONNX graph cannot express for a u8 consumer.
+            let data_out = if p.output_format.is_raw_output() {
+                out_bytes
+            } else {
+                Self::f32_to_u8(&out_bytes)
+            };
 
             // ── Read stats output tensors from MNN session and feed to controller ──
             let mut calib_vals: Option<[f32; 24]> = None;
@@ -1768,5 +1801,28 @@ mod tests {
         }
         let (wx, wy) = MnnEngine::query_optimal_workgroup();
         assert!(wx > 0 && wy > 0);
+    }
+
+    #[test]
+    fn test_f32_to_u8_narrows_display_output() {
+        // The graph hands back f32 [0,255] for the u8 display formats; the
+        // engine must narrow it to one byte per element, not reinterpret it.
+        let floats: [f32; 4] = [0.0, 127.5, 255.0, 12.25];
+        let raw: Vec<u8> = floats.iter().flat_map(|v| v.to_le_bytes()).collect();
+        assert_eq!(MnnEngine::f32_to_u8(&raw), vec![0u8, 127, 255, 12]);
+    }
+
+    #[test]
+    fn test_f32_to_u8_clamps_out_of_range() {
+        // Vulkan FP16 kernels can overshoot on saturated pixels; negatives
+        // must clamp to 0 rather than wrap to ~255 on the cast.
+        let floats: [f32; 3] = [-8.0, 256.0, 300.5];
+        let raw: Vec<u8> = floats.iter().flat_map(|v| v.to_le_bytes()).collect();
+        assert_eq!(MnnEngine::f32_to_u8(&raw), vec![0u8, 255, 255]);
+    }
+
+    #[test]
+    fn test_f32_to_u8_empty() {
+        assert!(MnnEngine::f32_to_u8(&[]).is_empty());
     }
 }

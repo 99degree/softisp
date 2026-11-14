@@ -82,19 +82,40 @@ impl Preview {
     /// [`cam_isp::engine::select_engine_by_name`], so `"cpu"`, `"mnn_vulkan"`
     /// or `"auto"` all work; the choice is a build-time matter of whether the
     /// `mnn` feature (and its bundled native runtime) is present.
-    fn new(engine_name: &str, target_width: u32, sensor_height: u32) -> Result<Self, String> {
+    fn new(engine_name: &str, _target_width: u32, _target_height: u32) -> Result<Self, String> {
         let mut engine: Box<dyn IspEngine> = select_engine_by_name(engine_name)
             .ok_or_else(|| format!("no ISP engine matching '{engine_name}'"))?;
         log::info!("ISP engine: {}", engine.backend_name());
 
-        // We need to determine the input type based on camera capabilities.
-        // First, open a temporary session to check camera capabilities.
-        let temp_session = CameraSession::open_default()
-            .map_err(|e| format!("failed to open camera for capability check: {e}"))?;
-
-        let has_raw = temp_session.is_raw();
-        let sensor_max = temp_session.sensor_max();
-        let bayer_pattern = temp_session.bayer_pattern();
+        // Try to open a camera session to read sensor capabilities.
+        // If the camera permission isn't granted yet (common on first launch),
+        // fall back to safe defaults so the pipeline can still be built and the
+        // app can launch instead of crashing.
+        let (session, has_raw, sensor_max, bayer_pattern, sensor_width, sensor_height) =
+            match CameraSession::open_default() {
+                Ok(s) => {
+                    log::info!(
+                        "Camera supports RAW16={}, sensor_max={}, bayer={}, sensor={}x{}",
+                        s.is_raw(),
+                        s.sensor_max(),
+                        s.bayer_pattern(),
+                        s.sensor_width(),
+                        s.sensor_height()
+                    );
+                    let props = (
+                        s.is_raw(),
+                        s.sensor_max(),
+                        s.bayer_pattern(),
+                        s.sensor_width(),
+                        s.sensor_height(),
+                    );
+                    (Some(s), props.0, props.1, props.2, props.3, props.4)
+                }
+                Err(e) => {
+                    log::warn!("Could not open camera for capability check: {e}");
+                    (None, false, 1023.0, camera::BGGR, 1600, 1200)
+                }
+            };
 
         // Determine profile based on camera capabilities
         let profile = if has_raw {
@@ -105,15 +126,24 @@ impl Preview {
             PipelineProfile::YUV
         };
 
-        // Store the session for reuse
-        let session = Some(temp_session);
+        // The session used for the capability probe is the one we capture from.
+        // Opening a second session here would fail — a camera device allows a
+        // single active client — and the failure was silently discarded, which
+        // left the preview with no frame source at all.
 
-        let mut blocks = profile.build_blocks(target_width, sensor_height, camera::BGGR);
+        // Build the pipeline for the *camera sensor* dimensions, not the
+        // window dimensions.  The engine must process frames exactly as the
+        // camera produces them; WindowTarget::present() scales the output to
+        // fit the surface via nearest-neighbour blit.
+        let pipeline_width = sensor_width.max(1);
+        let pipeline_height = sensor_height.max(1);
+
+        let mut blocks = profile.build_blocks(pipeline_width, pipeline_height, bayer_pattern);
         if blocks.is_empty() {
             return Err(format!("profile {} produced no blocks", profile.label));
         }
         let head = blocks.remove(0);
-        let aux = profile.build_aux_blocks(sensor_height as i64, target_width as i64);
+        let aux = profile.build_aux_blocks(pipeline_height as i64, pipeline_width as i64);
         blocks.extend(aux);
         engine
             .build(head, blocks, None, 21)
@@ -121,8 +151,8 @@ impl Preview {
         log::info!(
             "pipeline built: profile {} at {}x{}px",
             profile.label,
-            target_width,
-            sensor_height
+            pipeline_width,
+            pipeline_height
         );
 
         Ok(Self {
@@ -405,8 +435,10 @@ fn android_main(app: AndroidApp) {
         if preview.is_none() {
             match Preview::new(ENGINE_NAME, w, h) {
                 Ok(mut p) => {
-                    // Show raw camera feed by default to verify camera is working
-                    p.show_raw = true;
+                    // Show ISP pipeline output by default. Set show_raw = true
+                    // to bypass the ISP and display grayscale raw Bayer frames
+                    // instead (useful for verifying camera capture is working).
+                    p.show_raw = false;
                     preview = Some(p);
                 }
                 Err(e) => {

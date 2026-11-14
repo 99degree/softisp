@@ -692,7 +692,7 @@ fn test_mnn_backend_compare() {
 #[ignore] // Requires Vulkan backend — CPU backend SIGSEGV on Extra ops
 #[cfg(feature = "mnn")]
 fn test_mnn_packed_pipeline() {
-    use cam_isp::blocks::{DisplayBlock, RawInputBlock, UnpackCfaBlock};
+    use cam_isp::blocks::{DisplayBlock, RawInputPackedBlock, UnpackBlock};
     use cam_isp::engine::IspEngine;
     use cam_isp::mnnengine::{MnnBackend, MnnEngine};
     use cam_isp::pipeline::GraphComposer;
@@ -701,18 +701,11 @@ fn test_mnn_packed_pipeline() {
     let w = 64i64; // full width
     let pw = w / 2; // packed width
 
-    // Build packed pipeline: RawInput(INT32, pw) → UnpackCfaBlock → Display(PackedRgb)
-    let b1: Box<dyn IspBlock> = Box::new(
-        RawInputBlock::new()
-            .with_elem_type(6) // INT32 input
-            .with_concrete_dims(h, pw),
-    ); // packed width
-    let b2: Box<dyn IspBlock> = Box::new(
-        UnpackCfaBlock::new()
-            .with_concrete_dims(h, w)
-            .with_sensor_max(1023.0)
-            .with_blc(true),
-    );
+    // Build packed pipeline: RawInputPacked(INT32, 2ch, w/2) → UnpackBlock
+    // → Display(PackedRgb). `with_concrete_dims` takes the FULL width; the
+    // packed head halves the tensor width internally.
+    let b1: Box<dyn IspBlock> = Box::new(RawInputPackedBlock::new().with_concrete_dims(h, w));
+    let b2: Box<dyn IspBlock> = Box::new(UnpackBlock::new().with_concrete_width(w));
     let b3: Box<dyn IspBlock> = Box::new(
         DisplayBlock::new(w as u32)
             .with_output_format(cam_isp::engine::OutputFormat::PackedRgb)

@@ -10,7 +10,7 @@ use cam_isp::profile::PipelineProfile;
 
 /// Helper: build profile blocks (already wired by build_blocks)
 fn wired_blocks(profile: PipelineProfile) -> Vec<Box<dyn IspBlock>> {
-    profile.build_blocks(8, 2)
+    profile.build_blocks(8, 2, 0)
 }
 
 /// Helper: compose wired blocks into ONNX model

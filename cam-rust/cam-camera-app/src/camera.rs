@@ -61,6 +61,8 @@ pub struct CameraSession {
     bayer_pattern: i32,
     sensor_max: f32,
     raw: bool,
+    sensor_width: u32,
+    sensor_height: u32,
 }
 
 // The NDK handles are owned exclusively by this struct: it is created and
@@ -87,6 +89,8 @@ impl CameraSession {
             bayer_pattern: BGGR,
             sensor_max: DEFAULT_WHITE_LEVEL as f32,
             raw: true,
+            sensor_width: 0,
+            sensor_height: 0,
         };
 
         let ids = session.list_camera_ids()?;
@@ -205,6 +209,14 @@ impl CameraSession {
         let w = info.width.min(MAX_RAW_DIM);
         let h = info.height.min(MAX_RAW_DIM);
 
+        // Record the *capture* geometry, not the sensor's active array: the
+        // reader is created at `w`×`h`, so frames arrive at those dimensions.
+        // Building the ISP chain from the active array instead leaves it sized
+        // for a frame that never arrives, and MNN's resize-on-demand then sees
+        // a mismatched element count.
+        self.sensor_width = w as u32;
+        self.sensor_height = h as u32;
+
         if info.raw_supported {
             match self.start_capture(w, h, sys::AIMAGE_FORMATS::AIMAGE_FORMAT_RAW16) {
                 Ok(()) => {
@@ -237,7 +249,10 @@ impl CameraSession {
         self.start_capture(w, h, sys::AIMAGE_FORMATS::AIMAGE_FORMAT_YUV_420_888)?;
         self.raw = false;
         self.bayer_pattern = info.bayer_pattern;
-        self.sensor_max = info.sensor_max;
+        // `copy_pixels` scales the 8-bit luma plane to full `u16` range
+        // (`v * 257`), so the YUV path saturates at 65535 — not at the RAW
+        // white level, which would clip everything above ~4 % of full scale.
+        self.sensor_max = 65535.0;
         Ok(())
     }
 
@@ -381,6 +396,16 @@ impl CameraSession {
     /// Full-well capacity the sensor reported, or the 10-bit default.
     pub fn sensor_max(&self) -> f32 {
         self.sensor_max
+    }
+
+    /// Active array width of the sensor.
+    pub fn sensor_width(&self) -> u32 {
+        self.sensor_width
+    }
+
+    /// Active array height of the sensor.
+    pub fn sensor_height(&self) -> u32 {
+        self.sensor_height
     }
 
     /// Acquire the next queued frame and copy its pixels out as RAW `u16`.
