@@ -90,6 +90,21 @@ impl OutputFormat {
     pub fn is_fp16(self) -> bool {
         matches!(self, Self::Float16Rgb | Self::Float16Bgra)
     }
+    /// Whether the graph already emits the bytes the consumer reads, so no
+    /// narrowing is needed on the host. `Float*` and `PackedRgb` models encode
+    /// the final layout in the graph itself; the plain `Bgra`/`Rgba`/`Argb`/
+    /// `Abgr`/`Rgb`/`Bgr` formats build a Conv(1×1) that emits `f32 [0,255]`,
+    /// which the engine still has to truncate to `u8`.
+    pub fn is_raw_output(self) -> bool {
+        matches!(
+            self,
+            Self::FloatRgb
+                | Self::FloatBgra
+                | Self::Float16Rgb
+                | Self::Float16Bgra
+                | Self::PackedRgb
+        )
+    }
     /// ONNX elem_type for the output tensor: 10=FLOAT16, 1=FLOAT.
     pub fn onnx_elem_type(self) -> i32 {
         if self.is_fp16() {
@@ -474,6 +489,26 @@ mod tests {
         assert!(!OutputFormat::FloatRgb.is_fp16());
         assert!(OutputFormat::Float16Rgb.is_fp16());
         assert!(OutputFormat::Float16Bgra.is_fp16());
+    }
+
+    #[test]
+    fn test_output_format_is_raw_output() {
+        // Graph-native layouts: the bytes MNN writes are the bytes the
+        // consumer reads, so the engine must not narrow them.
+        assert!(OutputFormat::FloatRgb.is_raw_output());
+        assert!(OutputFormat::FloatBgra.is_raw_output());
+        assert!(OutputFormat::Float16Rgb.is_raw_output());
+        assert!(OutputFormat::Float16Bgra.is_raw_output());
+        assert!(OutputFormat::PackedRgb.is_raw_output());
+
+        // u8 display formats: the graph emits f32 [0,255] and the engine
+        // truncates, so these are NOT raw.
+        assert!(!OutputFormat::Bgra.is_raw_output());
+        assert!(!OutputFormat::Rgba.is_raw_output());
+        assert!(!OutputFormat::Argb.is_raw_output());
+        assert!(!OutputFormat::Abgr.is_raw_output());
+        assert!(!OutputFormat::Rgb.is_raw_output());
+        assert!(!OutputFormat::Bgr.is_raw_output());
     }
 
     #[test]
