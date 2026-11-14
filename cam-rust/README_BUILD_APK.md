@@ -48,9 +48,6 @@ half at the cost of a slower single-threaded codegen pass — acceptable on
 memory-constrained hosts.
 
 The APK will be at `target/release/apk/softisp-camera.apk`.
-```
-
-The APK will be at `target/debug/apk/softisp-camera.apk`.
 
 ## Required NDK/SDK Packages
 - NDK r29 (29.0.14206865)
@@ -135,6 +132,34 @@ Ensure `ANDROID_NDK_ROOT` points to the versioned NDK directory:
 ```bash
 export ANDROID_NDK_ROOT=/path/to/android-sdk/ndk/29.0.14206865
 ```
+
+### `Signing ... with keystore ...` then `Error: No such file or directory (os error 2)`
+
+Two distinct causes, both silent — the build gets all the way through
+zipalign and only fails at the final `apksigner sign` step.
+
+**1. `apksigner` / `d8` have the wrong interpreter (Termux only).**
+
+cargo-apk2 shells out to the build-tools wrapper scripts, which ship with
+`#!/bin/bash`. Termux has no `/bin/bash` (bash is at `$PREFIX/bin/bash`), so
+the exec fails with `ENOENT` — which surfaces as the misleading
+`No such file or directory` error even though the keystore and APK both exist.
+Rewrite the shebangs once per SDK install:
+
+```bash
+termux-fix-shebang $ANDROID_HOME/build-tools/34.0.0/apksigner \
+                   $ANDROID_HOME/build-tools/34.0.0/d8
+```
+
+Check with `grep -n '^#!' $ANDROID_HOME/build-tools/34.0.0/apksigner`.
+
+**2. A wrong `signing.release.path` in `Cargo.toml` (release builds only).**
+
+cargo-apk2 resolves that path as `crate_path.join(path)` — relative to the
+`cam-camera-app/` crate directory, **not** the workspace root. So
+`../android-app/...` means `cam-rust/android-app/...`, and one more `../`
+overshoots to the repo root. Debug builds never consult this table (they use
+`~/.android/debug.keystore`), so a wrong path only shows up under `--release`.
 
 ### Black Screen / No Camera Frames
 - Check logcat for `cam_isp::mnnengine: MNN inference failed` — indicates graph output dimension mismatch
