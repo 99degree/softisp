@@ -16,6 +16,36 @@ use ndk_sys as sys;
 /// time to bound ISP latency and per-frame memory.
 pub const MAX_RAW_DIM: i32 = 1920;
 
+/// A capture geometry the sensor can actually deliver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureSize {
+    /// Reader width in pixels (always even).
+    pub width: i32,
+    /// Reader height in pixels (always even).
+    pub height: i32,
+}
+
+impl CaptureSize {
+    /// Snap to even dimensions of at least 2×2.
+    ///
+    /// The ISP splits packed Bayer into even/odd columns, so an odd width makes
+    /// the last column unreachable; an odd height breaks the 2×2 quad.
+    fn even(width: i32, height: i32) -> Self {
+        Self {
+            width: (width & !1).max(2),
+            height: (height & !1).max(2),
+        }
+    }
+
+    fn area(&self) -> i64 {
+        i64::from(self.width) * i64::from(self.height)
+    }
+
+    fn longest_edge(&self) -> i32 {
+        self.width.max(self.height)
+    }
+}
+
 /// Frames the `AImageReader` queue may hold. Three keeps the producer one
 /// frame ahead without letting a stalled consumer grow the backlog.
 const MAX_IMAGES: i32 = 3;
@@ -31,7 +61,7 @@ pub const BGGR: i32 = 3;
 const DEFAULT_WHITE_LEVEL: i32 = 1023;
 
 /// Sensor properties that shape how frames must be interpreted.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SensorInfo {
     /// Active array width in pixels.
     pub width: i32,
@@ -43,6 +73,26 @@ pub struct SensorInfo {
     pub sensor_max: f32,
     /// `true` when the camera advertises the RAW capability.
     pub raw_supported: bool,
+    /// Stream geometry to create the reader at, chosen from the camera's own
+    /// advertised RAW16 configurations (see [`capture_size_candidates`]).
+    pub capture: CaptureSize,
+    /// Advertised RAW16 output sizes that fit the capture budget, largest
+    /// first. Empty when the camera publishes no usable list.
+    pub sizes: Vec<CaptureSize>,
+}
+
+impl SensorInfo {
+    /// RAW16 geometries to try, best first.
+    ///
+    /// Falls back to the active array when the camera publishes no
+    /// configuration list — a camera always accepts its own active array.
+    fn raw_candidates(&self) -> Vec<CaptureSize> {
+        if self.sizes.is_empty() {
+            vec![self.capture]
+        } else {
+            self.sizes.clone()
+        }
+    }
 }
 
 /// Errors surfaced to the app loop as displayable strings.
@@ -198,36 +248,30 @@ impl CameraSession {
 
         let info = self.read_sensor_info(c_id.as_ptr())?;
         log::info!(
-            "camera '{id}': {}x{} bayer={} max={} raw={}",
+            "camera '{id}': {}x{} bayer={} max={} raw={} capture={}x{}",
             info.width,
             info.height,
             info.bayer_pattern,
             info.sensor_max,
-            info.raw_supported
+            info.raw_supported,
+            info.capture.width,
+            info.capture.height
         );
 
-        let w = info.width.min(MAX_RAW_DIM);
-        let h = info.height.min(MAX_RAW_DIM);
-
-        // Record the *capture* geometry, not the sensor's active array: the
-        // reader is created at `w`×`h`, so frames arrive at those dimensions.
-        // Building the ISP chain from the active array instead leaves it sized
-        // for a frame that never arrives, and MNN's resize-on-demand then sees
-        // a mismatched element count.
-        self.sensor_width = w as u32;
-        self.sensor_height = h as u32;
+        let w = info.capture.width;
+        let h = info.capture.height;
 
         if info.raw_supported {
-            match self.start_capture(w, h, sys::AIMAGE_FORMATS::AIMAGE_FORMAT_RAW16) {
-                Ok(()) => {
-                    self.raw = true;
-                    self.bayer_pattern = info.bayer_pattern;
-                    self.sensor_max = info.sensor_max;
-                    return Ok(());
-                }
-                Err(e) => {
-                    log::warn!("RAW16 rejected ({e}); falling back to YUV_420_888");
-                    self.close_partial();
+            // Try the chosen geometry first, then every smaller advertised
+            // size. A camera may advertise a RAW16 configuration that the ISP
+            // pipeline still rejects (e.g. one only valid with a private
+            // format pair), so a single attempt is not enough evidence that
+            // RAW capture is unavailable.
+            for size in info.raw_candidates() {
+                if self.device.is_null() {
+                    // First iteration still owns the device opened above;
+                    // later ones need a fresh handle because close_partial()
+                    // closed it.
                     let mut device: *mut sys::ACameraDevice = null_mut();
                     let mut cb = device_callbacks();
                     check(
@@ -243,12 +287,59 @@ impl CameraSession {
                     )?;
                     self.device = device;
                 }
+                match self.start_capture(
+                    size.width,
+                    size.height,
+                    sys::AIMAGE_FORMATS::AIMAGE_FORMAT_RAW16,
+                ) {
+                    Ok(()) => {
+                        log::info!("RAW16 accepted at {}x{}", size.width, size.height);
+                        self.raw = true;
+                        self.bayer_pattern = info.bayer_pattern;
+                        self.sensor_max = info.sensor_max;
+                        // Record the *capture* geometry, not the sensor's
+                        // active array: the reader is created at this size, so
+                        // frames arrive at these dimensions and the ISP chain
+                        // must be built from them.
+                        self.sensor_width = size.width as u32;
+                        self.sensor_height = size.height as u32;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "RAW16 rejected at {}x{} ({e}); trying a smaller size",
+                            size.width,
+                            size.height
+                        );
+                        self.close_partial();
+                    }
+                }
             }
+        }
+
+        // No RAW16 geometry worked: fall back to YUV at the same budgeted size.
+        if self.device.is_null() {
+            let mut device: *mut sys::ACameraDevice = null_mut();
+            let mut cb = device_callbacks();
+            check(
+                unsafe {
+                    sys::ACameraManager_openCamera(
+                        self.manager,
+                        c_id.as_ptr(),
+                        &mut cb,
+                        &mut device,
+                    )
+                },
+                "ACameraManager_openCamera (retry)",
+            )?;
+            self.device = device;
         }
 
         self.start_capture(w, h, sys::AIMAGE_FORMATS::AIMAGE_FORMAT_YUV_420_888)?;
         self.raw = false;
         self.bayer_pattern = info.bayer_pattern;
+        self.sensor_width = w as u32;
+        self.sensor_height = h as u32;
         // `copy_pixels` scales the 8-bit luma plane to full `u16` range
         // (`v * 257`), so the YUV path saturates at 65535 — not at the RAW
         // white level, which would clip everything above ~4 % of full scale.
@@ -280,6 +371,10 @@ impl CameraSession {
             .and_then(|v| v.first().copied())
             .unwrap_or(DEFAULT_WHITE_LEVEL);
         let raw_supported = has_raw_capability(chars);
+        // Resolve the stream geometry while the metadata is still alive: the
+        // configuration list is the only authority on which reader sizes the
+        // camera will actually accept.
+        let sizes = capture_size_candidates(width, height, &raw_capture_sizes(chars));
 
         unsafe { sys::ACameraMetadata_free(chars) };
 
@@ -289,6 +384,8 @@ impl CameraSession {
             bayer_pattern,
             sensor_max: white_level.max(1) as f32,
             raw_supported,
+            capture: sizes[0],
+            sizes,
         })
     }
 
@@ -638,6 +735,86 @@ fn has_raw_capability(md: *mut sys::ACameraMetadata) -> bool {
     caps.contains(&(raw.0 as i32))
 }
 
+/// Halide pixel format code for `AIMAGE_FORMAT_RAW16` (MIPI RAW16 = 0x20).
+const HAL_PIXEL_FORMAT_RAW16: i32 = 32;
+
+/// Output geometries the sensor can actually stream, in `RAW16`.
+///
+/// `ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS` is an INT32 array of
+/// quadruples `(format, width, height, isInput)`; only the OUTPUT
+/// (`isInput == 0`) RAW16 entries describe what an `AImageReader` may be
+/// created at. Requesting anything else makes `AImageReader_new` fail, which is
+/// how the previous fixed-1920 path ended up with no frame source at all.
+///
+/// Returns an empty vec when the camera publishes no configuration list.
+fn raw_capture_sizes(md: *mut sys::ACameraMetadata) -> Vec<CaptureSize> {
+    let tag = sys::acamera_metadata_tag::ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS.0;
+    let Some(entries) = entry_i32(md, tag) else {
+        return Vec::new();
+    };
+    let output =
+        sys::acamera_metadata_enum_acamera_scaler_available_stream_configurations::ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS_OUTPUT;
+    entries
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|q| q[0] == HAL_PIXEL_FORMAT_RAW16 && q[3] == output.0 as i32)
+        .filter(|q| q[1] > 0 && q[2] > 0)
+        .map(|q| CaptureSize::even(q[1], q[2]))
+        .collect()
+}
+
+/// Sort the advertised RAW16 sizes best-first: largest area whose longest edge
+/// fits [`MAX_RAW_DIM`] comes first, so a 50 MP sensor costs 1080p rather than
+/// 50 MP while a 720p sensor keeps its native size.
+///
+/// `available` is the camera's advertised list. When the camera publishes
+/// nothing usable, the active array clipped to [`MAX_RAW_DIM`] is the only
+/// candidate (every camera in the wild accepts its own active array).
+pub fn capture_size_candidates(
+    active_width: i32,
+    active_height: i32,
+    available: &[CaptureSize],
+) -> Vec<CaptureSize> {
+    if available.is_empty() {
+        return vec![fit_to_limit(CaptureSize::even(active_width, active_height))];
+    }
+
+    let mut fitting: Vec<CaptureSize> = available
+        .iter()
+        .copied()
+        .filter(|s| s.longest_edge() <= MAX_RAW_DIM)
+        .collect();
+    // Largest first; ties keep the advertised order so the result is stable.
+    fitting.sort_by_key(|s| -s.area());
+
+    if fitting.is_empty() {
+        // Every advertised size exceeded the budget: scale one down instead of
+        // giving up on RAW entirely.
+        let biggest = available
+            .iter()
+            .copied()
+            .max_by_key(|s| s.area())
+            .map(fit_to_limit)
+            .unwrap_or_else(|| fit_to_limit(CaptureSize::even(active_width, active_height)));
+        return vec![biggest];
+    }
+    fitting
+}
+
+/// Shrink `size` proportionally so its longest edge is at most [`MAX_RAW_DIM`].
+fn fit_to_limit(size: CaptureSize) -> CaptureSize {
+    let longest = size.longest_edge();
+    if longest <= MAX_RAW_DIM {
+        return size;
+    }
+    let scale = f64::from(MAX_RAW_DIM) / f64::from(longest);
+    CaptureSize::even(
+        (f64::from(size.width) * scale).round() as i32,
+        (f64::from(size.height) * scale).round() as i32,
+    )
+}
+
 /// Map the sensor CFA phase byte to the ISP's `bayer_pattern` encoding.
 ///
 /// The ISP uses 0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR — the same numbering the
@@ -752,5 +929,82 @@ mod tests {
         for cfa in [4, 5, 99, -1] {
             assert_eq!(cfa_to_bayer(cfa), BGGR);
         }
+    }
+
+    fn size(w: i32, h: i32) -> CaptureSize {
+        CaptureSize {
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn capture_size_is_forced_even() {
+        // Odd edges cannot carry a complete 2×2 Bayer quad.
+        assert_eq!(CaptureSize::even(1921, 1441), size(1920, 1440));
+        assert_eq!(CaptureSize::even(1, 1), size(2, 2));
+        assert_eq!(CaptureSize::even(-5, 0), size(2, 2));
+    }
+
+    #[test]
+    fn prefers_largest_advertised_size_within_budget() {
+        // A 50 MP sensor advertises far more than the capture budget allows;
+        // the biggest that fits must win, not the sensor's full array.
+        let advertised = [
+            size(4000, 3000),
+            size(1920, 1080),
+            size(1280, 720),
+            size(640, 480),
+        ];
+        assert_eq!(
+            capture_size_candidates(4000, 3000, &advertised)[0],
+            size(1920, 1080)
+        );
+    }
+
+    #[test]
+    fn keeps_native_size_when_camera_is_small() {
+        let advertised = [size(1280, 720), size(640, 480)];
+        assert_eq!(
+            capture_size_candidates(1280, 720, &advertised)[0],
+            size(1280, 720)
+        );
+    }
+
+    #[test]
+    fn candidates_are_sorted_largest_first_and_bounded() {
+        let advertised = [
+            size(640, 480),
+            size(3840, 2160),
+            size(1920, 1080),
+            size(1280, 720),
+        ];
+        let got = capture_size_candidates(3840, 2160, &advertised);
+        // 3840x2160 exceeds MAX_RAW_DIM, so it is dropped — not scaled.
+        assert_eq!(got, vec![size(1920, 1080), size(1280, 720), size(640, 480)]);
+        assert!(got.iter().all(|s| s.longest_edge() <= MAX_RAW_DIM));
+    }
+
+    #[test]
+    fn falls_back_to_active_array_when_unadvertised() {
+        // No configuration list: trust the active array, scaled to the budget.
+        let got = capture_size_candidates(4000, 3000, &[]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].longest_edge(), MAX_RAW_DIM);
+        // Aspect ratio is preserved within rounding.
+        let aspect = f64::from(got[0].width) / f64::from(got[0].height);
+        assert!(
+            (aspect - 4.0 / 3.0).abs() < 0.01,
+            "aspect drifted: {aspect}"
+        );
+    }
+
+    #[test]
+    fn oversize_only_list_is_scaled_down_not_discarded() {
+        // Every advertised size is above the budget: RAW must still be tried.
+        let advertised = [size(8000, 6000), size(4000, 3000)];
+        let got = capture_size_candidates(8000, 6000, &advertised);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].longest_edge(), MAX_RAW_DIM);
     }
 }
