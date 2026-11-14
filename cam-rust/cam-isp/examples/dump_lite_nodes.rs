@@ -6,7 +6,7 @@ use std::io::Write;
 fn main() {
     let mut profile = PipelineProfile::LITE;
     profile.output_format = OutputFormat::FloatRgb;
-    let mut blocks = profile.build_blocks(1280, 0);
+    let mut blocks = profile.build_blocks(1280, 0, 0);
     GraphComposer::wire_blocks(&mut blocks);
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
@@ -19,7 +19,7 @@ fn main() {
     // Also dump HEAVY for comparison
     let mut profile2 = PipelineProfile::HEAVY;
     profile2.output_format = OutputFormat::FloatRgb;
-    let mut blocks2 = profile2.build_blocks(1280, 0);
+    let mut blocks2 = profile2.build_blocks(1280, 0, 0);
     GraphComposer::wire_blocks(&mut blocks2);
     let block_refs2: Vec<&dyn IspBlock> = blocks2.iter().map(|b| b.as_ref()).collect();
     let onnx2 = GraphComposer::compose_from_vec(&block_refs2, &[], 21).unwrap();

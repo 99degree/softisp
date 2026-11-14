@@ -16,7 +16,7 @@ fn main() {
     profile.output_format = OutputFormat::Argb;
 
     // Build pipeline for 4K → FHD downscale
-    let mut blocks = profile.build_blocks(1920, 0); // FHD as reference, auto-scaled
+    let mut blocks = profile.build_blocks(1920, 0, 0); // FHD as reference, auto-scaled
     GraphComposer::wire_blocks(&mut blocks);
 
     let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> =

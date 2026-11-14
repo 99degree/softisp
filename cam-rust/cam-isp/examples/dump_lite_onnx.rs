@@ -5,7 +5,7 @@ use cam_isp::profile::PipelineProfile;
 fn main() {
     let mut profile = PipelineProfile::LITE;
     profile.output_format = OutputFormat::FloatRgb;
-    let mut blocks = profile.build_blocks(1280, 0);
+    let mut blocks = profile.build_blocks(1280, 0, 0);
     GraphComposer::wire_blocks(&mut blocks);
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();

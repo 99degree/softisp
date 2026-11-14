@@ -24,13 +24,6 @@ pub enum OrtBackend {
     Nnapi,
     Xnnpack,
     Cpu,
-    Cuda,
-    #[allow(dead_code)]
-    Tensorrt,
-    #[allow(dead_code)]
-    Coreml,
-    #[allow(dead_code)]
-    Openvino,
 }
 
 impl OrtBackend {
@@ -39,10 +32,6 @@ impl OrtBackend {
             OrtBackend::Nnapi => "onnx_nnapi",
             OrtBackend::Xnnpack => "onnx_xnnpack",
             OrtBackend::Cpu => "onnx_cpu",
-            OrtBackend::Cuda => "onnx_cuda",
-            OrtBackend::Tensorrt => "onnx_tensorrt",
-            OrtBackend::Coreml => "onnx_coreml",
-            OrtBackend::Openvino => "onnx_openvino",
         }
     }
 
@@ -51,10 +40,6 @@ impl OrtBackend {
             OrtBackend::Nnapi => 90,
             OrtBackend::Xnnpack => 80,
             OrtBackend::Cpu => 70,
-            OrtBackend::Cuda => 95,
-            OrtBackend::Tensorrt => 85,
-            OrtBackend::Coreml => 75,
-            OrtBackend::Openvino => 85,
         }
     }
 }
@@ -359,15 +344,7 @@ macro_rules! register_onnx_engine {
 pub fn register_factories() {
     use crate::engine::register_engine;
     use crate::engine::EngineFactory;
-    let backends = [
-        OrtBackend::Cpu,
-        #[cfg(feature = "cuda")]
-        OrtBackend::Cuda,
-        #[cfg(feature = "tensorrt")]
-        OrtBackend::Tensorrt,
-        #[cfg(feature = "openvino")]
-        OrtBackend::Openvino,
-    ];
+    let backends = [OrtBackend::Cpu];
     for be in &backends {
         let name = be.id();
         let pri = be.priority();

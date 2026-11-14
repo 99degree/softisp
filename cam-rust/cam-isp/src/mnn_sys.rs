@@ -208,8 +208,10 @@ extern "C" {
     /// Query the actual forward type a session is using (post-fallback).
     pub fn mnn_get_actual_backend(interpreter: *mut c_void, session: *mut c_void) -> c_int;
 
-    // Retrieve per‑node profiling info (requires session built with profiling enabled).
-    // extern declaration removed; stub provided below
+    /// Force MNN Vulkan backend registration.
+    /// Calls MNNVulkanFuseRegister and manually registers the Vulkan runtime creator.
+    /// Returns 1 on success, 0 on failure.
+    pub fn ensure_mnn_vulkan_registered() -> c_int;
 }
 
 // General MNN_GetSessionInfo API (mirrors MNN::Interpreter::getSessionInfo).

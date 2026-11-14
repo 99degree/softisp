@@ -3,7 +3,7 @@ use cam_isp::pipeline::IspBlock;
 use cam_isp::profile::PipelineProfile;
 
 fn run_test(label: &str, profile: PipelineProfile, w: u32, h: u32) {
-    let blocks = profile.build_blocks(w, 0);
+    let blocks = profile.build_blocks(w, 0, 0);
     println!(
         "{}: {} blocks: {}",
         label,

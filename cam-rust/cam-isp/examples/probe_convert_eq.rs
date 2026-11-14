@@ -37,7 +37,7 @@ fn extract_op_types(json: &str) -> Vec<String> {
 }
 
 fn main() {
-    let mut blocks = PipelineProfile::MED.build_blocks(32, 0);
+    let mut blocks = PipelineProfile::MED.build_blocks(32, 0, 0);
     GraphComposer::wire_blocks(&mut blocks);
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = GraphComposer::compose_from_vec(&refs, &[], 21).expect("compose");

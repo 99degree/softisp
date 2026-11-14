@@ -21,7 +21,7 @@ fn main() {
         for (size_name, w, h) in sizes {
             // Benchmark
             println!("  Building {} {} pipeline...", prof_name, size_name);
-            let mut blocks = profile.build_blocks(w, 0);
+            let mut blocks = profile.build_blocks(w, 0, 0);
             cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
 
             let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> =

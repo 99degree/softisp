@@ -9,7 +9,7 @@ fn main() {
     // Test with Argb output format
     let mut profile = PipelineProfile::HEAVY;
     profile.output_format = OutputFormat::Argb;
-    let mut blocks = profile.build_blocks(1920, 0);
+    let mut blocks = profile.build_blocks(1920, 0, 0);
     cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let _onnx = cam_isp::pipeline::GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();

@@ -17,7 +17,7 @@ fn test_mnn_per_block_profiling() {
     let h = 64u32;
 
     // Build the full LITE pipeline.
-    let lite_blocks = PipelineProfile::LITE.build_blocks(64, 0);
+    let lite_blocks = PipelineProfile::LITE.build_blocks(64, 0, 0);
     let mut pipeline: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = lite_blocks;
     // Ensure a display block at the end.
     pipeline.push(Box::new(DisplayBlock::new(w)));

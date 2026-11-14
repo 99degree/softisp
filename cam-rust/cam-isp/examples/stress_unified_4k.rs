@@ -28,7 +28,7 @@ fn main() {
     profile.output_format = OutputFormat::Argb;
 
     println!("\n[1/4] Building pipeline...");
-    let mut blocks = profile.build_blocks(output_w, 0);
+    let mut blocks = profile.build_blocks(output_w, 0, 0);
     GraphComposer::wire_blocks(&mut blocks);
 
     let num_blocks = blocks.len();

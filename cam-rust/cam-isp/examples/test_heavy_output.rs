@@ -6,7 +6,7 @@ fn main() {
     cam_isp::register_mnn_engine!(cam_isp::mnnengine::MnnBackend::Vulkan);
 
     let profile = PipelineProfile::HEAVY;
-    let blocks = profile.build_blocks(1920, 0);
+    let blocks = profile.build_blocks(1920, 0, 0);
     println!("HEAVY blocks ({}):", blocks.len());
     for b in &blocks {
         println!(

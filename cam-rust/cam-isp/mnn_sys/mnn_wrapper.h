@@ -326,6 +326,13 @@ int mnn_benchmark_sync(
     int max_costs
 );
 
+/**
+ * Force MNN Vulkan backend registration.
+ * Calls MNNVulkanFuseRegister and manually registers the Vulkan runtime creator.
+ * Returns 1 on success, 0 on failure.
+ */
+int ensure_mnn_vulkan_registered(void);
+
 #ifdef __cplusplus
 }
 #endif
