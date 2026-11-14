@@ -106,16 +106,24 @@ fn setup_ndk_linker() {
         // Tell cc crate about the sysroot
         let triple = format!("{}-linux-android", arch);
         let arch_lib = sysroot.join("usr").join("lib").join(&triple);
-        println!("cargo:rustc-link-search=native={}", arch_lib.display());
-        // The platform `.so` stubs (`libandroid.so`, `liblog.so`, …) live in a
-        // per-API-level subdirectory, not directly beside `libc.a`. Without
-        // this the NDK sysroot is on the search path but resolves nothing, and
-        // any test binary linking `ANativeWindow_*` fails with undefined
-        // symbols.
+        // The platform `.so` stubs (`libc.so`, `liblog.so`, `libandroid.so`, …)
+        // live in a per-API-level subdirectory, while the arch dir directly
+        // above it holds only the *static* `libc.a` / `libm.a` / `libdl.a`.
+        //
+        // The API-level dir MUST come first. `-L` is searched in order and the
+        // linker prefers `libfoo.a` over `libfoo.so`, so listing the arch dir
+        // first makes `-lc` resolve to `libc.a` and statically embeds bionic
+        // (malloc, memset, getauxval, …) into the result. In an APK that is
+        // fatal: the inlined `getauxval` calls the bionic ifunc resolver, whose
+        // pointers are only published by the real runtime libc, so the process
+        // dies with a null-pointer SIGSEGV inside `__bionic_call_ifunc_resolver`
+        // before `main` runs. Pointing at the stub dir first yields a
+        // `DT_NEEDED libc.so` instead, which the dynamic linker resolves.
         let api_lib = arch_lib.join(api_level.to_string());
         if api_lib.exists() {
             println!("cargo:rustc-link-search=native={}", api_lib.display());
         }
+        println!("cargo:rustc-link-search=native={}", arch_lib.display());
         println!(
             "cargo:rustc-link-search=native={}",
             sysroot.join("usr").join("lib").display()
