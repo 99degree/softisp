@@ -290,9 +290,10 @@ impl Default for PipelineManager {
 mod tests {
     use super::*;
 
-    /// Returns true if running in CI (GitHub Actions, etc.).
-    fn is_ci() -> bool {
-        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    /// Whether the MNN Vulkan path can run here: the feature must be compiled
+    /// in *and* a driver must exist to hand out a device.
+    fn gpu_available() -> bool {
+        cfg!(feature = "mnn") && crate::gpu_probe::vulkan_available()
     }
 
     #[test]
@@ -304,19 +305,37 @@ mod tests {
 
     #[test]
     fn test_manager_build_and_process() {
-        if is_ci() {
-            eprintln!("Skipping on CI — requires MNN Vulkan runtime");
+        if !gpu_available() {
             return;
         }
+        // `build()` picks the engine out of the registry, and the registry is
+        // empty until `cam_isp::init()` runs. Without this the manager fell
+        // back to the CPU engine, so the test claimed to cover the MNN path
+        // while never touching it.
+        crate::init();
         let mut mgr = PipelineManager::new();
-        mgr.set_target_width(32);
+        mgr.set_profile(PipelineProfile::MED);
+        mgr.set_target_width(320);
         mgr.build().expect("Build failed");
         assert!(mgr.is_ready());
 
-        // Create synthetic 32x32 RAW Bayer frame
-        let mut raw = Vec::with_capacity(32 * 32 * 2);
-        for y in 0..32u32 {
-            for x in 0..32u32 {
+        let selected = mgr
+            .engine()
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|e| e.backend_name().to_string());
+        assert_eq!(
+            selected.as_deref(),
+            Some("mnn_vulkan"),
+            "manager should select the MNN Vulkan engine once the registry is populated"
+        );
+
+        // Create a synthetic RAW Bayer frame.
+        let (fw, fh) = (320u32, 180u32);
+        let mut raw = Vec::with_capacity((fw * fh * 2) as usize);
+        for y in 0..fh {
+            for x in 0..fw {
                 let val: u16 = if y % 2 == 0 {
                     if x % 2 == 0 {
                         2000
@@ -334,21 +353,39 @@ mod tests {
             }
         }
 
-        let result = mgr.process_frame(&raw, 32, 32, 65535.0);
+        let result = mgr.process_frame(&raw, fw, fh, 65535.0);
         assert!(result.is_ok(), "Process failed: {:?}", result.err());
         let r = result.unwrap();
-        assert_eq!(r.width, 32);
-        assert_eq!(r.height, 32);
+        assert!(r.width > 0 && r.height > 0);
         assert!(!r.data.is_empty());
         assert!(r.latency_ms > 0.0);
+
+        // The reported dimensions must describe the buffer we actually got.
+        // They used to be copied from the *request* while the graph emitted a
+        // different size, so consumers indexed past the end of the image.
+        // The manager asks for BGRA, so the graph's f32 output must also
+        // arrive narrowed to one byte per channel — four per pixel, no more.
+        assert_eq!(
+            r.data.len(),
+            (r.width * r.height * 4) as usize,
+            "BGRA frame should be exactly W*H*4 bytes ({}x{})",
+            r.width,
+            r.height
+        );
+        // The graph runs the packed-CFA path, so it reports the demosaiced
+        // half resolution rather than the requested one. The frame must be
+        // described by what the graph produced — the buffer length check above
+        // is what keeps that honest.
+        assert!(
+            r.width <= 640 && r.height <= 360,
+            "graph output ({}x{}) is larger than the request",
+            r.width,
+            r.height
+        );
     }
 
     #[test]
     fn test_manager_set_profile() {
-        if is_ci() {
-            eprintln!("Skipping on CI — requires MNN Vulkan runtime");
-            return;
-        }
         let mut mgr = PipelineManager::new();
         mgr.set_profile(PipelineProfile::LITE);
         assert_eq!(mgr.profile.label, "LITE");
