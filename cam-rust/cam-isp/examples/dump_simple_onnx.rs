@@ -16,7 +16,7 @@ fn main() {
 
     // Now dump the heavy model
     use cam_isp::profile::PipelineProfile;
-    let mut blocks2 = PipelineProfile::HEAVY.build_blocks(1920, 0);
+    let mut blocks2 = PipelineProfile::HEAVY.build_blocks(1920, 0, 0);
     cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks2);
     let block_refs2: Vec<&dyn IspBlock> = blocks2.iter().map(|b| b.as_ref()).collect();
     let onnx2 = cam_isp::pipeline::GraphComposer::compose_from_vec(&block_refs2, &[], 21).unwrap();

@@ -65,6 +65,15 @@ public:
     void gc(GCFlag flag = FULL);
     static std::shared_ptr<Executor> getGlobalExecutor();
 
+    class Activation {
+    public:
+        Activation(const RuntimeInfo& info);
+        ~Activation();
+        RuntimeInfo mRuntimeInfo;
+        std::shared_ptr<RuntimeExecuteWrap> mRuntimeWrap;
+    };
+    std::shared_ptr<Activation> activte() const;
+
     static std::shared_ptr<Executor> newExecutor(MNNForwardType type,
                                                  const BackendConfig& config,
                                                  int numberThread);

@@ -39,7 +39,7 @@ fn main() {
 
     // 12 blocks matching HEAVY exactly
     let profile = PipelineProfile::HEAVY;
-    let blocks = profile.build_blocks(1920, 0);
+    let blocks = profile.build_blocks(1920, 0, 0);
     println!("HEAVY blocks ({}):", blocks.len());
     for b in &blocks {
         println!("  {}", b.id());

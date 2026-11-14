@@ -1,10 +1,3 @@
-//! Link the camera2 NDK library.
-//!
-//! `ndk-sys` emits `#[link]` attributes for `libandroid`, `libmediandk` and
-//! friends, but the camera2 entry points (`ACameraManager_*`, `ACaptureRequest_*`)
-//! live in a separate `libcamera2ndk.so` that it does not declare. Declaring it
-//! here keeps the camera FFI in pure Rust — no C shim, no `cc` crate.
-
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -13,4 +6,7 @@ fn main() {
         return;
     }
     println!("cargo:rustc-link-lib=dylib=camera2ndk");
+    // Add rpath for MNN libraries when building tests
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/data/data/com.termux/files/home/softisp/cam-rust/lib/aarch64-v8a");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/apex/com.android.runtime/lib64/bionic");
 }

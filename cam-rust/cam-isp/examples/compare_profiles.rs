@@ -10,7 +10,7 @@ fn main() {
 
     for (name, mut profile) in profiles {
         profile.output_format = OutputFormat::FloatRgb;
-        let mut blocks = profile.build_blocks(1920, 0);
+        let mut blocks = profile.build_blocks(1920, 0, 0);
         GraphComposer::wire_blocks(&mut blocks);
 
         let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> =

@@ -287,7 +287,7 @@ fn test_heavy_profile_mnn_convert() {
     use std::path::PathBuf;
 
     // Generate HEAVY ONNX from Rust pipeline
-    let blocks = PipelineProfile::HEAVY.build_blocks(48, 0);
+    let blocks = PipelineProfile::HEAVY.build_blocks(48, 0, 0);
     let refs: Vec<&dyn cam_isp::pipeline::IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = GraphComposer::compose_from_vec(&refs, &[], 16).unwrap();
     assert!(

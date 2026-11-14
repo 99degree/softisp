@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Build blocks for 64x48 frame
     let width = 64;
-    let mut blocks = profile.build_blocks(width, 2); // bayer_pattern=2 (RGGB)
+    let mut blocks = profile.build_blocks(width, 2, 0); // bayer_pattern=2 (RGGB)
     
     println!("Built {} blocks:", blocks.len());
     for b in &blocks {

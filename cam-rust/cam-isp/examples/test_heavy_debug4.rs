@@ -122,6 +122,6 @@ fn main() {
     );
 
     // Full HEAVY profile
-    let blocks = PipelineProfile::HEAVY.build_blocks(1920, 0);
+    let blocks = PipelineProfile::HEAVY.build_blocks(1920, 0, 0);
     run_test(&format!("HEAVY ({} blocks)", blocks.len()), blocks);
 }

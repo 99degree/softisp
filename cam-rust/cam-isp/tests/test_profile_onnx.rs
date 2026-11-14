@@ -89,7 +89,7 @@ fn test_pro_profile_onnx() {
 
 #[test]
 fn test_lite_pipeline_has_correct_block_order() {
-    let blocks = PipelineProfile::LITE.build_blocks(8, 2);
+    let blocks = PipelineProfile::LITE.build_blocks(8, 2, 0);
     let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
     // All profiles have 12 base blocks (identity placeholders for disabled features).
     // LITE: raw → unpack_cfa → hook_src → lsc(id) → bayer_wb → demosaic_ccm
@@ -110,7 +110,7 @@ fn test_lite_pipeline_has_correct_block_order() {
 
 #[test]
 fn test_heavy_pipeline_block_order() {
-    let blocks = PipelineProfile::HEAVY.build_blocks(8, 2);
+    let blocks = PipelineProfile::HEAVY.build_blocks(8, 2, 0);
     let names: Vec<&str> = blocks.iter().map(|b| b.id()).collect();
     assert_eq!(names[0], "raw_input");
     assert_eq!(names[1], "unpack_cfa");
@@ -139,7 +139,7 @@ fn test_heavy_pipeline_block_order() {
 
 #[test]
 fn test_build_blocks_wires_internally() {
-    let blocks = PipelineProfile::LITE.build_blocks(8, 2);
+    let blocks = PipelineProfile::LITE.build_blocks(8, 2, 0);
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     // First block has no input, second block's input should match
     // first block's output

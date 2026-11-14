@@ -15,7 +15,7 @@ fn main() {
         profile.output_format = OutputFormat::FloatRgb;
 
         for &(w, h, label) in &[(1280, 720, "HD"), (1920, 1080, "FHD"), (3840, 2160, "4K")] {
-            let mut blocks = profile.build_blocks(w, 0);
+            let mut blocks = profile.build_blocks(w, 0, 0);
             cam_isp::pipeline::GraphComposer::wire_blocks(&mut blocks);
             let block_refs: Vec<&dyn cam_isp::pipeline::IspBlock> =
                 blocks.iter().map(|b| b.as_ref()).collect();
