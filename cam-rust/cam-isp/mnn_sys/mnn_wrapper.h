@@ -181,6 +181,29 @@ void* mnn_tensor_get_host_data_raw(MnnTensor tensor);
 size_t mnn_tensor_get_data_size(MnnTensor tensor);
 
 /**
+ * Upload host bytes into a session tensor for the next inference.
+ *
+ * Writing through `mnn_tensor_get_host_data_raw` is only visible to backends
+ * that execute in place; the Vulkan backend owns a separate device buffer, so
+ * such writes never reach the GPU. This goes through `copyFromHostTensor`,
+ * which performs the host→device transfer for whichever backend the session
+ * uses.
+ *
+ * `type_code`/`type_bits` describe the *host* data (use 2/32 for f32, 0/32 for
+ * int32); MNN converts to the tensor's own type.
+ *
+ * @return 0 on success, negative on error.
+ */
+int mnn_tensor_upload(
+    MnnTensor tensor,
+    const void* data,
+    size_t bytes,
+    int type_code,
+    int type_bits,
+    const int* shape,
+    int ndim);
+
+/**
  * Get the model buffer for saving in MNN format.
  * After loading an ONNX model via mnn_interpreter_create_from_buffer,
  * this returns the internal MNN format buffer.

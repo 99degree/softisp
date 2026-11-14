@@ -708,14 +708,14 @@ impl MnnEngine {
         }
 
         /// Write a single f32 value into a named tensor (4 bytes).
-        /// No-op if the tensor is missing or too small.
+        /// No-op if the tensor is missing.
+        ///
+        /// Scalars are uploaded with an explicit `[1]` shape: MNN reports a
+        /// rank-0 tensor's shape as empty, and an empty-shape upload carries
+        /// no elements, so these values would otherwise never be written.
         fn write_f32(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, val: f32) {
             if let Some(t) = find(pool, name) {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    if bytes.len() >= 4 {
-                        bytes[..4].copy_from_slice(&val.to_ne_bytes());
-                    }
-                }
+                t.upload_f32_shaped(&[1], &[val]);
             }
         }
 
@@ -727,15 +727,7 @@ impl MnnEngine {
             vals: &[f32],
         ) {
             if let Some(t) = find(pool, name) {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let byte_count = vals.len() * 4;
-                    if bytes.len() >= byte_count {
-                        let src = unsafe {
-                            std::slice::from_raw_parts(vals.as_ptr() as *const u8, byte_count)
-                        };
-                        bytes[..byte_count].copy_from_slice(src);
-                    }
-                }
+                t.upload_f32(vals);
             }
         }
 
@@ -744,10 +736,8 @@ impl MnnEngine {
         /// tensor is missing or too small.
         fn write_raw(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, data: &[u8]) {
             if let Some(t) = find(pool, name) {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let n = data.len().min(bytes.len());
-                    bytes[..n].copy_from_slice(&data[..n]);
-                }
+                // `extra_input_defaults` are serialized f32 values.
+                t.upload_bytes(data, 2, 32);
             }
         }
 
@@ -799,13 +789,7 @@ impl MnnEngine {
                 }
             }
             if let Some(t) = find(pool, "DemosaicCcmBlock/w") {
-                if let Some(bytes) = t.as_bytes_mut() {
-                    let src =
-                        unsafe { std::slice::from_raw_parts(fused.as_ptr() as *const u8, 48) };
-                    if bytes.len() >= 48 {
-                        bytes[..48].copy_from_slice(src);
-                    }
-                }
+                t.upload_f32(&fused);
             }
         }
         // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
@@ -942,14 +926,7 @@ impl MnnEngine {
         let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
         // Strength/falloff must match VignettingBlock::new_default (0.5 / 2.0).
         let gain = crate::blocks::VignettingBlock::gain_map(gh, gw, 0.5, 2.0);
-        if let Some(bytes) = t.as_bytes_mut() {
-            let byte_count = gain.len() * 4;
-            if bytes.len() >= byte_count {
-                let src =
-                    unsafe { std::slice::from_raw_parts(gain.as_ptr() as *const u8, byte_count) };
-                bytes[..byte_count].copy_from_slice(src);
-            }
-        }
+        t.upload_f32(&gain);
     }
 }
 
@@ -1237,8 +1214,7 @@ impl IspEngine for MnnEngine {
                 .pool
                 .as_ref()
                 .ok_or(crate::error::IspError::Config("no pool".into()))?;
-            let slot = pool.acquire();
-            let sess = &slot.sess;
+            let mut slot = pool.acquire();
             let interp = &pool.interp;
 
             let t_start = Instant::now();
@@ -1285,10 +1261,10 @@ impl IspEngine for MnnEngine {
             // Resolve the frame input by NAME (never getSessionInput(nullptr),
             // which is the alphabetically-first input in multi-input models).
             let frame_t = interp
-                .get_input(sess, self.frame_input_name.as_deref().unwrap_or(""))
-                .or_else(|| interp.get_first_input(sess));
+                .get_input(&slot.sess, self.frame_input_name.as_deref().unwrap_or(""))
+                .or_else(|| interp.get_first_input(&slot.sess));
             if let Some(t) = frame_t {
-                let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
+                let _ = t.set_shape(interp.as_ptr(), slot.sess.as_ptr(), &shape);
             }
             // Skip resize if shape unchanged from last full setup.
             // The C++ wrapper handles first-use resize per session.
@@ -1303,12 +1279,21 @@ impl IspEngine for MnnEngine {
                     // shape check passes during propagation. A baked [1,1,H,W] gain
                     // would break resizeSession for any input size differing from
                     // the model's baked dims.
-                    Self::write_vignetting_gain(&slot.tensor_pool, interp, sess, h, w);
-                    let _ = sess.resize();
+                    Self::write_vignetting_gain(&slot.tensor_pool, interp, &slot.sess, h, w);
+                    let _ = slot.sess.resize();
                     *cached = Some(shape_key);
                 }
                 needs
             };
+            // `resize()` re-allocates the session tensors, so the handles
+            // cached in the pool (and used above for the gain map) are stale
+            // for everything that follows. Re-resolve them before writing the
+            // per-frame weights, or those writes land in freed memory and the
+            // frame comes back black.
+            if needs_resize {
+                slot.refresh_tensors(interp);
+            }
+            let sess = &slot.sess;
             self.set_extra_inputs(
                 &slot.tensor_pool,
                 ccm,
@@ -1520,27 +1505,61 @@ impl IspEngine for MnnEngine {
                 path, t_infer_elapsed, w, h, n,
                 t_prep_end - t_start, t_infer_elapsed);
 
-            // ── Determine output size from format and actual element count ──
-            let oh = p.target_height as usize;
-            let ow = tw as usize;
+            // ── Determine output size and encoding from the output tensor ──
+            //
+            // The frame must be described by what the graph actually produced,
+            // not by the requested `target_width`/`target_height`: the display
+            // stage may resize, and a mismatch here makes the engine hand back
+            // a buffer whose length disagrees with `frame.width * height *
+            // channels` (silently truncating or mis-slicing the image).
+            let out_tensor = interp.get_output(sess, "DisplayBlock/frame");
+            let mut oh = p.target_height as usize;
+            let mut ow = tw as usize;
+            let mut graph_channels = p.output_format.channel_count();
+            if let Some(t) = &out_tensor {
+                let shape = t.shape();
+                // Only trust a concrete `[1,C,H,W]`; dynamic dims come back as
+                // 0/-1. PackedRgb is excluded because its last dim is the
+                // *packed* half-width, not the pixel width.
+                if p.output_format.is_raw_output() {
+                    // keep the request untouched
+                } else if shape.len() == 4 && shape[2] > 0 && shape[3] > 0 {
+                    graph_channels = shape[1].max(1) as usize;
+                    oh = shape[2] as usize;
+                    ow = shape[3] as usize;
+                }
+            }
+            let pixels = oh * ow;
+
+            // Two encodings can come back, and only the tensor itself says
+            // which — by its element type:
+            //
+            //  * FLOAT — the plain ONNX graph. `DisplayBlock` emits
+            //    `f32 [1,C,H,W]` in `[0,255]` for every u8 format; ONNX cannot
+            //    hand a u8 consumer its bytes, so the host narrows.
+            //  * INT32/UINT32 — MNN's Vulkan fusion rewrote the display Conv
+            //    into an `isp.display_*` shader that writes one packed word
+            //    per pixel (`a<<24 | b<<16 | g<<8 | r`, i.e. R,G,B,A in
+            //    little-endian byte order — exactly the BGRA bytes consumers
+            //    read). Those words are already the answer.
+            //
+            // Inferring the encoding from the element *count* instead would
+            // misfire, because a 1×1 Conv output of `pixels/channels` lands on
+            // the same count.
+            let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
+            let packed_display = !p.output_format.is_raw_output() && out_type != 4;
             let n_valid = n.max(0) as usize;
-            // The ONNX graph emits f32 for every format except `PackedRgb`
-            // (INT32) — including the plain `Bgra`/`Rgba`/… formats, whose
-            // Conv(1×1) output is `f32 [0,255]`. Size the tensor elements
-            // from the *graph's* element width, not from the narrow byte
-            // layout the consumer expects.
+            let out_elems = n_valid.min(pixels * graph_channels);
             let graph_elem = if p.output_format.is_fp16() { 2 } else { 4 };
-            let channels = p.output_format.channel_count();
-            let out_elems = n_valid.min(oh * ow * channels);
             let raw_bytes = out_elems * graph_elem;
             unsafe {
                 out_bytes.set_len(raw_bytes);
             }
 
-            // Narrow f32 `[0,255]` → u8 in place for the display formats.
+            // Narrow f32 `[0,255]` → u8 only for the graph-native float path.
             // The graph does all colour work; this is only the type cast the
             // ONNX graph cannot express for a u8 consumer.
-            let data_out = if p.output_format.is_raw_output() {
+            let data_out = if p.output_format.is_raw_output() || packed_display {
                 out_bytes
             } else {
                 Self::f32_to_u8(&out_bytes)
@@ -1710,7 +1729,7 @@ impl IspEngine for MnnEngine {
                 t_tensor_after - t_tensor_before,
                 t_infer_elapsed);
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
-            let mut frame = IspFrame::new(tw, oh as u32, FrameFormat::Rgba8888);
+            let mut frame = IspFrame::new(ow as u32, oh as u32, FrameFormat::Rgba8888);
             frame.data = data_out;
             // Propagate controller params from ProcessParams to output frame
             frame.params = p.isp_params.clone().unwrap_or_default();
@@ -1758,9 +1777,9 @@ macro_rules! register_mnn_engine {
 mod tests {
     use super::*;
 
-    /// Returns true if running in CI (GitHub Actions, etc.).
-    fn is_ci() -> bool {
-        std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+    /// Whether a Vulkan device is available to run the MNN graph on.
+    fn gpu_available() -> bool {
+        crate::gpu_probe::vulkan_available()
     }
 
     #[test]
@@ -1795,8 +1814,7 @@ mod tests {
 
     #[test]
     fn test_query_optimal_workgroup() {
-        if is_ci() {
-            eprintln!("Skipping on CI — requires MNN Vulkan runtime");
+        if !gpu_available() {
             return;
         }
         let (wx, wy) = MnnEngine::query_optimal_workgroup();

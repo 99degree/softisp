@@ -124,6 +124,25 @@ impl<'a> std::ops::DerefMut for SessionGuard<'a> {
     }
 }
 
+impl<'a> SessionGuard<'a> {
+    /// Re-resolve the cached extra-input tensor handles from the session.
+    ///
+    /// `resizeSession` re-allocates the session's tensors, so every handle
+    /// cached at pool construction points at freed memory. Writing the runtime
+    /// weights through those stale handles silently did nothing — the values
+    /// stayed at whatever the model shipped with, and for the fused CCM that
+    /// meant an all-zero matrix and a black frame. Call this after any resize.
+    pub(crate) fn refresh_tensors(&mut self, interp: &MnnInterpreterSafe) {
+        let slot = self.slot.as_mut().unwrap();
+        let names: Vec<String> = slot.tensor_pool.iter().map(|(n, _)| n.clone()).collect();
+        let refreshed: Vec<(String, MnnTensorSafe)> = names
+            .into_iter()
+            .filter_map(|n| interp.get_input(&slot.sess, &n).map(|t| (n, t)))
+            .collect();
+        slot.tensor_pool = refreshed;
+    }
+}
+
 #[cfg(feature = "mnn")]
 impl<'a> Drop for SessionGuard<'a> {
     fn drop(&mut self) {

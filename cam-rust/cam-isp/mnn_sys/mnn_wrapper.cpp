@@ -231,6 +231,40 @@ size_t mnn_tensor_get_data_size(MnnTensor tensor) {
 
 // ── Model buffer / conversion ───────────────────────────────────────────
 
+// ── Runtime tensor upload (host → backend) ──────────────────────────────
+
+extern "C" int mnn_tensor_upload(
+    MnnTensor tensor,
+    const void* data,
+    size_t bytes,
+    int type_code,
+    int type_bits,
+    const int* shape,
+    int ndim
+) {
+    auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
+    if (!t || !data || bytes == 0) return -1;
+
+    // Shape in MNN's own order. The caller passes the tensor's current shape,
+    // so this is just a defensive copy.
+    std::vector<int> host_shape(shape, shape + ndim);
+    size_t expected = 1;
+    for (int i = 0; i < ndim; i++) expected *= static_cast<size_t>(shape[i]);
+
+    halide_type_t host_type = { (halide_type_code_t)type_code, (uint8_t)type_bits, 1 };
+    auto* host = MNN::Tensor::create(
+        host_shape, host_type, const_cast<void*>(data), MNN::Tensor::CAFFE);
+    if (!host) return -2;
+    if (host->elementSize() != expected) {
+        delete host;
+        return -3;
+    }
+
+    t->copyFromHostTensor(host);
+    delete host;
+    return 0;
+}
+
 // ── Host-tensor inference (copyFromHostTensor / copyToHostTensor) ──────
 
 extern "C" int mnn_run_host_tensors(
@@ -511,30 +545,50 @@ extern "C" int mnn_run_with_output(
     int total = 1;
     for (int i = 0; i < in_ndim; i++) total *= in_shape[i];
 
-    // Set input host pointer — backend maps to device (zero-copy)
-    in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
-    in_tensor->buffer().device = 0;
-
-    // Resize if input element count doesn't match model
-    size_t tensor_size = in_tensor->elementSize();
-    if (tensor_size != (size_t)total) {
-        auto rc = net->tryResizeSession(sess);
-        if (rc != 0) {
-            return -3;
-        }
-        in_tensor = (input_name != nullptr)
-            ? net->getSessionInput(sess, input_name)
-            : net->getSessionInput(sess, nullptr);
+    // Hand the frame to the graph.
+    //
+    // Assigning `buffer().host`/`buffer().device = 0` only works for backends
+    // that execute in place. The Vulkan backend allocates its own device
+    // buffer for every session tensor and never reads that host pointer, so
+    // the frame was silently dropped and the graph inferred on zeros.
+    // `copyFromHostTensor` is the supported upload — it does the host→device
+    // transfer for whichever backend the session runs on.
+    if (in_tensor->elementSize() != (size_t)total) {
+        net->resizeTensor(in_tensor, shape);
+        net->resizeSession(sess);
+        in_tensor = (input_name != nullptr) ? net->getSessionInput(sess, input_name)
+                                            : net->getSessionInput(sess, nullptr);
         if (!in_tensor) return -3;
-        in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
-        in_tensor->buffer().device = 0;
-        tensor_size = in_tensor->elementSize();
-        if (tensor_size != (size_t)total) {
+        if (in_tensor->elementSize() != (size_t)total) {
             return -4;
         }
     }
 
-    // Set output host pointer — backend writes directly to this buffer
+    auto* host_in = MNN::Tensor::create(
+        shape, buffer_type, const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer)),
+        MNN::Tensor::CAFFE);
+    if (!host_in) return -3;
+    in_tensor->copyFromHostTensor(host_in);
+    delete host_in;
+
+    // Run inference.
+    auto run_ok = net->runSession(sess);
+    if (run_ok != 0) {
+        // MNN returns positive error codes (e.g. COMPUTE_SIZE_ERROR=3).
+        // Normalize to a negative value so callers treat failures as errors
+        // rather than mistaking a big positive code for a valid element count.
+        return -std::abs(static_cast<int>(run_ok));
+    }
+
+    // Read the result back into the caller's buffer.
+    //
+    // Pointing `out_tensor->buffer().host` at `out_data` before the run only
+    // works when the backend keeps the output in that same allocation. The
+    // Vulkan backend allocates its own device-backed buffer for the session
+    // output and writes there, so that pointer assignment is discarded and the
+    // caller was handed a buffer that never received anything (all zeros).
+    // `copyToHostTensor` is the supported readback — it also handles the
+    // device→host transfer.
     auto* out_tensor = (output_name != nullptr)
         ? net->getSessionOutput(sess, output_name)
         : net->getSessionOutput(sess, nullptr);
@@ -544,24 +598,18 @@ extern "C" int mnn_run_with_output(
     }
     if (!out_tensor) return -1;
 
-    out_tensor->buffer().host = reinterpret_cast<uint8_t*>(out_data);
-    out_tensor->buffer().device = 0;
-
-    // Run inference: backend maps host buffers to device via DMA,
-    // reads input, executes, writes output directly to host buffer.
-    // No copyToHostTensor needed — data is already in out_data.
-    auto run_ok = net->runSession(sess);
-    if (run_ok != 0) {
-        // MNN returns positive error codes (e.g. COMPUTE_SIZE_ERROR=3).
-        // Normalize to a negative value so callers treat failures as errors
-        // rather than mistaking a big positive code for a valid element count.
-        return -std::abs(static_cast<int>(run_ok));
-    }
-
-    // Return element count for the output tensor
     auto out_shape = out_tensor->shape();
     int out_total = 1;
     for (auto d : out_shape) out_total *= d;
+    if (out_total <= 0) return -5;
+
+    auto out_type = out_tensor->getType();
+    auto* host_out = MNN::Tensor::create(out_shape, out_type, out_data, MNN::Tensor::CAFFE);
+    if (!host_out) return -3;
+    out_tensor->copyToHostTensor(host_out);
+    delete host_out;
+
+    // Return element count for the output tensor
     return out_total < max_out ? out_total : max_out;
 }
 
