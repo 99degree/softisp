@@ -62,11 +62,15 @@ fn test_mnn_per_block_profiling() {
     let mut out_bytes = vec![0u8; max_out * 4];
     let out_ptr = out_bytes.as_mut_ptr() as *mut f32;
 
+    // Frame input tensor name — the packed head declares this graph input.
+    let frame_name = std::ffi::CString::new("RawInputPackedBlock/frame").expect("frame name");
+
     // Run inference.
     unsafe {
         let _ = cam_isp::mnn_sys::mnn_run_with_output(
             interp.as_ptr(),
             sess.as_ptr(),
+            frame_name.as_ptr(),
             buf.as_ptr() as *const c_void,
             0,
             32,

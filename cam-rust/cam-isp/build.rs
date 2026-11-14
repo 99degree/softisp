@@ -104,14 +104,18 @@ fn setup_ndk_linker() {
 
     if sysroot.exists() {
         // Tell cc crate about the sysroot
-        println!(
-            "cargo:rustc-link-search=native={}",
-            sysroot
-                .join("usr")
-                .join("lib")
-                .join(format!("{}-linux-android", arch))
-                .display()
-        );
+        let triple = format!("{}-linux-android", arch);
+        let arch_lib = sysroot.join("usr").join("lib").join(&triple);
+        println!("cargo:rustc-link-search=native={}", arch_lib.display());
+        // The platform `.so` stubs (`libandroid.so`, `liblog.so`, …) live in a
+        // per-API-level subdirectory, not directly beside `libc.a`. Without
+        // this the NDK sysroot is on the search path but resolves nothing, and
+        // any test binary linking `ANativeWindow_*` fails with undefined
+        // symbols.
+        let api_lib = arch_lib.join(api_level.to_string());
+        if api_lib.exists() {
+            println!("cargo:rustc-link-search=native={}", api_lib.display());
+        }
         println!(
             "cargo:rustc-link-search=native={}",
             sysroot.join("usr").join("lib").display()

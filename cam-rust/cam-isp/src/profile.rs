@@ -450,14 +450,21 @@ impl PipelineProfile {
         opset_mode: 0, // Primitive by default
     };
 
-    /// YUV input profile — for cameras that only provide YUV_420_888/NV12/NV21 output.
-    /// Uses YUV input blocks (Yuv420InputBlock/Nv12InputBlock/Nv21InputBlock)
-    /// followed by YuvToRgbBlock for YUV→RGB conversion.
+    /// YUV-source profile — for cameras that only deliver `YUV_420_888`.
+    ///
+    /// The capture layer (`cam-camera-app::camera::copy_pixels`) expands the
+    /// 8-bit luma plane into a `GG` mosaic and scales it to full `u16` range,
+    /// so by the time a frame reaches the engine it is Bayer-shaped `u16` — the
+    /// same tensor the RAW profiles consume. The head must therefore be the
+    /// packed RAW head, not `Yuv420InputBlock`: that block declares a
+    /// `[1,3,H,W]` FLOAT tensor (three planes), which cannot be fed from a
+    /// single-channel `u16` buffer and makes MNN's resize-on-demand refuse the
+    /// session outright.
     pub const YUV: Self = Self {
         label: "YUV",
         level: PipelineLevel::Medium,
-        input_type: "yuv",
-        use_unpack: false,
+        input_type: "raw",
+        use_unpack: true,
         force_input16: false,
         use_fcs: false,
         use_ldci: false,
@@ -650,6 +657,27 @@ mod tests {
             49,
             "HEAVY (primitive) should have 49 blocks (24 + 1 DPC + 24 identities), got {}",
             blocks.len()
+        );
+    }
+
+    #[test]
+    fn test_yuv_profile_uses_packed_raw_head() {
+        // The app hands the engine a Bayer-shaped `u16` buffer even on the YUV
+        // fallback, so the YUV profile must compose the same packed RAW head
+        // the RAW profiles use. A `Yuv420InputBlock` head would declare a
+        // `[1,3,H,W]` float tensor that no `u16` frame can fill.
+        let p = PipelineProfile::YUV;
+        assert_eq!(p.input_type, "raw");
+        assert!(p.use_unpack);
+        assert!(!p.force_input16);
+
+        let blocks = p.build_blocks(128, 72, 0);
+        assert!(!blocks.is_empty());
+        assert_eq!(
+            blocks[0].id(),
+            "raw_input_packed",
+            "YUV profile head should be the packed RAW head, got '{}'",
+            blocks[0].id()
         );
     }
 
