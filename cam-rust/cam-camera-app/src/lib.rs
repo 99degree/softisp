@@ -44,20 +44,18 @@ const POLL_TIMEOUT: Duration = Duration::from_millis(10);
 /// preview instead of letting latency grow without bound.
 const FRAME_BUDGET: Duration = Duration::from_millis(500);
 
-/// Route `log::` records to logcat.
+/// Route `log::` records to the app log *and* logcat.
 ///
 /// The app has no Java layer, and the default `log` implementation discards
 /// everything, which would make the engine/block-chain diagnostics invisible.
-/// `android_logger` is a target dependency pulled in only for Android (see
-/// Cargo.toml), so on the host this compiles to nothing and the tests stay
-/// hermetic.
+///
+/// The file half matters more than it looks: `android_logger` alone sends
+/// records to logcat, which needs the READ_LOGS grant to read and whose 256 KiB
+/// ring buffers drain quickly. Everything that distinguishes "the ISP failed"
+/// from "the ISP succeeded but nothing was drawn" lives in those records, and
+/// losing them makes the two look identical. See [`crashlog::install_logger`].
 fn init_logger() {
-    #[cfg(target_os = "android")]
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("softisp"),
-    );
+    crashlog::install_logger();
 }
 
 /// The last successfully processed frame, kept to repaint the surface.
@@ -70,6 +68,9 @@ struct Preview {
     stager: FrameStager,
     config: PipelineConfig,
     last_frame: Option<LastFrame>,
+    /// Most recent present() error, so a persistent surface failure is logged
+    /// once (and again only when the message changes) instead of per frame.
+    last_present_error: Option<String>,
     frames: u64,
     /// When true, display raw camera frame (grayscale) instead of ISP output
     show_raw: bool,
@@ -164,6 +165,7 @@ impl Preview {
                 bayer_pattern,
             },
             last_frame: None,
+            last_present_error: None,
             frames: 0,
             show_raw: false,
         })
@@ -247,8 +249,29 @@ impl Preview {
                     match self.engine.process(&params) {
                         Ok(out) => {
                             self.frames += 1;
-                            if let Err(e) = target.present(&out.data, out.width, out.height) {
-                                log::trace!("present: {e}");
+                            // A frame that processes but cannot be shown is
+                            // indistinguishable from a failed one unless the
+                            // present error is recorded: this is the only step
+                            // between "ISP returned pixels" and "the screen
+                            // changed". It used to be a `trace!`, which the
+                            // Info-level logger dropped, so a black preview
+                            // logged nothing at all.
+                            //
+                            // Rate-limited to a change of message, so a
+                            // per-frame surface error stays one line.
+                            let presented = target.present(&out.data, out.width, out.height);
+                            match presented {
+                                Ok(_) => self.last_present_error = None,
+                                Err(e) => {
+                                    if self.last_present_error.as_deref() != Some(e.as_str()) {
+                                        write_line(
+                                            "ERROR",
+                                            "display",
+                                            &format!("present failed: {e}"),
+                                        );
+                                        self.last_present_error = Some(e);
+                                    }
+                                }
                             }
                             self.last_frame = Some((out.data, out.width, out.height));
                         }
@@ -336,8 +359,10 @@ fn android_main(app: AndroidApp) {
     // The external data directory needs no runtime permission, so it is the
     // guaranteed-writable fallback when /sdcard/download is out of reach.
     let fallback = app.external_data_path();
-    init_logger();
+    // File first: the logger forwards into it, so the path has to be resolved
+    // before any record is emitted or the early lines would be dropped.
     crashlog::install(fallback.as_deref());
+    init_logger();
 
     // Register the ISP engines and builtin blocks before anything selects one.
     // The registry starts empty: without this call `select_engine_by_name`
