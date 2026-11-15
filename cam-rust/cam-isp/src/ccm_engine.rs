@@ -122,6 +122,58 @@ pub fn select_ccm(cct: i32) -> [f32; 9] {
 
 // ── CCM goalkeeper ──
 
+/// Upper bound on the magnitude of one row's cross-channel terms.
+///
+/// A CCM exists to remove cross-channel bleed, so its off-diagonals are small
+/// negatives: a typical sensor matrix has rows like `[1.5, -0.4, -0.1]`, where
+/// the off-diagonals add up to about 0.5. The quadratic CCT fit here returns
+/// rows adding up to 0.89 — nearly twice that — and the excess is what clips a
+/// channel on most real colours. A clipped channel changes hue outright, so the
+/// picture reads as "the colours are wrong" rather than as a tint.
+pub const MAX_OFF_DIAGONAL: f32 = 0.55;
+
+/// Largest per-row sum of absolute off-diagonal terms.
+///
+/// Rows are normalised to sum to one, so this is also how much of the output is
+/// taken from the *other* channels: 0.5 means half the signal comes from
+/// cross-talk, which is already aggressive.
+pub fn off_diagonal_spread(m: &[f32; 9]) -> f32 {
+    (0..3)
+        .map(|r| {
+            let base = r * 3;
+            let diag = m[base + r].abs();
+            let total: f32 = m[base..base + 3].iter().map(|v| v.abs()).sum();
+            (total - diag).max(0.0)
+        })
+        .fold(0.0, f32::max)
+}
+
+/// Shrink `m`'s cross-channel terms until no row exceeds `limit`.
+///
+/// The off-diagonals are scaled by `k` and the diagonal is rebuilt from the row
+/// sum, so every row still sums to one and neutrals stay neutral by
+/// construction rather than by a second normalisation pass. The result stays in
+/// the same family the fit produces — a milder amount of the same correction.
+fn limit_off_diagonal(m: &mut [f32; 9], limit: f32) -> bool {
+    let spread = off_diagonal_spread(m);
+    if !spread.is_finite() || spread <= limit {
+        return false;
+    }
+    let k = limit / spread;
+    for r in 0..3 {
+        let base = r * 3;
+        let mut off_sum = 0.0f32;
+        for c in 0..3 {
+            if c != r {
+                m[base + c] *= k;
+                off_sum += m[base + c];
+            }
+        }
+        m[base + r] = 1.0 - off_sum;
+    }
+    true
+}
+
 /// Validate and clamp a 3×3 CCM matrix (row-major) against ISP sanity criteria.
 ///
 /// Enforced invariants:
@@ -245,7 +297,19 @@ pub fn sanitize_ccm(
         set_cct!();
     }
 
-    // ── 5. Re-normalize after clamping (skip diagonal-only rows) ──
+    // ── 5. Bound the cross-channel magnitude ──
+    //
+    // Steps 1-4 constrain the matrix's *shape* — rows sum to one, off-diagonals
+    // negative, diagonal in range. None of them notices a matrix that satisfies
+    // all three while still dragging nearly a full unit of signal from the
+    // other channels, which is the case that clips and shifts hue.
+    if limit_off_diagonal(matrix, MAX_OFF_DIAGONAL) {
+        clamped = true;
+        or_flag!(CCM_DIAGONAL_EXTREME);
+        set_cct!();
+    }
+
+    // ── 6. Re-normalize after clamping (skip diagonal-only rows) ──
     for r in 0..3 {
         let base = r * 3;
         let row_sum: f32 = matrix[base..base + 3].iter().sum();
