@@ -429,6 +429,18 @@ fn link_mnn() {
     println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
     // Export dynamic symbols from static libraries so MNNConvertDeps can find them
     println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
+    // MNN's prebuilt libraries were built against the platform liblog, so their
+    // undefined symbols are versioned (`__android_log_print@LIBLOG`). The NDK
+    // sysroot ships an *unversioned* stub liblog.so, and lld refuses to leave a
+    // versioned reference unresolved in a shared library by default — the link
+    // fails with "undefined reference: __android_log_print@LIBLOG (disallowed
+    // by --no-allow-shlib-undefined)".
+    //
+    // The runtime is not the problem: the device's /system/lib64/liblog.so does
+    // define LIBLOG, so the reference resolves fine at load time. This only
+    // relaxes the *link-time* check for symbols coming from the prebuilt .so
+    // files; symbols this crate itself needs are still resolved normally.
+    println!("cargo:rustc-link-arg=-Wl,--allow-shlib-undefined");
     println!("cargo:rustc-link-lib=MNN");
     println!("cargo:rustc-link-lib=MNN_Vulkan");
     println!("cargo:rustc-link-lib=MNN_Express");
