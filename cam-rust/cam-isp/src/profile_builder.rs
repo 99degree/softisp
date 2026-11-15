@@ -186,6 +186,27 @@ impl PipelineProfile {
         // converter and silently drop the demosaic chain.
         blocks.push(Box::new(CcmBlock::with_instance("ccm")));
 
+        // Post-CCM downscale: everything from here on is RGB at 3+ channels,
+        // so this is the last point where shrinking the frame is cheap. Bayer
+        // stages above run on mosaics; tone/EE/bilateral/sharpen/display below
+        // all pay per RGB pixel, and the display tensor is the largest
+        // allocation in the graph.
+        //
+        // `tail_*` is the geometry every block below this point sees, so the
+        // ones that declare concrete dims (vignetting gain map, display
+        // output) have to be told the reduced size rather than the sensor's.
+        let (ds_w, ds_h) = self.post_ccm_downscale;
+        let (tail_w, tail_h) = if ds_w > 0 && ds_h > 0 {
+            info!("  post-CCM downscale: {target_width}x{concrete_h} -> {ds_w}x{ds_h}");
+            blocks.push(Box::new(
+                AdaptiveDownscaleBlock::new(ds_w as i64, ds_h as i64, 0, "edge", "fit")
+                    .with_concrete_dims(concrete_h, target_width as i64),
+            ));
+            (ds_w, ds_h)
+        } else {
+            (target_width, concrete_h as u32)
+        };
+
         if self.use_warp {
             blocks.push(Box::new(CcmBlock::with_instance("warp")));
         }
@@ -227,8 +248,8 @@ impl PipelineProfile {
         if self.use_vignetting {
             info!("  vignetting: VignettingBlock");
             blocks.push(Box::new(crate::blocks::VignettingBlock::new_default(
-                target_width,
-                (target_width as f64 * 9.0 / 16.0) as u32,
+                tail_w,
+                (tail_w as f64 * 9.0 / 16.0) as u32,
             )));
         } else {
             info!("  vignetting: IDENTITY");
@@ -286,10 +307,11 @@ impl PipelineProfile {
         }
 
         blocks.push(Box::new(
-            DisplayBlock::new(target_width)
+            DisplayBlock::new(tail_w)
                 .with_rotate(self.rotate_mode)
                 .with_output_format(self.output_format)
-                .with_opset_mode(self.opset_mode),
+                .with_opset_mode(self.opset_mode)
+                .with_concrete_dims(tail_h as i64, tail_w as i64),
         ));
 
         info!("  blocks: {} total", blocks.len());
