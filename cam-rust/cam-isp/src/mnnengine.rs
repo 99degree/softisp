@@ -1864,10 +1864,24 @@ impl IspEngine for MnnEngine {
                 }
 
                 // ChannelMeansBlock/frame → [1, 3] or [3]
-                if let Some(vals) = read_output_f32(interp, sess, "ChannelMeansBlock/frame", 3) {
-                    if vals.len() >= 3 {
+                // The stats tensors are registered as graph outputs by the
+                // composer, but the converted model does not always keep them:
+                // `oplists` shows the nodes while `get_output` returns None for
+                // the name. When that happens the controller silently sees no
+                // data and AWB/AE stop adapting, which looks like "3A does
+                // nothing" rather than a missing tensor. Say so explicitly.
+                match read_output_f32(interp, sess, "ChannelMeansBlock/frame", 3) {
+                    Some(vals) if vals.len() >= 3 => {
+                        debug!(
+                            "stats: channel means [{:.4}, {:.4}, {:.4}] (planar R,G,B)",
+                            vals[0], vals[1], vals[2]
+                        );
                         cm_vals = Some([vals[0], vals[1], vals[2]]);
                     }
+                    Some(vals) => debug!("stats: channel means too short ({} floats)", vals.len()),
+                    None => debug!(
+                        "stats: ChannelMeansBlock/frame is not reachable as a session output —                          the graph's stats are dead and the controller cannot adapt"
+                    ),
                 }
                 // ToneStatsBlock/frame → [6]
                 if let Some(vals) = read_output_f32(interp, sess, "ToneStatsBlock/frame", 6) {
