@@ -131,6 +131,13 @@ cam-rust/cam-isp/examples/check_onnx_sizes.rs
 
 # Android AOSP build artifacts
 
+# C/C++ sources and SPIR-V headers emitted at the repo root by the MNN/SPIR-V
+# codegen steps (cam-isp/build.rs and scripts/gen_spv.py). They are build
+# outputs, not sources — the tracked originals live under cam-rust/cam-isp/
+# and vulkan_isp/.
+/*.h
+/*.cpp
+
 META-INF/
 *.aar
 *.aar.zip

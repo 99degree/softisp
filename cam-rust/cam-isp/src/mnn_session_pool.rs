@@ -19,6 +19,16 @@ use crate::mnn_sys::{MnnBackendType, MnnInterpreterSafe, MnnSessionSafe, MnnTens
 pub(crate) struct SessionSlot {
     pub(crate) sess: MnnSessionSafe,
     pub(crate) tensor_pool: Vec<(String, MnnTensorSafe)>,
+    /// Input geometry this session's graph is currently sized for, if any.
+    ///
+    /// MNN invalidates a whole session whenever an input tensor's extent
+    /// changes (`Interpreter::resizeTensor` → `Session::setNeedResize`), and
+    /// `Session::run()` then refuses to execute — it returns
+    /// COMPUTE_SIZE_ERROR — until the session is resized again. Because the
+    /// pool hands out sessions round-robin, this has to be tracked per slot:
+    /// a single engine-wide "last shape" cannot tell whether *this* session
+    /// still needs resizing.
+    pub(crate) resized_for: Option<(u32, u32)>,
 }
 
 /// A pool of N sessions sharing one interpreter.
@@ -61,7 +71,11 @@ impl SessionPool {
                     tensor_pool.push((name.clone(), t));
                 }
             }
-            slots.push_back(SessionSlot { sess, tensor_pool });
+            slots.push_back(SessionSlot {
+                sess,
+                tensor_pool,
+                resized_for: None,
+            });
         }
         info!(
             "SessionPool: {} slots created with {} extra tensors each",
