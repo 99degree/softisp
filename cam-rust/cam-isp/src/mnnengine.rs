@@ -27,6 +27,12 @@ struct ControllerState {
     ccm: [f32; 9],
     tone: cam_types::ToneParams,
     frames: u32,
+    /// Auto-exposure gain: the loop's correction for a bright or dark scene.
+    exposure_gain: f32,
+    /// Histogram-constrained factor applied on top of the AE gain.
+    hist_gain: f32,
+    /// Lens-shading strength the controller has tuned for this scene.
+    lsc_strength: f32,
 }
 
 /// Set once the graph's channel count disagrees with the requested format.
@@ -727,6 +733,8 @@ impl MnnEngine {
         warp_shading: Option<&[f32]>,
         input_scale: f32,
         white_level: f32,
+        exposure_gain: f32,
+        lsc_strength: f32,
     ) {
         /// Look up a cached tensor handle by name prefix (fast — no CString alloc).
         fn find<'a>(
@@ -877,8 +885,14 @@ impl MnnEngine {
         write_f32(pool, "ToneBlock/brightness", tone.brightness);
         // ToneBlock/gamma_recip [1]
         write_f32(pool, "ToneBlock/gamma_recip", tone.gamma_recip);
-        // SaturationBlock/scale [3] — color saturation strength
-        write_f32_array(pool, "saturation/scale", &[1.0f32; 3]);
+        // SaturationBlock/scale [3] — per-channel saturation, from the tone
+        // controller. Its `tone_saturation` was previously ignored here, so the
+        // stage always ran at 1.0 and the controller's tuning never reached the
+        // picture.
+        let sat = tone.saturation.clamp(0.0, 2.0);
+        write_f32_array(pool, "saturation/scale", &[sat; 3]);
+        // ToneBlock/exposure [1] — AE gain, applied before contrast/brightness.
+        write_f32(pool, "ToneBlock/exposure", exposure_gain.max(0.05));
         // Sharpen/strength [1] — sharpening strength
         write_f32(pool, "Sharpen/strength", 1.0);
         // LdciBlock/strength [1] — local contrast strength
@@ -1008,6 +1022,7 @@ impl MnnEngine {
         sess: &crate::mnn_sys::MnnSessionSafe,
         h: u32,
         w: u32,
+        lsc_strength: f32,
     ) {
         // Two placements share this path: lens shading on the Bayer quad
         // (`[1,4,H/2,W/2]`) and vignetting on the RGB tail (`[1,3,H',W']`).
@@ -1021,10 +1036,20 @@ impl MnnEngine {
             let gw = (w / scale).max(1);
             let shape = vec![1i32, channels as i32, gh as i32, gw as i32];
             let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
-            // Strength/falloff match `VignettingBlock::new_default` (0.5 / 2.0);
-            // both placements describe the same lens.
-            let gain =
-                crate::blocks::VignettingBlock::gain_map_channels(gh, gw, 0.5, 2.0, channels);
+            // Strength is the controller's tuned value (it raises it in dark
+            // scenes); falloff stays at the lens model's 2.0. A strength of 0
+            // means "no correction", which the map expresses as a flat 1.0.
+            let gain = if lsc_strength <= 0.001 {
+                vec![1.0f32; (gh * gw) as usize * channels as usize]
+            } else {
+                crate::blocks::VignettingBlock::gain_map_channels(
+                    gh,
+                    gw,
+                    lsc_strength,
+                    2.0,
+                    channels,
+                )
+            };
             if !t.upload_f32(&gain) {
                 warn!("{name}: gain map upload failed ({} f32)", gain.len());
             }
@@ -1332,6 +1357,9 @@ impl IspEngine for MnnEngine {
             ccm: c.get_ccm(),
             tone: c.get_tone_params(),
             frames: c.frame_count,
+            exposure_gain: c.get_effective_exposure_gain(),
+            hist_gain: c.hist_constrained_gain,
+            lsc_strength: c.get_lsc_strength(),
         });
 
         // Per-Bayer-site gains (R, Gr, Gb, B): green drives both green sites.
@@ -1470,7 +1498,21 @@ impl IspEngine for MnnEngine {
                 // shape check passes during propagation. A baked [1,1,H,W] gain
                 // would break resizeSession for any input size differing from
                 // the model's baked dims.
-                Self::write_vignetting_gain(&slot.tensor_pool, interp, &slot.sess, h, w);
+                // The LSC strength is a controller output; ask it once per
+                // resize rather than locking again in the hot path.
+                let lsc_strength = self
+                    .controller
+                    .lock()
+                    .map(|c| c.get_lsc_strength())
+                    .unwrap_or(0.0);
+                Self::write_vignetting_gain(
+                    &slot.tensor_pool,
+                    interp,
+                    &slot.sess,
+                    h,
+                    w,
+                    lsc_strength,
+                );
                 // Resolve the frame input by NAME (never getSessionInput(
                 // nullptr), which is the alphabetically-first input in
                 // multi-input models) and give it this frame's extent.
@@ -1512,6 +1554,8 @@ impl IspEngine for MnnEngine {
                 p.warp_shading,
                 input_scale,
                 smax,
+                ctrl.as_ref().map_or(1.0, |c| c.exposure_gain),
+                ctrl.as_ref().map_or(0.0, |c| c.lsc_strength),
             );
             let t_tensor_after: std::time::Instant = Instant::now();
             debug!(
