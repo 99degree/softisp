@@ -14,7 +14,7 @@
 
 #![cfg(feature = "mnn")]
 
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 
 fn render(sensor_max: f32, sample: u16) -> Result<Vec<u8>, String> {
     let (w, h) = (640u32, 480u32);
