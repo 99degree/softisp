@@ -40,13 +40,9 @@ fn float_rgb_is_correct() {
 
     let head = blocks.remove(0);
     let mut engine = cam_isp::engine::select_engine_by_name("mnn_vulkan").expect("mnn_vulkan");
-    // fp16 storage doubles the element count assumptions in the output sizing
-    // path; disable it first to see whether the crash is that or the format.
-    engine
-        .as_any_mut()
-        .downcast_mut::<cam_isp::mnnengine::MnnEngine>()
-        .unwrap()
-        .set_fp16_storage(false);
+    // Leave fp16 storage at its production default: the device runs with it
+    // enabled, so a probe that silently disables it proves nothing about the
+    // preview.
     engine.build(head, blocks, None, 21).expect("build");
 
     let mut buf = vec![0u8; (w * h * 2) as usize];

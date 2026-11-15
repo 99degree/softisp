@@ -5,7 +5,7 @@
 //! via the methods here.
 
 use crate::blocks::*;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{BlockOpsetMode, IspBlock};
 use crate::profile::PipelineProfile;
 use log::info;
 
@@ -253,7 +253,16 @@ impl PipelineProfile {
         }
         if self.use_ee {
             info!("  ee: EeBlock");
-            blocks.push(Box::new(EeBlock::new()));
+            // EE emits a fused `isp.ee` extra op, which MNN's converter rewrites
+            // into a Vulkan Extra op backed by a SPIR-V shader — but only when
+            // the node is reachable as the chain's sole consumer of its input.
+            // Any pass-through block sitting directly in front of it (`ldci`
+            // here is an Identity when LDCI is off) makes the converter drop the
+            // fusion, leaving a dead `isp.ee` whose output reads as zeros. The
+            // `Primitive` form is a plain `Conv`, which has no such requirement.
+            blocks.push(Box::new(
+                EeBlock::new().with_opset_mode(BlockOpsetMode::Primitive),
+            ));
         } else {
             info!("  ee: IDENTITY");
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("ee")));
