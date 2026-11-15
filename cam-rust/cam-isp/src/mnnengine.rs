@@ -14,7 +14,6 @@
 use std::sync::Mutex;
 
 use log::{debug, error, info, warn};
-use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -27,12 +26,8 @@ struct ControllerState {
     ccm: [f32; 9],
     tone: cam_types::ToneParams,
     frames: u32,
-    /// Auto-exposure gain: the loop's correction for a bright or dark scene.
+    /// Auto-exposure gain, already including the histogram constraint.
     exposure_gain: f32,
-    /// Histogram-constrained factor applied on top of the AE gain.
-    hist_gain: f32,
-    /// Lens-shading strength the controller has tuned for this scene.
-    lsc_strength: f32,
 }
 
 /// Set once the graph's channel count disagrees with the requested format.
@@ -734,7 +729,6 @@ impl MnnEngine {
         input_scale: f32,
         white_level: f32,
         exposure_gain: f32,
-        lsc_strength: f32,
     ) {
         /// Look up a cached tensor handle by name prefix (fast — no CString alloc).
         fn find<'a>(
@@ -1369,8 +1363,6 @@ impl IspEngine for MnnEngine {
             tone: c.get_tone_params(),
             frames: c.frame_count,
             exposure_gain: c.get_effective_exposure_gain(),
-            hist_gain: c.hist_constrained_gain,
-            lsc_strength: c.get_lsc_strength(),
         });
 
         // Per-plane gains.
@@ -1572,7 +1564,6 @@ impl IspEngine for MnnEngine {
                 input_scale,
                 smax,
                 ctrl.as_ref().map_or(1.0, |c| c.exposure_gain),
-                ctrl.as_ref().map_or(0.0, |c| c.lsc_strength),
             );
             let t_tensor_after: std::time::Instant = Instant::now();
             debug!(

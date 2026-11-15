@@ -424,7 +424,7 @@ impl MnnInterpreterSafe {
         buf: &mut [f32],
     ) -> Option<usize> {
         let c_name = std::ffi::CString::new(name).ok()?;
-        let max_bytes = buf.len() * std::mem::size_of::<f32>();
+        let max_bytes = std::mem::size_of_val(buf);
         let bytes = unsafe {
             mnn_session_read_output(
                 self.inner,
