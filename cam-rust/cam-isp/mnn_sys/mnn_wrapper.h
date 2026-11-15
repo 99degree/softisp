@@ -135,6 +135,32 @@ MnnTensor mnn_session_get_input_v2(MnnInterpreter interpreter, MnnSession sessio
 MnnTensor mnn_session_get_output_v2(MnnInterpreter interpreter, MnnSession session, const char* name);
 
 /**
+ * Number of tensors the session exposes as outputs.
+ *
+ * "Registered as a graph output in the ONNX" and "reachable through
+ * `getSessionOutput`" are not the same thing: the converter keeps the op but can
+ * drop the output registration, and then `getSessionOutput(name)` returns null
+ * with no diagnostic. This lets a caller say which it is.
+ */
+int mnn_session_output_count(MnnInterpreter interpreter, MnnSession session);
+
+/**
+ * Name of the `index`-th session output, or nullptr when out of range.
+ *
+ * The returned pointer is owned by MNN; copy it before the session is freed.
+ */
+const char* mnn_session_output_name(MnnInterpreter interpreter, MnnSession session, int index);
+
+/**
+ * Copy one session output into `out`, returning the byte count (0 on failure).
+ *
+ * Required for any tensor that lives on the GPU: `host<float>()` is null for a
+ * Vulkan-backed tensor, so reading the raw host pointer yields nothing.
+ */
+int mnn_session_read_output(MnnInterpreter interpreter, MnnSession session, const char* name,
+                           void* out, int max_bytes);
+
+/**
  * Get the shape of a tensor.
  * @param tensor   Tensor handle.
  * @param dims     Output buffer for dimensions (at least 4 ints).

@@ -199,7 +199,77 @@ MnnTensor mnn_session_get_output_v2(MnnInterpreter interpreter, MnnSession sessi
     return reinterpret_cast<MnnTensor>(tensor);
 }
 
-// ── Tensor data access ───────────────────────────────────────────────────
+int mnn_session_output_count(MnnInterpreter interpreter, MnnSession session) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess) return 0;
+    const auto& outs = net->getSessionOutputAll(sess);
+    return static_cast<int>(outs.size());
+}
+
+const char* mnn_session_output_name(MnnInterpreter interpreter, MnnSession session, int index) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess || index < 0) return nullptr;
+    const auto& outs = net->getSessionOutputAll(sess);
+    if (index >= static_cast<int>(outs.size())) return nullptr;
+    auto it = outs.begin();
+    std::advance(it, index);
+    return it->first.c_str();
+}
+
+/**
+ * Copy one session output into `out`, returning the byte count (0 on failure).
+ *
+ * `mnn_tensor_get_host_data_raw` returns `Tensor::host<float>()`, which is the
+ * *host* allocation of a CPU tensor. A Vulkan-backed tensor has no host data --
+ * the value lives in a device buffer -- so that pointer is null and every stats
+ * read comes back as `None` even though the tensor is registered. This goes
+ * through `copyToHostTensor`, which performs the device->host transfer.
+ */
+int mnn_session_read_output(MnnInterpreter interpreter, MnnSession session, const char* name,
+                           void* out, int max_bytes) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    // Negative returns identify the failure instead of collapsing every case to
+    // "0 bytes": a missing tensor and an oversized buffer need different fixes.
+    if (!net || !sess) return -1;
+    if (!name || !out || max_bytes <= 0) return -2;
+    auto* t = net->getSessionOutput(sess, name);
+    if (!t) return -3;
+
+    auto shape = t->shape();
+    int total = 1;
+    for (auto d : shape) total *= d;
+    if (total <= 0) return -4;
+
+    auto type = t->getType();
+    size_t elem = 4;  // float32 unless the type says otherwise
+    if (type.bits == 16) elem = 2;
+    else if (type.bits == 8) elem = 1;
+    size_t bytes = static_cast<size_t>(total) * elem;
+    if (bytes > static_cast<size_t>(max_bytes)) {
+        // Name the shape: `[1,3]` needs 12 bytes, so a bigger request means the
+        // graph's reduction kept dimensions the caller did not expect.
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+                 "[mnn] read_output %s: needs %zu bytes, buffer %d (shape", name, bytes, max_bytes);
+        std::string msg = buf;
+        for (auto d : shape) msg += " " + std::to_string(d);
+        msg += ", bits " + std::to_string((int)type.bits) + ")";
+        MNN_PRINT("%s\n", msg.c_str());
+        fprintf(stderr, "%s\n", msg.c_str());
+        return -5;
+    }
+
+    auto* host = MNN::Tensor::create(shape, type, out, MNN::Tensor::CAFFE);
+    if (!host) return -6;
+    t->copyToHostTensor(host);
+    delete host;
+    return static_cast<int>(bytes);
+}
+
+// -- Tensor data access -------------------------------------------------
 
 int mnn_tensor_get_shape(MnnTensor tensor, int* dims, int max_dims) {
     auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
