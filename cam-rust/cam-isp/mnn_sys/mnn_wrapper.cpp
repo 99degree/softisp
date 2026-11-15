@@ -685,43 +685,6 @@ extern "C" int mnn_run_with_output(
     return out_total < max_out ? out_total : max_out;
 }
 
-extern "C" int mnn_run_external_zero_copy(
-    MnnInterpreter interpreter,
-    MnnSession session,
-    int64_t ext_handle,
-    int memory_type,
-    const int* in_shape,
-    int in_ndim,
-    float* out_data,
-    int max_out
-) {
-    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
-    auto* sess = reinterpret_cast<MNN::Session*>(session);
-    if (!net || !sess || ext_handle == 0 || !out_data) return -1;
-
-    auto* in_tensor = net->getSessionInput(sess, nullptr);
-    if (!in_tensor) return -1;
-
-    // Bind external device memory (dma-buf fd / AHardwareBuffer) as the input
-    // tensor's device pointer. On a Vulkan backend that honors setDevicePtr with
-    // MNN_MEMORY_AHARDWAREBUFFER, this imports the camera's CMA/dma-buf pages as
-    // device memory -- no CPU staging copy, no heap allocation for MIPI Bayer.
-    in_tensor->setDevicePtr(reinterpret_cast<const void*>(static_cast<uintptr_t>(ext_handle)), memory_type);
-
-    if (in_shape && in_ndim > 0) {
-        std::vector<int> dims(in_shape, in_shape + in_ndim);
-        net->resizeTensor(in_tensor, dims);
-    }
-
-    auto* output = net->getSessionOutput(sess, nullptr);
-    if (!output) return -1;
-    if (max_out > 0 && (int)output->elementSize() > max_out) return -1;
-    output->buffer().host = reinterpret_cast<uint8_t*>(out_data);
-
-    net->runSession(sess);
-    return 0;
-}
-
 // ── Model Info ──────────────────────────────────────────────────────────────
 extern "C" int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelInfo info_code, void* out) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
