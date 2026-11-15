@@ -172,6 +172,36 @@ fn frame_stats(bgra: &[u8]) -> FrameStats {
     }
 }
 
+/// Range and mean of the raw Bayer samples.
+struct RawStats {
+    min: u16,
+    max: u16,
+    mean: f64,
+}
+
+fn raw_stats(samples: &[u16]) -> RawStats {
+    if samples.is_empty() {
+        return RawStats {
+            min: 0,
+            max: 0,
+            mean: 0.0,
+        };
+    }
+    let mut min = u16::MAX;
+    let mut max = 0u16;
+    let mut sum = 0u64;
+    for &v in samples {
+        min = min.min(v);
+        max = max.max(v);
+        sum += v as u64;
+    }
+    RawStats {
+        min,
+        max,
+        mean: sum as f64 / samples.len() as f64,
+    }
+}
+
 /// The last successfully processed frame, kept to repaint the surface.
 type LastFrame = (Vec<u8>, u32, u32);
 
@@ -391,6 +421,29 @@ impl Preview {
         match cam.next_frame() {
             Ok(Some(frame)) => {
                 t_capture = started.elapsed();
+
+                // What did the sensor actually deliver?
+                //
+                // The ISP report further down says what came *out* of the
+                // pipeline; without the input's range the two are
+                // indistinguishable. All-minimum samples mean the capture is
+                // dark (exposure), not that the ISP crushed it.
+                if self.frames == 0 || self.frames.is_multiple_of(STATS_INTERVAL_FRAMES) {
+                    let raw = raw_stats(&frame.data);
+                    write_line(
+                        "INFO",
+                        "capture",
+                        &format!(
+                            "raw {}x{} min {} max {} mean {:.1} (sensor_max {})",
+                            frame.width,
+                            frame.height,
+                            raw.min,
+                            raw.max,
+                            raw.mean,
+                            self.config.sensor_max
+                        ),
+                    );
+                }
 
                 let stage_t0 = Instant::now();
                 let staged = self.stager.stage(&frame);
@@ -817,5 +870,32 @@ mod frame_stats_tests {
     fn short_buffer_is_handled() {
         assert_eq!(frame_stats(&[]).max, 0);
         assert_eq!(frame_stats(&[1, 2]).max, 0);
+    }
+}
+
+#[cfg(test)]
+mod raw_stats_tests {
+    use super::raw_stats;
+
+    #[test]
+    fn reports_range_and_mean() {
+        let s = raw_stats(&[0, 512, 1023]);
+        assert_eq!(s.min, 0);
+        assert_eq!(s.max, 1023);
+        assert!((s.mean - 511.67).abs() < 0.1);
+    }
+
+    #[test]
+    fn black_capture_is_visible_in_the_numbers() {
+        // An unexposed frame is all near-zero; this is what distinguishes
+        // "sensor dark" from "ISP crushed it".
+        let s = raw_stats(&[1, 2, 0, 3]);
+        assert_eq!(s.max, 3);
+        assert!(s.mean < 2.0);
+    }
+
+    #[test]
+    fn empty_is_handled() {
+        assert_eq!(raw_stats(&[]).max, 0);
     }
 }
