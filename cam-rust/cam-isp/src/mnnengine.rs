@@ -1894,33 +1894,46 @@ impl IspEngine for MnnEngine {
                     );
                 }
 
-                // The stats tap sits on `aux_hook_src`, which is right after
-                // BLC — the frame there is still the 4-plane CFA quad, not RGB.
-                // So this tensor is `[1, 4]`: one mean per Bayer site
-                // (R, Gr, Gb, B), and reading it as three floats fails.
+                // The tap's width depends on where it sits in the chain, and
+                // both placements are legitimate:
                 //
-                // Pre-AWB raw means are also the correct basis for AWB: they do
-                // not include the gains being applied, so the loop cannot chase
-                // its own output.
-                match read_output_f32(interp, sess, "ChannelMeansBlock/frame", 4) {
-                    Some(vals) if vals.len() >= 4 => {
-                        // Fold the two green sites into one.
-                        let g = 0.5 * (vals[1] + vals[2]);
-                        debug!(
-                            "stats: site means R {:.4} Gr {:.4} Gb {:.4} B {:.4} -> rgb [{:.4}, {:.4}, {:.4}]",
-                            vals[0], vals[1], vals[2], vals[3], vals[0], g, vals[3]
-                        );
-                        cm_vals = Some([vals[0], g, vals[3]]);
+                //   [1, 4]  after CFA, before demosaic — one mean per Bayer
+                //           site (R, Gr, Gb, B). No white balance has been
+                //           applied yet, so these describe the sensor and the
+                //           AWB loop cannot chase its own output.
+                //   [1, 3]  after demosaic — already RGB.
+                //
+                // The tensor's own shape is the only safe way to tell them
+                // apart: guessing from the value count rejected the 4-site form
+                // outright, and assuming 3 sites silently mixed Gb in as if it
+                // were B.
+                match read_output_f32(interp, sess, "ChannelMeansBlock/frame", 8) {
+                    Some(vals) => {
+                        // Odd lengths are impossible for a reduction over a
+                        // whole channel axis; treat anything but 3 or 4 as
+                        // unusable rather than folding a truncated read.
+                        match vals.len() {
+                            4 => {
+                                let g = 0.5 * (vals[1] + vals[2]);
+                                debug!(
+                                    "stats: CFA site means R {:.4} Gr {:.4} Gb {:.4} B {:.4} -> rgb [{:.4}, {:.4}, {:.4}]",
+                                    vals[0], vals[1], vals[2], vals[3], vals[0], g, vals[3]
+                                );
+                                cm_vals = Some([vals[0], g, vals[3]]);
+                            }
+                            3 => {
+                                debug!(
+                                    "stats: rgb channel means [{:.4}, {:.4}, {:.4}]",
+                                    vals[0], vals[1], vals[2]
+                                );
+                                cm_vals = Some([vals[0], vals[1], vals[2]]);
+                            }
+                            n => debug!(
+                                "stats: ChannelMeansBlock/frame has {n} values; expected 3 (RGB) \
+                                 or 4 (CFA sites R,Gr,Gb,B)"
+                            ),
+                        }
                     }
-                    Some(vals) if vals.len() >= 3 => {
-                        // A 3-channel tap (post-demosaic hook): already RGB.
-                        debug!(
-                            "stats: channel means [{:.4}, {:.4}, {:.4}] (rgb)",
-                            vals[0], vals[1], vals[2]
-                        );
-                        cm_vals = Some([vals[0], vals[1], vals[2]]);
-                    }
-                    Some(vals) => debug!("stats: channel means too short ({} floats)", vals.len()),
                     None => debug!(
                         "stats: ChannelMeansBlock/frame unreadable - the controller gets no feedback"
                     ),
