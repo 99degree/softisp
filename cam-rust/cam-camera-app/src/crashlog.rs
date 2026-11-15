@@ -23,6 +23,23 @@
 //!
 //! The file is size-capped: once it exceeds [`MAX_LOG_BYTES`] it is rotated to
 //! `softisp-app.log.1` (single generation) before new data is appended.
+//!
+//! # Capturing `log::` records
+//!
+//! Writing to the file by hand is not enough on its own. Almost every useful
+//! diagnostic lives behind `log::info!`/`warn!` in `cam-isp` (engine choice,
+//! pipeline geometry, capture format) and in this crate, and `log::` output
+//! goes to whichever logger was installed — logcat, on Android. When logcat is
+//! unreadable (a normal Termux situation: `logcat` needs the READ_LOGS grant,
+//! and the buffers can be drained by the time the log is collected) those
+//! lines are lost, which is exactly how "every frame fails" and "every frame
+//! succeeds but nothing is displayed" came to look identical.
+//!
+//! [`install_logger`] therefore installs a logger that writes to logcat *and*
+//! forwards the record into this file with the same `HH:MM:SS.mmm LEVEL [tag]`
+//! shape as [`write_line`]. Records are deduplicated: a repeated message is
+//! collapsed into `… (xN)` after [`FLUSH_REPEAT_COUNT`] occurrences, so a
+//! per-frame error cannot rotate the file away before it is read.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -40,11 +57,25 @@ pub const LOG_ROTATED_NAME: &str = "softisp-app.log.1";
 /// Rotation threshold. At roughly 120 bytes per line this is ~4,000 lines.
 pub const MAX_LOG_BYTES: u64 = 512 * 1024;
 
+/// How many identical consecutive `log::` records are written before the rest
+/// are collapsed into a single `… (xN)` line.
+///
+/// A per-frame failure repeats forever, and 512 KiB / ~120 B is only ~4,000
+/// lines: without this the file rotates away the very startup lines that say
+/// *why* the frames fail. Eight gives a readable burst plus a running count.
+pub const FLUSH_REPEAT_COUNT: u32 = 8;
+
 static ACTIVE_PATH: OnceLock<PathBuf> = OnceLock::new();
 static LOG_READY: AtomicBool = AtomicBool::new(false);
 static WRITE_FAILED: AtomicBool = AtomicBool::new(false);
 static FILE_LOCK: Mutex<()> = Mutex::new(());
 static APP_START_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Last `log::` line written, and how many times in a row it has appeared.
+///
+/// Guarded by [`FILE_LOCK`] so the repeat counter is updated atomically with
+/// the write it describes.
+static REPEAT_LAST: Mutex<Option<(String, u32)>> = Mutex::new(None);
 
 /// Timestamp `SystemTime::now()` as milliseconds since the Unix epoch.
 ///
@@ -213,6 +244,17 @@ fn panic_message(info: &std::panic::PanicHookInfo<'_>) -> String {
 
 /// Write one record, rotating first if the log has outgrown [`MAX_LOG_BYTES`].
 pub fn write_line(level: &str, tag: &str, msg: &str) {
+    write_line_deduped(level, tag, msg, false)
+}
+
+/// Shared body of [`write_line`] and the logger bridge.
+///
+/// `dedupe` is only true for `log::` records: a per-frame diagnostics message
+/// repeats hundreds of times, and collapsing the tail keeps the startup lines
+/// (which carry the actual diagnosis) from being rotated out. Explicit
+/// [`write_line`] calls are always written — the app makes few of them, and
+/// suppressing one of those would hide a deliberate status change.
+fn write_line_deduped(level: &str, tag: &str, msg: &str, dedupe: bool) {
     if !LOG_READY.load(Ordering::SeqCst) || WRITE_FAILED.load(Ordering::SeqCst) {
         return;
     }
@@ -223,26 +265,113 @@ pub fn write_line(level: &str, tag: &str, msg: &str) {
         return;
     };
 
+    let flat = msg.replace('\n', " ");
+    let rendered = format!(
+        "{} {:5} [{}] {:>7}ms {}",
+        timestamp(now_millis()),
+        level,
+        tag,
+        elapsed_ms(),
+        flat
+    );
+
+    // A collapsed run leaves a gap: when the message finally changes, record
+    // how many times the previous one repeated, otherwise the reader cannot
+    // tell "happened twice" from "happened 3,000 times".
+    let mut summary: Option<String> = None;
+    if dedupe {
+        let mut repeat = match REPEAT_LAST.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let same_as_last = matches!(
+            repeat.as_ref(),
+            Some((last, _count)) if *last == rendered
+        );
+        if same_as_last {
+            if let Some((_, count)) = repeat.as_mut() {
+                *count += 1;
+                if *count > FLUSH_REPEAT_COUNT {
+                    // Same message still repeating: keep the file small.
+                    return;
+                }
+            }
+        } else {
+            let dropped = repeat.as_ref().map_or(0, |(_, count)| *count);
+            if dropped > FLUSH_REPEAT_COUNT {
+                summary = Some(format!(
+                    "{}          … previous line repeated {dropped} times",
+                    timestamp(now_millis())
+                ));
+            }
+            *repeat = Some((rendered.clone(), 1));
+        }
+    }
+
     if rotate_if_needed(path).is_err() {
         WRITE_FAILED.store(true, Ordering::SeqCst);
         return;
     }
 
-    let line = format!(
-        "{} {:5} [{}] {:>7}ms {}\n",
-        timestamp(now_millis()),
-        level,
-        tag,
-        elapsed_ms(),
-        msg.replace('\n', " ")
-    );
-
+    let mut line = String::new();
+    if let Some(s) = summary {
+        line.push_str(&s);
+        line.push('\n');
+    }
+    line.push_str(&rendered);
+    line.push('\n');
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = f.write_all(line.as_bytes());
         let _ = f.flush();
     } else {
         WRITE_FAILED.store(true, Ordering::SeqCst);
     }
+}
+
+/// Install the `log` logger: Android logcat **plus** this file.
+///
+/// Without the file half, the whole diagnostic trail is invisible whenever
+/// logcat cannot be read — which is the normal case on a Termux-driven device
+/// (`logcat` needs the READ_LOGS grant, and the ring buffers are only 256 KiB,
+/// so a busy system drains them before the log is collected). Everything that
+/// distinguishes "ISP fails" from "ISP succeeds but nothing is drawn" lives in
+/// those `log::` records.
+///
+/// Records are forwarded with [`write_line_deduped`] so a per-frame message
+/// cannot rotate the file out from under the startup diagnostics.
+pub fn install_logger() {
+    struct FileLogger;
+
+    impl log::Log for FileLogger {
+        fn enabled(&self, _meta: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            // logcat first: it keeps the structured view (pace, tag filters)
+            // that file grep cannot replace.
+            #[cfg(target_os = "android")]
+            android_logger::AndroidLogger::log(&android_logger::AndroidLogger::default(), record);
+
+            let level = match record.level() {
+                log::Level::Error => "ERROR",
+                log::Level::Warn => "WARN",
+                log::Level::Info => "INFO",
+                log::Level::Debug => "DEBUG",
+                log::Level::Trace => "TRACE",
+            };
+            write_line_deduped(level, record.target(), &record.args().to_string(), true);
+        }
+
+        fn flush(&self) {}
+    }
+
+    static LOGGER: FileLogger = FileLogger;
+    if log::set_logger(&LOGGER).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+    // A second call (activity recreated) leaves the first logger installed:
+    // `set_logger` fails and the existing one keeps writing.
 }
 
 /// Move an oversized log aside so the next append starts a fresh file.
