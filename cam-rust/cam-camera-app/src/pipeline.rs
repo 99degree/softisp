@@ -9,6 +9,20 @@ use cam_isp::engine::{OutputFormat, ProcessParams};
 
 use crate::camera::RawFrame;
 
+/// The output format both the graph and the engine must agree on.
+///
+/// `FloatRgb` emits `[1,3,H,W]` f32 in `[0,1]` through a convolution-free
+/// `Pow + Clip`, so the host only has to interleave three planes. Every u8
+/// format (`Bgra`, `Rgba`, ...) instead ends in a `Conv(1x1)` that permutes
+/// channels and applies the x255 scale, and MNN's Vulkan backend zero-fills
+/// such a kernel unless the weights are baked into the operator — the picture
+/// comes back with a 255 alpha plane and black RGB.
+///
+/// This is shared so the graph's `DisplayBlock` and `ProcessParams` cannot
+/// disagree: a mismatch is silent, because the frame keeps the right length and
+/// `present()` still returns `Ok`.
+pub const OUTPUT_FORMAT: OutputFormat = OutputFormat::FloatRgb;
+
 /// Reusable staging buffers for the `u16` → `Vec<u8>` widening the API needs.
 pub struct FrameStager {
     bytes: Vec<u8>,
@@ -80,7 +94,7 @@ impl PipelineConfig {
         // that kernel comes out zero (the backend reads weights from the
         // operator, not from a graph input), so those formats render black.
         // The planar RGB is converted to BGRA on the host instead.
-        params.output_format = OutputFormat::FloatRgb;
+        params.output_format = OUTPUT_FORMAT;
         params.timestamp_ns = ts_ns;
         params
     }
@@ -150,7 +164,7 @@ mod tests {
         assert_eq!(p.sensor_max, 4095.0);
         assert_eq!(p.bayer_pattern, 2);
         assert_eq!(p.timestamp_ns, 1234);
-        assert_eq!(p.output_format, OutputFormat::FloatRgb);
+        assert_eq!(p.output_format, OUTPUT_FORMAT);
         assert_eq!(p.width, 2);
         assert_eq!(p.height, 1);
     }
