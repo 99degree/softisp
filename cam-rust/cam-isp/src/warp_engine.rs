@@ -240,7 +240,7 @@ impl GpuWarpEngine {
 
         // Create session (CPU for warp — lightweight)
         let session = interp
-            .create_session(MnnBackendType::Vulkan, 2)
+            .create_session(MnnBackendType::Vulkan, 2, true)
             .ok_or_else(|| crate::error::IspError::Mnn("warp session create fail".into()))?;
 
         info!("GpuWarpEngine: initialized {}×{}", width, height);

@@ -60,6 +60,7 @@ extern "C" {
         interpreter: *mut c_void,
         backend: MnnBackendType,
         num_threads: c_int,
+        precision: c_int,
     ) -> *mut c_void;
     pub fn mnn_session_release(interpreter: *mut c_void, session: *mut c_void);
     pub fn mnn_session_resize(interpreter: *mut c_void, session: *mut c_void) -> c_int;
@@ -299,12 +300,19 @@ impl MnnInterpreterSafe {
     }
 
     /// Create a session with the given backend.
+    ///
+    /// `fp16_storage` asks for `Precision_Normal` rather than the historical
+    /// `Precision_High`. On the Vulkan backend that is what makes MNN store
+    /// every float tensor as fp16 when the device supports it, halving the
+    /// bytes per element — see `mnn_session_create` in mnn_wrapper.cpp.
     pub fn create_session(
         &self,
         backend: MnnBackendType,
         num_threads: i32,
+        fp16_storage: bool,
     ) -> Option<MnnSessionSafe> {
-        let ptr = unsafe { mnn_session_create(self.inner, backend, num_threads) };
+        let precision = if fp16_storage { 0 } else { 1 };
+        let ptr = unsafe { mnn_session_create(self.inner, backend, num_threads, precision) };
         if ptr.is_null() {
             None
         } else {

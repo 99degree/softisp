@@ -104,6 +104,14 @@ pub struct MnnEngine {
     /// Whether to preserve input type (int16/uint16/float16) instead of widening to int32.
     /// Used by NativeInt16 mode to avoid Cast(int32→int16) in UnpackCfaBlock.
     preserve_input_type: bool,
+    /// Store the graph's float tensors as fp16 on the GPU when the device
+    /// supports it (`Precision_Normal` instead of `Precision_High`).
+    ///
+    /// Every tensor in the ISP chain is float, and the Vulkan backend allocates
+    /// 4 bytes per element when this is off and 2 when it is on. At 2592x1940
+    /// the RGBA display tensor alone is 77 MB -> 38 MB per session, which is
+    /// what makes a multi-session pool fit on a phone at all.
+    fp16_storage: bool,
     /// Expected input tensor element count from model (for validation).
     expected_input_elements: Option<u32>,
     /// ISP controller for AWB/AE/CCM/tone parameter estimation.
@@ -175,6 +183,7 @@ impl MnnEngine {
             frame_input_name: None,
             input_mode: None,
             preserve_input_type: false,
+            fp16_storage: true,
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
             pool_size,
@@ -256,6 +265,21 @@ impl MnnEngine {
     /// Get whether to preserve input type.
     pub fn preserve_input_type(&self) -> bool {
         self.preserve_input_type
+    }
+
+    /// Choose fp16 (`true`, the default) or fp32 (`false`) tensor storage.
+    ///
+    /// Applies to the whole graph, not just the frame: the Vulkan backend's
+    /// `getTensorSize` halves every float tensor's allocation when precision is
+    /// not `Precision_High`. Turn it off only to compare output numerics; it is
+    /// what keeps a 4-session pool inside a phone's GPU memory budget.
+    pub fn set_fp16_storage(&mut self, fp16: bool) {
+        self.fp16_storage = fp16;
+    }
+
+    /// Whether fp16 tensor storage is requested.
+    pub fn fp16_storage(&self) -> bool {
+        self.fp16_storage
     }
 
     /// Narrow the graph's `f32 [0,255]` output to `u8` bytes.
@@ -1014,11 +1038,11 @@ impl IspEngine for MnnEngine {
             })?;
 
             // Use first session to probe model input type (before building pool)
-            let probe_sess = interp.create_session(self.backend.to_sys(), 4).ok_or(
-                crate::error::IspError::Mnn(
+            let probe_sess = interp
+                .create_session(self.backend.to_sys(), 4, self.fp16_storage)
+                .ok_or(crate::error::IspError::Mnn(
                     "probe session create fail (Vulkan backend unavailable)".into(),
-                ),
-            )?;
+                ))?;
             // Resolve the frame input by NAME: getSessionInput(nullptr) returns
             // the alphabetically-first input, which is a runtime-fed weight
             // tensor in multi-input models (e.g. CcmBlock_ccm/matrix <
@@ -1129,6 +1153,7 @@ impl IspEngine for MnnEngine {
                 self.backend.to_sys(),
                 self.pool_size.max(1),
                 4,
+                self.fp16_storage,
                 extra_names,
             )?;
             self.pool_size = pool.len();
