@@ -1847,20 +1847,27 @@ impl IspEngine for MnnEngine {
 
                 /// Read a named output tensor and reinterpret bytes as `f32`.
                 /// Returns up to `max_n` floats, or `None` if the tensor is missing.
+                /// Read a named output tensor as floats.
+                ///
+                /// Goes through `mnn_session_read_output` (`copyToHostTensor`)
+                /// rather than `host<float>()`. On Vulkan a tensor's data lives
+                /// in a device buffer and the host pointer is null, so the
+                /// direct read returned `None` for every stats tensor — which
+                /// is why 3A never received any feedback.
                 fn read_output_f32(
                     interp: &crate::mnn_sys::MnnInterpreterSafe,
                     sess: &crate::mnn_sys::MnnSessionSafe,
                     name: &str,
                     max_n: usize,
                 ) -> Option<Vec<f32>> {
-                    let t = interp.get_output(sess, name)?;
-                    let bytes = t.as_bytes()?;
-                    let n_floats = bytes.len() / 4;
-                    let n = n_floats.min(max_n);
-                    let floats: &[f32] = unsafe {
-                        std::slice::from_raw_parts(bytes.as_ptr() as *const f32, n_floats)
-                    };
-                    Some(floats[..n].to_vec())
+                    let mut buf = vec![0.0f32; max_n];
+                    let n = interp.read_output_floats(sess, name, &mut buf)?;
+                    let n = n.min(max_n);
+                    if n == 0 {
+                        None
+                    } else {
+                        Some(buf.into_iter().take(n).collect())
+                    }
                 }
 
                 // ChannelMeansBlock/frame → [1, 3] or [3]
@@ -1870,17 +1877,52 @@ impl IspEngine for MnnEngine {
                 // the name. When that happens the controller silently sees no
                 // data and AWB/AE stop adapting, which looks like "3A does
                 // nothing" rather than a missing tensor. Say so explicitly.
-                match read_output_f32(interp, sess, "ChannelMeansBlock/frame", 3) {
-                    Some(vals) if vals.len() >= 3 => {
+                // Report the session's actual output list once per session build
+                // prefix. `get_output(name)` returning null for a tensor that is
+                // in `oplists` is otherwise indistinguishable from "the profile
+                // did not enable that block".
+                {
+                    let names = interp.output_names(sess);
+                    debug!(
+                        "session exposes {} outputs: {}",
+                        names.len(),
+                        if names.len() > 8 {
+                            format!("{} ...", names[..8].join(", "))
+                        } else {
+                            names.join(", ")
+                        }
+                    );
+                }
+
+                // The stats tap sits on `aux_hook_src`, which is right after
+                // BLC — the frame there is still the 4-plane CFA quad, not RGB.
+                // So this tensor is `[1, 4]`: one mean per Bayer site
+                // (R, Gr, Gb, B), and reading it as three floats fails.
+                //
+                // Pre-AWB raw means are also the correct basis for AWB: they do
+                // not include the gains being applied, so the loop cannot chase
+                // its own output.
+                match read_output_f32(interp, sess, "ChannelMeansBlock/frame", 4) {
+                    Some(vals) if vals.len() >= 4 => {
+                        // Fold the two green sites into one.
+                        let g = 0.5 * (vals[1] + vals[2]);
                         debug!(
-                            "stats: channel means [{:.4}, {:.4}, {:.4}] (planar R,G,B)",
+                            "stats: site means R {:.4} Gr {:.4} Gb {:.4} B {:.4} -> rgb [{:.4}, {:.4}, {:.4}]",
+                            vals[0], vals[1], vals[2], vals[3], vals[0], g, vals[3]
+                        );
+                        cm_vals = Some([vals[0], g, vals[3]]);
+                    }
+                    Some(vals) if vals.len() >= 3 => {
+                        // A 3-channel tap (post-demosaic hook): already RGB.
+                        debug!(
+                            "stats: channel means [{:.4}, {:.4}, {:.4}] (rgb)",
                             vals[0], vals[1], vals[2]
                         );
                         cm_vals = Some([vals[0], vals[1], vals[2]]);
                     }
                     Some(vals) => debug!("stats: channel means too short ({} floats)", vals.len()),
                     None => debug!(
-                        "stats: ChannelMeansBlock/frame is not reachable as a session output —                          the graph's stats are dead and the controller cannot adapt"
+                        "stats: ChannelMeansBlock/frame unreadable - the controller gets no feedback"
                     ),
                 }
                 // ToneStatsBlock/frame → [6]

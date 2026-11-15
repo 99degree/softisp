@@ -16,6 +16,7 @@
 #![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
+pub use std::ffi::CStr;
 pub use std::os::raw::{c_char, c_float, c_int, c_void};
 
 // ── Backend enum ─────────────────────────────────────────────────────────
@@ -81,6 +82,19 @@ extern "C" {
         session: *mut c_void,
         name: *const c_char,
     ) -> *mut c_void;
+    pub fn mnn_session_output_count(interpreter: *mut c_void, session: *mut c_void) -> c_int;
+    pub fn mnn_session_output_name(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        index: c_int,
+    ) -> *const c_char;
+    pub fn mnn_session_read_output(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        name: *const c_char,
+        out: *mut c_void,
+        max_bytes: c_int,
+    ) -> c_int;
     pub fn mnn_tensor_get_shape(tensor: *mut c_void, dims: *mut c_int, max_dims: c_int) -> c_int;
     pub fn mnn_tensor_get_type(tensor: *mut c_void) -> c_int;
     pub fn mnn_tensor_get_bits(tensor: *mut c_void) -> c_int;
@@ -372,6 +386,60 @@ impl MnnInterpreterSafe {
             None
         } else {
             Some(MnnTensorSafe { inner: ptr })
+        }
+    }
+
+    /// Names of every tensor the session exposes as an output.
+    ///
+    /// Empty is a meaningful answer: the graph can carry a stats op whose
+    /// output was never registered, in which case `get_output(name)` returns
+    /// `None` for a tensor that plainly exists in the model. Listing what *is*
+    /// there is the difference between a conversion bug and a lookup bug.
+    pub fn output_names(&self, session: &MnnSessionSafe) -> Vec<String> {
+        let count = unsafe { mnn_session_output_count(self.inner, session.inner) };
+        (0..count.max(0))
+            .filter_map(|i| {
+                let ptr = unsafe { mnn_session_output_name(self.inner, session.inner, i) };
+                if ptr.is_null() {
+                    None
+                } else {
+                    Some(
+                        unsafe { CStr::from_ptr(ptr) }
+                            .to_string_lossy()
+                            .into_owned(),
+                    )
+                }
+            })
+            .collect()
+    }
+
+    /// Copy a named session output into `buf`, returning the float count.
+    ///
+    /// Works for GPU tensors, unlike reading `host<float>()` directly -- a
+    /// Vulkan-backed tensor has no host allocation until it is copied.
+    pub fn read_output_floats(
+        &self,
+        session: &MnnSessionSafe,
+        name: &str,
+        buf: &mut [f32],
+    ) -> Option<usize> {
+        let c_name = std::ffi::CString::new(name).ok()?;
+        let max_bytes = buf.len() * std::mem::size_of::<f32>();
+        let bytes = unsafe {
+            mnn_session_read_output(
+                self.inner,
+                session.inner,
+                c_name.as_ptr(),
+                buf.as_mut_ptr() as *mut c_void,
+                max_bytes as c_int,
+            )
+        };
+        if bytes <= 0 {
+            // -3 = tensor not found, -5 = buffer too small, -4 = no elements.
+            log::debug!("read_output_floats({name}) -> {bytes}");
+            None
+        } else {
+            Some(bytes as usize / std::mem::size_of::<f32>())
         }
     }
 
