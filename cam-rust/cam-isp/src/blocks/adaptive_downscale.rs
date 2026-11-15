@@ -226,6 +226,26 @@ impl AdaptiveDownscaleBlock {
         // Final output is the nominal target (margin is cropped off after scale)
         let a = self.codec_align;
         if a <= 0 {
+            // With no codec align the block normally ends in a Resize whose
+            // *actual* output MNN derives from the `scales` constant:
+            //
+            //   output.dim[i].extent = scale[i] * (float)input.dim[i].extent
+            //
+            // as a float, assigned to an `int` — i.e. it floors. Declaring the
+            // nominal target here instead makes the ONNX value_info disagree
+            // with the tensor MNN computes and `resizeSession` rejects the
+            // graph with COMPUTE_SIZE_ERROR. A 2592x1940 source "fit" with
+            // scale 1436/1940 gives 1918, not 1920, so this reproduces MNN's
+            // arithmetic exactly (float32 multiply, then floor).
+            let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
+            if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
+                if let (Some(ih), Some(iw)) = (self.in_h, self.in_w) {
+                    let extent = |scale: f64, dim: i64| -> i64 {
+                        (scale as f32 * dim as f32).floor() as i64
+                    };
+                    return (extent(scale_h, ih), extent(scale_w, iw));
+                }
+            }
             return (self.target_h, self.target_w);
         }
         let pb = (a - (self.target_h % a)) % a;
@@ -449,12 +469,21 @@ impl IspBlock for AdaptiveDownscaleBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        // Resize `scales` must be a constant, not a graph input: MNN derives
-        // the Resize output shape from this tensor's contents during
-        // `resizeSession` (`InterpComputer` → `scalePtr[i] * input.dim[i]`),
-        // which runs before the engine could ever write a runtime value. As a
-        // graph input it dereferences a null host pointer and the session is
-        // never created.
+        // Both Resize inputs that describe the output geometry must be
+        // constants, not graph inputs.
+        //
+        // MNN derives the Resize output shape from them while propagating
+        // shapes during `resizeSession`:
+        //
+        //   ShapeInterp.cpp: output.dim[i].extent = scalePtr[i] * input.dim[i]
+        //   ShapeResize.cpp: output.dim[i].extent = input.dim[i] * xScale()
+        //
+        // That runs long before the engine could write a runtime value, so as
+        // graph inputs they dereference null host pointers. Worse, a `sizes`
+        // input — even a constant one — makes MNN take the ImageProcess path,
+        // whose `onComputeSize` declares a rank-1 output and then breaks the
+        // chain. Emitting `scales` only keeps it on the Interp path, where
+        // `extent = xScale() * input` reproduces our own output dims.
         let ns = self.tensor_ns();
         let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
         if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
