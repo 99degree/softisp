@@ -866,6 +866,10 @@ impl IspBlock for DisplayBlock {
     fn opset_mode(&self) -> BlockOpsetMode {
         self.opset_mode_override.unwrap_or(BlockOpsetMode::Custom)
     }
+
+    fn set_opset_mode(&mut self, mode: BlockOpsetMode) {
+        self.opset_mode_override = Some(mode);
+    }
 }
 
 #[cfg(test)]

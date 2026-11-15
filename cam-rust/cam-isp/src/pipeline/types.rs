@@ -272,6 +272,13 @@ pub trait IspBlock: Send + std::fmt::Debug {
     fn opset_mode(&self) -> BlockOpsetMode {
         BlockOpsetMode::Custom
     }
+
+    /// Ask this block to emit a different opset, or ignore the request.
+    ///
+    /// Only blocks with a fused `isp.*` form can honour it; everything else
+    /// keeps emitting standard ONNX ops. The default does nothing, so a caller
+    /// can retarget a whole chain without knowing which blocks support it.
+    fn set_opset_mode(&mut self, _mode: BlockOpsetMode) {}
 }
 
 /// Whether a block's ONNX fragment uses custom or primitive ops.
