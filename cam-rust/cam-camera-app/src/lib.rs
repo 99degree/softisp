@@ -202,8 +202,70 @@ fn raw_stats(samples: &[u16]) -> RawStats {
     }
 }
 
+/// How the bytes in a [`LastFrame`] are laid out.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FrameKind {
+    /// Interleaved BGRA bytes, one pixel per 4 bytes.
+    Bgra,
+    /// Planar RGB f32 (`[1,3,H,W]` in `[0,1]`), as `DisplayBlock::FloatRgb`
+    /// emits. The engine cannot hand back interleaved pixels because every u8
+    /// display format needs a `Conv(1x1)` whose Vulkan kernel is zero-filled.
+    PlanarRgbF32,
+}
+
 /// The last successfully processed frame, kept to repaint the surface.
-type LastFrame = (Vec<u8>, u32, u32);
+type LastFrame = (Vec<u8>, u32, u32, FrameKind);
+
+/// Present a frame regardless of how it is encoded.
+fn present_frame(
+    target: &WindowTarget<'_>,
+    data: &[u8],
+    w: u32,
+    h: u32,
+    kind: FrameKind,
+) -> Result<usize, String> {
+    match kind {
+        FrameKind::Bgra => target.present(data, w, h),
+        FrameKind::PlanarRgbF32 => {
+            // Reinterpret the f32 payload without copying: the caller owns a
+            // Vec<u8> whose alignment is only 1, so decode through
+            // `from_le_bytes` rather than casting a slice.
+            let floats: Vec<f32> = data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b))
+                .collect();
+            target.present_planar_rgb(&floats, w, h)
+        }
+    }
+}
+
+/// Brightness summary of a planar RGB f32 frame.
+fn planar_rgb_stats(floats: &[f32]) -> FrameStats {
+    let plane = floats.len() / 3;
+    if plane == 0 {
+        return FrameStats::default();
+    }
+    let mean = |p: &[f32]| p.iter().map(|v| *v as f64).sum::<f64>() / plane as f64 * 255.0;
+    let r = mean(&floats[0..plane]);
+    let g = mean(&floats[plane..2 * plane]);
+    let b = mean(&floats[2 * plane..3 * plane]);
+    let max = floats
+        .iter()
+        .cloned()
+        .fold(0.0f32, f32::max)
+        .mul_add(255.0, 0.0)
+        .clamp(0.0, 255.0) as u8;
+    let non_black = floats.iter().filter(|v| **v > 0.0).count();
+    FrameStats {
+        mean_r: r,
+        mean_g: g,
+        mean_b: b,
+        max,
+        non_black_pct: non_black as f64 * 100.0 / floats.len() as f64,
+    }
+}
 
 /// All per-window state, dropped and rebuilt when the window changes.
 struct Preview {
@@ -453,11 +515,17 @@ impl Preview {
                     // Display raw camera frame as grayscale
                     let raw_bgra = self.raw_to_grayscale_bgra(&frame);
                     let present_t0 = Instant::now();
-                    if let Err(e) = target.present(&raw_bgra, frame.width, frame.height) {
+                    if let Err(e) = present_frame(
+                        target,
+                        &raw_bgra,
+                        frame.width,
+                        frame.height,
+                        FrameKind::Bgra,
+                    ) {
                         log::trace!("present raw: {e}");
                     }
                     t_present = present_t0.elapsed();
-                    self.last_frame = Some((raw_bgra, frame.width, frame.height));
+                    self.last_frame = Some((raw_bgra, frame.width, frame.height, FrameKind::Bgra));
                 } else {
                     let params =
                         self.config
@@ -468,6 +536,13 @@ impl Preview {
                     match result {
                         Ok(out) => {
                             self.frames += 1;
+                            // `FloatRgb` hands back planar f32; anything else
+                            // is already bytes the window can take.
+                            let kind = if self.config.float_output() {
+                                FrameKind::PlanarRgbF32
+                            } else {
+                                FrameKind::Bgra
+                            };
                             // A frame that processes but cannot be shown is
                             // indistinguishable from a failed one unless the
                             // present error is recorded: this is the only step
@@ -479,7 +554,8 @@ impl Preview {
                             // Rate-limited to a change of message, so a
                             // per-frame surface error stays one line.
                             let present_t0 = Instant::now();
-                            let presented = target.present(&out.data, out.width, out.height);
+                            let presented =
+                                present_frame(target, &out.data, out.width, out.height, kind);
                             t_present = present_t0.elapsed();
                             match presented {
                                 Ok(_) => self.last_present_error = None,
@@ -494,14 +570,14 @@ impl Preview {
                                     }
                                 }
                             }
-                            self.last_frame = Some((out.data, out.width, out.height));
+                            self.last_frame = Some((out.data, out.width, out.height, kind));
                         }
                         Err(e) => {
                             write_line("ERROR", "isp", &format!("process failed: {e}"));
                             // ISP failed — repaint the last good frame so the UI
                             // never goes blank.
-                            if let Some((data, w, h)) = self.last_frame.as_ref() {
-                                let _ = target.present(data, *w, *h);
+                            if let Some((data, w, h, kind)) = self.last_frame.as_ref() {
+                                let _ = present_frame(target, data, *w, *h, *kind);
                             }
                         }
                     }
@@ -510,8 +586,8 @@ impl Preview {
             Ok(None) => {
                 // Nothing queued: repaint the last good frame so the surface
                 // survives instead of showing a stale/blank buffer.
-                if let Some((data, w, h)) = self.last_frame.as_ref() {
-                    let _ = target.present(data, *w, *h);
+                if let Some((data, w, h, kind)) = self.last_frame.as_ref() {
+                    let _ = present_frame(target, data, *w, *h, *kind);
                 }
             }
             Err(e) => write_line("ERROR", "camera", &e),
@@ -548,7 +624,18 @@ impl Preview {
             let content = self
                 .last_frame
                 .as_ref()
-                .map(|(data, _, _)| frame_stats(data))
+                .map(|(data, _, _, kind)| match kind {
+                    FrameKind::Bgra => frame_stats(data),
+                    FrameKind::PlanarRgbF32 => {
+                        let floats: Vec<f32> = data
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|b| f32::from_le_bytes(*b))
+                            .collect();
+                        planar_rgb_stats(&floats)
+                    }
+                })
                 .unwrap_or_default();
             write_line(
                 "INFO",
