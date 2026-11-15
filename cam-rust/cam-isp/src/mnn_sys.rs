@@ -82,6 +82,7 @@ extern "C" {
     ) -> *mut c_void;
     pub fn mnn_tensor_get_shape(tensor: *mut c_void, dims: *mut c_int, max_dims: c_int) -> c_int;
     pub fn mnn_tensor_get_type(tensor: *mut c_void) -> c_int;
+    pub fn mnn_tensor_get_bits(tensor: *mut c_void) -> c_int;
     pub fn mnn_tensor_get_host_data(tensor: *mut c_void) -> *mut f32;
     pub fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
     pub fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
@@ -507,6 +508,15 @@ impl MnnTensorSafe {
     /// Get the data type code: 4=float32, 5=int32, 6=uint32, 0=unknown.
     pub fn data_type(&self) -> i32 {
         unsafe { mnn_tensor_get_type(self.inner) }
+    }
+
+    /// Get the element bit width: 8, 16, 32, 64, or 0 if unknown.
+    ///
+    /// [`Self::data_type`] collapses INT16 and INT32 into the same code, so
+    /// this is the only way to tell a RAW16-shaped graph input from a widened
+    /// one.
+    pub fn data_bits(&self) -> i32 {
+        unsafe { mnn_tensor_get_bits(self.inner) }
     }
 
     /// Get a reference to the tensor's host data (any type) as bytes.

@@ -72,6 +72,11 @@ enum InputMode {
     /// `[1,2,H,W/2]` INT32 — packed u16 pairs split into even/odd i32 lanes
     /// on CPU (the packed-INT32 convention).
     SplitInt32,
+    /// `[1,2,H,W/2]` INT16 — packed u16 pairs split into even/odd **i16**
+    /// lanes on CPU. The graph input was declared INT16 and MNN kept the
+    /// width, so the split stays 16-bit: half the scratch memory of
+    /// [`Self::SplitInt32`] and no widening pass.
+    SplitInt16,
     /// `[1,2,H,W/2]` FLOAT32 — native 2×int16 buffer split into even/odd f32
     /// lanes on CPU. MNN's ONNX→MNN converter upcasts INT16-declared graph
     /// inputs to FLOAT32, so a "2×int16" model arrives here as float.
@@ -79,7 +84,8 @@ enum InputMode {
     /// `[1,1,H,W]` FLOAT32 — native int16 buffer converted to f32 on CPU
     /// (unpack_blc16 / UnpackCfa-style heads).
     RawFloat,
-    /// `[1,1,H,W]` INT32 — caller buffer passed through as-is.
+    /// `[1,1,H,W]` integer — caller buffer passed through as-is, at the
+    /// width the graph declared (INT16 or INT32).
     RawInt,
 }
 
@@ -121,6 +127,12 @@ pub struct MnnEngine {
     /// MNN's Vulkan backend cannot run integer elementwise ops, so the
     /// engine splits the two u16 lanes on CPU before feeding `[1,2,H,W/2]`.
     split_scratch: Mutex<Vec<i32>>,
+    /// Same split, 16-bit lanes, for a graph whose input stayed INT16.
+    ///
+    /// The model's declared width is not always 32: when the converter keeps
+    /// INT16 the tensor is half the size, so widening to i32 would double the
+    /// dominant per-frame buffer for no reason.
+    split_scratch_i16: Mutex<Vec<i16>>,
     /// Reused f32 scratch: u16→f32 lane conversion for native-int16 models
     /// (SplitFloat) and full-frame conversion for raw FLOAT32 models (RawFloat).
     scratch_f32: Mutex<Vec<f32>>,
@@ -174,6 +186,7 @@ impl MnnEngine {
                 crate::gpu_watchdog::WatchdogConfig::default(),
             ),
             split_scratch: Mutex::new(Vec::new()),
+            split_scratch_i16: Mutex::new(Vec::new()),
             scratch_f32: Mutex::new(Vec::new()),
             #[cfg(feature = "mnn")]
             default_inputs: Mutex::new(Vec::new()),
@@ -1024,16 +1037,25 @@ impl IspEngine for MnnEngine {
                         dims4[i] = *d;
                     }
                     // data_type() returns 4=float32/5=int32/6=uint32; map back
-                    // to halide codes (2=float/1=int/3=uint) so
+                    // to halide codes (0=int/1=uint/2=float) so
                     // model_input_type stays compatible with the FFI buffer
                     // type codes used by mnn_run_with_output.
+                    //
+                    // The bit width has to come from the tensor: `data_type()`
+                    // reports the *code* only, so an INT16 graph input would
+                    // otherwise be recorded as 32-bit and fed a buffer twice
+                    // the size MNN expects.
                     let halide_code = match code {
                         4 => 2, // halide_type_float
-                        5 => 1, // halide_type_int
-                        6 => 3, // halide_type_uint
+                        5 => 0, // halide_type_int
+                        6 => 1, // halide_type_uint
                         _ => code,
                     };
-                    (halide_code, 32, ndim, dims4)
+                    let bits = match t.data_bits() {
+                        8 | 16 | 32 | 64 => t.data_bits(),
+                        _ => 32,
+                    };
+                    (halide_code, bits, ndim, dims4)
                 }
                 None => (0, 0, 0, [0; 4]),
             };
@@ -1058,6 +1080,10 @@ impl IspEngine for MnnEngine {
             let mode = if split {
                 if is_float {
                     InputMode::SplitFloat
+                } else if input_bits == 16 {
+                    // The converter kept the declared INT16, so the lanes stay
+                    // 16-bit: same values, half the scratch.
+                    InputMode::SplitInt16
                 } else {
                     InputMode::SplitInt32
                 }
@@ -1091,6 +1117,13 @@ impl IspEngine for MnnEngine {
 
             // Build session pool (N sessions for parallel inference)
             // Backend was already validated by probe session above.
+            //
+            // Session count is a *memory* budget, not a preference. Each
+            // session allocates its own Vulkan buffers for the whole graph, so
+            // at 5 Mpx the default four need several hundred MB. `SessionPool`
+            // halves the count on failure rather than taking the process down
+            // (on device the log simply stopped at "MNN model inputs: N total"
+            // with no panic line at all).
             let pool = SessionPool::new(
                 interp,
                 self.backend.to_sys(),
@@ -1098,6 +1131,7 @@ impl IspEngine for MnnEngine {
                 4,
                 extra_names,
             )?;
+            self.pool_size = pool.len();
             info!(
                 "MNN engine loaded ({} bytes, backend={:?}, {} sessions, {} extra inputs)",
                 mnn_result.0.len(),
@@ -1299,6 +1333,7 @@ impl IspEngine for MnnEngine {
             // scratch by raw pointer, and another thread resizing the scratch
             // would otherwise dangle it.
             let split_scratch_i32: Option<std::sync::MutexGuard<'_, Vec<i32>>>;
+            let split_scratch_16: Option<std::sync::MutexGuard<'_, Vec<i16>>>;
             let scratch_f32: Option<std::sync::MutexGuard<'_, Vec<f32>>>;
             match mode {
                 InputMode::SplitInt32 => {
@@ -1315,6 +1350,24 @@ impl IspEngine for MnnEngine {
                         guard[pairs + i] = u16s[2 * i + 1] as i32;
                     }
                     split_scratch_i32 = Some(guard);
+                    split_scratch_16 = None;
+                    scratch_f32 = None;
+                }
+                InputMode::SplitInt16 => {
+                    let pairs = ((w / 2).max(1) as usize) * h as usize;
+                    let mut guard = self.split_scratch_i16.lock().unwrap();
+                    if guard.len() != pairs * 2 {
+                        guard.resize(pairs * 2, 0);
+                    }
+                    let u16s: &[u16] = unsafe {
+                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+                    };
+                    for i in 0..pairs {
+                        guard[i] = u16s[2 * i] as i16;
+                        guard[pairs + i] = u16s[2 * i + 1] as i16;
+                    }
+                    split_scratch_i32 = None;
+                    split_scratch_16 = Some(guard);
                     scratch_f32 = None;
                 }
                 InputMode::SplitFloat => {
@@ -1331,6 +1384,7 @@ impl IspEngine for MnnEngine {
                         guard[pairs + i] = u16s[2 * i + 1] as f32;
                     }
                     split_scratch_i32 = None;
+                    split_scratch_16 = None;
                     scratch_f32 = Some(guard);
                 }
                 InputMode::RawFloat => {
@@ -1346,10 +1400,12 @@ impl IspEngine for MnnEngine {
                         guard[i] = u16s[i] as f32;
                     }
                     split_scratch_i32 = None;
+                    split_scratch_16 = None;
                     scratch_f32 = Some(guard);
                 }
                 InputMode::RawInt => {
                     split_scratch_i32 = None;
+                    split_scratch_16 = None;
                     scratch_f32 = None;
                 }
             }
@@ -1364,6 +1420,16 @@ impl IspEngine for MnnEngine {
                         32,
                         vec![1, 2, h as i32, (w / 2).max(1) as i32],
                         "packed_split",
+                    )
+                }
+                InputMode::SplitInt16 => {
+                    let v = split_scratch_16.as_ref().unwrap();
+                    (
+                        v.as_ptr() as *const c_void,
+                        0, // halide_type_int
+                        16,
+                        vec![1, 2, h as i32, (w / 2).max(1) as i32],
+                        "packed_split_i16",
                     )
                 }
                 InputMode::SplitFloat => {

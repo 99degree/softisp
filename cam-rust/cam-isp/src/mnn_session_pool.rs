@@ -49,9 +49,21 @@ pub(crate) struct SessionPool {
 
 #[cfg(feature = "mnn")]
 impl SessionPool {
-    /// Build a pool of `n` sessions sharing `interp`.
+    /// Build a pool of up to `n` sessions sharing `interp`.
     /// `extra_names` are the non-frame input tensors (runtime-fed weights
     /// + constants) that the engine will write into before each inference.
+    ///
+    /// The session count is a memory budget. Every session allocates its own
+    /// Vulkan buffers for the whole graph, so at 5 Mpx four of them can need
+    /// several hundred MB — more than a phone will hand out. On device that
+    /// does not even surface as an MNN error: the process is killed while the
+    /// second session is being built, so the log stops mid-init with no panic.
+    ///
+    /// This therefore halves the count on failure and retries, down to one
+    /// session. A single-session preview is slower but runs; a four-session one
+    /// that cannot be allocated takes the app with it.
+    ///
+    /// Returns `Err` only when even one session cannot be created.
     pub(crate) fn new(
         interp: MnnInterpreterSafe,
         backend: MnnBackendType,
@@ -60,34 +72,57 @@ impl SessionPool {
         extra_names: Vec<String>,
     ) -> Result<Self, String> {
         let tensor_names = extra_names;
-        let mut slots = VecDeque::with_capacity(n);
-        for _ in 0..n {
-            let sess = interp
-                .create_session(backend, num_threads)
-                .ok_or_else(|| format!("create session {} failed", slots.len()))?;
-            let mut tensor_pool = Vec::new();
-            for name in &tensor_names {
-                if let Some(t) = interp.get_input(&sess, name) {
-                    tensor_pool.push((name.clone(), t));
+        let mut wanted = n.max(1);
+        loop {
+            let mut slots = VecDeque::with_capacity(wanted);
+            let mut failed = false;
+            for i in 0..wanted {
+                let Some(sess) = interp.create_session(backend, num_threads) else {
+                    log::warn!(
+                        "SessionPool: session {} of {} failed to allocate",
+                        i + 1,
+                        wanted
+                    );
+                    failed = true;
+                    break;
+                };
+                let mut tensor_pool = Vec::new();
+                for name in &tensor_names {
+                    if let Some(t) = interp.get_input(&sess, name) {
+                        tensor_pool.push((name.clone(), t));
+                    }
                 }
+                slots.push_back(SessionSlot {
+                    sess,
+                    tensor_pool,
+                    resized_for: None,
+                });
             }
-            slots.push_back(SessionSlot {
-                sess,
-                tensor_pool,
-                resized_for: None,
-            });
+
+            if !failed {
+                info!(
+                    "SessionPool: {} slots created with {} extra tensors each",
+                    slots.len(),
+                    slots[0].tensor_pool.len()
+                );
+                return Ok(Self {
+                    interp,
+                    inner: Mutex::new(slots),
+                    cond: Condvar::new(),
+                    tensor_names,
+                });
+            }
+
+            // Drop the partial pool before retrying: those sessions hold the
+            // very GPU memory the retry needs.
+            drop(slots);
+            if wanted == 1 {
+                return Err("could not allocate even one MNN session".to_string());
+            }
+            let next = (wanted / 2).max(1);
+            log::warn!("SessionPool: retrying with {next} session(s) instead of {wanted}");
+            wanted = next;
         }
-        info!(
-            "SessionPool: {} slots created with {} extra tensors each",
-            n,
-            slots[0].tensor_pool.len()
-        );
-        Ok(Self {
-            interp,
-            inner: Mutex::new(slots),
-            cond: Condvar::new(),
-            tensor_names,
-        })
     }
 
     /// Acquire a slot (blocks until one is free).
@@ -107,6 +142,18 @@ impl SessionPool {
         let mut slots = self.inner.lock().unwrap();
         slots.push_back(slot);
         self.cond.notify_one();
+    }
+
+    /// Number of sessions actually created.
+    ///
+    /// Can be lower than the requested count: [`Self::new`] halves it when an
+    /// allocation fails, and the engine records this so its own logging and
+    /// any later resize decisions match reality.
+    pub(crate) fn len(&self) -> usize {
+        match self.inner.lock() {
+            Ok(g) => g.len(),
+            Err(e) => e.into_inner().len(),
+        }
     }
 
     /// Return the number of tensor names tracked by this pool.
