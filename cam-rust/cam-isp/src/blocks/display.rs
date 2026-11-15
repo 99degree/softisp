@@ -158,6 +158,69 @@ impl DisplayBlock {
         self.rotate_mode == 0 && self.output_format == OutputFormat::FloatRgb
     }
 
+    /// Show/hide the `Conv(1×1)` permutation weights for the display format.
+    ///
+    /// These must be ONNX **initializers**, not graph inputs.
+    ///
+    /// MNN's Vulkan convolution reads its kernel from the operator's own
+    /// `Convolution2D::weight()` field. When that field is absent — which is the
+    /// case when the weights arrive as a graph input — the creator zero-fills
+    /// the kernel instead of sampling the input tensor:
+    ///
+    ///     VulkanConvolution.cpp:  if (nullptr != weightData) {...}
+    ///                             else { memset(weight, 0, ...); }
+    ///
+    /// Bias is not affected, so the symptom is a frame whose alpha plane is 255
+    /// and whose RGB planes are all zero. `DisplayBlock::conv_weights` therefore
+    /// bakes the values into the graph, which is also what makes them visible to
+    /// MNN's constant folding.
+    pub fn conv_weights(&self) -> Option<(Vec<f32>, Vec<f32>)> {
+        use OutputFormat::*;
+        let oc = self.output_format.channel_count();
+        let w = match self.output_format {
+            FloatBgra | Float16Bgra | Bgra => vec![
+                0.0f32, 0.0, 255.0, 0.0, //
+                255.0, 0.0, 255.0, 0.0, //
+                0.0, 0.0, 0.0, 0.0,
+            ],
+            Rgba => vec![
+                255.0f32, 0.0, 0.0, 0.0, //
+                255.0, 0.0, 0.0, 0.0, //
+                255.0, 0.0, 0.0, 0.0,
+            ],
+            Argb => vec![
+                0.0f32, 0.0, 0.0, 255.0, //
+                0.0, 0.0, 0.0, 255.0, //
+                0.0, 0.0, 0.0, 255.0,
+            ],
+            Abgr => vec![
+                0.0f32, 0.0, 0.0, 0.0, //
+                0.0, 255.0, 0.0, 255.0, //
+                0.0, 255.0, 0.0, 0.0,
+            ],
+            Rgb => vec![
+                255.0f32, 0.0, 0.0, //
+                0.0, 255.0, 0.0, //
+                0.0, 0.0, 255.0,
+            ],
+            Bgr => vec![
+                0.0f32, 0.0, 255.0, //
+                0.0, 255.0, 0.0, //
+                255.0, 0.0, 0.0,
+            ],
+            _ => return None,
+        };
+        let bias = if oc == 4 {
+            match self.output_format {
+                Argb | Abgr => vec![255.0f32, 0.0, 0.0, 0.0],
+                _ => vec![0.0f32, 0.0, 0.0, 255.0],
+            }
+        } else {
+            vec![0.0f32; oc]
+        };
+        Some((w, bias))
+    }
+
     fn packed_output_width(&self, width: i64) -> i64 {
         if self.output_format == OutputFormat::PackedRgb && self.pack_two_pixels {
             (width / 2).max(1)
@@ -614,7 +677,18 @@ impl IspBlock for DisplayBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        vec![]
+        // The Conv(1×1) permutation must be a constant: MNN's Vulkan backend
+        // reads kernels from the operator, and zero-fills when they are absent
+        // (see `conv_weights`). Baked here they also survive constant folding.
+        let Some((weights, bias)) = self.conv_weights() else {
+            return vec![];
+        };
+        let ns = self.tensor_ns();
+        let oc = self.output_format.channel_count() as i64;
+        vec![
+            Proto::tensor_proto_float(&format!("{}/conv_w", ns), &[oc, 3, 1, 1], &weights),
+            Proto::tensor_proto_float(&format!("{}/conv_b", ns), &[oc], &bias),
+        ]
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -622,7 +696,17 @@ impl IspBlock for DisplayBlock {
         let ns = self.tensor_ns();
         let mut inputs = Vec::new();
         match self.output_format {
-            FloatRgb | Float16Rgb => {}
+            FloatRgb | Float16Rgb => {
+                // The identity path emits `Pow(x, gamma_exp)` and
+                // `Clip(gamma, zero, one)`. Those three are graph tensors: an
+                // undeclared node input is dropped by MNN's ONNX importer
+                // ("has empty input"), the Pow loses its exponent and the
+                // whole graph dies in the optimizer with a SIGSEGV. Declaring
+                // them makes `set_extra_inputs` write real values.
+                inputs.push((format!("{}/gamma_exp", ns).to_string(), 1, vec![]));
+                inputs.push((format!("{}/zero", ns).to_string(), 1, vec![]));
+                inputs.push((format!("{}/one", ns).to_string(), 1, vec![]));
+            }
             PackedRgb => {
                 inputs.push((format!("{}/scale_255", ns).to_string(), 1, vec![]));
                 if self.can_pack_two_pixels() && self.in_h.is_some() && self.in_w.is_some() {
@@ -636,10 +720,10 @@ impl IspBlock for DisplayBlock {
                     inputs.push((format!("{}/pack_w", ns).to_string(), 1, vec![3, 1, 1]));
                 }
             }
+            // `FloatBgra`/`Bgra`/`Rgba`/... need a Conv(1×1), but its weights
+            // are initializers, not graph inputs — see `initializers`.
             fmt @ (FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
-                let oc = fmt.channel_count() as i64;
-                inputs.push((format!("{}/conv_w", ns).to_string(), 1, vec![oc, 3, 1, 1]));
-                inputs.push((format!("{}/conv_b", ns).to_string(), 1, vec![oc]));
+                let _ = fmt;
             }
         }
         if !self.is_identity() {
@@ -670,7 +754,23 @@ impl IspBlock for DisplayBlock {
         let ns = self.tensor_ns();
         let mut defaults = Vec::new();
         match self.output_format {
-            FloatRgb | Float16Rgb => {}
+            FloatRgb | Float16Rgb => {
+                // Same three tensors as `extra_inputs`. Brightness-only
+                // defaults: gamma 1/2.4 (sRGB-ish display encode, what the
+                // engine writes anyway) and a [0,1] clip.
+                defaults.push((
+                    format!("{}/gamma_exp", ns).to_string(),
+                    (1.0f32 / 2.4).to_ne_bytes().to_vec(),
+                ));
+                defaults.push((
+                    format!("{}/zero", ns).to_string(),
+                    (0.0f32).to_ne_bytes().to_vec(),
+                ));
+                defaults.push((
+                    format!("{}/one", ns).to_string(),
+                    (1.0f32).to_ne_bytes().to_vec(),
+                ));
+            }
             PackedRgb => {
                 defaults.push((
                     format!("{}/scale_255", ns).to_string(),
@@ -701,56 +801,9 @@ impl IspBlock for DisplayBlock {
                     ));
                 }
             }
-            fmt @ (FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
-                let (weights, bias): (Vec<f32>, Vec<f32>) = match fmt {
-                    FloatBgra | Float16Bgra | Bgra => (
-                        vec![
-                            0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                        ],
-                        vec![0.0, 0.0, 0.0, 255.0],
-                    ),
-                    Rgba => (
-                        vec![
-                            255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0,
-                        ],
-                        vec![0.0, 0.0, 0.0, 255.0],
-                    ),
-                    Argb => (
-                        vec![
-                            0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0,
-                        ],
-                        vec![255.0, 0.0, 0.0, 0.0],
-                    ),
-                    Abgr => (
-                        vec![
-                            0.0, 0.0, 0.0, 0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0,
-                        ],
-                        vec![255.0, 0.0, 0.0, 0.0],
-                    ),
-                    Rgb => (
-                        vec![255.0, 0.0, 0.0, 0.0, 255.0, 0.0, 0.0, 0.0, 255.0],
-                        vec![0.0, 0.0, 0.0],
-                    ),
-                    Bgr => (
-                        vec![0.0, 0.0, 255.0, 0.0, 255.0, 0.0, 255.0, 0.0, 0.0],
-                        vec![0.0, 0.0, 0.0],
-                    ),
-                    _ => unreachable!(),
-                };
-                defaults.push((
-                    format!("{}/conv_w", ns).to_string(),
-                    weights
-                        .iter()
-                        .flat_map(|v| v.to_ne_bytes())
-                        .collect::<Vec<u8>>(),
-                ));
-                defaults.push((
-                    format!("{}/conv_b", ns).to_string(),
-                    bias.iter()
-                        .flat_map(|v| v.to_ne_bytes())
-                        .collect::<Vec<u8>>(),
-                ));
-            }
+            // Weights are initializers now (see `initializers`), so there is
+            // nothing to upload per frame.
+            FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr => {}
         }
         if !self.is_identity() {
             if let (Some(h), Some(w)) = (self.in_h, self.in_w) {
@@ -856,9 +909,25 @@ mod tests {
 
     #[test]
     fn test_display_initializers() {
-        let b = DisplayBlock::new(640);
+        // `DisplayBlock::new` defaults to `Bgra`, whose Conv weights are now
+        // initializers rather than runtime defaults.
+        let bgra = DisplayBlock::new(640);
+        assert_eq!(bgra.extra_input_defaults().len(), 0);
+        assert_eq!(bgra.initializers().len(), 2, "conv_w + conv_b");
+
+        // `FloatRgb` takes the identity (Pow + Clip) path, which needs three
+        // runtime tensors. They used to be emitted as node inputs without being
+        // declared, so MNN dropped them and the optimizer crashed.
+        let b = DisplayBlock::new(640).with_output_format(OutputFormat::FloatRgb);
         let inits = b.extra_input_defaults();
-        // scale is a runtime input; only format constants stay baked
-        assert_eq!(inits.len(), 2);
+        // FloatRgb is the default output format here: gamma_exp, zero and one
+        // are the three tensors the identity (Pow + Clip) path needs. They used
+        // to be emitted as node inputs without being declared, so MNN dropped
+        // them and the graph crashed in the optimizer.
+        assert_eq!(inits.len(), 3);
+        let names: Vec<&str> = inits.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.iter().any(|n| n.ends_with("/gamma_exp")), "{names:?}");
+        assert!(names.iter().any(|n| n.ends_with("/zero")), "{names:?}");
+        assert!(names.iter().any(|n| n.ends_with("/one")), "{names:?}");
     }
 }

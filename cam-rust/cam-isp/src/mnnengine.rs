@@ -21,7 +21,7 @@ use std::time::Instant;
 type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 
 use crate::controller::IspController;
-use crate::engine::{IspEngine, ProcessParams};
+use crate::engine::{IspEngine, OutputFormat, ProcessParams};
 use crate::pipeline::{IspAuxOutput, IspBlock, IspFrame};
 use cam_types::{FrameFormat, ToneParams};
 
@@ -747,9 +747,14 @@ impl MnnEngine {
         /// tensors that were formerly baked as initializers).  No-op if the
         /// tensor is missing or too small.
         fn write_raw(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, data: &[u8]) {
-            if let Some(t) = find(pool, name) {
-                // `extra_input_defaults` are serialized f32 values.
-                t.upload_bytes(data, 2, 32);
+            match find(pool, name) {
+                Some(t) => {
+                    // `extra_input_defaults` are serialized f32 values.
+                    if !t.upload_bytes(data, 2, 32) {
+                        warn!("default for {name} ({} B) failed to upload", data.len());
+                    }
+                }
+                None => warn!("default for {name} has no tensor in the session"),
             }
         }
 
@@ -825,10 +830,19 @@ impl MnnEngine {
         }
         // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
         write_f32_array(pool, "DemosaicCcmBlock/b", &[tone.brightness; 3]);
-        // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains
-        if let Some(gains) = bayer {
-            write_f32_array(pool, "BayerWbBlock/gains", gains);
-        }
+        // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains.
+        //
+        // This must ALWAYS be written. `BayerWbBlock::extra_input_defaults`
+        // returns an empty list when its gains are the identity, so with no AWB
+        // yet there is no default to fall back on: the tensor stays zeroed and
+        // the Mul that applies it multiplies the whole frame by 0. Every later
+        // stage then reports success on a black image.
+        let identity_gains = [1.0f32; 4];
+        write_f32_array(
+            pool,
+            "BayerWbBlock/gains",
+            bayer.map_or(&identity_gains[..], |g| g),
+        );
         // DemosaicBlock/w + b [3,4,1,1]/[3] — production demosaic conv weights
         // (depend on the sensor Bayer pattern). CcmBlock_ccm/matrix [3,3] —
         // color matrix (identity when not provided). All three are true
@@ -1699,7 +1713,14 @@ impl IspEngine for MnnEngine {
                 // Only trust a concrete `[1,C,H,W]`; dynamic dims come back as
                 // 0/-1. PackedRgb is excluded because its last dim is the
                 // *packed* half-width, not the pixel width.
-                if p.output_format.is_raw_output() {
+                // `PackedRgb`'s last dim is the *packed* half-width, so its
+                // shape cannot describe pixels; every other format, including
+                // the float RGB ones, is a plain `[1,C,H,W]`. Excluding all raw
+                // outputs here made `FloatRgb` report the *requested* geometry
+                // — 2592x1940 when demosaic had already produced 1296x970 —
+                // so callers sized their buffers from a frame that never
+                // existed.
+                if p.output_format == OutputFormat::PackedRgb {
                     // keep the request untouched
                 } else if shape.len() == 4 && shape[2] > 0 && shape[3] > 0 {
                     graph_channels = shape[1].max(1) as usize;
@@ -1902,7 +1923,7 @@ impl IspEngine for MnnEngine {
             }
 
             debug!("pipeline stage=output_frame {}×{} frame={}B total={:?} prep={:?} resize={:?} infer={:?}",
-                tw, oh, data_out.len(), t_total_elapsed,
+                ow, oh, data_out.len(), t_total_elapsed,
                 t_prep_end - t_start,
                 t_tensor_after - t_tensor_before,
                 t_infer_elapsed);

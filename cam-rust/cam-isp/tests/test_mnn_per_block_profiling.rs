@@ -35,7 +35,7 @@ fn test_mnn_per_block_profiling() {
     // Load interpreter and create a session.
     let interp = MnnInterpreterSafe::from_file(mnn_path).expect("load MNN model");
     let sess = interp
-        .create_session(MnnBackendType::Vulkan, 4)
+        .create_session(MnnBackendType::Vulkan, 4, true)
         .expect("create session");
 
     // Synthetic raw input buffer (INT16 packed).

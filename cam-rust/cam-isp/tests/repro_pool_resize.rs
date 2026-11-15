@@ -14,7 +14,7 @@
 
 #![cfg(feature = "mnn")]
 
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::error::IspError;
 
 /// Build the MED chain at `build_w`x`build_h`, then feed `frames` frames at
