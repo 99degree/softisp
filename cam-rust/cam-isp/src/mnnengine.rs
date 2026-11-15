@@ -1280,7 +1280,21 @@ impl IspEngine for MnnEngine {
                     // would break resizeSession for any input size differing from
                     // the model's baked dims.
                     Self::write_vignetting_gain(&slot.tensor_pool, interp, &slot.sess, h, w);
-                    let _ = slot.sess.resize();
+                    // Surface the real reason instead of deferring to the FFI's
+                    // opaque `n=-3`. mnn_run_with_output returns -3 when its own
+                    // on-demand tryResizeSession fails, which used to be the only
+                    // symptom: this call failed, the failure was discarded, and
+                    // every frame then reported -3 with no clue why.
+                    if let Err(e) = slot.sess.resize() {
+                        return Err(crate::error::IspError::Mnn(format!(
+                            "session resize failed for {w}x{h} (mode={mode:?}): {e}. \
+                             The graph cannot be resized to this input geometry — check \
+                             that every shape-dependent block got concrete_h/concrete_w \
+                             at build time."
+                        )));
+                    }
+                    // Only cache after a successful resize: caching on failure
+                    // would skip the retry for every later frame.
                     *cached = Some(shape_key);
                 }
                 needs
