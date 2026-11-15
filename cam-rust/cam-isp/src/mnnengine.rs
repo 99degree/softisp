@@ -117,11 +117,6 @@ pub struct MnnEngine {
     /// GPU hang watchdog for fault-tolerant inference.
     /// Triggers CPU fallback when MNN/Vulkan hangs exceed threshold.
     watchdog: crate::gpu_watchdog::GpuWatchdog,
-    /// Cached input tensor shape to skip redundant sess.resize().
-    /// Fixed-resolution pipelines (e.g. 4K→FHD) never change shape,
-    /// so resize() is only needed on the very first frame.
-    /// Stores (h, w, mode) of the last fully-configured frame.
-    last_input_shape: Mutex<Option<(i32, i32, InputMode)>>,
     /// Reused even/odd lane-split buffer for the packed INT32 input path.
     /// MNN's Vulkan backend cannot run integer elementwise ops, so the
     /// engine splits the two u16 lanes on CPU before feeding `[1,2,H,W/2]`.
@@ -220,7 +215,6 @@ impl MnnEngine {
             watchdog: crate::gpu_watchdog::GpuWatchdog::new(
                 crate::gpu_watchdog::WatchdogConfig::default(),
             ),
-            last_input_shape: Mutex::new(None),
             split_scratch: Mutex::new(Vec::new()),
             scratch_f32: Mutex::new(Vec::new()),
             #[cfg(feature = "mnn")]
@@ -1257,54 +1251,51 @@ impl IspEngine for MnnEngine {
             } else {
                 vec![1, 1, h as i32, w as i32]
             };
-            // Always set shape (cheap) so C++ on-demand resize works.
-            // Resolve the frame input by NAME (never getSessionInput(nullptr),
-            // which is the alphabetically-first input in multi-input models).
-            let frame_t = interp
-                .get_input(&slot.sess, self.frame_input_name.as_deref().unwrap_or(""))
-                .or_else(|| interp.get_first_input(&slot.sess));
-            if let Some(t) = frame_t {
-                let _ = t.set_shape(interp.as_ptr(), slot.sess.as_ptr(), &shape);
-            }
-            // Skip resize if shape unchanged from last full setup.
-            // The C++ wrapper handles first-use resize per session.
-            let needs_resize = {
-                let shape_key = (h as i32, w as i32, mode);
-                let mut cached = self.last_input_shape.lock().unwrap();
-                let needs = cached.as_ref().is_none_or(|last| *last != shape_key);
-                if needs {
-                    // Vignetting gain map is a runtime extra input (not a baked
-                    // initializer): resize it to the post-demosaic dims (h/2 × w/2)
-                    // and fill with computed gains BEFORE resizeSession so the Mul
-                    // shape check passes during propagation. A baked [1,1,H,W] gain
-                    // would break resizeSession for any input size differing from
-                    // the model's baked dims.
-                    Self::write_vignetting_gain(&slot.tensor_pool, interp, &slot.sess, h, w);
-                    // Surface the real reason instead of deferring to the FFI's
-                    // opaque `n=-3`. mnn_run_with_output returns -3 when its own
-                    // on-demand tryResizeSession fails, which used to be the only
-                    // symptom: this call failed, the failure was discarded, and
-                    // every frame then reported -3 with no clue why.
-                    if let Err(e) = slot.sess.resize() {
-                        return Err(crate::error::IspError::Mnn(format!(
-                            "session resize failed for {w}x{h} (mode={mode:?}): {e}. \
-                             The graph cannot be resized to this input geometry — check \
-                             that every shape-dependent block got concrete_h/concrete_w \
-                             at build time."
-                        )));
-                    }
-                    // Only cache after a successful resize: caching on failure
-                    // would skip the retry for every later frame.
-                    *cached = Some(shape_key);
-                }
-                needs
-            };
-            // `resize()` re-allocates the session tensors, so the handles
-            // cached in the pool (and used above for the gain map) are stale
-            // for everything that follows. Re-resolve them before writing the
-            // per-frame weights, or those writes land in freed memory and the
-            // frame comes back black.
+            // Resize decision is PER SLOT.
+            //
+            // `Tensor::set_shape` calls `Interpreter::resizeTensor`, which
+            // takes an extent change as a signal to `setNeedResize()` on the
+            // session that owns the tensor. `Session::run()` then returns
+            // COMPUTE_SIZE_ERROR until that session is resized again. Sessions
+            // are handed out round-robin, so with a single engine-wide "last
+            // shape" key only the first session was ever resized: the other
+            // three failed every time with exactly the COMPUTE_SIZE_ERROR the
+            // camera saw.
+            let needs_resize = slot.resized_for != Some((w, h));
             if needs_resize {
+                // Vignetting gain map is a runtime extra input (not a baked
+                // initializer): resize it to the post-demosaic dims (h/2 × w/2)
+                // and fill with computed gains BEFORE resizeSession so the Mul
+                // shape check passes during propagation. A baked [1,1,H,W] gain
+                // would break resizeSession for any input size differing from
+                // the model's baked dims.
+                Self::write_vignetting_gain(&slot.tensor_pool, interp, &slot.sess, h, w);
+                // Resolve the frame input by NAME (never getSessionInput(
+                // nullptr), which is the alphabetically-first input in
+                // multi-input models) and give it this frame's extent.
+                let frame_t = interp
+                    .get_input(&slot.sess, self.frame_input_name.as_deref().unwrap_or(""))
+                    .or_else(|| interp.get_first_input(&slot.sess));
+                if let Some(t) = frame_t {
+                    let _ = t.set_shape(interp.as_ptr(), slot.sess.as_ptr(), &shape);
+                }
+                // Surface the real reason instead of deferring to the FFI's
+                // opaque `n=-3`: this call is where a graph that cannot take
+                // the geometry actually fails.
+                if let Err(e) = slot.sess.resize() {
+                    return Err(crate::error::IspError::Mnn(format!(
+                        "session resize failed for {w}x{h} (mode={mode:?}): {e}. \
+                         The graph cannot be resized to this input geometry — check \
+                         that every shape-dependent block got concrete_h/concrete_w \
+                         at build time."
+                    )));
+                }
+                slot.resized_for = Some((w, h));
+                // `resize()` re-allocates the session tensors, so the handles
+                // cached in the pool (and used above for the gain map) are stale
+                // for everything that follows. Re-resolve them before writing
+                // the per-frame weights, or those writes land in freed memory
+                // and the frame comes back black.
                 slot.refresh_tensors(interp);
             }
             let sess = &slot.sess;
