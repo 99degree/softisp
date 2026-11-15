@@ -65,6 +65,12 @@ fn build() -> Option<Box<dyn IspEngine>> {
 #[test]
 #[ignore]
 fn controller_loop_is_closed() {
+    // Without a logger the engine's `debug!` stats trace goes nowhere, and the
+    // question "what means did the controller actually see" is unanswerable.
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(false)
+        .try_init();
     cam_isp::init();
 
     let (w, h) = (512u32, 384u32);
@@ -125,6 +131,12 @@ fn controller_loop_is_closed() {
         let f = engine.process(&params).expect("process");
         last = plane_means(&f.data);
 
+        // What is the stats tap actually handing the controller?
+        if i == 0 {
+            if let Some(aux) = &f.aux {
+                let _ = aux;
+            }
+        }
         let (awb, ccm_bg, cct) = {
             let ctrl = engine.controller().lock().expect("controller");
             (ctrl.get_awb_gains(), ctrl.get_ccm()[1], ctrl.estimated_cct)
