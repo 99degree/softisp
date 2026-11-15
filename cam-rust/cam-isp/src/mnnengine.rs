@@ -112,6 +112,10 @@ pub struct MnnEngine {
     /// the RGBA display tensor alone is 77 MB -> 38 MB per session, which is
     /// what makes a multi-session pool fit on a phone at all.
     fp16_storage: bool,
+    /// Whether the graph divides by `sensor_max` at its head (a
+    /// `NormalizeBlock`). Defaults to true, the shape of every profile that
+    /// keeps the block.
+    normalizes_at_input: bool,
     /// Expected input tensor element count from model (for validation).
     expected_input_elements: Option<u32>,
     /// ISP controller for AWB/AE/CCM/tone parameter estimation.
@@ -184,6 +188,7 @@ impl MnnEngine {
             input_mode: None,
             preserve_input_type: false,
             fp16_storage: true,
+            normalizes_at_input: true,
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
             pool_size,
@@ -280,6 +285,22 @@ impl MnnEngine {
     /// Whether fp16 tensor storage is requested.
     pub fn fp16_storage(&self) -> bool {
         self.fp16_storage
+    }
+
+    /// Declare whether the graph divides by `sensor_max` at its head.
+    ///
+    /// True (the default) when the pipeline carries a `NormalizeBlock`, whose
+    /// `max_val` input `set_extra_inputs` writes. False when the pipeline was
+    /// built with `PipelineProfile::normalize_at_display`, where the divide is
+    /// folded into the display Conv and the engine must therefore scale the
+    /// unit-bearing parameters by `sensor_max` itself.
+    pub fn set_normalizes_at_input(&mut self, yes: bool) {
+        self.normalizes_at_input = yes;
+    }
+
+    /// See [`Self::set_normalizes_at_input`].
+    pub fn normalizes_at_input(&self) -> bool {
+        self.normalizes_at_input
     }
 
     /// Narrow the graph's `f32 [0,255]` output to `u8` bytes.
@@ -687,6 +708,7 @@ impl MnnEngine {
         isp_params: Option<&crate::isp_params::IspParams>,
         warp_grid: Option<&[f32]>,
         warp_shading: Option<&[f32]>,
+        input_scale: f32,
     ) {
         /// Look up a cached tensor handle by name prefix (fast — no CString alloc).
         fn find<'a>(
@@ -734,8 +756,27 @@ impl MnnEngine {
         // Write raw tensor bytes from each block's `extra_input_defaults()`.
         // These are written FIRST so that per-frame isp_params overrides
         // below take precedence.
+        //
+        // `input_scale` is 1.0 unless the pipeline deferred the divide: then
+        // the frame is still in raw counts, so the display Conv — whose weights
+        // carry the [0,1] to [0,255] scaling — must be divided by the same
+        // factor or every pixel saturates on the first clamp.
         let defaults = self.default_inputs.lock().unwrap();
         for (name, data) in defaults.iter() {
+            if input_scale != 1.0 && name == "DisplayBlock/conv_w" {
+                let scaled: Vec<u8> = data
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .flat_map(|b| {
+                        (f32::from_le_bytes(*b) / input_scale)
+                            .to_le_bytes()
+                            .to_vec()
+                    })
+                    .collect();
+                write_raw(pool, name, &scaled);
+                continue;
+            }
             write_raw(pool, name, data);
         }
         drop(defaults);
@@ -832,7 +873,23 @@ impl MnnEngine {
         write_f32(pool, "DisplayBlock/scale", 1.0);
         write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
         write_f32(pool, "DisplayBlock/zero", 0.0);
-        write_f32(pool, "DisplayBlock/one", 1.0);
+        write_f32(pool, "DisplayBlock/one", input_scale);
+        // Every `Clip(x, <ns>/zero, <ns>/one)` in the chain assumes a [0,1]
+        // frame. With the divide deferred it must allow the full white level,
+        // or highlights saturate at a single count.
+        if input_scale != 1.0 {
+            for ns in [
+                "BlcBlock_dpc",
+                "BlcBlock",
+                "BayerWbBlock",
+                "CcmBlock_ccm",
+                "ToneBlock",
+                "SaturationBlock",
+            ] {
+                write_f32(pool, &format!("{ns}/one"), input_scale);
+                write_f32(pool, &format!("{ns}/zero"), 0.0);
+            }
+        }
         // GammaBlock — inv_gamma, min, max, lift, norm
         if let Some(isp) = isp_params {
             let inv_gamma = if isp.tone.gamma > 0.0 {
@@ -855,7 +912,7 @@ impl MnnEngine {
             write_f32(pool, "DisplayBlock/scale", 1.0);
             write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
             write_f32(pool, "DisplayBlock/zero", 0.0);
-            write_f32(pool, "DisplayBlock/one", 1.0);
+            write_f32(pool, "DisplayBlock/one", input_scale);
             // SaturationBlock/scale [3] — from saturation.factor
             write_f32_array(pool, "saturation/scale", &[isp.saturation.factor; 3]);
             // Sharpen/strength [1] — from sharpen.amount
@@ -1194,6 +1251,17 @@ impl IspEngine for MnnEngine {
         let awb = p.awb_gains.as_ref();
         let bayer_pattern = p.bayer_pattern;
 
+        // `sensor_max` is normally applied by `NormalizeBlock` at the head of
+        // the chain, and `set_extra_inputs` feeds it the divisor. When the
+        // pipeline was instead built with the divide folded into the display,
+        // that block is absent: the graph works in raw sensor counts and the
+        // values that carry physical meaning have to be scaled here instead.
+        let input_scale = if self.normalizes_at_input || smax <= 1.0 {
+            1.0
+        } else {
+            smax
+        };
+
         // If isp_params is available, override individual fields
         // This allows per-frame controller params to flow through
         let (override_ccm, override_tone, override_bayer) = if let Some(ref params) = p.isp_params {
@@ -1210,6 +1278,22 @@ impl IspEngine for MnnEngine {
             )
         } else {
             (None, None, None)
+        };
+        // In the deferred scheme the frame is still in raw sensor counts.
+        // Brightness is additive against the frame so it scales by `smax`;
+        // contrast is multiplicative and means the same thing either way.
+        let scaled_tone;
+        let tone = if self.normalizes_at_input {
+            override_tone.as_ref().unwrap_or(tone)
+        } else {
+            let base = override_tone.as_ref().unwrap_or(tone);
+            scaled_tone = cam_types::ToneParams {
+                contrast: base.contrast,
+                brightness: base.brightness * input_scale,
+                gamma_recip: base.gamma_recip,
+                ..*base
+            };
+            &scaled_tone
         };
         let ccm = override_ccm.or(ccm);
         let tone = override_tone.as_ref().unwrap_or(tone);
@@ -1326,6 +1410,7 @@ impl IspEngine for MnnEngine {
                 p.isp_params.as_ref(),
                 p.warp_grid,
                 p.warp_shading,
+                input_scale,
             );
             let t_tensor_after: std::time::Instant = Instant::now();
             debug!(
