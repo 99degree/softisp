@@ -65,6 +65,20 @@ fn init_logger() {
 /// bounds the largest allocation in the graph.
 const TAIL_MAX_EDGE: u32 = 1920;
 
+/// Whether the post-CCM downscale is enabled.
+///
+/// **Off deliberately.** The block builds a session now (`scales` and the
+/// output dims are consistent), but `runSession` still fails with
+/// COMPUTE_SIZE_ERROR and the cause is not yet pinned: `cam-isp`'s
+/// `probe_post_ccm_downscale` test reproduces it in isolation —
+///
+///     off          8 frames OK, output 1296x970
+///     1920x1436    FAILED: runSession failed: MNN error code=3
+///
+/// so it is not an interaction with the camera. Until that test passes, the
+/// app must not build the pipeline with it.
+const TAIL_DOWNSCALE_ENABLED: bool = false;
+
 /// Choose the post-CCM (RGB tail) geometry for a sensor of `w`x`h`.
 ///
 /// Returns `(0, 0)` when the sensor already fits: downscaling a frame that is
@@ -168,7 +182,11 @@ impl Preview {
         // (fp32) or 38 MB (fp16) per session, and the whole cosmetic chain runs
         // on it. Downscaling here keeps demosaic full resolution — Bayer is a
         // quarter the elements — while making everything downstream cheaper.
-        profile.post_ccm_downscale = post_ccm_downscale(pipeline_width, pipeline_height);
+        profile.post_ccm_downscale = if TAIL_DOWNSCALE_ENABLED {
+            post_ccm_downscale(pipeline_width, pipeline_height)
+        } else {
+            (0, 0)
+        };
         if profile.post_ccm_downscale != (0, 0) {
             log::info!(
                 "post-CCM downscale: {}x{} -> {}x{}",
