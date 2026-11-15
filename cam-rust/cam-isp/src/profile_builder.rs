@@ -198,11 +198,16 @@ impl PipelineProfile {
         let (ds_w, ds_h) = self.post_ccm_downscale;
         let (tail_w, tail_h) = if ds_w > 0 && ds_h > 0 {
             info!("  post-CCM downscale: {target_width}x{concrete_h} -> {ds_w}x{ds_h}");
-            blocks.push(Box::new(
-                AdaptiveDownscaleBlock::new(ds_w as i64, ds_h as i64, 0, "edge", "fit")
-                    .with_concrete_dims(concrete_h, target_width as i64),
-            ));
-            (ds_w, ds_h)
+            let ds = AdaptiveDownscaleBlock::new(ds_w as i64, ds_h as i64, 0, "edge", "fit")
+                .with_concrete_dims(concrete_h, target_width as i64);
+            // Use the block's *own* idea of its output size, not the requested
+            // target. MNN derives the Resize extent as
+            // `floor(scale * input)`, so a 2592 -> 1920 fit lands on 1918; the
+            // tail blocks must declare that number or every downstream shape
+            // check disagrees with the tensor and `runSession` fails.
+            let (tail_h_i, tail_w_i) = ds.out_dims();
+            blocks.push(Box::new(ds));
+            (tail_w_i as u32, tail_h_i as u32)
         } else {
             (target_width, concrete_h as u32)
         };
