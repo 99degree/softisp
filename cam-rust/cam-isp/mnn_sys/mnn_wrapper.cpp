@@ -90,7 +90,8 @@ void mnn_interpreter_destroy(MnnInterpreter interpreter) {
 
 // ── Session ──────────────────────────────────────────────────────────────
 
-MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend, int num_threads) {
+MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend, int num_threads,
+                              int precision) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     if (!net) return nullptr;
 
@@ -111,10 +112,23 @@ MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend
         case MNN_BACKEND_NN:     config.type = MNN_FORWARD_NN; break;
         default:                 config.type = MNN_FORWARD_CPU; break;
     }
-    
-    // Use high precision for Vulkan backend to ensure correct ISP output
+
+    // Precision is a *memory* knob on the Vulkan backend, not only an accuracy
+    // one: `VulkanBackend` sets
+    //
+    //     mUseFP16 = (precision != Precision_High && device supports fp16)
+    //
+    // and `getTensorSize` then halves the bytes per element for every float
+    // tensor in the graph. At 2592x1940 the RGBA display tensor alone is 38 MB
+    // per session instead of 77 MB, and the whole pipeline is float, so this
+    // is the single largest lever on peak GPU memory.
+    //
+    //   precision 0 = Precision_Normal -> fp16 storage when supported
+    //   precision 1 = Precision_High   -> fp32 storage (the old hardcoded value)
     MNN::BackendConfig backendConfig;
-    backendConfig.precision = MNN::BackendConfig::Precision_High;
+    backendConfig.precision = (precision == 0)
+        ? MNN::BackendConfig::Precision_Normal
+        : MNN::BackendConfig::Precision_High;
     config.backendConfig = &backendConfig;
 
     auto* session = net->createSession(config);
