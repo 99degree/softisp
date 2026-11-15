@@ -130,9 +130,16 @@ impl IspBlock for ToneBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         vec![
+            // Exposure first: gain scales the signal, then contrast shapes it.
             Proto::node(
                 "Mul",
-                &[&self.input_source, &format!("{}/contrast", ns)],
+                &[&self.input_source, &format!("{}/exposure", ns)],
+                &[&format!("{}/exposed", ns)],
+                &[],
+            ),
+            Proto::node(
+                "Mul",
+                &[&format!("{}/exposed", ns), &format!("{}/contrast", ns)],
                 &[&format!("{}/contrasted", ns)],
                 &[],
             ),
@@ -167,6 +174,11 @@ impl IspBlock for ToneBlock {
             // optimizer then trips over the half-connected op.
             (format!("{}/contrast", ns).to_string(), 1, vec![1]),
             (format!("{}/brightness", ns).to_string(), 1, vec![1]),
+            // Exposure gain from the AE loop. It multiplies the frame before
+            // the contrast/brightness stage, so a bright or dark scene is
+            // corrected at the right point in the tone curve instead of being
+            // folded into an additive brightness offset.
+            (format!("{}/exposure", ns).to_string(), 1, vec![1]),
             (format!("{}/zero", ns).to_string(), 1, vec![]),
             (format!("{}/one", ns).to_string(), 1, vec![]),
         ]
@@ -182,6 +194,11 @@ impl IspBlock for ToneBlock {
             (
                 format!("{}/brightness", ns).to_string(),
                 self.brightness.to_ne_bytes().to_vec(),
+            ),
+            // Neutral gain: the AE loop overwrites this once it has stats.
+            (
+                format!("{}/exposure", ns).to_string(),
+                1.0f32.to_ne_bytes().to_vec(),
             ),
             (
                 format!("{}/zero", ns).to_string(),
@@ -214,8 +231,8 @@ mod tests {
         let mut b = ToneBlock::new();
         b.set_input_source("in/frame");
         let nodes = b.nodes();
-        // Mul + Add + Clip = 3 nodes
-        assert_eq!(nodes.len(), 3);
+        // exposure Mul + contrast Mul + brightness Add + Clip = 4 nodes
+        assert_eq!(nodes.len(), 4);
     }
 
     #[test]
@@ -228,11 +245,12 @@ mod tests {
     fn test_tone_initializers() {
         let b = ToneBlock::new();
         let inits = b.extra_input_defaults();
-        // contrast + brightness (Mul/Add node inputs) + zero/one (Clip bounds)
-        assert_eq!(inits.len(), 4);
+        // contrast + brightness + exposure (Mul/Add node inputs) + zero/one
+        assert_eq!(inits.len(), 5);
         let names: Vec<&str> = inits.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"ToneBlock/contrast"));
         assert!(names.contains(&"ToneBlock/brightness"));
+        assert!(names.contains(&"ToneBlock/exposure"));
     }
 
     #[test]
