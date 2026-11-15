@@ -51,6 +51,14 @@ pub struct PipelineConfig {
 }
 
 impl PipelineConfig {
+    /// Whether the engine emits planar f32 RGB rather than bytes.
+    ///
+    /// Both variants of this config request `FloatRgb`; the flag exists so the
+    /// frame loop does not have to keep a second copy of the format decision.
+    pub fn float_output(&self) -> bool {
+        true
+    }
+
     /// Build `ProcessParams` for one frame.
     ///
     /// # Panics
@@ -66,9 +74,13 @@ impl PipelineConfig {
         let mut params = ProcessParams::new(width, height, staged);
         params.sensor_max = self.sensor_max;
         params.bayer_pattern = self.bayer_pattern;
-        // The CPU engine writes BGRA through the display block, so the
-        // intermediate packed format is never observed by this app.
-        params.output_format = OutputFormat::Bgra;
+        // `FloatRgb`: the graph emits `[1,3,H,W]` f32 in [0,1] with no
+        // convolution. The u8 display formats instead emit a Conv(1x1) that
+        // applies the format permutation and the x255 scale — and on Vulkan
+        // that kernel comes out zero (the backend reads weights from the
+        // operator, not from a graph input), so those formats render black.
+        // The planar RGB is converted to BGRA on the host instead.
+        params.output_format = OutputFormat::FloatRgb;
         params.timestamp_ns = ts_ns;
         params
     }
@@ -138,7 +150,7 @@ mod tests {
         assert_eq!(p.sensor_max, 4095.0);
         assert_eq!(p.bayer_pattern, 2);
         assert_eq!(p.timestamp_ns, 1234);
-        assert_eq!(p.output_format, OutputFormat::Bgra);
+        assert_eq!(p.output_format, OutputFormat::FloatRgb);
         assert_eq!(p.width, 2);
         assert_eq!(p.height, 1);
     }
