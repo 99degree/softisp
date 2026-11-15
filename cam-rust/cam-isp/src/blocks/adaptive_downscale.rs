@@ -449,7 +449,23 @@ impl IspBlock for AdaptiveDownscaleBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        vec![]
+        // Resize `scales` must be a constant, not a graph input: MNN derives
+        // the Resize output shape from this tensor's contents during
+        // `resizeSession` (`InterpComputer` → `scalePtr[i] * input.dim[i]`),
+        // which runs before the engine could ever write a runtime value. As a
+        // graph input it dereferences a null host pointer and the session is
+        // never created.
+        let ns = self.tensor_ns();
+        let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
+        if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
+            vec![Proto::tensor_proto_float(
+                &format!("{}/scales", ns),
+                &[4],
+                &[1.0, 1.0, scale_h as f32, scale_w as f32],
+            )]
+        } else {
+            vec![]
+        }
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -479,11 +495,19 @@ impl IspBlock for AdaptiveDownscaleBlock {
                 inputs.push((format!("{}/crop_steps", ns), 6, vec![1, 1, 1, 1]));
             }
         }
-        // Resize scale factors
-        let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
-        if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
-            inputs.push((format!("{}/scales", ns), 1, vec![4]));
-        }
+        // Resize scale factors are NOT declared as runtime inputs on purpose.
+        //
+        // MNN's InterpComputer reads the shape tensor's host data while
+        // computing output shapes (`scalePtr[i] * input.dim[i].extent`), which
+        // happens at resizeSession time — long before the engine writes any
+        // runtime input. A graph input there dereferences a null host pointer
+        // and even crashes `createSession`: on device this showed up as
+        // "probe session create fail (Vulkan backend unavailable)" for an ISP
+        // graph that otherwise builds fine.
+        //
+        // They are emitted as initializers instead (see `initializers`), which
+        // makes them constant and readable at shape-inference time.
+        let (_, _, _oh, _ow) = self.scale_out_dims();
         // EIS margin center-crop
         if self.margin > 0.001 && _oh > self.target_h && _ow > self.target_w {
             let crop_h = (_oh - self.target_h) / 2;
@@ -572,15 +596,10 @@ impl IspBlock for AdaptiveDownscaleBlock {
             }
         }
         let (scale_h, scale_w, _oh, _ow) = self.scale_out_dims();
-        if (scale_h - 1.0).abs() > 0.001 || (scale_w - 1.0).abs() > 0.001 {
-            defaults.push((
-                format!("{}/scales", ns),
-                [1.0f32, 1.0, scale_h as f32, scale_w as f32]
-                    .iter()
-                    .flat_map(|v| v.to_ne_bytes())
-                    .collect::<Vec<u8>>(),
-            ));
-        }
+        // `scales` is an initializer, not a runtime input (see `initializers`),
+        // so it must not also be pushed as a default value here — writing it
+        // would target a tensor the engine no longer exposes as an input.
+        let _ = (scale_h, scale_w);
         if self.margin > 0.001 && _oh > self.target_h && _ow > self.target_w {
             let crop_h = (_oh - self.target_h) / 2;
             let crop_w = (_ow - self.target_w) / 2;
