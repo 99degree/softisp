@@ -180,11 +180,26 @@ impl PipelineProfile {
         }
 
         if self.use_lsc {
-            info!("  lsc: CcmBlock");
-            // Post-CFA tensors carry 4 Bayer quad channels; the LSC CCM must
-            // match (4→4 identity pass-through), otherwise MNN resizeSession
-            // rejects the 1x1 conv: inputChannel 4 vs filter inputCount 3.
-            blocks.push(Box::new(CcmBlock::with_instance("lsc").with_channels(4)));
+            // Lens shading is a radial gain on the raw quad, applied here —
+            // before demosaic, so the four Bayer sites each get corrected at
+            // their own position rather than after they have been mixed.
+            //
+            // The gain map is a runtime graph input (the engine fills it at the
+            // frame's geometry), which is why this is the vignetting block with
+            // a 4-plane map and not a CCM: the previous 4x4 identity Conv here
+            // was a placeholder that did nothing.
+            info!("  lsc: VignettingBlock (4-plane, post-CFA)");
+            blocks.push(Box::new(
+                // The post-CFA quad is the demosaiced geometry: half the
+                // sensor in each axis.
+                crate::blocks::VignettingBlock::new(
+                    (target_width / 2).max(1),
+                    (sensor_height / 2).max(1),
+                    self.lsc_strength,
+                )
+                .with_instance("lsc")
+                .with_channels(4),
+            ));
         } else {
             info!("  lsc: IDENTITY");
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("lsc")));

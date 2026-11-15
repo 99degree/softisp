@@ -72,6 +72,12 @@ pub struct PipelineProfile {
     pub use_unsharp: bool,
     /// Enable lens shading correction.
     pub use_lsc: bool,
+    /// Lens shading strength (0.0 = off, 1.0 = full correction).
+    ///
+    /// The gain map is computed from this at frame time; it is not a
+    /// per-sensor calibration table, so a device with a real LSC grid would
+    /// override the map rather than this scalar.
+    pub lsc_strength: f32,
     /// Enable image warping (EIS/deshake).
     pub use_warp: bool,
     /// Enable HDR merge.
@@ -182,6 +188,7 @@ impl PipelineProfile {
         use_local_contrast: false,
         use_unsharp: false,
         use_lsc: false,
+        lsc_strength: 0.5,
         use_warp: false,
         use_hdr: false,
         rotate_mode: 0,
@@ -226,6 +233,7 @@ impl PipelineProfile {
         use_local_contrast: false,
         use_unsharp: true,
         use_lsc: false,
+        lsc_strength: 0.5,
         use_warp: false,
         use_hdr: false,
         rotate_mode: 0,
@@ -270,6 +278,7 @@ impl PipelineProfile {
         use_local_contrast: true,
         use_unsharp: true,
         use_lsc: true,
+        lsc_strength: 0.5,
         use_warp: false,
         use_hdr: false,
         rotate_mode: 0,
@@ -314,6 +323,7 @@ impl PipelineProfile {
         use_local_contrast: true,
         use_unsharp: true,
         use_lsc: true,
+        lsc_strength: 0.5,
         use_warp: true,
         use_hdr: true,
         rotate_mode: 0,
@@ -357,6 +367,7 @@ impl PipelineProfile {
         use_ldci: false,
         use_ee: false,
         use_lsc: false,
+        lsc_strength: 0.5,
         use_warp: false,
         use_hdr: false,
         use_local_contrast: false,
@@ -406,6 +417,7 @@ impl PipelineProfile {
         use_local_contrast: false,
         use_unsharp: false,
         use_lsc: true,
+        lsc_strength: 0.5,
         use_warp: false,
         use_hdr: false,
         rotate_mode: 0,
@@ -461,6 +473,7 @@ impl PipelineProfile {
         use_local_contrast: false,
         use_unsharp: false,
         use_lsc: true,
+        lsc_strength: 0.5,
         use_warp: true, // EIS alignment between exposures
         use_hdr: true,
         rotate_mode: 0,
@@ -514,6 +527,7 @@ impl PipelineProfile {
         use_local_contrast: false,
         use_unsharp: true,
         use_lsc: false,
+        lsc_strength: 0.5,
         use_warp: false,
         use_hdr: false,
         rotate_mode: 0,
@@ -609,6 +623,7 @@ impl PipelineProfile {
             use_local_contrast,
             use_unsharp,
             use_lsc,
+            lsc_strength: 0.5,
             use_warp,
             use_hdr,
             rotate_mode,
