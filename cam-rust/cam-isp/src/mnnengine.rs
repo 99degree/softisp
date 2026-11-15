@@ -1506,13 +1506,32 @@ impl IspEngine for MnnEngine {
             let t_infer_elapsed = t_infer_start.elapsed();
 
             if n <= 0 {
+                // The FFI's negative code alone cannot say *why*: -6/-7/-8 are
+                // shape problems, a negative MNN code is a backend error. The
+                // C side records the reason alongside the code.
+                let detail = unsafe {
+                    let p = crate::mnn_sys::mnn_last_error();
+                    if p.is_null() {
+                        String::new()
+                    } else {
+                        CStr::from_ptr(p).to_string_lossy().into_owned()
+                    }
+                };
                 error!("MNN inference failed: n={} (input={}x{}, output_name='DisplayBlock/frame', path={})", n, w, h, path);
-                error!("  This usually means the MNN IspChainFusion pass computed wrong output dimensions.");
-                error!("  Check that RawInputBlock has concrete_h and concrete_w set (not -1).");
-                return Err(crate::error::IspError::Mnn(format!(
-                    "MNN inference failed: n={} (input={}x{})",
-                    n, w, h
-                )));
+                if detail.is_empty() {
+                    error!("  This usually means the MNN IspChainFusion pass computed wrong output dimensions.");
+                    error!(
+                        "  Check that RawInputBlock has concrete_h and concrete_w set (not -1)."
+                    );
+                } else {
+                    error!("  MNN reported: {detail}");
+                }
+                let reason = if detail.is_empty() {
+                    format!("MNN inference failed: n={n} (input={w}x{h})")
+                } else {
+                    format!("MNN inference failed: n={n} (input={w}x{h}): {detail}")
+                };
+                return Err(crate::error::IspError::Mnn(reason));
             }
 
             debug!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts) prep={:?} infer={:?}",

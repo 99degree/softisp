@@ -16,10 +16,40 @@
 #include <cstring>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdarg>
+#include <cstdio>
+#include <string>
 #include <MNN/MNNForwardType.h>
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
+
+// ── Last inference error ───────────────────────────────────────────────
+// `mnn_run_with_output` can fail for several distinct reasons that all
+// collapse into one negative return code. The engine reports the code, but
+// the app only has its own log file — not logcat — so the reason has to be
+// readable from Rust. The message is set on every failure path and cleared
+// at the top of each run.
+static std::mutex g_last_error_mutex;
+static std::string g_last_error;
+
+static void set_last_error(const char* fmt, ...) {
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    std::lock_guard<std::mutex> lock(g_last_error_mutex);
+    g_last_error = buf;
+    MNN_PRINT("[mnn_run] %s\n", buf);
+}
+
+/// Returns the message from the most recent `mnn_run_with_output` failure,
+/// or an empty string when the last run succeeded.
+extern "C" const char* mnn_last_error(void) {
+    std::lock_guard<std::mutex> lock(g_last_error_mutex);
+    return g_last_error.c_str();
+}
 
 // ── Vulkan plugin loader ───────────────────────────────────────────────
 // MNN_SEP_BUILD compiles backends as separate .so files. Each backend has
@@ -524,6 +554,10 @@ extern "C" int mnn_run_with_output(
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!net || !sess || !buffer || !out_data) return -1;
+    {
+        std::lock_guard<std::mutex> lock(g_last_error_mutex);
+        g_last_error.clear();
+    }
 
     // The model may declare several inputs (frame + runtime-fed weights).
     // MNN's getSessionInput(nullptr) returns the alphabetically-first input
@@ -532,12 +566,19 @@ extern "C" int mnn_run_with_output(
     auto* in_tensor = (input_name != nullptr)
         ? net->getSessionInput(sess, input_name)
         : net->getSessionInput(sess, nullptr);
-    if (!in_tensor) return -1;
+    if (!in_tensor) {
+        set_last_error("frame input '%s' not found in session",
+                       input_name ? input_name : "(first)");
+        return -1;
+    }
 
     halide_type_t buffer_type = { (halide_type_code_t)buffer_type_code, (uint8_t)buffer_type_bits, 1 };
     auto model_type = in_tensor->getType();
     
     if (model_type.code != buffer_type.code || model_type.bits != buffer_type.bits) {
+        set_last_error("input type mismatch: model code=%d bits=%d, buffer code=%d bits=%d",
+                       (int)model_type.code, (int)model_type.bits,
+                       (int)buffer_type.code, (int)buffer_type.bits);
         return -2;
     }
 
@@ -554,13 +595,40 @@ extern "C" int mnn_run_with_output(
     // `copyFromHostTensor` is the supported upload — it does the host→device
     // transfer for whichever backend the session runs on.
     if (in_tensor->elementSize() != (size_t)total) {
+        set_last_error("input element mismatch before resize: model=%zu requested=%d, resizing",
+                       in_tensor->elementSize(), total);
+        // Set the new shape on the input tensor, then propagate it through the
+        // graph. `tryResizeSession` is the variant that reports *why* it failed
+        // (memory vs. compute-size vs. unsupported), which is exactly what an
+        // opaque negative return code cannot convey.
         net->resizeTensor(in_tensor, shape);
-        net->resizeSession(sess);
+        MNN::ErrorCode rc = net->tryResizeSession(sess);
+        if (rc != MNN::NO_ERROR) {
+            set_last_error("tryResizeSession failed: code=%d (%s)", (int)rc,
+                           rc == MNN::OUT_OF_MEMORY      ? "OUT_OF_MEMORY"
+                           : rc == MNN::NOT_SUPPORT      ? "NOT_SUPPORT"
+                           : rc == MNN::COMPUTE_SIZE_ERROR ? "COMPUTE_SIZE_ERROR"
+                           : rc == MNN::NO_EXECUTION     ? "NO_EXECUTION"
+                                                         : "OTHER");
+            return -6;
+        }
         in_tensor = (input_name != nullptr) ? net->getSessionInput(sess, input_name)
                                             : net->getSessionInput(sess, nullptr);
-        if (!in_tensor) return -3;
+        if (!in_tensor) {
+            set_last_error("frame input vanished after tryResizeSession");
+            return -7;
+        }
         if (in_tensor->elementSize() != (size_t)total) {
-            return -4;
+            auto s = in_tensor->shape();
+            char shapebuf[128] = {0};
+            size_t off = 0;
+            for (size_t i = 0; i < s.size() && off + 12 < sizeof(shapebuf); i++) {
+                off += snprintf(shapebuf + off, sizeof(shapebuf) - off, "%s%d",
+                                i ? "," : "", s[i]);
+            }
+            set_last_error("resize did not take: model=%zu requested=%d resulting shape=[%s]",
+                           in_tensor->elementSize(), total, shapebuf);
+            return -8;
         }
     }
 
@@ -574,6 +642,10 @@ extern "C" int mnn_run_with_output(
     // Run inference.
     auto run_ok = net->runSession(sess);
     if (run_ok != 0) {
+        set_last_error("runSession failed: MNN error code=%d (%s)", run_ok,
+                       run_ok == 1 ? "OUT_OF_MEMORY" : run_ok == 2 ? "NOT_SUPPORT"
+                       : run_ok == 3 ? "COMPUTE_SIZE_ERROR" : run_ok == 4 ? "NO_EXECUTION"
+                       : "OTHER");
         // MNN returns positive error codes (e.g. COMPUTE_SIZE_ERROR=3).
         // Normalize to a negative value so callers treat failures as errors
         // rather than mistaking a big positive code for a valid element count.
