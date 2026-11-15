@@ -29,9 +29,14 @@ use pipeline::{FrameStager, PipelineConfig};
 use preview::WindowTarget;
 use storage::Access;
 
-/// Frames processed between two stat lines. At 30 fps this is one line per
-/// second: frequent enough to spot a stall, sparse enough to stay readable.
-const STATS_INTERVAL_FRAMES: u64 = 30;
+/// Frames processed between two stat lines.
+///
+/// The preview runs at ~1 fps on this hardware, so the old value of 30 meant a
+/// status line every half minute — and a session that ended before frame 30
+/// (the camera reports an error after ~20 s) never printed one at all. That is
+/// why a black preview produced no content report to compare against. Five
+/// gives a line every few seconds.
+const STATS_INTERVAL_FRAMES: u64 = 5;
 
 /// How long the event loop blocks waiting for a new frame or lifecycle event.
 ///
@@ -474,7 +479,11 @@ impl Preview {
                 ),
             );
         }
-        if self.frames > 0 && self.frames.is_multiple_of(STATS_INTERVAL_FRAMES) {
+        // The first frame always reports: it is the one that answers "is the
+        // picture visible at all", and a session may not survive to frame 5.
+        if self.frames == 1
+            || (self.frames > 0 && self.frames.is_multiple_of(STATS_INTERVAL_FRAMES))
+        {
             let (w, h) = self.last_frame.as_ref().map_or((0, 0), |f| (f.1, f.2));
             // Report what the frame actually contains, not just its size.
             //
