@@ -188,6 +188,7 @@ const HD: Resolution = Resolution {
 const RESOLUTIONS: [Resolution; 4] = [HD, FHD, QHD, UHD_4K];
 
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_performance_logging_infrastructure() {
     println!("\n=== Performance Logging Infrastructure Test ===\n");
 
@@ -236,6 +237,7 @@ fn test_performance_logging_infrastructure() {
 }
 
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_perf_data_read_write() {
     println!("\n=== Performance Data Read/Write Test ===\n");
 
@@ -270,6 +272,7 @@ fn test_perf_data_read_write() {
 }
 
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_realistic_performance_estimates() {
     println!("\n=== Realistic Performance Estimates ===\n");
 

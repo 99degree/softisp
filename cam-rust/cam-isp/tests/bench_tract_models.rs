@@ -15,6 +15,7 @@ fn models_dir() -> PathBuf {
 }
 
 #[test]
+#[ignore = "benchmark"]
 fn bench_fp32_tract() {
     let path = models_dir().join("fusedispcontroller.onnx");
     if !path.exists() {
@@ -65,6 +66,7 @@ fn bench_fp32_tract() {
 }
 
 #[test]
+#[ignore = "benchmark"]
 fn bench_int8_tract() {
     let path = models_dir().join("fusedispcontroller_int8.onnx");
     if !path.exists() {
@@ -115,6 +117,7 @@ fn bench_int8_tract() {
 }
 
 #[test]
+#[ignore = "benchmark"]
 fn bench_fp16_tract() {
     let path = models_dir().join("fusedispcontroller_fp16.onnx");
     if !path.exists() {
@@ -169,6 +172,7 @@ fn bench_fp16_tract() {
 }
 
 #[test]
+#[ignore = "benchmark"]
 fn bench_all_models_comparison() {
     let iterations = 100;
 
