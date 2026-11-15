@@ -18,6 +18,17 @@ use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+/// The controller fields the graph is fed from, captured once per frame.
+///
+/// Taken as a snapshot so the controller lock is released before the encode —
+/// holding it across inference would serialise every frame against the 3A maths.
+struct ControllerState {
+    awb: [f32; 3],
+    ccm: [f32; 9],
+    tone: cam_types::ToneParams,
+    frames: u32,
+}
+
 /// Set once the graph's channel count disagrees with the requested format.
 ///
 /// The condition holds for every frame, so it is reported exactly once.
@@ -1284,9 +1295,39 @@ impl IspEngine for MnnEngine {
         let buf = p.buf;
         let smax = p.sensor_max;
         let tw = p.target_width;
-        let ccm = p.ccm_matrix.as_ref();
-        let tone = &p.tone_params;
-        let bayer = p.bayer_gains.as_ref();
+        // ── Close the 3A loop ──
+        //
+        // The stats phase below calls `update_channel_stats` /
+        // `update_tone_stats`, which move `awb_gains` and `smoothed_ccm` on the
+        // controller. But the graph is fed from `ProcessParams`, and no caller
+        // has to fill those in — the app passes `ccm_matrix: None`,
+        // `bayer_gains: None`, `awb_gains: None`. The controller then computes
+        // gains that nothing applies, and with a static scene the picture is
+        // byte-identical frame after frame while `awb_gains` walks.
+        //
+        // Explicit values from the caller still win; only the slots left empty
+        // are taken from the controller.
+        let ctrl = self.controller.lock().ok().map(|c| ControllerState {
+            awb: c.get_awb_gains(),
+            ccm: c.get_ccm(),
+            tone: c.get_tone_params(),
+            frames: c.frame_count,
+        });
+
+        // Per-Bayer-site gains (R, Gr, Gb, B): green drives both green sites.
+        let ctrl_bayer: [f32; 4] = match &ctrl {
+            Some(c) => [c.awb[0], c.awb[1], c.awb[1], c.awb[2]],
+            None => [1.0; 4],
+        };
+        let bayer_src: Option<&[f32; 4]> = p.bayer_gains.as_ref().or(Some(&ctrl_bayer));
+        let ccm_src: Option<&[f32; 9]> = p.ccm_matrix.as_ref().or(ctrl.as_ref().map(|c| &c.ccm));
+        // Only trust the controller's tone once it has seen frames; before that
+        // it is the untouched default.
+        let tone_base: &cam_types::ToneParams = match &ctrl {
+            Some(c) if c.frames > 0 => &c.tone,
+            _ => &p.tone_params,
+        };
+
         let awb = p.awb_gains.as_ref();
         let bayer_pattern = p.bayer_pattern;
 
@@ -1323,9 +1364,9 @@ impl IspEngine for MnnEngine {
         // contrast is multiplicative and means the same thing either way.
         let scaled_tone;
         let tone = if self.normalizes_at_input {
-            override_tone.as_ref().unwrap_or(tone)
+            override_tone.as_ref().unwrap_or(tone_base)
         } else {
-            let base = override_tone.as_ref().unwrap_or(tone);
+            let base = override_tone.as_ref().unwrap_or(tone_base);
             scaled_tone = cam_types::ToneParams {
                 contrast: base.contrast,
                 brightness: base.brightness * input_scale,
@@ -1334,9 +1375,9 @@ impl IspEngine for MnnEngine {
             };
             &scaled_tone
         };
-        let ccm = override_ccm.or(ccm);
+        let ccm = override_ccm.or(ccm_src);
         let tone = override_tone.as_ref().unwrap_or(tone);
-        let bayer = override_bayer.or(bayer);
+        let bayer = override_bayer.or(bayer_src);
 
         if !self.initialized {
             return Err(crate::error::IspError::Config("not init".into()));
