@@ -15,7 +15,13 @@ use std::sync::Mutex;
 
 use log::{debug, error, info, warn};
 use std::ffi::CStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+
+/// Set once the graph's channel count disagrees with the requested format.
+///
+/// The condition holds for every frame, so it is reported exactly once.
+static CHANNEL_MISMATCH_REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Zone data: (rows, cols, zone_rgb`[r]``[c]` = `[f32; 3]`)
 type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
@@ -1726,6 +1732,26 @@ impl IspEngine for MnnEngine {
                     graph_channels = shape[1].max(1) as usize;
                     oh = shape[2] as usize;
                     ow = shape[3] as usize;
+
+                    // The graph's channel count and the caller's expectation
+                    // must agree: the buffer is decoded by interpreting channel
+                    // 0 as the start of the image. A `[1,4,H,W]` display Conv
+                    // fed to a `FloatRgb` caller is silently wrong — every
+                    // plane lands 8x too large in the wrong place — so say so
+                    // instead of rendering garbage.
+                    let expected = p.output_format.channel_count();
+                    if graph_channels != expected
+                        && !CHANNEL_MISMATCH_REPORTED.swap(true, Ordering::Relaxed)
+                    {
+                        // A configuration error, not a frame error: it holds
+                        // for every frame, so report it exactly once.
+                        warn!(
+                            "output channel mismatch: graph produced {} channels, {:?} expects {}. \
+                             The profile's `output_format` and `ProcessParams::output_format` \
+                             must agree, or every plane lands in the wrong place.",
+                            graph_channels, p.output_format, expected
+                        );
+                    }
                 }
             }
             let pixels = oh * ow;
