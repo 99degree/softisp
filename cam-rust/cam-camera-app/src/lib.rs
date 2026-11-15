@@ -70,18 +70,21 @@ const TAIL_MAX_EDGE: u32 = 1920;
 
 /// Whether the post-CCM downscale is enabled.
 ///
-/// It needs an **exact integer** reduction factor, which is why this is a
-/// toggle and not just a target size. MNN derives a Resize's output extent as
+/// **Off by default.** It is a performance measure, not a correctness one, and
+/// `cam-isp/tests/probe_post_ccm_downscale.rs` is the only thing that has ever
+/// exercised it — never a real capture on device. The pipeline that runs today
+/// is the one every other change in this file was verified against, so the
+/// preview keeps that path until the downscale has proven itself on hardware.
+///
+/// Flipping it on is one line. It selects an **exact integer** reduction
+/// factor, because MNN derives a Resize's output extent as
 ///
 ///     output.dim[i].extent = scale[i] * (float)input.dim[i].extent   // floors
 ///
-/// so a 2592 -> 1920 fit computes 1918, not 1920. Every downstream block then
-/// compares its declared shape against a tensor of a different width and
-/// `runSession` fails with COMPUTE_SIZE_ERROR — measurable with
-/// `cam-isp/tests/probe_post_ccm_downscale.rs`. Integer factors land exactly
-/// (1296/2592 and 970/1940 are both exactly representable), so the declared
-/// and computed shapes agree.
-const TAIL_DOWNSCALE_ENABLED: bool = true;
+/// A non-integer ratio still runs (the declared shape is corrected from the
+/// block's own `out_dims`), but an integer factor keeps the declared and the
+/// computed geometry identical instead of relying on that.
+const TAIL_DOWNSCALE_ENABLED: bool = false;
 
 /// Choose the post-CCM (RGB tail) geometry for a sensor of `w`x`h`.
 ///
