@@ -176,7 +176,16 @@ impl CameraSession {
         for id in &raw_supported_ids {
             match session.try_open(id) {
                 Ok(()) => {
-                    log::info!("Opened RAW16 camera: {id}");
+                    // `try_open` falls back to YUV internally, so the id being
+                    // raw-capable says nothing about what was actually opened.
+                    log::info!(
+                        "Opened camera {id} ({})",
+                        if session.is_raw() {
+                            "RAW16"
+                        } else {
+                            "YUV fallback"
+                        }
+                    );
                     return Ok(session);
                 }
                 Err(e) => {
@@ -789,15 +798,21 @@ pub fn capture_size_candidates(
     fitting.sort_by_key(|s| -s.area());
 
     if fitting.is_empty() {
-        // Every advertised size exceeded the budget: scale one down instead of
-        // giving up on RAW entirely.
-        let biggest = available
-            .iter()
-            .copied()
-            .max_by_key(|s| s.area())
-            .map(fit_to_limit)
-            .unwrap_or_else(|| fit_to_limit(CaptureSize::even(active_width, active_height)));
-        return vec![biggest];
+        // Every advertised size exceeds the budget. Return them *smallest
+        // first*, and never invent a geometry.
+        //
+        // `ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS` is exhaustive: a
+        // streamer accepts those geometries and nothing else. Inventing
+        // `1920x1436` from the advertised `2592x1940` therefore cannot succeed
+        // — on this device it was rejected by
+        // `ACameraDevice_createCaptureSession` with status -10000 (UNKNOWN),
+        // which dropped the whole capture to YUV. Overshooting the
+        // `MAX_RAW_DIM` budget is the lesser evil: the ISP chain is built from
+        // the real capture geometry, so only a sensor whose *smallest* RAW16
+        // stream is still larger pays for it.
+        let mut all: Vec<CaptureSize> = available.to_vec();
+        all.sort_by_key(|s| s.area());
+        return all;
     }
     fitting
 }
@@ -1000,11 +1015,17 @@ mod tests {
     }
 
     #[test]
-    fn oversize_only_list_is_scaled_down_not_discarded() {
-        // Every advertised size is above the budget: RAW must still be tried.
-        let advertised = [size(8000, 6000), size(4000, 3000)];
-        let got = capture_size_candidates(8000, 6000, &advertised);
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].longest_edge(), MAX_RAW_DIM);
+    fn oversize_only_list_returns_advertised_sizes_smallest_first() {
+        // Every advertised size is above the budget. The candidates must still
+        // be geometries the camera actually advertises — a scaled invention
+        // like 1920x1436 is not streamable and `createCaptureSession` rejects
+        // it outright.
+        let advertised = [size(4000, 3000), size(2592, 1940)];
+        let got = capture_size_candidates(2592, 1940, &advertised);
+        assert_eq!(got, vec![size(2592, 1940), size(4000, 3000)]);
+        assert!(
+            got.iter().all(|s| advertised.contains(s)),
+            "every candidate must be an advertised geometry, got {got:?}"
+        );
     }
 }
