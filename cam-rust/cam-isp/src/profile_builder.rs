@@ -82,7 +82,13 @@ impl PipelineProfile {
                             .with_concrete_height(concrete_h),
                     ));
                     blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
-                    blocks.push(Box::new(NormalizeBlock::new()));
+                    // NormalizeBlock (Cast + Div by sensor_max) is what puts the
+                    // frame in [0,1]; every downstream block clamps against
+                    // `<ns>/one`. `normalize_at_display` skips it here and folds
+                    // the same factor into the display weights instead.
+                    if !self.normalize_at_display {
+                        blocks.push(Box::new(NormalizeBlock::new()));
+                    }
                     // UnpackBlock splits packed INT32 into even/odd channels [1,2,H,W/2];
                     // CfaBlockPacked consumes them as 2 conv input channels (kernel
                     // [2,1], stride [2,1]) instead of an interleaved [1,1,H,W] tensor —
@@ -94,7 +100,9 @@ impl PipelineProfile {
                             .with_concrete_width(full_w)
                             .with_concrete_height(concrete_h),
                     ));
-                    blocks.push(Box::new(NormalizeBlock::new()));
+                    if !self.normalize_at_display {
+                        blocks.push(Box::new(NormalizeBlock::new()));
+                    }
                     blocks.push(Box::new(CfaBlock::new()));
                 }
             }
@@ -119,7 +127,9 @@ impl PipelineProfile {
                             .with_concrete_height(concrete_h),
                     ));
                     blocks.push(Box::new(UnpackBlock::new().with_concrete_width(full_w)));
-                    blocks.push(Box::new(NormalizeBlock::new()));
+                    if !self.normalize_at_display {
+                        blocks.push(Box::new(NormalizeBlock::new()));
+                    }
                     blocks.push(Box::new(CfaBlockPacked::new()));
                 } else {
                     blocks.push(Box::new(
@@ -127,7 +137,9 @@ impl PipelineProfile {
                             .with_concrete_width(full_w)
                             .with_concrete_height(concrete_h),
                     ));
-                    blocks.push(Box::new(NormalizeBlock::new()));
+                    if !self.normalize_at_display {
+                        blocks.push(Box::new(NormalizeBlock::new()));
+                    }
                     blocks.push(Box::new(CfaBlock::new()));
                 }
             }
