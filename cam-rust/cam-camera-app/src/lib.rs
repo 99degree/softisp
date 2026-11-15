@@ -58,6 +58,30 @@ fn init_logger() {
     crashlog::install_logger();
 }
 
+/// Longest edge the RGB tail is allowed to run at.
+///
+/// The cosmetic stages and the display tensor all pay per RGB pixel, while the
+/// Bayer stages above them cost a quarter of that per pixel. Picking a cap here
+/// bounds the largest allocation in the graph.
+const TAIL_MAX_EDGE: u32 = 1920;
+
+/// Choose the post-CCM (RGB tail) geometry for a sensor of `w`x`h`.
+///
+/// Returns `(0, 0)` when the sensor already fits: downscaling a frame that is
+/// already small enough would cost a resample and lose detail for nothing.
+/// Otherwise the aspect ratio is preserved and both edges are forced even,
+/// because the demosaic/CCM path works on 2×2 quads.
+fn post_ccm_downscale(w: u32, h: u32) -> (u32, u32) {
+    let longest = w.max(h);
+    if longest <= TAIL_MAX_EDGE {
+        return (0, 0);
+    }
+    let scale = TAIL_MAX_EDGE as f64 / longest as f64;
+    let tw = ((w as f64 * scale).round() as u32) & !1;
+    let th = ((h as f64 * scale).round() as u32) & !1;
+    (tw.max(2), th.max(2))
+}
+
 /// The last successfully processed frame, kept to repaint the surface.
 type LastFrame = (Vec<u8>, u32, u32);
 
@@ -119,7 +143,7 @@ impl Preview {
             };
 
         // Determine profile based on camera capabilities
-        let profile = if has_raw {
+        let mut profile = if has_raw {
             log::info!("Camera supports RAW16, using RAW Bayer pipeline");
             PipelineProfile::MED
         } else {
@@ -128,7 +152,7 @@ impl Preview {
         };
 
         // The session used for the capability probe is the one we capture from.
-        // Opening a second session here would fail — a camera device allows a
+        // Opening a second session would fail — a camera device allows a
         // single active client — and the failure was silently discarded, which
         // left the preview with no frame source at all.
 
@@ -138,6 +162,22 @@ impl Preview {
         // fit the surface via nearest-neighbour blit.
         let pipeline_width = sensor_width.max(1);
         let pipeline_height = sensor_height.max(1);
+
+        // Shrink the RGB tail (tone, EE, bilateral, sharpen, display) after
+        // CCM. The display tensor dominates GPU memory: at 5 Mpx it is 77 MB
+        // (fp32) or 38 MB (fp16) per session, and the whole cosmetic chain runs
+        // on it. Downscaling here keeps demosaic full resolution — Bayer is a
+        // quarter the elements — while making everything downstream cheaper.
+        profile.post_ccm_downscale = post_ccm_downscale(pipeline_width, pipeline_height);
+        if profile.post_ccm_downscale != (0, 0) {
+            log::info!(
+                "post-CCM downscale: {}x{} -> {}x{}",
+                pipeline_width,
+                pipeline_height,
+                profile.post_ccm_downscale.0,
+                profile.post_ccm_downscale.1
+            );
+        }
 
         let mut blocks = profile.build_blocks(pipeline_width, pipeline_height, bayer_pattern);
         if blocks.is_empty() {
@@ -150,10 +190,14 @@ impl Preview {
             .build(head, blocks, None, 21)
             .map_err(|e| format!("engine.build failed: {e}"))?;
         log::info!(
-            "pipeline built: profile {} at {}x{}px",
+            "pipeline built: profile {} at {}x{}px{}",
             profile.label,
             pipeline_width,
-            pipeline_height
+            pipeline_height,
+            match profile.post_ccm_downscale {
+                (0, 0) => String::new(),
+                (w, h) => format!(", RGB tail {w}x{h}"),
+            }
         );
 
         Ok(Self {
@@ -559,4 +603,38 @@ fn storage_note(sdk: i32, fallback: Option<&Path>) -> String {
         note.push_str(&format!(" (fallback: {})", dir.display()));
     }
     note
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_ccm_downscale_caps_the_longest_edge() {
+        // 5 Mpx sensor: cap the RGB tail at 1920, keep the aspect ratio, and
+        // keep both edges even for the 2x2 demosaic quad.
+        let (w, h) = post_ccm_downscale(2592, 1940);
+        assert_eq!(w, 1920);
+        assert_eq!(h, 1436, "1940 * (1920/2592) = 1437 -> even-snapped");
+        assert_eq!(w % 2, 0);
+        assert_eq!(h % 2, 0);
+        let src = 2592.0 / 1940.0;
+        let dst = w as f64 / h as f64;
+        assert!((src - dst).abs() < 0.01, "aspect drifted: {src} vs {dst}");
+    }
+
+    #[test]
+    fn post_ccm_downscale_is_off_when_the_sensor_already_fits() {
+        // Resampling a frame that already fits would cost detail for nothing.
+        assert_eq!(post_ccm_downscale(1920, 1080), (0, 0));
+        assert_eq!(post_ccm_downscale(1280, 720), (0, 0));
+        assert_eq!(post_ccm_downscale(1920, 1920), (0, 0));
+    }
+
+    #[test]
+    fn post_ccm_downscale_caps_a_tall_sensor_by_its_long_edge() {
+        let (w, h) = post_ccm_downscale(1940, 2592);
+        assert_eq!(h, 1920);
+        assert!(w > 0 && w < 1920);
+    }
 }

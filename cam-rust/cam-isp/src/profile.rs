@@ -102,6 +102,16 @@ pub struct PipelineProfile {
     /// Set to 0 to always process at full resolution.
     /// Example: 4K sensor (3840) → set to 1920 for FHD-equivalent processing.
     pub pipeline_downscale_target: u32,
+    /// Downscale to `(w, h)` immediately **after** `CcmBlock`, before tone and
+    /// the cosmetic stages. `(0, 0)` disables it.
+    ///
+    /// This is the cheap place to shrink the frame. Everything before CCM runs
+    /// on Bayer mosaics (¼ the elements of RGB at the same pixel count), so
+    /// demosaic input stays full resolution and only the RGB tail — tone, EE,
+    /// bilateral, sharpen, display — is processed at the smaller size. The
+    /// display tensor is the largest allocation in the graph, so this is what
+    /// decides whether the pipeline fits on the GPU.
+    pub post_ccm_downscale: (u32, u32),
     /// EIS margin fraction (0.05 = 5%). Passed to AdaptiveDownscaleBlock for
     /// reserving edge pixels for EIS/deshake warp shifts.
     pub eis_margin: f64,
@@ -165,6 +175,7 @@ impl PipelineProfile {
         use_histogram: false,    // skip histogram (LITE)
         stats_downscale_max: 0,  // full resolution
         pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
         use_bilateral: false,
         use_saturation: false,
@@ -207,6 +218,7 @@ impl PipelineProfile {
         use_histogram: false,    // skip histogram (MED)
         stats_downscale_max: 0,  // full resolution
         pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
         use_bilateral: false,
         use_saturation: true,
@@ -249,6 +261,7 @@ impl PipelineProfile {
         use_histogram: true,
         stats_downscale_max: 540, // stats read from ~540p (downscaled from aux_hook_src)
         pipeline_downscale_target: 0, // 0 = disabled; set to e.g. 1920 for perf measurement
+        post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
         use_bilateral: true,
         use_saturation: false,
@@ -291,6 +304,7 @@ impl PipelineProfile {
         use_histogram: true,     // 16-bin histogram (full AE stats)
         stats_downscale_max: 0,  // full resolution
         pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
         use_bilateral: true,
         use_saturation: true,
@@ -334,6 +348,7 @@ impl PipelineProfile {
         use_histogram: false,     // skip histogram
         stats_downscale_max: 0,   // full resolution
         pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
         use_bilateral: false,
         use_saturation: false,
@@ -379,6 +394,7 @@ impl PipelineProfile {
         use_histogram: true,
         stats_downscale_max: 0,
         pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
         use_bilateral: true, // Simplified: AveragePool blur
         use_saturation: true,
@@ -432,6 +448,7 @@ impl PipelineProfile {
         use_histogram: false,
         stats_downscale_max: 0,
         pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
         eis_margin: 0.05, // 5% margin for EIS alignment warp
         use_bilateral: false,
         use_saturation: false,
@@ -483,6 +500,7 @@ impl PipelineProfile {
         use_histogram: false,    // skip histogram
         stats_downscale_max: 0,  // full resolution
         pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
         use_bilateral: false,
         use_saturation: true,
@@ -535,6 +553,7 @@ impl PipelineProfile {
         use_histogram: bool, // 16-bin luminance histogram for AE and clipping detection
         stats_downscale_max: u32, // max pixel dimension for stats (0 = full res)
         pipeline_downscale_target: u32, // max pixel dimension for main pipeline (0 = full res)
+        post_ccm_downscale: (u32, u32), // (w, h) downscale right after CCM, (0,0) = off
         eis_margin: f64,  // EIS margin fraction (0.05 = 5%), default 0.0
         use_bilateral: bool, // bilateral filter (edge-preserving denoise)
         use_saturation: bool, // saturation control
@@ -574,6 +593,7 @@ impl PipelineProfile {
             use_histogram,             // 16-bin luminance histogram
             stats_downscale_max,       // adaptive stats downscale
             pipeline_downscale_target, // main pipeline downscale target
+            post_ccm_downscale,        // post-CCM downscale (w, h)
             eis_margin,                // EIS margin fraction
             use_bilateral,             // bilateral filter
             use_saturation,            // saturation control
@@ -698,28 +718,29 @@ mod tests {
             true,
             true,
             false,
-            0,     // rotate_mode: none
-            true,  // use_zone_stats
-            false, // use_channel_means
-            true,  // use_tone_stats
-            false, // use_histogram
-            0,     // stats_downscale_max
-            0,     // pipeline_downscale_target
-            0.0,   // eis_margin
-            true,  // use_bilateral
-            true,  // use_saturation
-            true,  // use_vignetting
-            false, // use_colorspace
-            true,  // use_gamma
-            true,  // use_sharpen
-            false, // use_wavelet_denoise
-            false, // use_auto_contrast
-            false, // use_normalize
-            false, // use_tiled_rendering
-            1,     // tile_count_x
-            1,     // tile_count_y
-            0,     // tile_overlap
-            0,     // opset_mode: Primitive
+            0,      // rotate_mode: none
+            true,   // use_zone_stats
+            false,  // use_channel_means
+            true,   // use_tone_stats
+            false,  // use_histogram
+            0,      // stats_downscale_max
+            0,      // pipeline_downscale_target
+            (0, 0), // post_ccm_downscale
+            0.0,    // eis_margin
+            true,   // use_bilateral
+            true,   // use_saturation
+            true,   // use_vignetting
+            false,  // use_colorspace
+            true,   // use_gamma
+            true,   // use_sharpen
+            false,  // use_wavelet_denoise
+            false,  // use_auto_contrast
+            false,  // use_normalize
+            false,  // use_tiled_rendering
+            1,      // tile_count_x
+            1,      // tile_count_y
+            0,      // tile_overlap
+            0,      // opset_mode: Primitive
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -748,28 +769,29 @@ mod tests {
             false,
             false,
             false,
-            0,     // rotate_mode: none
-            false, // use_zone_stats
-            false, // use_channel_means
-            false, // use_tone_stats
-            false, // use_histogram
-            0,     // stats_downscale_max
-            0,     // pipeline_downscale_target
-            0.0,   // eis_margin
-            false, // use_bilateral
-            false, // use_saturation
-            false, // use_vignetting
-            false, // use_colorspace
-            false, // use_gamma
-            false, // use_sharpen
-            false, // use_wavelet_denoise
-            false, // use_auto_contrast
-            false, // use_normalize
-            false, // use_tiled_rendering
-            1,     // tile_count_x
-            1,     // tile_count_y
-            0,     // tile_overlap
-            0,     // opset_mode: Primitive
+            0,      // rotate_mode: none
+            false,  // use_zone_stats
+            false,  // use_channel_means
+            false,  // use_tone_stats
+            false,  // use_histogram
+            0,      // stats_downscale_max
+            0,      // pipeline_downscale_target
+            (0, 0), // post_ccm_downscale
+            0.0,    // eis_margin
+            false,  // use_bilateral
+            false,  // use_saturation
+            false,  // use_vignetting
+            false,  // use_colorspace
+            false,  // use_gamma
+            false,  // use_sharpen
+            false,  // use_wavelet_denoise
+            false,  // use_auto_contrast
+            false,  // use_normalize
+            false,  // use_tiled_rendering
+            1,      // tile_count_x
+            1,      // tile_count_y
+            0,      // tile_overlap
+            0,      // opset_mode: Primitive
         );
         let blocks = p.build_blocks(128, 72, 0);
         assert_eq!(
