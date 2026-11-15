@@ -24,6 +24,7 @@ fn create_test_frame() -> IspFrame {
 }
 
 #[test]
+#[ignore = "benchmark"]
 fn bench_neural_controller_mock() {
     let mut ctrl = NeuralController::with_mock_model();
     let frame = create_test_frame();
@@ -52,6 +53,7 @@ fn bench_neural_controller_mock() {
 }
 
 #[test]
+#[ignore = "benchmark"]
 fn bench_rule_based_controller() {
     let mut ctrl = cam_isp::controller_api::Controller::rule_based();
     let frame = create_test_frame();
@@ -80,6 +82,7 @@ fn bench_rule_based_controller() {
 }
 
 #[test]
+#[ignore = "benchmark"]
 fn bench_comparison() {
     let frame = create_test_frame();
     let iterations = 100;

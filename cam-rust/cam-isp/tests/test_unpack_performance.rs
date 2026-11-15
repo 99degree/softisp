@@ -89,6 +89,7 @@ const UHD_4K: Resolution = Resolution {
 const RESOLUTIONS: [Resolution; 2] = [FHD, UHD_4K];
 
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_unpack_performance_fhd_4k() {
     println!("\n=== Unpack Performance Test ===\n");
 
@@ -157,6 +158,7 @@ fn test_unpack_performance_fhd_4k() {
 }
 
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_onnx_model_building_performance() {
     println!("\n=== ONNX Model Building Performance ===\n");
 
@@ -187,6 +189,7 @@ fn test_onnx_model_building_performance() {
 }
 
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_fp16_fp32_memory_usage() {
     println!("\n=== Memory Usage Comparison ===\n");
 
@@ -228,6 +231,7 @@ fn test_fp16_fp32_memory_usage() {
 }
 
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_prepare_fp16_fp32_buffers() {
     println!("\n=== Buffer Preparation Test ===\n");
 
@@ -282,6 +286,7 @@ struct PerfMetrics {
 }
 
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_performance_logging() {
     println!("\n=== Performance Logging Test ===\n");
 
