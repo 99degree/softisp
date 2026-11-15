@@ -211,6 +211,19 @@ int mnn_tensor_get_type(MnnTensor tensor) {
     return 0;
 }
 
+/**
+ * Bit width of a tensor's element type (8, 16, 32, 64), or 0 on error.
+ *
+ * `mnn_tensor_get_type` only reports the *code*, so INT16 and INT32 are both
+ * indistinguishable from it. The engine needs the width to feed a RAW16 buffer
+ * without an unnecessary widening pass.
+ */
+int mnn_tensor_get_bits(MnnTensor tensor) {
+    auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
+    if (!t) return 0;
+    return (int)t->getType().bits;
+}
+
 float* mnn_tensor_get_host_data(MnnTensor tensor) {
     auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
     if (!t) return nullptr;
