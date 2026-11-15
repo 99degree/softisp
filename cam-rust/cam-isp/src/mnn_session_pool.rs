@@ -69,6 +69,7 @@ impl SessionPool {
         backend: MnnBackendType,
         n: usize,
         num_threads: i32,
+        fp16_storage: bool,
         extra_names: Vec<String>,
     ) -> Result<Self, String> {
         let tensor_names = extra_names;
@@ -77,7 +78,7 @@ impl SessionPool {
             let mut slots = VecDeque::with_capacity(wanted);
             let mut failed = false;
             for i in 0..wanted {
-                let Some(sess) = interp.create_session(backend, num_threads) else {
+                let Some(sess) = interp.create_session(backend, num_threads, fp16_storage) else {
                     log::warn!(
                         "SessionPool: session {} of {} failed to allocate",
                         i + 1,

@@ -77,9 +77,12 @@ void mnn_interpreter_destroy(MnnInterpreter interpreter);
  * @param interpreter   Opaque handle from mnn_interpreter_create_from_buffer.
  * @param backend       Desired backend (MNN_BACKEND_*).
  * @param num_threads   Number of CPU threads (used for CPU backend).
+ * @param precision     0 = Precision_Normal (fp16 tensor storage when the GPU
+ *                      supports it, half the memory), 1 = Precision_High.
  * @return Opaque handle, or NULL on failure.
  */
-MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend, int num_threads);
+MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend, int num_threads,
+                              int precision);
 
 /**
  * Release a Session.
