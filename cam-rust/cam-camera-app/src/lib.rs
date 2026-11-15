@@ -128,6 +128,45 @@ fn gcd(a: u32, b: u32) -> u32 {
     }
 }
 
+/// Summary of a BGRA frame's brightness, for the periodic status line.
+#[derive(Default)]
+struct FrameStats {
+    mean_r: f64,
+    mean_g: f64,
+    mean_b: f64,
+    max: u8,
+    non_black_pct: f64,
+}
+
+fn frame_stats(bgra: &[u8]) -> FrameStats {
+    if bgra.len() < 4 {
+        return FrameStats::default();
+    }
+    let pixels = bgra.len() / 4;
+    let (mut sr, mut sg, mut sb) = (0u64, 0u64, 0u64);
+    let mut max = 0u8;
+    let mut non_black = 0usize;
+    for px in bgra.as_chunks::<4>().0 {
+        // BGRA: [b, g, r, a]
+        sr += px[2] as u64;
+        sg += px[1] as u64;
+        sb += px[0] as u64;
+        let brightest = px[0].max(px[1]).max(px[2]);
+        max = max.max(brightest);
+        if brightest > 0 {
+            non_black += 1;
+        }
+    }
+    let n = pixels as f64;
+    FrameStats {
+        mean_r: sr as f64 / n,
+        mean_g: sg as f64 / n,
+        mean_b: sb as f64 / n,
+        max,
+        non_black_pct: non_black as f64 * 100.0 / n,
+    }
+}
+
 /// The last successfully processed frame, kept to repaint the surface.
 type LastFrame = (Vec<u8>, u32, u32);
 
@@ -437,10 +476,30 @@ impl Preview {
         }
         if self.frames > 0 && self.frames.is_multiple_of(STATS_INTERVAL_FRAMES) {
             let (w, h) = self.last_frame.as_ref().map_or((0, 0), |f| (f.1, f.2));
+            // Report what the frame actually contains, not just its size.
+            //
+            // "N frames processed, last WxH" is satisfied by a completely black
+            // buffer: the ISP can return the right length of zeros and every
+            // stage above will report success. These numbers are the only way
+            // to tell "the pixel work ran" from "the pixel work produced
+            // nothing" without pulling the image off the device.
+            let content = self
+                .last_frame
+                .as_ref()
+                .map(|(data, _, _)| frame_stats(data))
+                .unwrap_or_default();
             write_line(
                 "INFO",
                 "stats",
-                &format!("{} frames processed, last {w}x{h}", self.frames),
+                &format!(
+                    "{} frames processed, last {w}x{h}, rgb mean [{:.1},{:.1},{:.1}], max {}, non-black {:.1}%",
+                    self.frames,
+                    content.mean_r,
+                    content.mean_g,
+                    content.mean_b,
+                    content.max,
+                    content.non_black_pct
+                ),
             );
         }
     }
@@ -715,5 +774,39 @@ mod tests {
         // full-size rather than inventing a geometry.
         assert_eq!(post_ccm_downscale(1940, 2592), (970, 1296));
         assert!(1296 <= super::TAIL_MAX_EDGE);
+    }
+}
+
+#[cfg(test)]
+mod frame_stats_tests {
+    use super::frame_stats;
+
+    #[test]
+    fn black_frame_reports_zeros() {
+        // This is the report that makes a black preview visible: every other
+        // signal (frame count, size, present()) looks healthy.
+        let black = vec![0u8; 4 * 100];
+        let s = frame_stats(&black);
+        assert_eq!(s.max, 0);
+        assert_eq!(s.non_black_pct, 0.0);
+        assert_eq!(s.mean_r, 0.0);
+    }
+
+    #[test]
+    fn bgra_channels_are_read_in_order() {
+        // Memory order is B,G,R,A; the summary must not swap red and blue.
+        let px = [10u8, 20, 30, 255];
+        let s = frame_stats(&px);
+        assert_eq!(s.mean_b, 10.0);
+        assert_eq!(s.mean_g, 20.0);
+        assert_eq!(s.mean_r, 30.0);
+        assert_eq!(s.max, 30);
+        assert_eq!(s.non_black_pct, 100.0);
+    }
+
+    #[test]
+    fn short_buffer_is_handled() {
+        assert_eq!(frame_stats(&[]).max, 0);
+        assert_eq!(frame_stats(&[1, 2]).max, 0);
     }
 }

@@ -709,6 +709,7 @@ impl MnnEngine {
         warp_grid: Option<&[f32]>,
         warp_shading: Option<&[f32]>,
         input_scale: f32,
+        white_level: f32,
     ) {
         /// Look up a cached tensor handle by name prefix (fast — no CString alloc).
         fn find<'a>(
@@ -855,8 +856,23 @@ impl MnnEngine {
         write_f32_array(pool, "FcsBlock/gain", &[1.0f32; 3]);
         // FcsBlock/bias [3] — per-channel bias (default: zero)
         write_f32_array(pool, "FcsBlock/bias", &[0.0f32; 3]);
-        // NormalizeBlock/max_val [1] — max value for division (default: 65535)
-        write_f32(pool, "NormalizeBlock/max_val", 65535.0);
+        // NormalizeBlock/max_val [1] — the divisor that maps sensor counts to
+        // [0,1].
+        //
+        // This used to be a fixed 65535. A 10-bit sensor reports a white level
+        // of 1023, so a fully exposed pixel arrived at 1023/65535 = 0.0156 and
+        // the display — whose Conv carries the [0,1]→[0,255] scale — handed
+        // back 4/255. Every frame rendered essentially black while every stage
+        // reported success, which is exactly what the log showed.
+        //
+        // `input_scale` is 1.0 when the pipeline defers the divide (no
+        // NormalizeBlock then), so `white_level` is the sensor's own scale.
+        let divisor = if input_scale > 1.0 {
+            input_scale
+        } else {
+            white_level
+        };
+        write_f32(pool, "NormalizeBlock/max_val", divisor.max(1.0));
         // GammaBlock / AutoContrastBlock / DisplayBlock — always write
         // defaults so pure-input tensors are never left uninitialized when
         // no isp_params are supplied; the isp_params branch below overrides.
@@ -928,12 +944,15 @@ impl MnnEngine {
             write_f32_array(pool, "FcsBlock/gain", &fcs_gain);
             // FcsBlock/bias [3] — per-channel bias
             write_f32_array(pool, "FcsBlock/bias", &[isp.tone.brightness; 3]);
-            // NormalizeBlock/max_val [1] — from sensor_max or blc
-            let max_val = isp_params
-                .as_ref()
-                .map(|p| p.blc.r * 2.0)
-                .unwrap_or(65535.0);
-            write_f32(pool, "NormalizeBlock/max_val", max_val);
+            // NormalizeBlock/max_val [1] — the sensor's white level, same
+            // value as the default path above. Deriving it from `blc.r` was
+            // wrong: black level and white level are unrelated quantities.
+            let divisor = if input_scale > 1.0 {
+                input_scale
+            } else {
+                white_level
+            };
+            write_f32(pool, "NormalizeBlock/max_val", divisor.max(1.0));
         }
 
         // ── Warp grid + shading LUT (runtime extra_inputs) ────────
@@ -1411,6 +1430,7 @@ impl IspEngine for MnnEngine {
                 p.warp_grid,
                 p.warp_shading,
                 input_scale,
+                smax,
             );
             let t_tensor_after: std::time::Instant = Instant::now();
             debug!(
