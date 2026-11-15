@@ -231,22 +231,39 @@ impl Preview {
         };
 
         let started = Instant::now();
+        // Per-stage marks. "frame took 650ms" says nothing actionable on its
+        // own — the cost could be the capture copy, the ISP, or the blit, and
+        // they have completely different fixes. These carry the split into the
+        // warning line so the log answers "which stage" without a profiler.
+        let mut t_capture = Duration::ZERO;
+        let mut t_stage = Duration::ZERO;
+        let mut t_isp = Duration::ZERO;
+        let mut t_present = Duration::ZERO;
         match cam.next_frame() {
             Ok(Some(frame)) => {
+                t_capture = started.elapsed();
+
+                let stage_t0 = Instant::now();
                 let staged = self.stager.stage(&frame);
+                t_stage = stage_t0.elapsed();
 
                 if self.show_raw {
                     // Display raw camera frame as grayscale
                     let raw_bgra = self.raw_to_grayscale_bgra(&frame);
+                    let present_t0 = Instant::now();
                     if let Err(e) = target.present(&raw_bgra, frame.width, frame.height) {
                         log::trace!("present raw: {e}");
                     }
+                    t_present = present_t0.elapsed();
                     self.last_frame = Some((raw_bgra, frame.width, frame.height));
                 } else {
                     let params =
                         self.config
                             .params(frame.width, frame.height, staged, frame.timestamp_ns);
-                    match self.engine.process(&params) {
+                    let isp_t0 = Instant::now();
+                    let result = self.engine.process(&params);
+                    t_isp = isp_t0.elapsed();
+                    match result {
                         Ok(out) => {
                             self.frames += 1;
                             // A frame that processes but cannot be shown is
@@ -259,7 +276,9 @@ impl Preview {
                             //
                             // Rate-limited to a change of message, so a
                             // per-frame surface error stays one line.
+                            let present_t0 = Instant::now();
                             let presented = target.present(&out.data, out.width, out.height);
+                            t_present = present_t0.elapsed();
                             match presented {
                                 Ok(_) => self.last_present_error = None,
                                 Err(e) => {
@@ -301,7 +320,14 @@ impl Preview {
             write_line(
                 "WARN",
                 "loop",
-                &format!("frame took {}ms", elapsed.as_millis()),
+                &format!(
+                    "frame took {}ms (capture {} / stage {} / isp {} / present {} ms)",
+                    elapsed.as_millis(),
+                    t_capture.as_millis(),
+                    t_stage.as_millis(),
+                    t_isp.as_millis(),
+                    t_present.as_millis()
+                ),
             );
         }
         if self.frames > 0 && self.frames.is_multiple_of(STATS_INTERVAL_FRAMES) {
