@@ -49,14 +49,19 @@
   `buffer` (`(void)buffer;`) was rewritten to bind the caller's CMA mmap ptr as the
   MNN input/output tensor host via `Tensor::buffer().host` (zero-copy on the CPU
   path). Remaining gap (Vulkan host→device copy) tracked under P2b.
-- **External-memory zero-copy surface (cam-isp, VERIFIED):** added the FFI
-  `mnn_run_external_zero_copy` (mnn_wrapper.cpp) using `Tensor::setDevicePtr(fd,
-  MNN_MEMORY_AHARDWAREBUFFER)`, the Rust extern + `MNN_MEMORY_AHARDWAREBUFFER`
-  const (mnn_sys.rs), `MnnEngine::run_external_zero_copy` (mnnengine.rs), and
-  `CameraIspService::process_raw_frame_external` (integration.rs, extracts the
-  CMA `dma_fd` from the input buffer and drives the MNN session directly).
-  Builds clean and passes `cargo clippy -p cam-isp --lib --features mnn -D warnings`.
-  The MNN *backend* import this depends on is still pending (see P2b).
+- **External-memory zero-copy surface (cam-isp): REMOVED 2026-11-15.** The FFI
+  `mnn_run_external_zero_copy` (mnn_wrapper.cpp), the Rust extern +
+  `MNN_MEMORY_AHARDWAREBUFFER` const (mnn_sys.rs), `MnnEngine::run_external_zero_copy`
+  (mnnengine.rs) and `CameraIspService::process_raw_frame_external` (integration.rs)
+  were removed because they could not work against the MNN build we ship, and had no
+  callers outside that chain. `Tensor::setDevicePtr` only stores the raw handle
+  (`mBuffer.device = (uint64_t)ptr; mBuffer.flags = memoryType;`), while the Vulkan
+  backend unconditionally does `reinterpret_cast<VulkanBuffer*>(tensor->deviceId())`
+  and dereferences it — so passing an fd/AHB pointer there is a type-confused
+  dereference, not an import. Nothing in `source/backend/vulkan/` reads
+  `buffer().flags`, and the shipped `libMNN_Vulkan.so` exports neither
+  `VulkanBuffer::createExternal` nor any AHB import entry point. See P2b for what a
+  working implementation actually requires.
 - **HAL/ISP integration module** (`cam-isp/src/integration.rs`): `ZeroCopyBufferManager`
   (CMA/ION/memfd), `CameraIspService` (auto-builds the CPU pipeline), `AndroidHalIspBridge`,
   `V4l2IspBridge` (`process_frame` / `process_batch` + `BridgeStats`). 6 integration tests pass.
@@ -107,7 +112,7 @@
   angular velocity → focal-length pixel shift) before falling back to image-based
   block-matching. ✅
 
-### P2b — True Zero-Copy via External Memory (Implemented, unverified)
+### P2b — True Zero-Copy via External Memory (not implemented in shipped MNN)
 
 For large MIPI Bayer (e.g. 48 MP raw ≈ 100+ MB), binding a host pointer
 (`Tensor::buffer().host = ptr`, as `mnn_run_true_zero_copy` now does) is correct on
@@ -146,14 +151,16 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   does not consume it yet (no `VkImportMemoryFdInfoKHR` / AHardwareBuffer import in
   `source/backend/vulkan`). Headers (`VK_EXT_external_memory_dma_buf`, `vkGetMemoryFdKHR`)
   and the OpenCL reference impl are present.
-- **cam-isp side — DONE (verified):** FFI `mnn_run_external_zero_copy`, Rust extern
-  + `MNN_MEMORY_AHARDWAREBUFFER` const, `MnnEngine::run_external_zero_copy`, and
-  `CameraIspService::process_raw_frame_external` (extracts CMA `dma_fd`, binds it via
-  `setDevicePtr`, runs the MNN session). Compiles + clippy-clean. It is inert on
-  Vulkan today because the backend does not import the fd yet.
-- **MNN backend side — implemented in MNN fork (`1b94cc09`, unverified — needs NDK
-  rebuild + on-device validation):** mirrors `source/backend/opencl/core/OpenCLBackend.cpp`
-  (`_allocHostBuffer`, ~lines 749–1027). Concrete changes committed to the MNN fork:
+- **cam-isp side — REMOVED (2026-11-15):** the FFI `mnn_run_external_zero_copy`,
+  the Rust extern + `MNN_MEMORY_AHARDWAREBUFFER` const, `MnnEngine::run_external_zero_copy`
+  and `CameraIspService::process_raw_frame_external` were deleted. They were inert at
+  best and unsafe at worst (see the Status entry above); the surface should be rebuilt
+  against the backend work below rather than kept as a stub.
+- **MNN backend side — NOT PRESENT in the checked-out MNN tree (verified 2026-11-15):**
+  `grep -rn 'createExternal' ~/MNN/source/backend/vulkan/` returns nothing, and nothing
+  under `source/backend/vulkan/` reads `buffer().flags` or `MNN_MEMORY_AHARDWAREBUFFER`.
+  The shipped `libMNN_Vulkan.so` correspondingly exports no such symbol. The plan below
+  is therefore still a plan, not a revert-to-working:
   1. `VulkanInstance` enables `VK_KHR_external_memory_capabilities` (when available);
      `VulkanDevice` enables `VK_KHR_external_memory_fd` and `createBuffer` now takes a
      `pNext` (for `VkExternalMemoryBufferCreateInfo`).
@@ -170,18 +177,18 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   Android AHB import is intentionally out of scope (MNN's Vulkan headers lack
   `VkImportAndroidHardwareBufferInfoANDROID`). The external path is gated by the
   `MNN_MEMORY_AHARDWAREBUFFER` flag and never fires in default MNN usage.
-- **Verification status:** cam-isp surface verified by `cargo clippy` (no GPU/camera
-  needed). The MNN backend change **cannot be built or runtime-tested in Termux**
-  (no `cmake`/`ninja`/`vulkan` in PATH; no GPU/V4L2 device) — it must be built on the
-  MNN NDK machine and validated on-device (V4L2 dma-buf → Vulkan import → inference).
+- **Verification status:** nothing on the cam-isp side remains to verify — that surface
+  was removed (2026-11-15). The MNN backend work **cannot be built or runtime-tested in
+  Termux** (no `cmake`/`ninja`/`vulkan` in PATH; no GPU/V4L2 device); it must be built
+  on the MNN NDK machine and validated on-device (V4L2 dma-buf → Vulkan import →
+  inference).
 - **Enhancement surface:** `cam-isp/mnn_sys/mnn_vulkan_stubs.cpp` holds weak no-op
   Vulkan extension stubs (e.g. `MNNVulkanHotSwapConstBuffer`) that our custom MNN
   build overrides — the natural place to add the import entry point.
-- **Status:** cam-isp surface verified; MNN Vulkan backend import **implemented** in
-  the MNN fork (`1b94cc09`) but **unverified** (no NDK/cmake/Vulkan/device in Termux).
-  Remaining: build the custom MNN with external-memory support, copy the `.so` into
-  `cam-rust/lib/arm64-v8a/`, and validate on-device (V4L2 dma-buf → Vulkan import →
-  inference) before claiming true zero-copy end-to-end.
+- **Status:** not implemented end-to-end. The cam-isp Rust surface was removed rather
+  than kept as a stub that cannot work; the MNN Vulkan backend import has to be written
+  (item 1–4 above), the custom `.so` built and copied into `cam-rust/lib/aarch64-v8a/`,
+  and the Rust surface reintroduced only once the backend honours the flag.
 
 ### P3 — Hardening / CI ✅ (workspace clean)
 - **`cargo clippy --workspace --all-targets --features mnn -D warnings` passes** on all
