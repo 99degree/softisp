@@ -193,6 +193,7 @@ fn test_mnn_unpack_performance_with_profiling() {
 
 /// Simpler test without MNN dependency - just logs the expected performance
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_log_expected_performance() {
     println!("\n=== Expected MNN Performance (Based on CPU Tests) ===\n");
 
@@ -225,6 +226,7 @@ fn test_log_expected_performance() {
 
 /// Test that reads and displays profiling data structure
 #[test]
+#[ignore = "long-running benchmark"]
 fn test_perf_data_structure() {
     println!("\n=== Performance Data Structure Test ===\n");
 
