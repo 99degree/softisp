@@ -259,6 +259,10 @@ impl IspBlock for DemosaicCcmBlock {
         self.forced_mode.unwrap_or(BlockOpsetMode::Custom)
     }
 
+    fn set_opset_mode(&mut self, mode: BlockOpsetMode) {
+        self.forced_mode = Some(mode);
+    }
+
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let inp = self.effective_input();
