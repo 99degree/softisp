@@ -11,6 +11,7 @@
 #![allow(clippy::needless_return)] // Some returns are explicit for clarity
 
 pub mod ae;
+pub mod bayer_planes;
 pub mod blocks;
 pub mod config;
 pub mod controller;

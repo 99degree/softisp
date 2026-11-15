@@ -828,11 +828,19 @@ impl MnnEngine {
         const DEMO_GRBG: [f32; 12] = [0.0, 1.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.5, 0.0, 0.0, 1.0, 0.0];
         const DEMO_GBRG: [f32; 12] = [0.0, 0.0, 1.0, 0.0, 0.5, 0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0];
 
-        // Select demosaic weights by pattern
+        // Select demosaic weights by pattern.
+        //
+        // The encoding is Android's `SENSOR_INFO_COLOR_FILTER_ARRANGEMENT`:
+        // 0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR (`cam_camera_app::camera::cfa_to_bayer`).
+        // This match previously answered 1->BGGR, 2->GRBG, 3->GBRG, which
+        // rotates the three non-RGGB patterns by one — so a GRBG sensor got
+        // BGGR weights and swapped red and blue outright. The pair chosen must
+        // be the one whose planes hold the colours the table assumes, i.e. the
+        // table's own name.
         let demo: &[f32; 12] = match bayer_pattern & 3 {
-            1 => &DEMO_BGGR,
-            2 => &DEMO_GRBG,
-            3 => &DEMO_GBRG,
+            1 => &DEMO_GRBG,
+            2 => &DEMO_GBRG,
+            3 => &DEMO_BGGR,
             _ => &DEMO_RGGB,
         };
 
@@ -1340,6 +1348,9 @@ impl IspEngine for MnnEngine {
         let buf = p.buf;
         let smax = p.sensor_max;
         let tw = p.target_width;
+        // Needed by the 3A snapshot below (per-plane gain mapping).
+        let bayer_pattern = p.bayer_pattern;
+
         // ── Close the 3A loop ──
         //
         // The stats phase below calls `update_channel_stats` /
@@ -1362,9 +1373,16 @@ impl IspEngine for MnnEngine {
             lsc_strength: c.get_lsc_strength(),
         });
 
-        // Per-Bayer-site gains (R, Gr, Gb, B): green drives both green sites.
+        // Per-plane gains.
+        //
+        // The CFA stage emits planes in physical quad order (TL, TR, BL, BR), so
+        // which plane holds red depends on the sensor's Bayer pattern. Writing
+        // the controller's `[R, G, B]` straight into planes 0..3 only happens to
+        // be right for RGGB; on the GBRG sensor this device reports it puts the
+        // red gain on a *green* plane and the blue gain on red, which is a
+        // permanent colour cast no white balance can remove.
         let ctrl_bayer: [f32; 4] = match &ctrl {
-            Some(c) => [c.awb[0], c.awb[1], c.awb[1], c.awb[2]],
+            Some(c) => crate::bayer_planes::gains_by_plane(&c.awb, bayer_pattern),
             None => [1.0; 4],
         };
         let bayer_src: Option<&[f32; 4]> = p.bayer_gains.as_ref().or(Some(&ctrl_bayer));
@@ -1377,7 +1395,6 @@ impl IspEngine for MnnEngine {
         };
 
         let awb = p.awb_gains.as_ref();
-        let bayer_pattern = p.bayer_pattern;
 
         // `sensor_max` is normally applied by `NormalizeBlock` at the head of
         // the chain, and `set_extra_inputs` feeds it the divisor. When the
@@ -1978,12 +1995,21 @@ impl IspEngine for MnnEngine {
                         // unusable rather than folding a truncated read.
                         match vals.len() {
                             4 => {
-                                let g = 0.5 * (vals[1] + vals[2]);
-                                debug!(
-                                    "stats: CFA site means R {:.4} Gr {:.4} Gb {:.4} B {:.4} -> rgb [{:.4}, {:.4}, {:.4}]",
-                                    vals[0], vals[1], vals[2], vals[3], vals[0], g, vals[3]
+                                // Planes are physical quad positions, so fold
+                                // through the pattern rather than assuming
+                                // plane 0 is red.
+                                let planes: [f32; 4] =
+                                    [vals[0], vals[1], vals[2], vals[3]];
+                                let rgb = crate::bayer_planes::planes_to_rgb(
+                                    &planes,
+                                    bayer_pattern,
                                 );
-                                cm_vals = Some([vals[0], g, vals[3]]);
+                                debug!(
+                                    "stats: planes [{:.4}, {:.4}, {:.4}, {:.4}] (pattern {}) -> rgb [{:.4}, {:.4}, {:.4}]",
+                                    vals[0], vals[1], vals[2], vals[3], bayer_pattern,
+                                    rgb[0], rgb[1], rgb[2]
+                                );
+                                cm_vals = Some(rgb);
                             }
                             3 => {
                                 debug!(
