@@ -58,42 +58,70 @@ fn init_logger() {
     crashlog::install_logger();
 }
 
-/// Longest edge the RGB tail is allowed to run at.
+/// Longest RGB edge the tail is allowed to run at.
 ///
 /// The cosmetic stages and the display tensor all pay per RGB pixel, while the
-/// Bayer stages above them cost a quarter of that per pixel. Picking a cap here
-/// bounds the largest allocation in the graph.
+/// Bayer stages above them cost a quarter of that per pixel. Demosaic halves
+/// both edges, so this cap applies to the *post-demosaic* frame: a 2592x1940
+/// sensor is 1296x970 RGB and already fits, while a 4640x3472 one is
+/// 2320x1736 and gets divided by two.
 const TAIL_MAX_EDGE: u32 = 1920;
 
 /// Whether the post-CCM downscale is enabled.
 ///
-/// **Off deliberately.** The block builds a session now (`scales` and the
-/// output dims are consistent), but `runSession` still fails with
-/// COMPUTE_SIZE_ERROR and the cause is not yet pinned: `cam-isp`'s
-/// `probe_post_ccm_downscale` test reproduces it in isolation —
+/// It needs an **exact integer** reduction factor, which is why this is a
+/// toggle and not just a target size. MNN derives a Resize's output extent as
 ///
-///     off          8 frames OK, output 1296x970
-///     1920x1436    FAILED: runSession failed: MNN error code=3
+///     output.dim[i].extent = scale[i] * (float)input.dim[i].extent   // floors
 ///
-/// so it is not an interaction with the camera. Until that test passes, the
-/// app must not build the pipeline with it.
-const TAIL_DOWNSCALE_ENABLED: bool = false;
+/// so a 2592 -> 1920 fit computes 1918, not 1920. Every downstream block then
+/// compares its declared shape against a tensor of a different width and
+/// `runSession` fails with COMPUTE_SIZE_ERROR — measurable with
+/// `cam-isp/tests/probe_post_ccm_downscale.rs`. Integer factors land exactly
+/// (1296/2592 and 970/1940 are both exactly representable), so the declared
+/// and computed shapes agree.
+const TAIL_DOWNSCALE_ENABLED: bool = true;
 
 /// Choose the post-CCM (RGB tail) geometry for a sensor of `w`x`h`.
 ///
 /// Returns `(0, 0)` when the sensor already fits: downscaling a frame that is
 /// already small enough would cost a resample and lose detail for nothing.
-/// Otherwise the aspect ratio is preserved and both edges are forced even,
-/// because the demosaic/CCM path works on 2×2 quads.
+///
+/// Otherwise the factor is the largest divisor of `gcd(w, h)` that brings the
+/// longest edge under [`TAIL_MAX_EDGE`]. An integer factor is not a preference
+/// — it is required for the graph to run. MNN computes a Resize's extent from
+/// the scale as a floor of a float multiply, so a non-integer ratio rounds to a
+/// width nobody declared and the session fails (see
+/// `TAIL_DOWNSCALE_ENABLED`). Dividing exactly keeps `scale == 1/k` precise and
+/// the result square with both the block's own `out_dims` and the tail.
 fn post_ccm_downscale(w: u32, h: u32) -> (u32, u32) {
-    let longest = w.max(h);
-    if longest <= TAIL_MAX_EDGE {
+    if w.max(h) <= TAIL_MAX_EDGE {
         return (0, 0);
     }
-    let scale = TAIL_MAX_EDGE as f64 / longest as f64;
-    let tw = ((w as f64 * scale).round() as u32) & !1;
-    let th = ((h as f64 * scale).round() as u32) & !1;
-    (tw.max(2), th.max(2))
+    let g = gcd(w, h);
+    // Divisors of the gcd, ascending, so the first that fits is the mildest.
+    let mut best = 0;
+    for k in 1..=g {
+        if g.is_multiple_of(k) && w.max(h) / k <= TAIL_MAX_EDGE {
+            best = k;
+            break;
+        }
+    }
+    if best <= 1 {
+        // No exact reduction fits the budget. Leave the tail at full size
+        // rather than feed the graph a geometry it cannot reproduce.
+        return (0, 0);
+    }
+    ((w / best).max(2), (h / best).max(2))
+}
+
+/// Greatest common divisor.
+fn gcd(a: u32, b: u32) -> u32 {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
 }
 
 /// The last successfully processed frame, kept to repaint the surface.
@@ -182,8 +210,10 @@ impl Preview {
         // (fp32) or 38 MB (fp16) per session, and the whole cosmetic chain runs
         // on it. Downscaling here keeps demosaic full resolution — Bayer is a
         // quarter the elements — while making everything downstream cheaper.
+        // Expressed in *RGB* coordinates: demosaic halves both edges, so the
+        // frame entering the tail is already half the sensor's size.
         profile.post_ccm_downscale = if TAIL_DOWNSCALE_ENABLED {
-            post_ccm_downscale(pipeline_width, pipeline_height)
+            post_ccm_downscale(pipeline_width / 2, pipeline_height / 2)
         } else {
             (0, 0)
         };
@@ -628,17 +658,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn post_ccm_downscale_caps_the_longest_edge() {
-        // 5 Mpx sensor: cap the RGB tail at 1920, keep the aspect ratio, and
-        // keep both edges even for the 2x2 demosaic quad.
-        let (w, h) = post_ccm_downscale(2592, 1940);
-        assert_eq!(w, 1920);
-        assert_eq!(h, 1436, "1940 * (1920/2592) = 1437 -> even-snapped");
-        assert_eq!(w % 2, 0);
-        assert_eq!(h % 2, 0);
-        let src = 2592.0 / 1940.0;
+    fn post_ccm_downscale_uses_an_exact_integer_factor() {
+        // The factor must divide both RGB edges exactly. (The Resize path now
+        // also survives an inexact ratio, but an exact one keeps the declared
+        // and computed shapes identical instead of relying on that.)
+        let (w, h) = post_ccm_downscale(2320, 1736);
+        assert_eq!((w, h), (1160, 868));
+        assert_eq!(2320 % 2, 0);
+        assert_eq!(1736 % 2, 0);
+        let src = 2320.0 / 1736.0;
         let dst = w as f64 / h as f64;
-        assert!((src - dst).abs() < 0.01, "aspect drifted: {src} vs {dst}");
+        assert!((src - dst).abs() < 1e-9, "aspect drifted: {src} vs {dst}");
+    }
+
+    #[test]
+    fn post_ccm_downscale_prefers_the_mildest_factor_that_fits() {
+        // 4640x3472 Bayer is 2320x1736 RGB; /2 is the first exact factor that
+        // brings it under the cap.
+        assert_eq!(post_ccm_downscale(2320, 1736), (1160, 868));
+        // 3268x2448 Bayer is 1634x1224 RGB, which already fits -> no resample.
+        assert_eq!(post_ccm_downscale(1634, 1224), (0, 0));
+    }
+
+    #[test]
+    fn post_ccm_downscale_skips_sensors_with_no_exact_factor() {
+        // 1921 is prime-ish with the height: no factor brings it under the cap
+        // without inventing a size, so the tail stays full-resolution.
+        assert_eq!(post_ccm_downscale(4000, 3001), (0, 0));
     }
 
     #[test]
@@ -650,9 +696,11 @@ mod tests {
     }
 
     #[test]
-    fn post_ccm_downscale_caps_a_tall_sensor_by_its_long_edge() {
-        let (w, h) = post_ccm_downscale(1940, 2592);
-        assert_eq!(h, 1920);
-        assert!(w > 0 && w < 1920);
+    fn post_ccm_downscale_caps_a_tall_frame_by_its_long_edge() {
+        // Portrait frame: the cap applies to the longer (vertical) edge.
+        // 1940x2592 RGB shares only small factors with the cap, so this stays
+        // full-size rather than inventing a geometry.
+        assert_eq!(post_ccm_downscale(1940, 2592), (970, 1296));
+        assert!(1296 <= super::TAIL_MAX_EDGE);
     }
 }
