@@ -367,6 +367,15 @@ impl Preview {
             );
         }
 
+        // The *graph* must be built for the same output format the engine is
+        // told to expect. `profile.output_format` decides whether DisplayBlock
+        // emits a Conv(1x1) permutation or the convolution-free Pow+Clip path;
+        // `params.output_format` decides how the engine decodes what comes back.
+        // Letting the two disagree is silent: the graph emits `[1,4,H,W]`
+        // B,G,R,A planes in 0..255, the engine decodes them as `[1,3,H,W]` f32
+        // in 0..1, and every pixel lands 8x too large in the wrong channel.
+        profile.output_format = pipeline::OUTPUT_FORMAT;
+
         let mut blocks = profile.build_blocks(pipeline_width, pipeline_height, bayer_pattern);
         if blocks.is_empty() {
             return Err(format!("profile {} produced no blocks", profile.label));
