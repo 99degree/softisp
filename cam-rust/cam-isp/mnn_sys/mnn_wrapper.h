@@ -145,6 +145,11 @@ int mnn_tensor_get_shape(MnnTensor tensor, int* dims, int max_dims);
 int mnn_tensor_get_type(MnnTensor tensor);
 
 /**
+ * Get the element bit width of a tensor (8, 16, 32, 64), 0 on error.
+ */
+int mnn_tensor_get_bits(MnnTensor tensor);
+
+/**
  * Get a mutable pointer to the tensor's host data.
  * For CPU tensors, this returns a pointer to the data buffer.
  * @param tensor  Tensor handle.
