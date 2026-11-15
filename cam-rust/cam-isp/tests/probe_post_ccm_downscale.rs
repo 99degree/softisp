@@ -1,10 +1,14 @@
-//! Does the post-CCM downscale actually *run*, not just build?
+//! Does the post-CCM downscale build *and* run?
 //!
-//! Building a session only proves the graph was accepted. The device log then
-//! showed every frame failing with COMPUTE_SIZE_ERROR from `runSession`, which
-//! means the declared output shape still disagreed with what MNN computed from
-//! the Resize `scales` constant. This feeds real frames through both settings
-//! and reports the first failure and the returned geometry.
+//! `post_ccm_downscale` is expressed in **RGB** coordinates: demosaic halves
+//! both edges, so a 2592x1940 Bayer frame reaches the tail as 1296x970 RGB.
+//! This drives the MED profile at that sensor size and rotates through the
+//! whole session pool, which is what the live preview does.
+//!
+//! History: the block used to declare its Resize `scales` as a *runtime* graph
+//! input. MNN reads that tensor's contents during `resizeSession`
+//! (`InterpComputer` → `scalePtr[i]`), so `createSession` got a null host
+//! pointer and failed. `scales` is an initializer now.
 //!
 //! Run:
 //!   cargo test -p cam-isp --test probe_post_ccm_downscale --features mnn -- --nocapture --ignored
@@ -60,7 +64,6 @@ fn run_case(ds: (u32, u32)) -> Result<(u32, u32, usize), String> {
         isp_params: None,
     };
 
-    // Several frames so the session pool rotates through every slot.
     let mut last = (0u32, 0u32, 0usize);
     for frame in 0..8 {
         match engine.process(&params) {
@@ -76,12 +79,21 @@ fn run_case(ds: (u32, u32)) -> Result<(u32, u32, usize), String> {
 fn post_ccm_downscale_inference() {
     cam_isp::init();
 
-    for (label, ds) in [("off", (0u32, 0u32)), ("1920x1436", (1920u32, 1436u32))] {
+    // Dims are RGB. 2592x1940 Bayer -> 1296x970 RGB, so:
+    //   off / (1296,970)  no resample inserted
+    //   (648,485)         exact half of the RGB frame
+    //   (800,599)         arbitrary ratio (exercises the floor arithmetic)
+    for (label, ds) in [
+        ("off", (0u32, 0u32)),
+        ("(1296,970) no change", (1296u32, 970u32)),
+        ("(648,485) exact half", (648u32, 485u32)),
+        ("(800,599) arbitrary", (800u32, 599u32)),
+    ] {
         match run_case(ds) {
             Ok((w, h, bytes)) => {
-                eprintln!("{label:<12} 8 frames OK, output {w}x{h} ({bytes} bytes)")
+                eprintln!("{label:<22} 8 frames OK, output {w}x{h} ({bytes} bytes)")
             }
-            Err(e) => eprintln!("{label:<12} FAILED: {e}"),
+            Err(e) => eprintln!("{label:<22} FAILED: {e}"),
         }
     }
 }
