@@ -61,7 +61,7 @@ fn run_warp(mnn_path: &str) -> Result<(f32, f32, f32), String> {
         return Err("no model".into());
     }
 
-    let session = unsafe { mnn_session_create(interp, MnnBackendType::Vulkan, 1) };
+    let session = unsafe { mnn_session_create(interp, MnnBackendType::Vulkan, 1, 1) };
     if session.is_null() {
         unsafe {
             mnn_interpreter_destroy(interp);

@@ -81,7 +81,10 @@ fn run_inference(mnn_path: &str) -> Result<(f32, f32, f32), String> {
     }
 
     let backend = MnnBackendType::Vulkan;
-    let session = unsafe { mnn_session_create(interp, backend, 1) };
+    // precision: 1 = Precision_High (fp32 storage). The session API grew this
+    // argument when fp16 storage became selectable; an e2e comparison wants the
+    // full-precision path.
+    let session = unsafe { mnn_session_create(interp, backend, 1, 1) };
     if session.is_null() {
         unsafe {
             mnn_interpreter_destroy(interp);

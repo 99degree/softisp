@@ -108,7 +108,7 @@ fn test_mnn_unpack_performance_with_profiling() {
 
         let session_start = Instant::now();
         let sess = interp
-            .create_session(MnnBackendType::Vulkan, 1)
+            .create_session(MnnBackendType::Vulkan, 1, true)
             .expect("Failed to create Vulkan session");
         let session_create_time = session_start.elapsed();
 
