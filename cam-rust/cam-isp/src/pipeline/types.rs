@@ -506,15 +506,19 @@ impl GraphComposer {
         }
 
         let mut all_nodes = Vec::new();
-        // GraphProto field 5 (initializer) stays empty: every baked constant
-        // was migrated to a runtime graph input (see `extra_inputs()`), and
-        // the engine writes the payload into the MNN Input tensor before
-        // inference.  Emitting the raw payload bytes here would (a) break the
-        // ONNX schema — field 5 expects a serialized `TensorProto`, not a raw
-        // blob — and (b) shadow the graph input in MNN's converter, which
-        // only creates an `OpType_Input` op for a graph input that has no
-        // matching initializer.
-        let all_initializers: Vec<Vec<u8>> = Vec::new();
+        // GraphProto field 5 (initializer). Most baked constants were migrated
+        // to runtime graph inputs (see `extra_inputs()`), but some tensors
+        // cannot be runtime inputs at all: MNN consults their *contents* while
+        // propagating shapes during `resizeSession`, long before the engine
+        // could write a value. Resize `scales` is the case that forced this —
+        // as a graph input it dereferenced a null host pointer
+        // (`InterpComputer` → `scalePtr[i]`) and the session was never created.
+        //
+        // These come from `IspBlock::initializers()`, which returns serialized
+        // `TensorProto`s. They are NOT also registered as graph inputs: MNN's
+        // converter only emits an `OpType_Input` op for a graph input that has
+        // no matching initializer.
+        let mut all_initializers: Vec<Vec<u8>> = Vec::new();
         let mut graph_inputs = Vec::new();
         let mut all_outputs = Vec::new();
         let mut value_infos = Vec::new();
@@ -546,6 +550,7 @@ impl GraphComposer {
                 }
             }
             all_nodes.extend(nodes);
+            all_initializers.extend(blk.initializers());
 
             // Intermediate tensor value info for type inference (→ field 13)
             // Only for non-Identity blocks

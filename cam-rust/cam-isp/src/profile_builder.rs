@@ -195,21 +195,26 @@ impl PipelineProfile {
         // `tail_*` is the geometry every block below this point sees, so the
         // ones that declare concrete dims (vignetting gain map, display
         // output) have to be told the reduced size rather than the sensor's.
+        // Demosaic halves both edges: a 2592x1940 Bayer frame becomes
+        // 1296x970 RGB (the CFA conv is a 2x2 stride-2 extract). Everything
+        // below this point therefore lives in *RGB* coordinates, half the
+        // sensor's, and `post_ccm_downscale` is expressed in those too.
+        let rgb_w = (target_width / 2).max(1);
+        let rgb_h = ((concrete_h as u32) / 2).max(1);
         let (ds_w, ds_h) = self.post_ccm_downscale;
-        let (tail_w, tail_h) = if ds_w > 0 && ds_h > 0 {
-            info!("  post-CCM downscale: {target_width}x{concrete_h} -> {ds_w}x{ds_h}");
+        let (tail_w, tail_h) = if ds_w > 0 && ds_h > 0 && ds_w != rgb_w {
+            info!("  post-CCM downscale: {rgb_w}x{rgb_h} -> {ds_w}x{ds_h}");
             let ds = AdaptiveDownscaleBlock::new(ds_w as i64, ds_h as i64, 0, "edge", "fit")
-                .with_concrete_dims(concrete_h, target_width as i64);
+                .with_concrete_dims(rgb_h as i64, rgb_w as i64);
             // Use the block's *own* idea of its output size, not the requested
-            // target. MNN derives the Resize extent as
-            // `floor(scale * input)`, so a 2592 -> 1920 fit lands on 1918; the
-            // tail blocks must declare that number or every downstream shape
-            // check disagrees with the tensor and `runSession` fails.
+            // target: MNN derives the Resize extent as `scale * input` in
+            // float, so an inexact ratio lands a pixel or two away and every
+            // downstream shape check would disagree with the tensor.
             let (tail_h_i, tail_w_i) = ds.out_dims();
             blocks.push(Box::new(ds));
             (tail_w_i as u32, tail_h_i as u32)
         } else {
-            (target_width, concrete_h as u32)
+            (rgb_w, rgb_h)
         };
 
         if self.use_warp {
