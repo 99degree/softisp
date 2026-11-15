@@ -22,6 +22,19 @@ pub struct VignettingBlock {
     pub falloff: f32,
     /// Input tensor name (set by wire_blocks).
     input_source: String,
+    /// Instance suffix, so the same physics can appear twice in one chain
+    /// (lens shading on the Bayer quad, vignetting on the RGB tail) without
+    /// their tensor names colliding.
+    pub instance: String,
+    /// This instance's output tensor name, kept as a field because
+    /// `frame_tensor()` returns a borrow.
+    output: String,
+    /// Number of planes in the frame this block multiplies.
+    ///
+    /// Lens shading runs on the post-CFA quad (4 planes of the half-resolution
+    /// Bayer grid); the RGB tail has 3. The gain map is `[1, channels, h, w]`
+    /// so the `Mul` broadcasts one map across every plane.
+    pub channels: u32,
 }
 
 impl VignettingBlock {
@@ -35,7 +48,60 @@ impl VignettingBlock {
             strength,
             falloff: 2.0,
             input_source: String::new(),
+            instance: String::new(),
+            output: "vignetting/output".to_string(),
+            channels: 1,
         }
+    }
+
+    /// Give this instance its own tensor namespace.
+    pub fn with_instance(mut self, name: &str) -> Self {
+        self.instance = name.to_string();
+        self.output = if name.is_empty() {
+            "vignetting/output".to_string()
+        } else {
+            format!("vignetting_{}/output", name)
+        };
+        self
+    }
+
+    /// Set how many planes the frame carries (`1` single plane, `4` CFA quad).
+    pub fn with_channels(mut self, channels: u32) -> Self {
+        self.channels = channels.max(1);
+        self
+    }
+
+    /// Tensor name of this instance's gain-map graph input.
+    pub fn gain_map_tensor(&self) -> String {
+        if self.instance.is_empty() {
+            "vignetting/gain_map".to_string()
+        } else {
+            format!("vignetting_{}/gain_map", self.instance)
+        }
+    }
+
+    /// Tensor name for this instance's frame input.
+    pub fn input_tensor(&self) -> String {
+        if self.instance.is_empty() {
+            "vignetting/input".to_string()
+        } else {
+            format!("vignetting_{}/input", self.instance)
+        }
+    }
+
+    /// Tensor name for this instance's frame output.
+    pub fn output_tensor(&self) -> String {
+        if self.instance.is_empty() {
+            "vignetting/output".to_string()
+        } else {
+            format!("vignetting_{}/output", self.instance)
+        }
+    }
+
+    /// Gain for one normalised radius, shared by the map builder and tests.
+    fn gain_at(radius: f32, strength: f32, falloff: f32) -> f32 {
+        let vignette = 1.0 - strength * radius.powf(falloff);
+        1.0 / vignette.max(0.1)
     }
 
     /// Create with default parameters.
@@ -73,12 +139,33 @@ impl VignettingBlock {
                 let r = (dx * dx + dy * dy).sqrt() / max_dist;
 
                 // Vignetting correction: boost edges
-                let vignette = 1.0 - strength * r.powf(falloff);
-                let gain = 1.0 / vignette.max(0.1); // Prevent division by zero
-                gain_map.push(gain);
+                gain_map.push(Self::gain_at(r, strength, falloff));
             }
         }
         gain_map
+    }
+
+    /// Gain map for a `channels`-plane frame: `[1, channels, h, w]`.
+    ///
+    /// The falloff is one radial function of position, so every plane shares
+    /// it; the channel axis exists only so the `Mul` broadcasts plane by plane
+    /// without needing a reshape.
+    pub fn gain_map_channels(
+        height: u32,
+        width: u32,
+        strength: f32,
+        falloff: f32,
+        channels: u32,
+    ) -> Vec<f32> {
+        let one = Self::gain_map(height, width, strength, falloff);
+        if channels <= 1 {
+            return one;
+        }
+        let mut all = Vec::with_capacity(one.len() * channels as usize);
+        for _ in 0..channels {
+            all.extend_from_slice(&one);
+        }
+        all
     }
 }
 
@@ -88,15 +175,24 @@ impl IspBlock for VignettingBlock {
     }
 
     fn tensor_ns(&self) -> String {
-        "VignettingBlock".to_string()
+        if self.instance.is_empty() {
+            "VignettingBlock".to_string()
+        } else {
+            format!("VignettingBlock_{}", self.instance)
+        }
     }
 
     fn input_source(&self) -> Option<&str> {
         if self.input_source.is_empty() {
-            Some("vignetting/input")
+            None
         } else {
             Some(&self.input_source)
         }
+    }
+
+    /// The frame input, resolved lazily so each instance gets its own name.
+    fn graph_input_name(&self) -> Option<&str> {
+        None
     }
 
     fn set_input_source(&mut self, name: &str) {
@@ -104,7 +200,9 @@ impl IspBlock for VignettingBlock {
     }
 
     fn frame_tensor(&self) -> Option<&str> {
-        Some("vignetting/output")
+        // Stored rather than formatted on demand: the trait hands back a
+        // borrowed str, so the name has to outlive the call.
+        Some(self.output.as_str())
     }
 
     fn prev(&self) -> Option<&Box<dyn IspBlock>> {
@@ -121,10 +219,13 @@ impl IspBlock for VignettingBlock {
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
-            self.input_source().unwrap_or("vignetting/input"),
+            self.input_source()
+                .unwrap_or(&self.input_tensor())
+                .to_string()
+                .as_str(),
             &[
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(self.channels as i64),
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_param("W"),
             ],
@@ -134,10 +235,10 @@ impl IspBlock for VignettingBlock {
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
         Some(Proto::value_info(
-            self.frame_tensor().unwrap_or("vignetting/output"),
+            &self.output,
             &[
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(3),
+                Proto::tensor_dim_value(self.channels as i64),
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_param("W"),
             ],
@@ -151,15 +252,17 @@ impl IspBlock for VignettingBlock {
         // [1,1,H,W] constant would break MNN resizeSession whenever the
         // pipeline input size differs from the baked dims (e.g. 32×32 or
         // 4K into an FHD-baked model). The engine resizes + fills it.
+        let input_owned = self.input_tensor();
         let input = if self.input_source.is_empty() {
-            "vignetting/input"
+            input_owned.as_str()
         } else {
             &self.input_source
         };
+        let gain_tensor = self.gain_map_tensor();
 
         vec![Proto::node(
             "Mul",
-            &[input, "vignetting/gain_map"],
+            &[input, &gain_tensor],
             &[self.frame_tensor().unwrap_or("vignetting/output")],
             &[],
         )]
@@ -171,9 +274,14 @@ impl IspBlock for VignettingBlock {
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         vec![(
-            "vignetting/gain_map".to_string(),
+            self.gain_map_tensor(),
             1, // FLOAT
-            vec![1, 1, self.height as i64, self.width as i64],
+            vec![
+                1,
+                self.channels as i64,
+                self.height as i64,
+                self.width as i64,
+            ],
         )]
     }
 }

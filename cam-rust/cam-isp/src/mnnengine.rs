@@ -1009,20 +1009,40 @@ impl MnnEngine {
         h: u32,
         w: u32,
     ) {
-        let Some(t) = pool
-            .iter()
-            .find(|(n, _)| n == "vignetting/gain_map")
-            .map(|(_, t)| t)
-        else {
-            return;
-        };
-        let gh = (h / 2).max(1);
-        let gw = (w / 2).max(1);
-        let shape = vec![1i32, 1, gh as i32, gw as i32];
-        let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
-        // Strength/falloff must match VignettingBlock::new_default (0.5 / 2.0).
-        let gain = crate::blocks::VignettingBlock::gain_map(gh, gw, 0.5, 2.0);
-        t.upload_f32(&gain);
+        // Two placements share this path: lens shading on the Bayer quad
+        // (`[1,4,H/2,W/2]`) and vignetting on the RGB tail (`[1,3,H',W']`).
+        // Each instance owns its own gain-map tensor, so anything the profile
+        // did not add is simply absent from the pool.
+        for (name, t) in pool {
+            let Some((channels, scale)) = Self::gain_map_layout(name) else {
+                continue;
+            };
+            let gh = (h / scale).max(1);
+            let gw = (w / scale).max(1);
+            let shape = vec![1i32, channels as i32, gh as i32, gw as i32];
+            let _ = t.set_shape(interp.as_ptr(), sess.as_ptr(), &shape);
+            // Strength/falloff match `VignettingBlock::new_default` (0.5 / 2.0);
+            // both placements describe the same lens.
+            let gain =
+                crate::blocks::VignettingBlock::gain_map_channels(gh, gw, 0.5, 2.0, channels);
+            if !t.upload_f32(&gain) {
+                warn!("{name}: gain map upload failed ({} f32)", gain.len());
+            }
+        }
+    }
+
+    /// `(channels, downsample factor)` for a gain-map tensor name.
+    ///
+    /// The RGB tail and the Bayer quad both live on the demosaiced grid, which
+    /// is half the sensor in each axis; the channel count is what differs.
+    fn gain_map_layout(name: &str) -> Option<(u32, u32)> {
+        match name {
+            // Tail vignetting (`VignettingBlock` with no instance).
+            "vignetting/gain_map" => Some((3, 2)),
+            // Lens shading on the post-CFA quad.
+            "vignetting_lsc/gain_map" => Some((4, 2)),
+            _ => None,
+        }
     }
 }
 
