@@ -221,6 +221,13 @@ extern "C" {
     /// Calls MNNVulkanFuseRegister and manually registers the Vulkan runtime creator.
     /// Returns 1 on success, 0 on failure.
     pub fn ensure_mnn_vulkan_registered() -> c_int;
+
+    /// Human-readable reason for the most recent `mnn_run_with_output` failure.
+    ///
+    /// The negative return code alone cannot distinguish a shape mismatch from
+    /// a backend compute error, and the app has no logcat — only its own log
+    /// file — so the reason has to come back through this pointer.
+    pub fn mnn_last_error() -> *const c_char;
 }
 
 // General MNN_GetSessionInfo API (mirrors MNN::Interpreter::getSessionInfo).

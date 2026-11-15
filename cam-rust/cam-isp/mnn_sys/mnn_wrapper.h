@@ -356,6 +356,16 @@ int mnn_benchmark_sync(
  */
 int ensure_mnn_vulkan_registered(void);
 
+/**
+ * Human-readable reason for the most recent `mnn_run_with_output` failure.
+ *
+ * The Rust side only learns a negative return code, which cannot distinguish
+ * a shape mismatch from a backend compute error. This returns a message set on
+ * every failure path (cleared at the start of each run), or "" on success.
+ * The pointer stays valid until the next run on any session.
+ */
+const char* mnn_last_error(void);
+
 #ifdef __cplusplus
 }
 #endif
