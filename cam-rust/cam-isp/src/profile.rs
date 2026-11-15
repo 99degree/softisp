@@ -133,6 +133,22 @@ pub struct PipelineProfile {
     pub use_auto_contrast: bool,
     /// Enable normalization (zero-mean, unit-variance).
     pub use_normalize: bool,
+    /// Fold the input normalisation into the *display* stage instead of
+    /// dividing the Bayer frame up front.
+    ///
+    /// The ISP chain works on `[0,1]` floats: `BlcBlock`, `BayerWbBlock`,
+    /// `CcmBlock`, `ToneBlock` and the display Conv all clamp or scale against
+    /// `<ns>/one`, which is 1.0. Inserting `NormalizeBlock` (a Cast + Div by
+    /// `sensor_max`) is what establishes that range.
+    ///
+    /// With this flag the divide is skipped at the input and every block before
+    /// the display keeps working in sensor counts; the display Conv weights and
+    /// the tone contrast are divided by the same factor so the final image is
+    /// identical. That removes one full-frame pass over the Bayer data, but it
+    /// assumes no `Clip` in the chain saturates below the sensor's white level.
+    /// Real sensor data reaches ~0.97 full scale, which the 1.0 clips will cut,
+    /// so this is **off by default**.
+    pub normalize_at_display: bool,
     /// Enable tiled rendering for high-resolution output (e.g., 4K→4K).
     /// When true, the output is split into tiles processed independently.
     pub use_tiled_rendering: bool,
@@ -186,6 +202,7 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        normalize_at_display: false,
         use_tiled_rendering: false,
         tile_count_x: 1,
         tile_count_y: 1,
@@ -229,6 +246,7 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        normalize_at_display: false,
         use_tiled_rendering: false,
         tile_count_x: 1,
         tile_count_y: 1,
@@ -272,6 +290,7 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        normalize_at_display: false,
         use_tiled_rendering: false,
         tile_count_x: 1,
         tile_count_y: 1,
@@ -315,6 +334,7 @@ impl PipelineProfile {
         use_wavelet_denoise: true,
         use_auto_contrast: true,
         use_normalize: false,
+        normalize_at_display: false,
         use_tiled_rendering: false,
         tile_count_x: 1,
         tile_count_y: 1,
@@ -359,6 +379,7 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        normalize_at_display: false,
         use_tiled_rendering: false,
         tile_count_x: 1,
         tile_count_y: 1,
@@ -405,6 +426,7 @@ impl PipelineProfile {
         use_wavelet_denoise: true, // Simplified: AveragePool denoise
         use_auto_contrast: true,   // GPU-accelerated via ISP op
         use_normalize: true,
+        normalize_at_display: false,
         use_tiled_rendering: true, // Enable for 4K→4K
         tile_count_x: 2,
         tile_count_y: 2,
@@ -459,6 +481,7 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        normalize_at_display: false,
         use_tiled_rendering: false,
         tile_count_x: 1,
         tile_count_y: 1,
@@ -511,6 +534,7 @@ impl PipelineProfile {
         use_wavelet_denoise: false,
         use_auto_contrast: false,
         use_normalize: false,
+        normalize_at_display: false,
         use_tiled_rendering: false,
         tile_count_x: 1,
         tile_count_y: 1,
@@ -564,6 +588,7 @@ impl PipelineProfile {
         use_wavelet_denoise: bool, // wavelet denoising
         use_auto_contrast: bool, // auto contrast
         use_normalize: bool, // normalization
+        normalize_at_display: bool, // fold the normalise divide into the display stage
         use_tiled_rendering: bool, // enable tiled rendering for high-res output
         tile_count_x: u32, // horizontal tile count (e.g., 2 for 4K→4K)
         tile_count_y: u32, // vertical tile count (e.g., 2 for 4K→4K)
@@ -604,6 +629,7 @@ impl PipelineProfile {
             use_wavelet_denoise,       // wavelet denoising
             use_auto_contrast,         // auto contrast
             use_normalize,             // normalization
+            normalize_at_display,      // defer the divide to display
             use_tiled_rendering,       // enable tiled rendering
             tile_count_x,              // horizontal tile count
             tile_count_y,              // vertical tile count
@@ -736,6 +762,7 @@ mod tests {
             false,  // use_wavelet_denoise
             false,  // use_auto_contrast
             false,  // use_normalize
+            false,  // normalize_at_display
             false,  // use_tiled_rendering
             1,      // tile_count_x
             1,      // tile_count_y
@@ -787,6 +814,7 @@ mod tests {
             false,  // use_wavelet_denoise
             false,  // use_auto_contrast
             false,  // use_normalize
+            false,  // normalize_at_display
             false,  // use_tiled_rendering
             1,      // tile_count_x
             1,      // tile_count_y
