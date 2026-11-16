@@ -857,6 +857,42 @@ impl MnnEngine {
         }
         // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
         write_f32_array(pool, "DemosaicCcmBlock/b", &[tone.brightness; 3]);
+
+        // ── Coefficient buffers for the fused isp.* ops ──
+        //
+        // The Extra ops are positional: coefficients arrive as descriptor
+        // buffers at bindings 5+, never as node attributes. VulkanFuse reads 12
+        // attribute keys and none of them is a coefficient, so a block that
+        // emits `kernel_shape`/`blc_offsets`/`rotate_mode` is talking to nobody.
+        // These three writes are what actually reach the shaders.
+        //
+        // EeBlock: depthwise unsharp kernel [3,1,3,3] + bias [3]. Values match
+        // `EeBlock::extra_input_defaults` (centre 3.0, orthogonal -0.5, sum 1.0)
+        // so the fused path and the primitive Conv agree exactly.
+        let ee_kernel: [f32; 27] = [
+            0.0, -0.5, 0.0, //
+            -0.5, 3.0, -0.5, //
+            0.0, -0.5, 0.0,
+        ]
+        .iter()
+        .cycle()
+        .take(27)
+        .copied()
+        .collect::<Vec<f32>>()
+        .try_into()
+        .unwrap_or([0.0; 27]);
+        if let Some(t) = find(pool, "EeBlock/kernel_ee") {
+            if !t.upload_f32(&ee_kernel) {
+                warn!("EeBlock/kernel_ee: upload failed");
+            }
+        }
+        write_f32_array(pool, "EeBlock/bias_ee", &[0.0f32; 3]);
+
+        // DisplayBlock/gamma — `isp.display` computes `pow(x, 1/gamma)` and reads
+        // gamma from binding 0. Left at zero the shader's `pow(x, 0)` yields 1.0
+        // everywhere, i.e. a white frame. The primitive path uses 1/2.4 as an
+        // exponent, so the shader wants its reciprocal.
+        write_f32(pool, "DisplayBlock/gamma", 2.4);
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains.
         //
         // This must ALWAYS be written. `BayerWbBlock::extra_input_defaults`
