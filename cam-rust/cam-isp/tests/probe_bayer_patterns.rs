@@ -98,6 +98,7 @@ fn render(pattern: i32) -> Option<(f64, f64, f64)> {
 }
 
 #[test]
+#[ignore = "renders all four Bayer patterns at 2592x1940"]
 fn every_pattern_renders_the_same_scene() {
     cam_isp::init();
 

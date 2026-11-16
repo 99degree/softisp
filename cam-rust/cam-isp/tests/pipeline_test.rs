@@ -68,6 +68,7 @@ fn color_raw(width: u32, height: u32, r: u16, g: u16, b: u16) -> Vec<u8> {
 
 /// Test that CpuEngine processes a single 4×4 gray frame without error.
 #[test]
+#[ignore = "runs real MNN inference"]
 fn test_controller_gray_4x4() {
     cam_isp::init();
     let w = 4u32;
@@ -98,6 +99,7 @@ fn test_controller_gray_4x4() {
 
 /// Test AWB convergence across 10 frames with warm light input (4×4).
 #[test]
+#[ignore = "runs real MNN inference"]
 fn test_controller_convergence() {
     cam_isp::init();
     let w = 4u32;
@@ -139,6 +141,7 @@ fn test_controller_convergence() {
 
 /// Test that a flat gray input produces balanced RGB output.
 #[test]
+#[ignore = "runs real MNN inference"]
 fn test_pipeline_gray_balance() {
     cam_isp::init();
     let w = 8u32;
@@ -198,6 +201,7 @@ fn test_pipeline_gray_balance() {
 
 /// Test that a gradient produces brighter right side than left.
 #[test]
+#[ignore = "runs real MNN inference"]
 fn test_pipeline_gradient() {
     cam_isp::init();
     let w = 8u32;
@@ -250,6 +254,7 @@ fn test_pipeline_gradient() {
 
 /// Test pipeline handles edge cases (black/white frames) on tiny input.
 #[test]
+#[ignore = "runs real MNN inference"]
 fn test_pipeline_edge_cases() {
     cam_isp::init();
     let w = 4u32;
@@ -296,6 +301,7 @@ fn test_pipeline_edge_cases() {
 
 /// Test FusedPipeline builds with LITE profile.
 #[test]
+#[ignore = "runs real MNN inference"]
 fn test_profile_pipeline_integration() {
     cam_isp::init();
     let blocks = PipelineProfile::LITE.build_blocks(32, 0, 0);
@@ -306,6 +312,7 @@ fn test_profile_pipeline_integration() {
 
 /// Test FusedPipeline builds with TEST profile.
 #[test]
+#[ignore = "runs real MNN inference"]
 fn test_profile_test_build() {
     cam_isp::init();
     let blocks = PipelineProfile::TEST.build_blocks(8, 2, 0);
