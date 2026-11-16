@@ -260,8 +260,10 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("fcs")));
         }
         if self.use_ldci {
-            info!("  ldci: LdciBlock");
-            blocks.push(Box::new(LdciBlock::new()));
+            info!("  ldci: LdciBlock (opset_mode={})", self.opset_mode);
+            blocks.push(Box::new(
+                LdciBlock::new().with_opset_mode(BlockOpsetMode::from_profile(self.opset_mode)),
+            ));
         } else {
             info!("  ldci: IDENTITY");
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("ldci")));
@@ -275,8 +277,12 @@ impl PipelineProfile {
             // here is an Identity when LDCI is off) makes the converter drop the
             // fusion, leaving a dead `isp.ee` whose output reads as zeros. The
             // `Primitive` form is a plain `Conv`, which has no such requirement.
+            // Primitive stays the default because the fused form needs an exact
+            // upstream pattern and silently yields zeros when the converter
+            // declines to rewrite it. An explicit MnnIspMin request from the
+            // profile overrides that so fusion can be tried deliberately.
             blocks.push(Box::new(
-                EeBlock::new().with_opset_mode(BlockOpsetMode::Primitive),
+                EeBlock::new().with_opset_mode(BlockOpsetMode::from_profile(self.opset_mode)),
             ));
         } else {
             info!("  ee: IDENTITY");
