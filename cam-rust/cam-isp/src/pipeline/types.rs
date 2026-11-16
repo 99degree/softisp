@@ -294,6 +294,22 @@ pub enum BlockOpsetMode {
     MnnIspMin,
 }
 
+impl BlockOpsetMode {
+    /// Translate `PipelineProfile::opset_mode` (the integer the profile table
+    /// stores) into the enum.
+    ///
+    /// 0 = Primitive, 1 = Custom, 2 = MnnIspMin; anything else is treated as
+    /// Primitive so a bad profile value degrades to the safe form rather than
+    /// emitting an op type no backend understands.
+    pub fn from_profile(mode: i32) -> Self {
+        match mode {
+            2 => Self::MnnIspMin,
+            1 => Self::Custom,
+            _ => Self::Primitive,
+        }
+    }
+}
+
 /// Helper to build a chain of blocks as a Vec.
 pub struct PipelineBuilder {
     pub blocks: Vec<Box<dyn IspBlock>>,
