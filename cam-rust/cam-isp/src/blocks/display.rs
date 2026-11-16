@@ -329,10 +329,16 @@ impl DisplayBlock {
             attrs.push(Proto::attribute_int("has_postprocess", 1));
         }
 
+        // `isp.display` reads its gamma from binding 5 — a graph input the
+        // engine writes, not a `const` attribute. The attribute form broke
+        // `resizeSession` with COMPUTE_SIZE_ERROR, and leaving gamma unwritten
+        // made `pow(x, 0)` a constant 1.0 (a white frame).
+        let gamma = format!("{}/gamma", self.tensor_ns());
+
         vec![Proto::node_with_domain(
             "isp.display",
             "isp",
-            &[&inp],
+            &[&inp, &gamma],
             &[final_output],
             &attrs,
         )]
@@ -695,6 +701,12 @@ impl IspBlock for DisplayBlock {
         use OutputFormat::*;
         let ns = self.tensor_ns();
         let mut inputs = Vec::new();
+        // The fused rule takes gamma as an extra input; declare it for every
+        // format so `set_extra_inputs` can write it regardless of which path
+        // the graph composer picks.
+        if self.opset_mode() == BlockOpsetMode::MnnIspMin {
+            inputs.push((format!("{}/gamma", ns).to_string(), 1, vec![1]));
+        }
         match self.output_format {
             FloatRgb | Float16Rgb => {
                 // The identity path emits `Pow(x, gamma_exp)` and
