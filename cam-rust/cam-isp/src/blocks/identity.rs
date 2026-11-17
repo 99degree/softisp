@@ -15,6 +15,12 @@ pub struct IdentityBlock {
     input_source: String,
     output_name: String,
     channels: i64,
+    /// Tensor other blocks read from this point, if any.
+    ///
+    /// The aux stats blocks attach to `aux_hook_src/out`, which makes that
+    /// identity a *tap*, not dead weight: eliding it would leave the stats
+    /// branches reading a tensor nothing produces.
+    tap_tensor: Option<String>,
 }
 
 impl Default for IdentityBlock {
@@ -32,7 +38,15 @@ impl IdentityBlock {
             input_source: String::new(),
             output_name: format!("{}/out", name),
             channels: 4, // RGBA
+            tap_tensor: None,
         }
+    }
+
+    /// Mark this identity as a tap point that `tensor` (and anything reading it)
+    /// depends on. A tapped identity is never elided.
+    pub fn with_tap(mut self, tensor: &str) -> Self {
+        self.tap_tensor = Some(tensor.to_string());
+        self
     }
 
     pub fn with_channels(mut self, channels: i64) -> Self {
@@ -42,6 +56,12 @@ impl IdentityBlock {
 }
 
 impl IspBlock for IdentityBlock {
+    /// Pass-through: elide it from the graph rather than emit a node that
+    /// copies the whole frame — unless something else reads from here, in which
+    /// case the node is the only thing producing that tensor.
+    fn is_noop(&self) -> bool {
+        self.tap_tensor.is_none()
+    }
     fn id(&self) -> &str {
         &self.id
     }
@@ -153,6 +173,11 @@ impl BridgeIdentityBlock {
 }
 
 impl IspBlock for BridgeIdentityBlock {
+    /// Pass-through: elide it from the graph rather than emit a node that
+    /// copies the whole frame.
+    fn is_noop(&self) -> bool {
+        true
+    }
     fn id(&self) -> &str {
         &self.id
     }

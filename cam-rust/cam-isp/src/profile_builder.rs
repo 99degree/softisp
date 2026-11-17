@@ -186,7 +186,11 @@ impl PipelineProfile {
             blocks.push(Box::new(BlcBlock::new()));
         }
 
-        blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_src")));
+        // Tap point: the stats blocks read `aux_hook_src/out`, so this identity
+        // must survive elision or the stats branches lose their source.
+        blocks.push(Box::new(
+            crate::blocks::IdentityBlock::new("aux_hook_src").with_tap("aux_hook_src/out"),
+        ));
 
         let pipeline_factor = if self.pipeline_downscale_target > 0 {
             let tw = target_width as f32;
@@ -336,7 +340,10 @@ impl PipelineProfile {
 
         blocks.push(Box::new(ToneBlock::new()));
 
-        blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_out")));
+        // Tap point: tone stats read `aux_hook_out/out`.
+        blocks.push(Box::new(
+            crate::blocks::IdentityBlock::new("aux_hook_out").with_tap("aux_hook_out/out"),
+        ));
 
         if self.use_fcs {
             info!("  fcs: FcsBlock");
@@ -494,15 +501,20 @@ impl PipelineProfile {
         // position (`id_{prev}_{next}`) so a graph dump is readable. That is
         // worth it while building a pipeline and not worth 58% of the node count
         // while running one, so it is a switch rather than a constant.
+        let staged = blocks.len();
         let blocks = if crate::profile::BRIDGE_IDENTITIES {
+            // Debugging aid: keep every position addressable in a graph dump.
             crate::pipeline::GraphComposer::wire_blocks_with_identities(blocks)
         } else {
-            let mut wired = blocks;
-            crate::pipeline::GraphComposer::wire_blocks(&mut wired);
-            wired
+            crate::pipeline::GraphComposer::elide_noops(blocks)
         };
 
-        info!("  blocks wired: {} total", blocks.len());
+        info!(
+            "  blocks wired: {} of {} stages ({} pass-through elided)",
+            blocks.len(),
+            staged,
+            staged.saturating_sub(blocks.len())
+        );
         blocks
     }
 
