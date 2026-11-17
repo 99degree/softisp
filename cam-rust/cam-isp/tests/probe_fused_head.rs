@@ -88,7 +88,7 @@ fn floats(data: &[u8]) -> Vec<f32> {
 #[ignore]
 fn fused_head_matches_the_primitive_head() {
     let _ = env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
+        .filter_level(log::LevelFilter::Info)
         .is_test(false)
         .try_init();
     cam_isp::init();
