@@ -170,6 +170,56 @@ pub struct PipelineProfile {
     /// Opset mode for ONNX emission: 0=Primitive, 1=Custom, 2=MnnIspMin.
     /// Default is 0 (Primitive) for maximum compatibility.
     pub opset_mode: i32,
+    /// Which stages may emit a fused `isp.*` op, even when `opset_mode` says
+    /// MnnIspMin.
+    ///
+    /// Fusion is all-or-nothing per block otherwise: `opset_mode = 2` switches
+    /// every fusion-capable stage at once, so a single bad shader takes the
+    /// whole preview with it. This lets a stage be turned on after it has been
+    /// verified, one at a time, and keeps the rest on the primitive path.
+    pub fuse_stages: FuseStages,
+}
+
+/// Per-stage permission for fused `isp.*` emission.
+///
+/// Every stage defaults to **off**. A stage is switched on only after its fused
+/// form has been measured against the primitive one it replaces — see
+/// `probe_fusion_stepwise`, which does that comparison one block at a time.
+///
+/// The gate is deliberately separate from `opset_mode`: that field says what
+/// the backend *can* run, this one says what this profile has decided to trust.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FuseStages {
+    /// `DemosaicBlock` + `CcmBlock` as one `isp.demosaic_ccm`.
+    pub demosaic_ccm: bool,
+    /// `CcmBlock` as `isp.ccm`.
+    pub ccm: bool,
+    /// `EeBlock` as `isp.ee`.
+    pub ee: bool,
+    /// `LdciBlock` as `isp.ldci`.
+    pub ldci: bool,
+    /// `DisplayBlock` as `isp.display`.
+    pub display: bool,
+}
+
+impl FuseStages {
+    /// Nothing fused — every stage emits its primitive form.
+    pub const NONE: Self = Self {
+        demosaic_ccm: false,
+        ccm: false,
+        ee: false,
+        ldci: false,
+        display: false,
+    };
+
+    /// Whether `stage` is allowed, given the profile-wide `opset_mode`.
+    ///
+    /// A stage only fuses when the profile asked for MnnIspMin *and* the stage
+    /// is on the allowlist. Asking for MnnIspMin with an empty allowlist is a
+    /// no-op rather than a surprise.
+    pub fn allows(&self, opset_mode: i32, stage: bool) -> bool {
+        opset_mode == 2 && stage
+    }
 }
 
 impl PipelineProfile {
@@ -216,6 +266,7 @@ impl PipelineProfile {
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
         opset_mode: 0, // Primitive by default
+        fuse_stages: FuseStages::NONE,
     };
 
     /// Medium: adds bad pixel correction + unsharp mask.
@@ -261,6 +312,7 @@ impl PipelineProfile {
         tile_overlap: 0,
         output_format: OutputFormat::Bgra,
         opset_mode: 0, // Primitive by default
+        fuse_stages: FuseStages::NONE,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
@@ -306,6 +358,7 @@ impl PipelineProfile {
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
         opset_mode: 0, // Primitive by default
+        fuse_stages: FuseStages::NONE,
     };
 
     /// Everything-on profile: all available blocks enabled.
@@ -351,6 +404,7 @@ impl PipelineProfile {
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
         opset_mode: 0, // Primitive by default
+        fuse_stages: FuseStages::NONE,
     };
 
     /// Test profile: minimal blocks for fast unit testing.
@@ -397,6 +451,7 @@ impl PipelineProfile {
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
         opset_mode: 0, // Primitive by default
+        fuse_stages: FuseStages::NONE,
     };
 
     /// Unified profile — full ISP pipeline with all blocks enabled.
@@ -445,6 +500,7 @@ impl PipelineProfile {
         tile_overlap: 2,
         output_format: OutputFormat::PackedRgb,
         opset_mode: 2, // MnnIspMin for Vulkan GPU backend
+        fuse_stages: FuseStages::NONE,
     };
 
     /// HDR profile — multi-exposure burst with async HDR merge.
@@ -501,6 +557,7 @@ impl PipelineProfile {
         tile_overlap: 0,
         output_format: OutputFormat::PackedRgb,
         opset_mode: 0, // Primitive by default
+        fuse_stages: FuseStages::NONE,
     };
 
     /// YUV-source profile — for cameras that only deliver `YUV_420_888`.
@@ -555,6 +612,7 @@ impl PipelineProfile {
         tile_overlap: 0,
         output_format: OutputFormat::Bgra,
         opset_mode: 0, // Primitive by default
+        fuse_stages: FuseStages::NONE,
     };
 
     /// All built-in profiles.
@@ -608,6 +666,7 @@ impl PipelineProfile {
         tile_count_y: u32, // vertical tile count (e.g., 2 for 4K→4K)
         tile_overlap: u32, // overlap pixels between tiles for convolution
         opset_mode: i32,  // 0=Primitive, 1=Custom, 2=MnnIspMin
+        fuse_stages: FuseStages, // per-stage allowlist for fused isp.* emission
     ) -> Self {
         Self {
             label,
@@ -623,6 +682,7 @@ impl PipelineProfile {
             use_local_contrast,
             use_unsharp,
             use_lsc,
+            fuse_stages,
             lsc_strength: 0.5,
             use_warp,
             use_hdr,
@@ -783,6 +843,7 @@ mod tests {
             1,      // tile_count_y
             0,      // tile_overlap
             0,      // opset_mode: Primitive
+            FuseStages::NONE,
         );
         assert_eq!(p.label, "CUSTOM");
         assert!(p.use_warp);
@@ -835,6 +896,7 @@ mod tests {
             1,      // tile_count_y
             0,      // tile_overlap
             0,      // opset_mode: Primitive
+            FuseStages::NONE,
         );
         let blocks = p.build_blocks(128, 72, 0);
         assert_eq!(
