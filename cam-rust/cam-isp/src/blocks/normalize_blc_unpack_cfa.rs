@@ -48,7 +48,10 @@ impl Default for NormalizeBlcUnpackCfa {
 impl NormalizeBlcUnpackCfa {
     pub fn new() -> Self {
         Self {
-            input_source: String::new(),
+            // A named input, not the empty string: `graph_input_name()` hands
+            // this straight to the composer, and an unnamed graph input leaves
+            // the engine with no tensor to feed.
+            input_source: "raw_frame".to_string(),
             frame_tensor: "NormalizeBlcUnpackCfa/frame".to_string(),
             concrete_h: None,
             concrete_w: None,
@@ -216,8 +219,15 @@ impl NormalizeBlcUnpackCfa {
                 &format!("{}/max_val", ns),
             ],
             &[&self.frame_tensor],
-            // `height_downscale` is dropped: the shader always halves both edges.
-            &[Proto::attribute_int("elementwise", 1)],
+            // No `elementwise`: that attribute means "the output has the input's
+            // shape", and VulkanFuse then sizes the dispatch from the input
+            // dims. This op halves H and W, so marking it elementwise dispatched
+            // 192 rows of work for a 96-row output — and the readback of the
+            // resulting tensor faulted instead of returning the quad.
+            //
+            // The shader gets its source geometry from the params block, which
+            // VulkanFuse fills from the input tensor regardless.
+            &[],
         )
     }
 }
@@ -338,16 +348,30 @@ impl IspBlock for NormalizeBlcUnpackCfa {
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
-        let sw = if self.use_fast_unpack { 2 } else { 1 };
+
+        // The fused path declares only the tensors its shader reads. Declaring
+        // the primitive-only ones too (`div_65536`, `cfa_w`, `zero`, `one`) left
+        // them as graph inputs that no node consumed, which MNN's converter
+        // drops — and a graph input nothing references is a good way to make
+        // session creation fail in a place no message points at.
+        if self.opset_mode() == BlockOpsetMode::Primitive {
+            let sw = if self.use_fast_unpack { 2 } else { 1 };
+            return vec![
+                (format!("{}/max_val", ns), 1, vec![1]),
+                (format!("{}/div_65536", ns), 6, vec![]),
+                (format!("{}/mod_65536", ns), 6, vec![]),
+                (format!("{}/cfa_w", ns), 1, vec![4, 2, 2, sw]),
+                (format!("{}/cfa_b", ns), 1, vec![4]),
+                (format!("{}/blc_vals", ns), 1, vec![1, 4, 1, 1]),
+                (format!("{}/zero", ns), 1, vec![]),
+                (format!("{}/one", ns), 1, vec![]),
+            ];
+        }
+
+        // Binding order follows this list: `input[1]` -> 5, `input[2]` -> 6.
         vec![
-            (format!("{}/max_val", ns), 1, vec![1]),
-            (format!("{}/div_65536", ns), 6, vec![]),
-            (format!("{}/mod_65536", ns), 6, vec![]),
-            (format!("{}/cfa_w", ns), 1, vec![4, 2, 2, sw]),
-            (format!("{}/cfa_b", ns), 1, vec![4]),
             (format!("{}/blc_vals", ns), 1, vec![1, 4, 1, 1]),
-            (format!("{}/zero", ns), 1, vec![]),
-            (format!("{}/one", ns), 1, vec![]),
+            (format!("{}/max_val", ns), 1, vec![1]),
         ]
     }
 
