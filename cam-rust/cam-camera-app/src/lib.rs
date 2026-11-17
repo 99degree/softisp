@@ -326,8 +326,8 @@ impl Preview {
 
         // Determine profile based on camera capabilities
         let mut profile = if has_raw {
-            log::info!("Camera supports RAW16, using RAW Bayer pipeline");
-            PipelineProfile::MED
+            log::info!("Camera supports RAW16, using RAW Bayer pipeline (fused isp.* opset)");
+            PipelineProfile::FUSED
         } else {
             log::info!("Camera only supports YUV, using YUV input pipeline");
             PipelineProfile::YUV

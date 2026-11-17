@@ -589,6 +589,7 @@ fn parse_profile_builtin(s: &str) -> Option<PipelineProfile> {
     match s {
         "LITE" => Some(PipelineProfile::LITE),
         "MED" => Some(PipelineProfile::MED),
+        "FUSED" => Some(PipelineProfile::FUSED),
         "HEAVY" => Some(PipelineProfile::HEAVY),
         "PRO" => Some(PipelineProfile::PRO),
         "UNIFIED" => Some(PipelineProfile::UNIFIED),

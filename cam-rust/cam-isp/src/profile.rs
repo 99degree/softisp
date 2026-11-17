@@ -210,6 +210,19 @@ pub struct FuseStages {
 }
 
 impl FuseStages {
+    /// Every stage that has a verified fused form.
+    ///
+    /// Each entry was measured against its primitive form before being added
+    /// here; see `probe_enable_fused_stages` and `probe_fused_head`.
+    pub const ALL: Self = Self {
+        unpack_blc_normal_cfa: true,
+        demosaic_ccm: true,
+        ccm: true,
+        ee: true,
+        ldci: true,
+        display: true,
+    };
+
     /// Nothing fused — every stage emits its primitive form.
     pub const NONE: Self = Self {
         unpack_blc_normal_cfa: false,
@@ -321,6 +334,69 @@ impl PipelineProfile {
         output_format: OutputFormat::Bgra,
         opset_mode: 0, // Primitive by default
         fuse_stages: FuseStages::NONE,
+    };
+
+    /// Fused: MED's stage set, with every fusion-capable stage emitting a
+    /// single `isp.*` dispatch instead of its primitive block chain.
+    ///
+    /// This is the profile the app runs. The difference from [`Self::MED`] is
+    /// only how the stages are expressed — the pixel maths is the same, and
+    /// `probe_fused_head` / `probe_enable_fused_stages` check each substitution
+    /// against its primitive form before it is allowed in here.
+    ///
+    /// Fusing changes the memory picture in two ways worth knowing:
+    ///
+    ///   * the head becomes one dispatch over the packed sensor buffer instead
+    ///     of five blocks that cast, split, divide, clip and slice the
+    ///     full-resolution frame;
+    ///   * a chain containing an `isp.*` op cannot use fp16 tensor storage —
+    ///     those shaders declare `float[]` buffers, and MNN allocates two bytes
+    ///     per element when fp16 is on. `MnnEngine::chain_has_fused_op` detects
+    ///     that and drops to fp32 with a warning.
+    pub const FUSED: Self = Self {
+        label: "FUSED",
+        level: PipelineLevel::Medium,
+        input_type: "raw",
+        use_unpack: true,
+        force_input16: false,
+        use_fcs: false,
+        use_ldci: false,
+        use_ee: true,
+        use_bad_pixel: true,
+        demosaic_quality: DemosaicQuality::Standard,
+        use_local_contrast: false,
+        use_unsharp: true,
+        use_lsc: false,
+        lsc_strength: 0.5,
+        use_warp: false,
+        use_hdr: false,
+        rotate_mode: 0,
+        use_zone_stats: true,
+        use_channel_means: true,
+        use_tone_stats: true,
+        use_histogram: false,
+        stats_downscale_max: 0,
+        pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
+        eis_margin: 0.0,
+        use_bilateral: false,
+        use_saturation: true,
+        use_vignetting: false,
+        use_colorspace: false,
+        use_gamma: false,
+        use_sharpen: false,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
+        normalize_at_display: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
+        output_format: OutputFormat::Bgra,
+        // MnnIspMin is what lets `fuse_stages` have any effect at all.
+        opset_mode: 2,
+        fuse_stages: FuseStages::ALL,
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
