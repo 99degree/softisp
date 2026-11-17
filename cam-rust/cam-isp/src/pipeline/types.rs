@@ -279,6 +279,20 @@ pub trait IspBlock: Send + std::fmt::Debug {
     /// keeps emitting standard ONNX ops. The default does nothing, so a caller
     /// can retarget a whole chain without knowing which blocks support it.
     fn set_opset_mode(&mut self, _mode: BlockOpsetMode) {}
+
+    /// True when this block passes its input through unchanged.
+    ///
+    /// The pipeline builder emits these for stages a profile has turned off, so
+    /// positions stay stable when a flag flips. Each one is still a real ONNX
+    /// node — an `Identity` or an identity-permutation `Transpose` — which on the
+    /// GPU means a full-frame read and write that computes nothing.
+    ///
+    /// `GraphComposer::elide_noops` removes them and rewires the chain, so this
+    /// is the hook that lets a chain keep its structure while the graph does not
+    /// pay for it.
+    fn is_noop(&self) -> bool {
+        false
+    }
 }
 
 /// Whether a block's ONNX fragment uses custom or primitive ops.
@@ -788,6 +802,27 @@ impl GraphComposer {
             let prev = blocks[i - 1].frame_tensor().unwrap_or("--").to_string();
             blocks[i].set_input_source(&prev);
         }
+    }
+
+    /// Remove pass-through blocks and rewire the chain around them.
+    ///
+    /// A `noop` block exists so the builder can leave a stage slot empty without
+    /// every other stage shifting. In the graph it is a whole node — an
+    /// `Identity`, or a `Transpose(perm=[0,1,2,3])` — that reads and writes a
+    /// full frame to compute nothing. On the FUSED chain that is 13 of 14
+    /// remaining nodes, so eliding them is the difference between a graph that
+    /// is mostly copies and one that is mostly work.
+    ///
+    /// Returns the blocks that do something, wired to each other. A chain of
+    /// nothing but noops comes back empty: there is no work to express.
+    pub fn elide_noops(blocks: Vec<Box<dyn IspBlock>>) -> Vec<Box<dyn IspBlock>> {
+        let mut kept: Vec<Box<dyn IspBlock>> =
+            blocks.into_iter().filter(|b| !b.is_noop()).collect();
+        if kept.is_empty() {
+            return kept;
+        }
+        Self::wire_blocks(&mut kept);
+        kept
     }
 
     /// Auto-fusion prepass: scan for contiguous runs whose block IDs match a

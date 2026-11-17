@@ -98,7 +98,7 @@ fn render(profile: PipelineProfile) -> Result<Outcome, String> {
 #[ignore]
 fn fused_profile_renders() {
     let _ = env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
+        .filter_level(log::LevelFilter::Info)
         .is_test(false)
         .try_init();
     cam_isp::init();
