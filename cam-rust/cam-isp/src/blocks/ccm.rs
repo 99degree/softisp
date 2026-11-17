@@ -207,6 +207,20 @@ impl IspBlock for CcmBlock {
         vec![]
     }
 
+    /// `CcmBlock` can emit `isp.ccm`, so it declares the op type the other
+    /// fusion-capable blocks declare.
+    ///
+    /// This is static metadata — it says the block *can* fuse, not that it is
+    /// fusing. `MnnEngine::chain_has_fused_op` pairs it with
+    /// `opset_mode() == MnnIspMin` to decide whether the graph will actually
+    /// contain an `isp.*` op, and therefore whether fp16 tensor storage is safe.
+    /// Without this declaration a chain that fused only its CCM was misjudged as
+    /// unfused, kept fp16, and the shader read halves as floats — a black frame
+    /// with no error.
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        Some(&["isp.ccm"])
+    }
+
     fn opset_mode(&self) -> BlockOpsetMode {
         self.forced_mode.unwrap_or(BlockOpsetMode::Primitive)
     }
