@@ -329,6 +329,12 @@ impl DisplayBlock {
             attrs.push(Proto::attribute_int("has_postprocess", 1));
         }
 
+        // Mark the op elementwise so VulkanFuse derives the dispatch from the
+        // input tensor and hot-swaps W/H into the params block. Without it the
+        // shader's own `x >= w` test sees zeros and early-returns, leaving the
+        // output tensor untouched — a black frame that no error mentions.
+        attrs.push(Proto::attribute_int("elementwise", 1));
+
         // `isp.display` reads its gamma from binding 5 — a graph input the
         // engine writes, not a `const` attribute. The attribute form broke
         // `resizeSession` with COMPUTE_SIZE_ERROR, and leaving gamma unwritten
