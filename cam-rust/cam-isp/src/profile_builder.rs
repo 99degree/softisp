@@ -207,18 +207,42 @@ impl PipelineProfile {
 
         blocks.push(Box::new(BayerWbBlock::new()));
 
-        blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
-        // Unique instance names: multiple CcmBlocks share the default
-        // "CcmBlock/applied|frame" tensors, which alias in the ONNX→MNN
-        // converter and silently drop the demosaic chain.
-        // CCM can emit a fused `isp.ccm` instead of Conv(1x1) + Clip, but only
-        // while its bias is zero — `isp_ccm.comp` has coefficients for the
-        // matrix and none for an offset. The builder keeps the primitive form
-        // whenever a bias is set, so selecting MnnIspMin here is safe.
-        blocks
-            .push(Box::new(CcmBlock::with_instance("ccm").with_opset_mode(
-                BlockOpsetMode::from_profile(self.opset_mode),
-            )));
+        // Demosaic and CCM are one fused op or two primitive ones — never a mix.
+        // `isp.demosaic_ccm` applies `CCM x demosaic` weights, so leaving a
+        // separate CcmBlock behind would apply the colour matrix twice.
+        if self
+            .fuse_stages
+            .allows(self.opset_mode, self.fuse_stages.demosaic_ccm)
+        {
+            info!("  demosaic+ccm: DemosaicCcmBlock (fused isp.demosaic_ccm)");
+            blocks.push(Box::new(
+                DemosaicCcmBlock::new(bayer_pattern)
+                    // Demosaic halves both edges, so the block is told the
+                    // *input* geometry and derives the output itself.
+                    .with_concrete_dims(concrete_h, full_w)
+                    .with_opset_mode(BlockOpsetMode::MnnIspMin),
+            ));
+        } else {
+            blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
+            // Unique instance names: multiple CcmBlocks share the default
+            // "CcmBlock/applied|frame" tensors, which alias in the ONNX→MNN
+            // converter and silently drop the demosaic chain.
+            //
+            // CCM can emit a fused `isp.ccm` instead of Conv(1x1) + Clip, but
+            // only while its bias is zero — `isp_ccm.comp` has coefficients for
+            // the matrix and none for an offset.
+            let ccm_mode = if self
+                .fuse_stages
+                .allows(self.opset_mode, self.fuse_stages.ccm)
+            {
+                BlockOpsetMode::MnnIspMin
+            } else {
+                BlockOpsetMode::Primitive
+            };
+            blocks.push(Box::new(
+                CcmBlock::with_instance("ccm").with_opset_mode(ccm_mode),
+            ));
+        }
 
         // Post-CCM downscale: everything from here on is RGB at 3+ channels,
         // so this is the last point where shrinking the frame is cheap. Bayer
@@ -267,9 +291,18 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("fcs")));
         }
         if self.use_ldci {
-            info!("  ldci: LdciBlock (opset_mode={})", self.opset_mode);
+            info!("  ldci: LdciBlock (fused={})", self.fuse_stages.ldci);
             blocks.push(Box::new(
-                LdciBlock::new().with_opset_mode(BlockOpsetMode::from_profile(self.opset_mode)),
+                LdciBlock::new().with_opset_mode(
+                    if self
+                        .fuse_stages
+                        .allows(self.opset_mode, self.fuse_stages.ldci)
+                    {
+                        BlockOpsetMode::MnnIspMin
+                    } else {
+                        BlockOpsetMode::Primitive
+                    },
+                ),
             ));
         } else {
             info!("  ldci: IDENTITY");
@@ -289,7 +322,16 @@ impl PipelineProfile {
             // declines to rewrite it. An explicit MnnIspMin request from the
             // profile overrides that so fusion can be tried deliberately.
             blocks.push(Box::new(
-                EeBlock::new().with_opset_mode(BlockOpsetMode::from_profile(self.opset_mode)),
+                EeBlock::new().with_opset_mode(
+                    if self
+                        .fuse_stages
+                        .allows(self.opset_mode, self.fuse_stages.ee)
+                    {
+                        BlockOpsetMode::MnnIspMin
+                    } else {
+                        BlockOpsetMode::Primitive
+                    },
+                ),
             ));
         } else {
             info!("  ee: IDENTITY");
@@ -369,7 +411,16 @@ impl PipelineProfile {
             DisplayBlock::new(tail_w)
                 .with_rotate(self.rotate_mode)
                 .with_output_format(self.output_format)
-                .with_opset_mode(self.opset_mode)
+                .with_opset_mode(
+                    if self
+                        .fuse_stages
+                        .allows(self.opset_mode, self.fuse_stages.display)
+                    {
+                        2
+                    } else {
+                        0
+                    },
+                )
                 .with_concrete_dims(tail_h as i64, tail_w as i64),
         ));
 
