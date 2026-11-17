@@ -201,6 +201,13 @@ impl IspBlock for EeBlock {
                         Proto::attribute_ints("pads", &[1, 1, 1, 1]),
                         Proto::attribute_ints("strides", &[1, 1]),
                         Proto::attribute_int("group", 3),
+                        // Mark the op elementwise so VulkanFuse derives the
+                        // dispatch from the input tensor and hot-swaps W/H into
+                        // the params block. Without it the shader's own
+                        // `x >= w` test sees zeros and early-returns, leaving
+                        // the output tensor untouched — a black frame that no
+                        // error mentions.
+                        Proto::attribute_int("elementwise", 1),
                     ],
                 )]
             }
