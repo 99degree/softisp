@@ -1194,6 +1194,32 @@ impl IspEngine for MnnEngine {
                         onnx.len()
                     );
 
+                    // ── Precision is a correctness constraint, not a knob ──
+                    //
+                    // Every `isp.*` shader declares `float[]` storage buffers,
+                    // but `VulkanBackend::getTensorSize` allocates two bytes per
+                    // element when `mUseFP16`. A fused op therefore reads halves
+                    // as floats: the same fused CCM gives mean 0.8007 at fp32 and
+                    // 0.0000 at fp16, with nothing else changed.
+                    //
+                    // So a chain that contains a fused op cannot use fp16
+                    // storage. Detect that here rather than making every caller
+                    // know — and say so, because it halves the memory headroom.
+                    let has_fused = all.iter().any(|b| {
+                        matches!(
+                            b.opset_mode(),
+                            crate::pipeline::BlockOpsetMode::MnnIspMin
+                                | crate::pipeline::BlockOpsetMode::Custom
+                        )
+                    });
+                    if has_fused && self.fp16_storage {
+                        warn!(
+                            "chain contains fused isp.* ops — forcing fp32 tensor storage \
+                             (their shaders declare float buffers; fp16 would hand them halves)"
+                        );
+                        self.fp16_storage = false;
+                    }
+
                     // Collect default values for extra inputs from every block
                     // before we discard the block list.  These replace the
                     // former baked Const initializers: the engine writes them
