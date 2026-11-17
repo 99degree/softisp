@@ -188,6 +188,14 @@ pub struct PipelineProfile {
 ///
 /// The gate is deliberately separate from `opset_mode`: that field says what
 /// the backend *can* run, this one says what this profile has decided to trust.
+/// Emit a `Transpose(perm=[0,1,2,3])` bridge between every pair of blocks.
+///
+/// A bridge is a semantic no-op and a full-frame GPU read + write. They exist so
+/// every pipeline position has a named node (`id_{prev}_{next}`) in a graph dump;
+/// on the FUSED chain they are 19 of 33 nodes. Off by default — turn it on when
+/// reading a converted model, not when running one.
+pub const BRIDGE_IDENTITIES: bool = false;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FuseStages {
     /// The RAW head as one `isp.unpack_blc_normal_cfa`.
@@ -841,14 +849,22 @@ mod tests {
         assert_eq!(p.demosaic_quality, DemosaicQuality::Edge);
     }
 
+    /// Chains keep their *stage* count; the identity bridges that used to pad
+    /// it are an emission detail and are off by default (see
+    /// `BRIDGE_IDENTITIES`), so the expected length follows that switch.
     #[test]
     fn test_build_blocks_lite() {
         let blocks = PipelineProfile::LITE.build_blocks(128, 72, 0);
-        // LITE: 24 main blocks + 23 identity bridges = 47
+        let stages = 24;
+        let expected = if BRIDGE_IDENTITIES {
+            stages + stages - 1 // one bridge between each adjacent pair
+        } else {
+            stages
+        };
         assert_eq!(
             blocks.len(),
-            47,
-            "LITE (primitive) should have 47 blocks (24 + 23 identities), got {}",
+            expected,
+            "LITE (primitive) should have {expected} blocks, got {}",
             blocks.len()
         );
     }
@@ -856,11 +872,16 @@ mod tests {
     #[test]
     fn test_build_blocks_heavy() {
         let blocks = PipelineProfile::HEAVY.build_blocks(128, 72, 0);
-        // HEAVY: 24 main + 1 DPC + 24 identity bridges = 49
+        let stages = 25; // 24 + the DPC block
+        let expected = if BRIDGE_IDENTITIES {
+            stages + stages - 1
+        } else {
+            stages
+        };
         assert_eq!(
             blocks.len(),
-            49,
-            "HEAVY (primitive) should have 49 blocks (24 + 1 DPC + 24 identities), got {}",
+            expected,
+            "HEAVY (primitive) should have {expected} blocks, got {}",
             blocks.len()
         );
     }
@@ -983,40 +1004,54 @@ mod tests {
             FuseStages::NONE,
         );
         let blocks = p.build_blocks(128, 72, 0);
+        let expected = if BRIDGE_IDENTITIES { 45 } else { 23 };
         assert_eq!(
             blocks.len(),
-            45,
-            "Legacy should have 45 blocks (23 + 22 identities), got {}",
+            expected,
+            "Legacy should have {expected} blocks (23 stages + bridges), got {}",
             blocks.len()
         );
         assert_eq!(blocks[0].id(), "raw_input");
-        // With identity bridges, the second block is the identity bridge
-        assert!(
-            blocks[1].id().starts_with("id_raw_input_"),
-            "Second block should be identity bridge, got '{}'",
-            blocks[1].id()
-        );
+        // Bridges are off by default, so `normalize` follows `raw_input`
+        // directly; when they are on there is a named bridge in between.
+        let normalize_at = if BRIDGE_IDENTITIES {
+            assert!(
+                blocks[1].id().starts_with("id_raw_input_"),
+                "With bridges on, the second block is the bridge, got '{}'",
+                blocks[1].id()
+            );
+            2
+        } else {
+            1
+        };
         assert_eq!(
-            blocks[2].id(),
+            blocks[normalize_at].id(),
             "normalize",
-            "Third block should be Normalize (no Unpack)"
+            "Normalize should follow raw_input (no Unpack in this profile)"
         );
     }
 
     #[test]
     fn test_block_count() {
-        // block_count() calls build_blocks() which now includes identity bridges
-        // LITE: 24 main + 23 identities + 3 stats = 50
+        // block_count() is `build_blocks().len() + build_aux_blocks().len()`.
+        // The bridge nodes are part of build_blocks only when
+        // BRIDGE_IDENTITIES is on, so the expectation follows that switch.
+        let bridges = |stages: usize| {
+            if BRIDGE_IDENTITIES {
+                stages + stages - 1
+            } else {
+                stages
+            }
+        };
         assert_eq!(
             PipelineProfile::LITE.block_count(),
-            50,
-            "LITE: 24 main + 23 identities + 3 stats = 50"
+            bridges(24) + 3,
+            "LITE: 24 stages (+ bridges) + 3 stats"
         );
-        // HEAVY: 24 main + 1 DPC + 24 identities + 5 stats = 54
         assert_eq!(
             PipelineProfile::HEAVY.block_count(),
-            54,
-            "HEAVY: 24 main + 1 DPC + 24 identities + 5 stats = 54"
+            bridges(25) + 5,
+            "HEAVY: 25 stages (+ bridges) + 5 stats"
         );
     }
 
