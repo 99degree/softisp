@@ -43,16 +43,15 @@ fn run(opset_mode: i32) -> Result<Outcome, String> {
 
     let mut engine = cam_isp::engine::select_engine_by_name("mnn_vulkan")
         .ok_or_else(|| "mnn_vulkan engine not registered".to_string())?;
-    // The fused shaders read f32 tensors; fp16 storage would hand them halves
-    // that they interpret as floats. Set PROBE_FP32=1 to compare.
-    if std::env::var("PROBE_FP32").is_ok() {
-        if let Some(m) = engine
-            .as_any_mut()
-            .downcast_mut::<cam_isp::mnnengine::MnnEngine>()
-        {
-            m.set_fp16_storage(false);
-        }
-    }
+    // fp16 tensor storage stays ON, matching the live app. Forcing fp32 here
+    // was worth trying once — the fused shaders declare plain `float` buffers,
+    // so halves could be misread — but this device cannot hold two 2592x1940
+    // fp32 sessions and the attempt OOMs before the first frame. Even if it fit,
+    // a number taken from a configuration the app never runs is not evidence
+    // about the app.
+    //
+    // If the fused path ever needs fp32 to be correct, the fix belongs in the
+    // engine (choose precision per pipeline), not in a probe flag.
     engine
         .build(head, blocks, None, 21)
         .map_err(|e| format!("build: {e}"))?;
