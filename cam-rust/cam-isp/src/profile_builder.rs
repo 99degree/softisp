@@ -211,7 +211,14 @@ impl PipelineProfile {
         // Unique instance names: multiple CcmBlocks share the default
         // "CcmBlock/applied|frame" tensors, which alias in the ONNX→MNN
         // converter and silently drop the demosaic chain.
-        blocks.push(Box::new(CcmBlock::with_instance("ccm")));
+        // CCM can emit a fused `isp.ccm` instead of Conv(1x1) + Clip, but only
+        // while its bias is zero — `isp_ccm.comp` has coefficients for the
+        // matrix and none for an offset. The builder keeps the primitive form
+        // whenever a bias is set, so selecting MnnIspMin here is safe.
+        blocks
+            .push(Box::new(CcmBlock::with_instance("ccm").with_opset_mode(
+                BlockOpsetMode::from_profile(self.opset_mode),
+            )));
 
         // Post-CCM downscale: everything from here on is RGB at 3+ channels,
         // so this is the last point where shrinking the frame is cheap. Bayer
