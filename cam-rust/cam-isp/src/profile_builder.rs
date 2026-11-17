@@ -55,7 +55,33 @@ impl PipelineProfile {
             }
             "raw" => {
                 // Standard RAW Bayer pipeline
-                if self.force_input16 {
+                if self
+                    .fuse_stages
+                    .allows(self.opset_mode, self.fuse_stages.unpack_blc_normal_cfa)
+                {
+                    // One `isp.unpack_blc_normal_cfa` dispatch replaces the five
+                    // blocks that cast, split, divide, clip and slice the
+                    // full-resolution frame. The graph still starts with the
+                    // packed input block — the shader reads those INT32 words
+                    // directly — so this changes the middle of the head, not its
+                    // interface.
+                    info!(
+                        "  head: RawInputPacked + isp.unpack_blc_normal_cfa \
+                         (fused unpack+normalize+blc+cfa)"
+                    );
+                    blocks.push(Box::new(
+                        RawInputPackedBlock::new()
+                            .with_concrete_width(full_w)
+                            .with_concrete_height(concrete_h),
+                    ));
+                    blocks.push(Box::new(
+                        NormalizeBlcUnpackCfa::new()
+                            .with_concrete_dims(concrete_h, full_w)
+                            .with_sensor_max(65535.0)
+                            .with_bayer_pattern(bayer_pattern)
+                            .with_opset_mode(BlockOpsetMode::MnnIspMin),
+                    ));
+                } else if self.force_input16 {
                     // Pure 16-bit raw input [1,1,H,W] INT16 — no packed tensor, no
                     // split. MNN's converter upcasts the INT16 input to FLOAT32, and
                     // the engine converts the u16 buffer to f32 (RawFloat mode).
@@ -145,10 +171,20 @@ impl PipelineProfile {
             }
         }
 
-        if self.use_bad_pixel {
-            blocks.push(Box::new(BlcBlock::with_instance("dpc")));
+        // The fused head subtracts the black level itself, on the packed
+        // samples before the quad split — which is where it belongs. Emitting
+        // the BLC blocks as well would subtract it twice.
+        let head_did_blc = self
+            .fuse_stages
+            .allows(self.opset_mode, self.fuse_stages.unpack_blc_normal_cfa);
+        if head_did_blc {
+            info!("  blc: fused into the head (isp.unpack_blc_normal_cfa)");
+        } else {
+            if self.use_bad_pixel {
+                blocks.push(Box::new(BlcBlock::with_instance("dpc")));
+            }
+            blocks.push(Box::new(BlcBlock::new()));
         }
-        blocks.push(Box::new(BlcBlock::new()));
 
         blocks.push(Box::new(crate::blocks::IdentityBlock::new("aux_hook_src")));
 

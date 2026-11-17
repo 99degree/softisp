@@ -899,6 +899,34 @@ impl MnnEngine {
         }
         write_f32_array(pool, "EeBlock/bias_ee", &[0.0f32; 3]);
 
+        // isp.unpack_blc_normal_cfa/bayer_pattern [1] — CFA phase.
+        //
+        // The fused head subtracts black level by *colour* but emits planes in
+        // physical quad order, so it needs the phase to know which plane is
+        // which. Written from `ProcessParams::bayer_pattern`, not from the
+        // block's construction-time default, so a profile cannot carry a stale
+        // phase into a different sensor.
+        write_f32(pool, "isp_unpack_blc/bayer_pattern", bayer_pattern as f32);
+
+        // isp.unpack_blc/max_val [1] — the white level the fused head divides by.
+        //
+        // The primitive head divides inside `NormalizeBlock`, which reads
+        // `NormalizeBlock/max_val`. The fused head does the same divide in its
+        // shader, so it needs the same number under its own tensor name. Left
+        // unwritten it kept the block's construction-time default of 65535, and
+        // a 10-bit sensor's 1023-count frame came out at 0.016 — a nearly black
+        // picture at the end of an otherwise correct chain.
+        write_f32(
+            pool,
+            "isp_unpack_blc/max_val",
+            if input_scale > 1.0 {
+                input_scale
+            } else {
+                white_level
+            }
+            .max(1.0),
+        );
+
         // DisplayBlock/gamma — `isp.display` computes `pow(x, 1/gamma)` and reads
         // gamma from binding 0. Left at zero the shader's `pow(x, 0)` yields 1.0
         // everywhere, i.e. a white frame. The primitive path uses 1/2.4 as an
