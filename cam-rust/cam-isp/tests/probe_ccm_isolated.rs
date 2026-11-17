@@ -52,6 +52,21 @@ fn run_matrix(tag: &str, ccm_mode: BlockOpsetMode, ccm_matrix: Option<[f32; 9]>)
             return;
         }
     };
+    // Tensor storage precision.
+    //
+    // `isp.*` shaders declare plain `float` SSBOs. With MNN's default
+    // `Precision_Normal` on Vulkan every float tensor is stored as fp16, so a
+    // shader reading `float params[9]` sees half-width data interpreted as
+    // floats. At 256x192 an fp32 session fits comfortably, so this probe can
+    // isolate that from everything else.
+    if std::env::var("PROBE_FP32").is_ok() {
+        if let Some(m) = engine
+            .as_any_mut()
+            .downcast_mut::<cam_isp::mnnengine::MnnEngine>()
+        {
+            m.set_fp16_storage(false);
+        }
+    }
     if let Err(e) = engine.build(head, blocks, None, 21) {
         eprintln!("{tag:<22} build failed: {e}");
         return;

@@ -76,6 +76,20 @@ fn render_with(mut blocks: Vec<Box<dyn IspBlock>>) -> Option<Frame> {
 
     let head = blocks.remove(0);
     let mut engine = cam_isp::engine::select_engine_by_name("mnn_vulkan")?;
+    // Fused `isp.*` shaders declare plain `float` SSBOs. MNN's default
+    // `Precision_Normal` stores every float tensor as fp16, so those shaders read
+    // half-width bytes as floats and produce garbage — verified: the fused CCM
+    // is byte-identical to the primitive Conv under fp32 and all-zero under
+    // fp16. PROBE_FP32=1 switches storage so the fused stages can be judged on
+    // their maths rather than on the precision mismatch.
+    if std::env::var("PROBE_FP32").is_ok() {
+        if let Some(m) = engine
+            .as_any_mut()
+            .downcast_mut::<cam_isp::mnnengine::MnnEngine>()
+        {
+            m.set_fp16_storage(false);
+        }
+    }
     if let Err(e) = engine.build(head, blocks, None, 21) {
         eprintln!("  build failed: {e}");
         return None;
