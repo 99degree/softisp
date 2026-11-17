@@ -190,6 +190,13 @@ pub struct PipelineProfile {
 /// the backend *can* run, this one says what this profile has decided to trust.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FuseStages {
+    /// The RAW head as one `isp.unpack_blc_normal_cfa`.
+    ///
+    /// Replaces `RawInputPacked + Unpack + Normalize + Blc + CfaPacked` — five
+    /// blocks that between them cast, divide, clip and slice the full-resolution
+    /// frame — with a single dispatch that reads the packed sensor buffer and
+    /// emits the quad directly.
+    pub unpack_blc_normal_cfa: bool,
     /// `DemosaicBlock` + `CcmBlock` as one `isp.demosaic_ccm`.
     pub demosaic_ccm: bool,
     /// `CcmBlock` as `isp.ccm`.
@@ -205,6 +212,7 @@ pub struct FuseStages {
 impl FuseStages {
     /// Nothing fused — every stage emits its primitive form.
     pub const NONE: Self = Self {
+        unpack_blc_normal_cfa: false,
         demosaic_ccm: false,
         ccm: false,
         ee: false,
