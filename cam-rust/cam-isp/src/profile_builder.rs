@@ -298,15 +298,34 @@ impl PipelineProfile {
         let (ds_w, ds_h) = self.post_ccm_downscale;
         let (tail_w, tail_h) = if ds_w > 0 && ds_h > 0 && ds_w != rgb_w {
             info!("  post-CCM downscale: {rgb_w}x{rgb_h} -> {ds_w}x{ds_h}");
-            let ds = AdaptiveDownscaleBlock::new(ds_w as i64, ds_h as i64, 0, "edge", "fit")
-                .with_concrete_dims(rgb_h as i64, rgb_w as i64);
-            // Use the block's *own* idea of its output size, not the requested
-            // target: MNN derives the Resize extent as `scale * input` in
-            // float, so an inexact ratio lands a pixel or two away and every
-            // downstream shape check would disagree with the tensor.
-            let (tail_h_i, tail_w_i) = ds.out_dims();
-            blocks.push(Box::new(ds));
-            (tail_w_i as u32, tail_h_i as u32)
+
+            // Fused: one `isp.downscale` dispatch instead of a `Resize` node.
+            //
+            // The shader does bilinear + aspect-fit + letterbox, which is what
+            // this stage wants. `AdaptiveDownscaleBlock` also offers `crop` and
+            // an EIS margin, and the shader understands neither — so those
+            // configurations keep the primitive form rather than quietly
+            // changing the geometry.
+            let fused = self
+                .fuse_stages
+                .allows(self.opset_mode, self.fuse_stages.tail_downscale);
+            if fused {
+                let ds = RgbDownscaleBlock::new(ds_w as i64, ds_h as i64)
+                    .with_concrete_dims(rgb_h as i64, rgb_w as i64);
+                blocks.push(Box::new(ds));
+                (ds_w, ds_h)
+            } else {
+                let ds = AdaptiveDownscaleBlock::new(ds_w as i64, ds_h as i64, 0, "edge", "fit")
+                    .with_concrete_dims(rgb_h as i64, rgb_w as i64);
+                // Use the block's *own* idea of its output size, not the
+                // requested target: MNN derives the Resize extent as
+                // `scale * input` in float, so an inexact ratio lands a pixel or
+                // two away and every downstream shape check would disagree with
+                // the tensor.
+                let (tail_h_i, tail_w_i) = ds.out_dims();
+                blocks.push(Box::new(ds));
+                (tail_w_i as u32, tail_h_i as u32)
+            }
         } else {
             (rgb_w, rgb_h)
         };
