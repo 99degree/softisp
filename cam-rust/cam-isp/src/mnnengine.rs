@@ -757,8 +757,19 @@ impl MnnEngine {
             name: &str,
             vals: &[f32],
         ) {
-            if let Some(t) = find(pool, name) {
-                t.upload_f32(vals);
+            // A failed upload leaves the tensor at whatever it was allocated
+            // with — usually zeros. That turns into a silently black or
+            // unmodified stage, so say so instead of swallowing the bool.
+            match find(pool, name) {
+                Some(t) => {
+                    if !t.upload_f32(vals) {
+                        warn!(
+                            "{name}: upload of {} f32 rejected (tensor wants a different size)",
+                            vals.len()
+                        );
+                    }
+                }
+                None => warn!("{name}: no such tensor in the session"),
             }
         }
 
