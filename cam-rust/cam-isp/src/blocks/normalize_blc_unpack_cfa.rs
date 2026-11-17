@@ -86,6 +86,15 @@ impl NormalizeBlcUnpackCfa {
         self
     }
 
+    /// Select the emitted opset mode.
+    ///
+    /// `MnnIspMin` and `Custom` both emit the fused `isp.unpack_blc` op;
+    /// `Primitive` emits the five-op equivalent.
+    pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
+        self.forced_mode = Some(mode);
+        self
+    }
+
     /// Emit primitive ONNX ops instead of the fused isp.unpack_blc custom op.
     pub fn force_primitive(mut self) -> Self {
         self.forced_mode = Some(BlockOpsetMode::Primitive);
@@ -110,20 +119,17 @@ impl NormalizeBlcUnpackCfa {
         fused
     }
 
-    /// Emit the fused custom-domain isp.unpack_blc node.
+    /// Emit the fused custom-domain `isp.unpack_blc` node.
+    ///
+    /// This used to emit op_type `unpack`, which is not an `isp.*` name and has
+    /// no shader: the op reached the runtime as an unknown Extra, VulkanFuse
+    /// rejected it, and the graph was left with a node nothing could execute —
+    /// a SIGSEGV during session creation rather than an error message.
+    ///
+    /// Coefficients ride as graph inputs, not attributes: `VulkanFuse` is
+    /// positional and reads none of the attribute keys this block used to set.
     fn emit_custom_node(&self) -> Vec<u8> {
-        let attrs = vec![
-            Proto::attribute_floats("blc_offsets", &self.blc_offsets),
-            Proto::attribute_float("sensor_max", self.sensor_max),
-            Proto::attribute_ints("height_downscale", &[self.height_downscale]),
-        ];
-        Proto::node_with_domain(
-            "unpack",
-            "isp",
-            &[&self.input_source],
-            &[&self.frame_tensor],
-            &attrs,
-        )
+        self.emit_mnn_isp_min_node()
     }
 
     /// Emit primitive ONNX nodes for MNN when Custom opsets are not available.
@@ -181,20 +187,37 @@ impl NormalizeBlcUnpackCfa {
         ]
     }
 
-    /// Emit MNN ISP minimum opset node — uses exact isp.crop_blc_norm_cfa op type
-    /// matching MNN's IspChainFusion pattern (isp.crop_blc_norm_cfa shader).
+    /// Emit the fused `isp.unpack_blc` Extra op.
+    ///
+    /// One dispatch replaces `Cast → Div → Sub → Clip → Conv(2x2, stride 2)`
+    /// over the full-resolution frame.
+    ///
+    /// The node takes **tensors**, not attributes, because `VulkanFuse` is
+    /// positional: it reads twelve attribute keys and none of them is a
+    /// coefficient, so a shader's inputs can only arrive as descriptor buffers.
+    /// Input order decides the binding (`input[0]` is the frame at 3, then
+    /// `input[1..]` fill 5, 6, …), which is why the arguments below are in the
+    /// same order the shader declares them.
     fn emit_mnn_isp_min_node(&self) -> Vec<u8> {
-        let attrs = vec![
-            Proto::attribute_floats("blc_offsets", &self.blc_offsets),
-            Proto::attribute_float("sensor_max", self.sensor_max),
-            Proto::attribute_ints("height_downscale", &[self.height_downscale]),
-        ];
+        let ns = self.tensor_ns();
         Proto::node_with_domain(
-            "crop_blc_norm_cfa", // MNN isp.crop_blc_norm_cfa op type
+            // The full name, not a bare one plus the domain: the converter
+            // copies op_type verbatim into Extra::type, so "unpack_blc" became
+            // an Extra named exactly that — no isp. prefix, no lookup entry,
+            // and the op was dropped, leaving a graph node nothing could run.
+            "isp.unpack_blc",
             "isp",
-            &[&self.input_source],
+            &[
+                // binding 3 — packed `[1,1,H,W/2]` INT32 sensor samples
+                &self.input_source,
+                // binding 5 — black level per quad plane
+                &format!("{}/blc_vals", ns),
+                // binding 6 — the sensor's white level
+                &format!("{}/max_val", ns),
+            ],
             &[&self.frame_tensor],
-            &attrs,
+            // `height_downscale` is dropped: the shader always halves both edges.
+            &[Proto::attribute_int("elementwise", 1)],
         )
     }
 }
