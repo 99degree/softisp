@@ -1339,7 +1339,16 @@ impl IspEngine for MnnEngine {
                 }
                 None => (0, 0, 0, [0; 4]),
             };
-            self.model_input_type = if input_code != 0 {
+            // Record the type whenever the tensor existed. The guard used to be
+            // `input_code != 0`, which is wrong for exactly the case it matters
+            // most: `halide_type_int` *is* code 0, so every INT32 model input was
+            // recorded as "unknown" and `InputMode::RawInt` then fell back to
+            // `(0, 16)` — a 16-bit buffer handed to a 32-bit input:
+            //
+            //     input type mismatch: model code=0 bits=32, buffer code=0 bits=16
+            //
+            // `input_ndim` is the real "we found a tensor" signal.
+            self.model_input_type = if input_ndim > 0 {
                 Some((input_code, input_bits))
             } else {
                 None
@@ -1775,6 +1784,21 @@ impl IspEngine for MnnEngine {
                 }
             }
 
+            // Which tensor is the result? `DisplayBlock/frame` for a full
+            // chain, the tail block's own name otherwise. Resolved once here
+            // instead of assumed, because a miss reads a null tensor and faults
+            // inside MNN with no message that names the cause.
+            let output_name = if interp.get_output(sess, "DisplayBlock/frame").is_some() {
+                "DisplayBlock/frame".to_string()
+            } else {
+                match interp.output_names(sess).first() {
+                    Some(n) => n.clone(),
+                    None => "DisplayBlock/frame".to_string(),
+                }
+            };
+            let output_name_ptr = std::ffi::CString::new(output_name.clone())
+                .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+
             let (buffer_ptr, buffer_type_code, buffer_type_bits, input_shape, path_str) = match mode
             {
                 InputMode::SplitInt32 => {
@@ -1865,7 +1889,7 @@ impl IspEngine for MnnEngine {
                     buffer_type_bits,
                     input_shape.as_ptr(),
                     input_shape.len() as i32,
-                    c"DisplayBlock/frame".as_ptr(),
+                    output_name_ptr.as_ptr(),
                     out_ptr,
                     max_out as i32,
                 );
@@ -1897,7 +1921,10 @@ impl IspEngine for MnnEngine {
                         CStr::from_ptr(p).to_string_lossy().into_owned()
                     }
                 };
-                error!("MNN inference failed: n={} (input={}x{}, output_name='DisplayBlock/frame', path={})", n, w, h, path);
+                error!(
+                    "MNN inference failed: n={} (input={}x{}, output_name='{}', path={})",
+                    n, w, h, output_name, path
+                );
                 if detail.is_empty() {
                     error!("  This usually means the MNN IspChainFusion pass computed wrong output dimensions.");
                     error!(
@@ -1925,7 +1952,7 @@ impl IspEngine for MnnEngine {
             // stage may resize, and a mismatch here makes the engine hand back
             // a buffer whose length disagrees with `frame.width * height *
             // channels` (silently truncating or mis-slicing the image).
-            let out_tensor = interp.get_output(sess, "DisplayBlock/frame");
+            let out_tensor = interp.get_output(sess, &output_name);
             let mut oh = p.target_height as usize;
             let mut ow = tw as usize;
             let mut graph_channels = p.output_format.channel_count();

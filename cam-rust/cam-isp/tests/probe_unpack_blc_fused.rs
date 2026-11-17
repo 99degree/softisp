@@ -3,64 +3,59 @@
 //! The fused op replaces `Cast → Div → Sub → Clip → Conv(2x2, stride 2)`:
 //! packed INT32 samples in, normalised and BLC-corrected planar quad out.
 //!
-//! The comparison is against values computed here on the CPU, not against
-//! `NormalizeBlcUnpackCfa`'s primitive form. That form is not usable standalone
-//! — it runs `Conv(stride 2)` over an already-packed `[1,1,H,W/2]` tensor, so its
-//! output width is half of what it declares — and the first version of this
-//! probe crashed inside MNN's session creation trying to build it.
+//! Two things had to be fixed before this could run at all, and both were in
+//! the probe rather than in MNN:
+//!
+//!   * the head block's `ProcessParams` must describe the *packed* frame it is
+//!     actually fed (`W` samples per row, `W*2` bytes), not the sensor geometry
+//!     the chain would have after unpacking;
+//!   * the block needs an input tensor name — it used to default to the empty
+//!     string, which no session can resolve.
 //!
 //! Run:
 //!   cargo test -p cam-isp --test probe_unpack_blc_fused --features mnn -- --nocapture --ignored
 
 #![cfg(feature = "mnn")]
 
-use cam_isp::blocks::NormalizeBlcUnpackCfa;
+use cam_isp::blocks::{DemosaicBlock, DisplayBlock, NormalizeBlcUnpackCfa};
 use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::pipeline::{BlockOpsetMode, GraphComposer, IspBlock};
 
+/// Sensor geometry. The packed buffer holds `W * H` samples, two per INT32 word.
 const W: u32 = 256;
 const H: u32 = 192;
 const SENSOR_MAX: f32 = 1023.0;
 const BLC: f32 = 0.02;
 
-/// Two u16 samples per INT32 word, gradient so a mis-indexed quad is visible.
+/// `W * H` samples, two u16 per word, gradient so a mis-indexed quad is visible.
 fn packed_input() -> Vec<u8> {
-    let words_per_row = (W / 2) as usize;
-    let mut buf = vec![0u8; words_per_row * H as usize * 4];
-    for y in 0..H as usize {
-        for k in 0..words_per_row {
-            let lo = ((y * 7 + k * 2) % 900 + 50) as u16;
-            let hi = ((y * 7 + k * 2 + 1) % 900 + 50) as u16;
-            let packed = (hi as u32) << 16 | lo as u32;
-            let i = (y * words_per_row + k) * 4;
-            buf[i..i + 4].copy_from_slice(&packed.to_le_bytes());
-        }
+    let mut buf = vec![0u8; (W as usize) * (H as usize) * 2];
+    for i in 0..(W as usize) * (H as usize) {
+        let v = ((i * 7) % 900 + 50) as u16;
+        buf[i * 2..i * 2 + 2].copy_from_slice(&v.to_le_bytes());
     }
     buf
 }
 
-/// What the shader should produce, plane by plane, computed on the CPU.
+/// One raw sample at (x, y), matching `packed_input`.
+fn sample(x: usize, y: usize) -> f32 {
+    let i = y * W as usize + x;
+    (((i * 7) % 900 + 50) as f32 / SENSOR_MAX - BLC).clamp(0.0, 1.0)
+}
+
+/// The quad the shader should produce: plane p = quad site p, planar.
 fn expected_quad() -> Vec<f32> {
-    let words_per_row = (W / 2) as usize;
-    let qw = words_per_row;
-    let qh = H as usize / 2;
+    let qw = (W / 2) as usize;
+    let qh = (H / 2) as usize;
     let plane = qw * qh;
     let mut out = vec![0.0f32; plane * 4];
-
-    let norm = |v: u16| ((v as f32) / SENSOR_MAX - BLC).clamp(0.0, 1.0);
-
     for qy in 0..qh {
         for qx in 0..qw {
-            let lo = ((qy * 2 * 7 + qx * 2) % 900 + 50) as u16;
-            let hi = ((qy * 2 * 7 + qx * 2 + 1) % 900 + 50) as u16;
-            let lo2 = (((qy * 2 + 1) * 7 + qx * 2) % 900 + 50) as u16;
-            let hi2 = (((qy * 2 + 1) * 7 + qx * 2 + 1) % 900 + 50) as u16;
-
             let idx = qy * qw + qx;
-            out[0 * plane + idx] = norm(lo); // TL
-            out[1 * plane + idx] = norm(hi); // TR
-            out[2 * plane + idx] = norm(lo2); // BL
-            out[3 * plane + idx] = norm(hi2); // BR
+            out[0 * plane + idx] = sample(qx * 2, qy * 2); // TL
+            out[1 * plane + idx] = sample(qx * 2 + 1, qy * 2); // TR
+            out[2 * plane + idx] = sample(qx * 2, qy * 2 + 1); // BL
+            out[3 * plane + idx] = sample(qx * 2 + 1, qy * 2 + 1); // BR
         }
     }
     out
@@ -70,18 +65,36 @@ fn expected_quad() -> Vec<f32> {
 #[ignore]
 fn unpack_blc_computes_the_quad() {
     let _ = env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
+        .filter_level(log::LevelFilter::Info)
         .is_test(false)
         .try_init();
     cam_isp::init();
+
+    let mode = match std::env::var("PROBE_MODE").as_deref() {
+        Ok("prim") => BlockOpsetMode::Primitive,
+        _ => BlockOpsetMode::MnnIspMin,
+    };
+    eprintln!("mode = {mode:?}");
 
     let block = NormalizeBlcUnpackCfa::new()
         .with_concrete_dims(H as i64, W as i64)
         .with_sensor_max(SENSOR_MAX)
         .with_blc_offsets([BLC; 4])
-        .with_opset_mode(BlockOpsetMode::MnnIspMin);
+        .with_opset_mode(mode);
 
-    let mut blocks: Vec<Box<dyn IspBlock>> = vec![Box::new(block)];
+    let mut blocks: Vec<Box<dyn IspBlock>> = vec![
+        Box::new(block),
+        // The op emits a 4-plane quad, so the tail has to consume 4 channels:
+        // demosaic, then display. Feeding the quad straight to `DisplayBlock`
+        // (which expects 3 planes) is a channel mismatch, and MNN reports it by
+        // faulting rather than by returning an error.
+        Box::new(DemosaicBlock::new(2)),
+        Box::new(
+            DisplayBlock::new(W)
+                .with_output_format(OutputFormat::FloatRgb)
+                .with_opset_mode(0),
+        ),
+    ];
     GraphComposer::wire_blocks(&mut blocks);
     let head = blocks.remove(0);
 
@@ -90,6 +103,8 @@ fn unpack_blc_computes_the_quad() {
     engine.build(head, blocks, None, 21).expect("build");
 
     let buf = packed_input();
+    // The head consumes the packed frame directly: one sample per pixel of a
+    // W x H INT32 plane, so the geometry is W x H, not the post-unpack quad.
     let params = ProcessParams {
         width: W,
         height: H,
@@ -135,12 +150,11 @@ fn unpack_blc_computes_the_quad() {
     assert_eq!(
         got.len(),
         want.len(),
-        "output has {} values, the shader declares {}",
+        "output has {} values, the quad is {}",
         got.len(),
         want.len()
     );
 
-    // Per-plane means first: a swapped plane order shows up here immediately.
     let plane = got.len() / 4;
     for (i, name) in ["TL", "TR", "BL", "BR"].iter().enumerate() {
         let g: f64 = got[i * plane..(i + 1) * plane]
