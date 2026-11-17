@@ -152,3 +152,6 @@ docs/architecture/PIPELINE_BLOCKS.md.bak
 
 # Analysis scratch (moved, not deleted — pending review)
 .trash_*
+
+# Tool-call transcript written by logged.sh
+log.txt
