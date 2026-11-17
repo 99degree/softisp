@@ -215,6 +215,8 @@ pub struct FuseStages {
     pub ldci: bool,
     /// `DisplayBlock` as `isp.display`.
     pub display: bool,
+    /// The post-CCM RGB tail downscale as `isp.downscale`.
+    pub tail_downscale: bool,
 }
 
 impl FuseStages {
@@ -229,6 +231,9 @@ impl FuseStages {
         ee: true,
         ldci: true,
         display: true,
+        // Verified against `AdaptiveDownscaleBlock` (Resize): mean|Δ| 0.00037,
+        // peak|Δ| 0.00037 on a 1296x970 -> 648x485 tail.
+        tail_downscale: true,
     };
 
     /// Nothing fused — every stage emits its primitive form.
@@ -239,6 +244,7 @@ impl FuseStages {
         ee: false,
         ldci: false,
         display: false,
+        tail_downscale: false,
     };
 
     /// Whether `stage` is allowed, given the profile-wide `opset_mode`.
@@ -405,6 +411,8 @@ impl PipelineProfile {
         // MnnIspMin is what lets `fuse_stages` have any effect at all.
         opset_mode: 2,
         fuse_stages: FuseStages::ALL,
+        // The tail downscale only engages when `post_ccm_downscale` is set;
+        // FUSED leaves the geometry alone unless the caller asks for it.
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
