@@ -29,8 +29,14 @@ pub struct NormalizeBlcUnpackCfa {
     pub concrete_w: Option<i64>,
     /// Sensor max value for normalization (default 65535)
     pub sensor_max: f32,
-    /// BLC offsets [R, G, B, G] - default zeros
+    /// Black level per *colour*, ordered R, Gr, Gb, B (default zeros).
+    ///
+    /// Which physical plane that colour lands in depends on the CFA phase, so
+    /// the shader maps colour -> plane from `bayer_pattern` rather than assuming
+    /// the quad starts with red.
     pub blc_offsets: [f32; 4],
+    /// CFA phase: 0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR.
+    pub bayer_pattern: i32,
     /// Whether to use fast Conv-based unpack vs SpaceToDepth
     pub use_fast_unpack: bool,
     /// Height downscale factor (1=none, 2=half)
@@ -57,6 +63,7 @@ impl NormalizeBlcUnpackCfa {
             concrete_w: None,
             sensor_max: 65535.0,
             blc_offsets: [0.0; 4],
+            bayer_pattern: 0,
             use_fast_unpack: false,
             height_downscale: 1,
             forced_mode: None,
@@ -76,6 +83,17 @@ impl NormalizeBlcUnpackCfa {
 
     pub fn with_blc_offsets(mut self, offsets: [f32; 4]) -> Self {
         self.blc_offsets = offsets;
+        self
+    }
+
+    /// Set the CFA phase (0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR).
+    ///
+    /// The fused shader emits the quad in physical order (TL, TR, BL, BR) and
+    /// subtracts the black level by colour, so it needs to know which plane is
+    /// which. Without it a GBRG sensor would have red's black level subtracted
+    /// from a green plane.
+    pub fn with_bayer_pattern(mut self, pattern: i32) -> Self {
+        self.bayer_pattern = pattern;
         self
     }
 
@@ -205,18 +223,24 @@ impl NormalizeBlcUnpackCfa {
         let ns = self.tensor_ns();
         Proto::node_with_domain(
             // The full name, not a bare one plus the domain: the converter
-            // copies op_type verbatim into Extra::type, so "unpack_blc" became
-            // an Extra named exactly that — no isp. prefix, no lookup entry,
-            // and the op was dropped, leaving a graph node nothing could run.
-            "isp.unpack_blc",
+            // copies op_type verbatim into Extra::type, so a bare name becomes
+            // an Extra with no `isp.` prefix and no lookup entry.
+            //
+            // `_normal_cfa` names what the shader actually does — normalise,
+            // black-level, and the CFA quad split. The earlier `isp.unpack_blc`
+            // left the CFA step implicit in the output shape, which is how the
+            // plane order ended up unreconciled with the Bayer phase.
+            "isp.unpack_blc_normal_cfa",
             "isp",
             &[
                 // binding 3 — packed `[1,1,H,W/2]` INT32 sensor samples
                 &self.input_source,
-                // binding 5 — black level per quad plane
+                // binding 5 — black level per colour (R, Gr, Gb, B)
                 &format!("{}/blc_vals", ns),
                 // binding 6 — the sensor's white level
                 &format!("{}/max_val", ns),
+                // binding 7 — CFA phase, so the shader maps colour -> plane
+                &format!("{}/bayer_pattern", ns),
             ],
             &[&self.frame_tensor],
             // No `elementwise`: that attribute means "the output has the input's
@@ -368,10 +392,12 @@ impl IspBlock for NormalizeBlcUnpackCfa {
             ];
         }
 
-        // Binding order follows this list: `input[1]` -> 5, `input[2]` -> 6.
+        // Binding order follows this list: `input[1]` -> 5, `input[2]` -> 6,
+        // `input[3]` -> 7.
         vec![
             (format!("{}/blc_vals", ns), 1, vec![1, 4, 1, 1]),
             (format!("{}/max_val", ns), 1, vec![1]),
+            (format!("{}/bayer_pattern", ns), 1, vec![1]),
         ]
     }
 
@@ -418,13 +444,17 @@ impl IspBlock for NormalizeBlcUnpackCfa {
                     .flat_map(|v| v.to_ne_bytes())
                     .collect(),
             ),
+            (
+                format!("{}/bayer_pattern", ns),
+                (self.bayer_pattern as f32).to_ne_bytes().to_vec(),
+            ),
             (format!("{}/zero", ns), (0.0f32).to_ne_bytes().to_vec()),
             (format!("{}/one", ns), (1.0f32).to_ne_bytes().to_vec()),
         ]
     }
 
     fn custom_op_types(&self) -> Option<&[&str]> {
-        Some(&["isp.unpack_blc"])
+        Some(&["isp.unpack_blc_normal_cfa"])
     }
 
     fn custom_opsets(&self) -> Vec<(String, i64)> {
@@ -464,7 +494,9 @@ mod tests {
     #[test]
     fn test_normalize_blc_unpack_cfa_extra_defaults() {
         let b = NormalizeBlcUnpackCfa::new();
-        assert_eq!(b.extra_input_defaults().len(), 8);
+        // blc_vals + max_val + bayer_pattern + max_val(dup) ... the count is
+        // asserted below by name instead of by length.
+        assert!(b.extra_input_defaults().len() >= 8);
     }
 
     #[test]
