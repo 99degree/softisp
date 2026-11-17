@@ -465,13 +465,25 @@ impl PipelineProfile {
             info!("    [{:2}] {}", i, b.id());
         }
 
-        let blocks = crate::pipeline::GraphComposer::wire_blocks_with_identities(blocks);
+        // Identity bridges between every pair of blocks are off by default.
+        //
+        // They emit `Transpose(perm=[0,1,2,3])` — a no-op that still reads and
+        // writes a full frame on the GPU. On the FUSED chain that is 19 of 33
+        // nodes, so most of the graph's dispatches would compute nothing.
+        //
+        // The original reason for them was debuggability: each bridge names its
+        // position (`id_{prev}_{next}`) so a graph dump is readable. That is
+        // worth it while building a pipeline and not worth 58% of the node count
+        // while running one, so it is a switch rather than a constant.
+        let blocks = if crate::profile::BRIDGE_IDENTITIES {
+            crate::pipeline::GraphComposer::wire_blocks_with_identities(blocks)
+        } else {
+            let mut wired = blocks;
+            crate::pipeline::GraphComposer::wire_blocks(&mut wired);
+            wired
+        };
 
-        info!("  blocks + identities: {} total", blocks.len());
-        for (i, b) in blocks.iter().enumerate() {
-            info!("    [{:2}] {}", i, b.id());
-        }
-
+        info!("  blocks wired: {} total", blocks.len());
         blocks
     }
 
