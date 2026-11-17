@@ -1120,6 +1120,30 @@ impl MnnEngine {
     }
 }
 
+/// Whether any block in `chain` will emit a fused `isp.*` Extra op.
+///
+/// Two conditions, and both are needed:
+///
+///   `custom_op_types().is_some()`  — the block *can* emit a fused op. This is
+///       static metadata: the five fusion-capable blocks declare it whether or
+///       not they are currently fused.
+///   `opset_mode() == MnnIspMin`    — the block is *set* to do so. Only those
+///       same five blocks override `opset_mode`; everything else inherits the
+///       `Custom` default.
+///
+/// Testing either alone gets it wrong. `custom_op_types()` alone calls every
+/// chain fused, including a primitive one. `opset_mode()` alone calls every
+/// chain fused too, because of that `Custom` default — which is what silently
+/// forced fp32 tensor storage for the app's ordinary pipeline. Four fp32
+/// sessions at 2592x1940 do not fit: the process stalled for seconds while
+/// allocating sessions and then died mid-frame.
+pub fn chain_has_fused_op(chain: &[Box<dyn IspBlock>]) -> bool {
+    chain.iter().any(|b| {
+        b.custom_op_types().is_some()
+            && b.opset_mode() == crate::pipeline::BlockOpsetMode::MnnIspMin
+    })
+}
+
 impl IspEngine for MnnEngine {
     fn backend_name(&self) -> &'static str {
         self.backend.id()
@@ -1205,13 +1229,18 @@ impl IspEngine for MnnEngine {
                     // So a chain that contains a fused op cannot use fp16
                     // storage. Detect that here rather than making every caller
                     // know — and say so, because it halves the memory headroom.
-                    let has_fused = all.iter().any(|b| {
-                        matches!(
-                            b.opset_mode(),
-                            crate::pipeline::BlockOpsetMode::MnnIspMin
-                                | crate::pipeline::BlockOpsetMode::Custom
-                        )
-                    });
+                    //
+                    // The test is `custom_op_types()`, not `opset_mode()`.
+                    // `opset_mode()` defaults to `Custom` for every block that
+                    // does not override it — Identity, Blc, Unary and the rest —
+                    // so asking it made *every* chain look fused. That silently
+                    // forced fp32 for the app's ordinary primitive pipeline, and
+                    // four fp32 sessions at 2592x1940 do not fit: the process
+                    // grew a 5 s gap allocating sessions and then died mid-frame.
+                    //
+                    // `custom_op_types()` is the precise signal: exactly the five
+                    // blocks that can emit an `isp.*` Extra op declare it.
+                    let has_fused = chain_has_fused_op(&all);
                     if has_fused && self.fp16_storage {
                         warn!(
                             "chain contains fused isp.* ops — forcing fp32 tensor storage \
