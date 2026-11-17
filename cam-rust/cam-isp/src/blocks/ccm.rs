@@ -4,7 +4,7 @@
 //! naming for multiple CCM stages (LSC, CCM, LDCI placeholders).
 
 use crate::onnx::proto::Proto;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{BlockOpsetMode, IspBlock};
 
 /// CcmBlock — Color Correction Matrix via per-channel Conv(1×1).
 ///
@@ -24,6 +24,8 @@ pub struct CcmBlock {
     matrix: Vec<f32>,
     /// Per-channel bias
     bias: Vec<f32>,
+    /// Override the emitted opset. `None` keeps the Primitive `Conv + Clip`.
+    pub forced_mode: Option<BlockOpsetMode>,
 }
 impl Default for CcmBlock {
     fn default() -> Self {
@@ -67,6 +69,7 @@ impl CcmBlock {
                 0.0, 0.0, 1.0,
             ], // B row
             bias: vec![0.0; 3],
+            forced_mode: None,
         }
     }
     /// Set input and output channel count.
@@ -81,7 +84,14 @@ impl CcmBlock {
         self.bias = vec![0.0; ch as usize];
         self
     }
+
+    /// Select the emitted opset mode (Primitive or MnnIspMin).
+    pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
+        self.forced_mode = Some(mode);
+        self
+    }
 }
+
 impl IspBlock for CcmBlock {
     fn id(&self) -> &str {
         &self.id
@@ -146,6 +156,26 @@ impl IspBlock for CcmBlock {
     }
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        if self.opset_mode() == BlockOpsetMode::MnnIspMin {
+            // One `isp.ccm` dispatch instead of Conv(1x1) + Clip. The matrix
+            // arrives at binding 5 as a runtime tensor, which is the same
+            // `{ns}/matrix` the primitive Conv consumes — the engine already
+            // writes it, so only the node changes.
+            //
+            // `isp_ccm.comp` declares exactly nine coefficients and no bias, so
+            // this path is only equivalent while the bias is zero. A non-zero
+            // bias would be dropped silently, so it stays on the primitive form.
+            let flat: Vec<f32> = self.matrix.clone();
+            if self.bias.iter().all(|b| *b == 0.0) && flat.len() == 9 {
+                return vec![Proto::node_with_domain(
+                    "isp.ccm",
+                    "isp",
+                    &[&self.input_source, &format!("{}/matrix", ns)],
+                    &[&self.frame_tensor],
+                    &[Proto::attribute_int("elementwise", 1)],
+                )];
+            }
+        }
         vec![
             Proto::node(
                 "Conv",
@@ -175,6 +205,14 @@ impl IspBlock for CcmBlock {
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
         vec![]
+    }
+
+    fn opset_mode(&self) -> BlockOpsetMode {
+        self.forced_mode.unwrap_or(BlockOpsetMode::Primitive)
+    }
+
+    fn set_opset_mode(&mut self, mode: BlockOpsetMode) {
+        self.forced_mode = Some(mode);
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
