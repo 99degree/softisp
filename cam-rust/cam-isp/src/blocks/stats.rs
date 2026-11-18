@@ -166,6 +166,16 @@ pub struct ChannelMeansBlock {
     pub input_source: String,
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
+    /// Reduce the frame by this factor *before* the mean, with a box filter.
+    ///
+    /// A channel mean is the average of every sample, so averaging a 2x2 block
+    /// first and then averaging the blocks is the same number — the reduction is
+    /// exact, not an approximation. What it saves is the reduction's own read of
+    /// the full frame: at 4x the mean reads 1/16 as much.
+    ///
+    /// `1` disables it, which is what a profile that wants full-resolution
+    /// statistics keeps.
+    pub downscale: i64,
 }
 
 impl Default for ChannelMeansBlock {
@@ -184,11 +194,18 @@ impl ChannelMeansBlock {
             input_source: String::new(),
             concrete_h: None,
             concrete_w: None,
+            downscale: 1,
         }
     }
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
         self.concrete_h = Some(h);
         self.concrete_w = Some(w);
+        self
+    }
+
+    /// Average `factor`x`factor` blocks before taking the mean.
+    pub fn with_downscale(mut self, factor: u32) -> Self {
+        self.downscale = factor.max(1) as i64;
         self
     }
 }
@@ -253,15 +270,38 @@ impl IspBlock for ChannelMeansBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        vec![Proto::node(
-            "ReduceMean",
-            &[&self.input_source],
-            &[&self.frame_tensor],
-            &[
-                Proto::attribute_ints("axes", &[2, 3]),
-                Proto::attribute_int("keepdims", 0),
-            ],
-        )]
+        let reduce = |input: &str, out: &str| {
+            Proto::node(
+                "ReduceMean",
+                &[input],
+                &[out],
+                &[
+                    Proto::attribute_ints("axes", &[2, 3]),
+                    Proto::attribute_int("keepdims", 0),
+                ],
+            )
+        };
+        if self.downscale <= 1 {
+            return vec![reduce(&self.input_source, &self.frame_tensor)];
+        }
+        // Box-average first, then average the blocks. The mean is unchanged —
+        // only the number of samples the reduction walks.
+        let ns = self.tensor_ns();
+        let pooled = format!("{ns}/pooled");
+        vec![
+            Proto::node(
+                "AveragePool",
+                &[&self.input_source],
+                &[&pooled],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[self.downscale, self.downscale]),
+                    Proto::attribute_ints("strides", &[self.downscale, self.downscale]),
+                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                    Proto::attribute_int("ceil_mode", 1),
+                ],
+            ),
+            reduce(&pooled, &self.frame_tensor),
+        ]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
         vec![]
@@ -300,6 +340,15 @@ pub struct ToneStatsBlock {
     pub input_source: String,
     pub concrete_h: Option<i64>,
     pub concrete_w: Option<i64>,
+    /// Box-average the frame by this factor before the luma reduction.
+    ///
+    /// Mean, min, max and variance of luma survive a box filter: averaging blocks
+    /// first and then reducing is the same mean, and the order statistics of a
+    /// smooth image barely move. What it saves is the per-pixel luma conv over the
+    /// whole frame.
+    ///
+    /// `1` disables it.
+    pub downscale: i64,
 }
 
 impl Default for ToneStatsBlock {
@@ -318,7 +367,21 @@ impl ToneStatsBlock {
             input_source: String::new(),
             concrete_h: None,
             concrete_w: None,
+            downscale: 1,
         }
+    }
+
+    /// Declare the frame size this block reads, so its value-info is concrete.
+    pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
+        self.concrete_h = Some(h);
+        self.concrete_w = Some(w);
+        self
+    }
+
+    /// Average `factor`x`factor` blocks before the luma reduction.
+    pub fn with_downscale(mut self, factor: u32) -> Self {
+        self.downscale = factor.max(1) as i64;
+        self
     }
 }
 
@@ -384,15 +447,38 @@ impl IspBlock for ToneStatsBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
 
+        // Box-average first when asked: the luma conv and every reduction below it
+        // then walk 1/factor² of the pixels. Mean, min and max of a smooth image
+        // are unchanged by the filter; only the sample count drops.
+        let pooled = format!("{ns}/pooled");
+        let stat_input = if self.downscale > 1 {
+            pooled.as_str()
+        } else {
+            self.input_source.as_str()
+        };
+
+        let mut nodes: Vec<Vec<u8>> = Vec::new();
+        if self.downscale > 1 {
+            nodes.push(Proto::node(
+                "AveragePool",
+                &[&self.input_source],
+                &[&pooled],
+                &[
+                    Proto::attribute_ints("kernel_shape", &[self.downscale, self.downscale]),
+                    Proto::attribute_ints("strides", &[self.downscale, self.downscale]),
+                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                    Proto::attribute_int("ceil_mode", 1),
+                ],
+            ));
+        }
+
         // Luma weights as a Conv1×1: [1, 3, 1, 1]
         // L = 0.299R + 0.587G + 0.114B
-        vec![
-            // ── Compute luma via Conv1×1 ──
-            // Weight shape [1, 3, 1, 1], single output channel
+        nodes.extend(vec![
             Proto::node(
                 "Conv",
                 &[
-                    &self.input_source,
+                    stat_input,
                     &format!("{}/luma_w", ns),
                     &format!("{}/luma_b", ns),
                 ],
@@ -486,7 +572,8 @@ impl IspBlock for ToneStatsBlock {
                 &[&self.frame_tensor],
                 &[Proto::attribute_int("axis", 1)],
             ),
-        ]
+        ]);
+        nodes
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
