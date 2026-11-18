@@ -144,6 +144,12 @@ pub struct MnnEngine {
     stats_interval: u32,
     /// Frames since the last measurement. `0` means the next frame measures.
     stats_countdown: AtomicU32,
+    /// Whether to fetch the statistics at all.
+    ///
+    /// Read per frame, so a caller can turn it off for a burst of frames without
+    /// rebuilding the session. Atomic rather than a plain bool because the camera
+    /// thread owns the engine and a control thread flips this.
+    stats_enabled: AtomicBool,
     /// Expected input tensor element count from model (for validation).
     expected_input_elements: Option<u32>,
     /// ISP controller for AWB/AE/CCM/tone parameter estimation.
@@ -219,6 +225,7 @@ impl MnnEngine {
             normalizes_at_input: true,
             stats_interval: 1,
             stats_countdown: AtomicU32::new(0),
+            stats_enabled: AtomicBool::new(true),
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
             pool_size,
@@ -333,6 +340,30 @@ impl MnnEngine {
     /// How often the statistics are measured, in frames.
     pub fn stats_interval(&self) -> u32 {
         self.stats_interval
+    }
+
+    /// Turn the 3A statistics on or off at run time.
+    ///
+    /// Off means no readback at all: every tensor the statistics produce stays on
+    /// the device, nothing is copied to the host, and the controller is not moved.
+    /// The graph still contains the statistics nodes — they run, their results are
+    /// simply never fetched — so switching back on needs no rebuild and no
+    /// re-conversion.
+    ///
+    /// A frame produced while this is off reports
+    /// `IspAuxOutput::stats_measured == false` and carries no statistics, which is
+    /// what a consumer uses to skip its own work instead of reading a tensor that
+    /// was never fetched.
+    ///
+    /// Default is **on**, because a pipeline whose controller never receives
+    /// feedback is not doing 3A at all and that should be a deliberate choice.
+    pub fn set_stats_enabled(&self, on: bool) {
+        self.stats_enabled.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether the 3A statistics are being measured.
+    pub fn stats_enabled(&self) -> bool {
+        self.stats_enabled.load(Ordering::Relaxed)
     }
 
     /// Declare whether the graph divides by `sensor_max` at its head.
@@ -2195,14 +2226,21 @@ impl IspEngine for MnnEngine {
             // after it. This is decided per frame, before any tensor is read, so a
             // skipped frame costs no readback at all — the readback is the stall,
             // not the reduction.
-            let measure_stats = if self.stats_countdown.load(Ordering::Relaxed) == 0 {
-                self.stats_countdown
-                    .store(self.stats_interval.max(1) - 1, Ordering::Relaxed);
-                true
-            } else {
-                self.stats_countdown.fetch_sub(1, Ordering::Relaxed);
-                false
-            };
+            // Two reasons to skip, and they mean the same thing to a consumer: the
+            // switch is off, or this frame is not the one in `stats_interval`.
+            //
+            // Both are decided here, before any tensor is touched, so a skipped
+            // frame costs no readback at all — the readback (a `copyToHostTensor`
+            // that waits for the queue) is the stall, not the reduction.
+            let measure_stats = self.stats_enabled.load(Ordering::Relaxed)
+                && if self.stats_countdown.load(Ordering::Relaxed) == 0 {
+                    self.stats_countdown
+                        .store(self.stats_interval.max(1) - 1, Ordering::Relaxed);
+                    true
+                } else {
+                    self.stats_countdown.fetch_sub(1, Ordering::Relaxed);
+                    false
+                };
 
             #[cfg(feature = "mnn")]
             if measure_stats {
