@@ -432,6 +432,8 @@ impl IspEngine for CpuEngine {
             af_phase,
             vcm_position,
             eis_compensation,
+            // The CPU engine measures every frame; it is the MNN path that skips.
+            stats_measured: true,
         });
 
         info!(
