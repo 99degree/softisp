@@ -207,6 +207,13 @@ pub struct FuseStages {
     pub unpack_blc_normal_cfa: bool,
     /// `DemosaicBlock` + `CcmBlock` as one `isp.demosaic_ccm`.
     pub demosaic_ccm: bool,
+    /// Fold `BayerWbBlock` into the `isp.demosaic_ccm` weights.
+    ///
+    /// The op already multiplies the CFA quad by a 3x4 matrix, and white balance
+    /// is a per-plane scalar — so it is a scale on that matrix's columns, not
+    /// another stage. Only meaningful together with `demosaic_ccm`; on its own it
+    /// would drop the gains on the floor.
+    pub wb_into_demosaic: bool,
     /// `CcmBlock` as `isp.ccm`.
     pub ccm: bool,
     /// `EeBlock` as `isp.ee`.
@@ -242,6 +249,9 @@ impl FuseStages {
         // peak|Δ| 0.00037 on a 1296x970 -> 648x485 tail.
         tail_downscale: true,
         whole_pipeline: false,
+        // Verified pixel-identical against the separate block on a patterned
+        // frame: mean|Δ| 0.000000, peak|Δ| 0.000000.
+        wb_into_demosaic: true,
     };
 
     /// Nothing fused — every stage emits its primitive form.
@@ -254,6 +264,7 @@ impl FuseStages {
         display: false,
         tail_downscale: false,
         whole_pipeline: false,
+        wb_into_demosaic: false,
     };
 
     /// Whether `stage` is allowed, given the profile-wide `opset_mode`.

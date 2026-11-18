@@ -849,6 +849,19 @@ impl MnnEngine {
             _ => &DEMO_RGGB,
         };
 
+        // Is white balance still its own block?
+        //
+        // `isp.demosaic_ccm` divides one matrix, so when `BayerWbBlock` is absent
+        // the gains have to ride in as a scale on that matrix's columns:
+        //
+        //     fused[i][j] = Σₖ ccm[i][k] · demo[k][j] · wb[j]
+        //
+        // The plane index `j` is the CFA quad site, which is exactly what
+        // `bayer_gains` is ordered by. Folding is only correct when `ccm` is
+        // present — with the matrix missing the default is the demosaic table
+        // alone, and the gains would be dropped on the floor.
+        let wb_folded = find(pool, "BayerWbBlock/gains").is_none();
+
         // Is a separate tone stage present?
         //
         // The demosaic weights below can absorb contrast and brightness, but only
@@ -869,6 +882,13 @@ impl MnnEngine {
                     let mut s = 0.0;
                     for k in 0..3 {
                         s += ccm[i * 3 + k] * demo[k * 4 + j];
+                    }
+                    // Absorb white balance, which is a per-plane scalar on the
+                    // matrix's columns.
+                    if wb_folded {
+                        if let Some(g) = bayer {
+                            s *= g[j];
+                        }
                     }
                     // Absorb contrast only when no tone stage will apply it.
                     fused[i * 4 + j] = if tone_stage_present {
