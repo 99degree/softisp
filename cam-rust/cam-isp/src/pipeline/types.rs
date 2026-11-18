@@ -34,7 +34,7 @@ use crate::onnx::proto::Proto;
 ///     println!("AWB gains: {:?}", aux.wb_gains);
 /// }
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct IspAuxOutput {
     /// RGB channel means for AWB statistics
     pub channel_means: Option<[f32; 3]>,
@@ -62,6 +62,17 @@ pub struct IspAuxOutput {
     pub vcm_position: Option<i32>,
     /// EIS compensation `[dx_px, dy_px, roll_deg]`.
     pub eis_compensation: Option<[f32; 3]>,
+    /// Whether this frame carried 3A statistics at all.
+    ///
+    /// `false` means the engine skipped the statistics readback for this frame —
+    /// the stats run at a fraction of the frame rate, so most frames have none.
+    /// Every `Option` field above is `None` in that case, which is also what a
+    /// *tensor that failed to read* looks like; this flag is what tells a consumer
+    /// "nothing to update" from "something broke".
+    ///
+    /// Defaults to `true` so a frame from a chain that always measures (and any
+    /// caller-built frame) keeps its old meaning.
+    pub stats_measured: bool,
 }
 
 /// ISP frame carrying pixel data.
@@ -107,6 +118,31 @@ pub struct IspFrame {
     pub inference_duration_ns: u64,
     /// Total pipeline duration (ns).
     pub total_duration_ns: u64,
+}
+
+impl Default for IspAuxOutput {
+    /// Everything empty except `stats_measured`, which defaults to `true`.
+    ///
+    /// The derive would give `false`, and a chain that never sets the flag would
+    /// then look like one that never measured — silently freezing the 3A loop.
+    fn default() -> Self {
+        Self {
+            channel_means: None,
+            tone_stats: None,
+            wb_gains: None,
+            histogram: None,
+            zone_stats: None,
+            focus_metric: None,
+            cct: None,
+            ae_gain: None,
+            calibration_stats: None,
+            scene_category: None,
+            af_phase: None,
+            vcm_position: None,
+            eis_compensation: None,
+            stats_measured: true,
+        }
+    }
 }
 
 impl IspFrame {
