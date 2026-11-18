@@ -849,6 +849,18 @@ impl MnnEngine {
             _ => &DEMO_RGGB,
         };
 
+        // Is a separate tone stage present?
+        //
+        // The demosaic weights below can absorb contrast and brightness, but only
+        // when nothing else will apply them. On the fused chain the `ToneBlock`
+        // is still there, and it reads `ToneBlock/contrast` /
+        // `ToneBlock/brightness` from its own tensors further down — so folding
+        // tone into the weights would apply it twice. On a flat grey test frame
+        // with contrast 1.0 and brightness 0.0 that is invisible; on a real scene
+        // with the controller at contrast 1.3 it multiplies the channels by 1.69
+        // and clips.
+        let tone_stage_present = find(pool, "ToneBlock/contrast").is_some();
+
         // Fused CCM weights: w[i,j] = Σₖ ccm[i,k] * demo[k,j]
         if let Some(ccm) = ccm {
             let mut fused = [0.0f32; 12];
@@ -858,16 +870,26 @@ impl MnnEngine {
                     for k in 0..3 {
                         s += ccm[i * 3 + k] * demo[k * 4 + j];
                     }
-                    // When tone is fused in, absorb contrast into weights
-                    fused[i * 4 + j] = s * tone.contrast;
+                    // Absorb contrast only when no tone stage will apply it.
+                    fused[i * 4 + j] = if tone_stage_present {
+                        s
+                    } else {
+                        s * tone.contrast
+                    };
                 }
             }
             if let Some(t) = find(pool, "DemosaicCcmBlock/w") {
                 t.upload_f32(&fused);
             }
         }
-        // DemosaicCcmBlock/b [3] — CCM bias + tone brightness
-        write_f32_array(pool, "DemosaicCcmBlock/b", &[tone.brightness; 3]);
+        // DemosaicCcmBlock/b [3] — CCM bias, plus tone brightness when the tone
+        // stage is not there to add it itself.
+        let demosaic_bias = if tone_stage_present {
+            [0.0f32; 3]
+        } else {
+            [tone.brightness; 3]
+        };
+        write_f32_array(pool, "DemosaicCcmBlock/b", &demosaic_bias);
 
         // ── Coefficient buffers for the fused isp.* ops ──
         //
