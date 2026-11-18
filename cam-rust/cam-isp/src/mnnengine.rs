@@ -1604,18 +1604,22 @@ impl IspEngine for MnnEngine {
 
         // If isp_params is available, override individual fields
         // This allows per-frame controller params to flow through
-        let (override_ccm, override_tone, override_bayer) = if let Some(ref params) = p.isp_params {
+        let mut isp_plane_gains = [1.0f32; 4];
+        let (override_ccm, override_tone, _no_flat_wb) = if let Some(ref params) = p.isp_params {
             let tone = cam_types::ToneParams {
                 contrast: params.tone.contrast,
                 brightness: params.tone.brightness,
                 gamma_recip: params.tone.gamma,
                 ..Default::default()
             };
-            (
-                Some(&params.ccm.matrix),
-                Some(tone),
-                Some(&[params.wb.r, params.wb.g, params.wb.g, params.wb.b]),
-            )
+            // WB gains arrive as [R, G, B] and every consumer is plane-ordered:
+            // `isp.pipeline` indexes its gains by CFA plane, so a flat
+            // [R, G, G, B] only happens to be right for RGGB. On a GRBG sensor it
+            // puts the red gain on a green plane and the blue gain on red, which
+            // renders as a cast no downstream correction can remove.
+            //
+            // Bound outside the tuple so it lives as long as the borrow.
+            (Some(&params.ccm.matrix), Some(tone), None::<&[f32; 4]>)
         } else {
             (None, None, None)
         };
@@ -1635,6 +1639,14 @@ impl IspEngine for MnnEngine {
             };
             &scaled_tone
         };
+        // Map the callers [R, G, B] onto the sensors planes, which is what the
+        // blocks and the fused op both index by.
+        if p.isp_params.is_some() {
+            let wb = p.isp_params.as_ref().unwrap();
+            isp_plane_gains =
+                crate::bayer_planes::gains_by_plane(&[wb.wb.r, wb.wb.g, wb.wb.b], bayer_pattern);
+        }
+        let override_bayer = p.isp_params.as_ref().map(|_| &isp_plane_gains);
         let ccm = override_ccm.or(ccm_src);
         let tone = override_tone.as_ref().unwrap_or(tone);
         let bayer = override_bayer.or(bayer_src);
