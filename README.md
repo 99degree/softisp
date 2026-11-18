@@ -37,9 +37,11 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 
 - **52 ISP blocks** across input, black-level, white-balance, demosaic, color,
   tone, denoise, warp, and display categories (see [Pipeline](#pipeline-blocks)).
-- **Vulkan GPU acceleration** — full fused pipeline runs in ~12 GPU dispatches
-  (4K→4K UNIFIED profile: **141.2 FPS**; HEAVY: **79.8 FPS**; 4K→FHD preview: ~57 FPS
-  on Snapdragon 8 Gen 2).
+- **Vulkan GPU acceleration** — the fused chain is 12 blocks at 4K: 8 image stages
+  plus 4 statistics taps, of which 4 stages are single `isp.*` dispatches.
+  Measured end to end: **3.1 FPS** at 3840×2160 and **5.7 FPS**
+  at 1920×1080 for `FUSED`, **7.2 / 9.6 FPS** for `WHOLE`, against 1.9 / 4.0 for the
+  primitive chain. See [Performance](#performance-on-device-vulkan-gpu).
 - **Software fallback** — `CpuEngine` implements the full 11-stage ISP in pure Rust
   (with AVX2/SSE2/NEON/NEON-FP16/NEON-DOTPROD SIMD backends).
 - **Deshake** — software video stabilization (block-matching motion estimation +
@@ -92,17 +94,58 @@ cargo test -p cam-isp --features rectifier    # 801 lib tests
 cargo run --example camera_isp -p cam-isp --features mnn -- --width 640 --height 480
 ```
 
-## Performance (Vulkan GPU, Snapdragon 8 Gen 2)
+## Performance (on-device, Vulkan GPU)
 
-| Resolution | GPU Latency | GPU FPS | CPU Latency | CPU FPS | Speedup |
-|---|---|---|---|---|---|
-| HD (1280×720) | 1.47 ms | **680** | 442 ms | 2 | **340×** |
-| FHD (1920×1080) | 2.28 ms | **438** | 983 ms | 1 | **438×** |
-| 4K (3840×2160) | 12.87 ms | **78** | 3904 ms | 0.25 | **312×** |
+End-to-end, whole chain, raw Bayer in → planar RGB out, 8 frames warmup then
+20–30 measured. `p50` over the run, not an average of block times.
 
-4K→FHD down-scale (the common preview/record path) sustains **~57 FPS** on GPU.
-**End-to-end MNN stress (4K→4K, all post-processing):** UNIFIED profile
-**141.2 FPS** (P99 8.7 ms, tiled 2×2); HEAVY profile **79.8 FPS** (P99 129.1 ms).
+**3840×2160** (`PERF_FRAMES=30 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
+
+| Profile | Blocks | p50 | p95 | FPS |
+|---|---|---|---|---|
+| MED (primitives) | 19 | 530.0 ms | 596.1 ms | 1.9 |
+| **FUSED** | 12 | **322.9 ms** | 417.6 ms | **3.1** |
+| FUSED, statistics off | 12 | 306.3 ms | 387.9 ms | 3.3 |
+| **WHOLE** (`isp.pipeline`) | 2 | **139.2 ms** | 159.0 ms | **7.2** |
+
+**1920×1080**
+
+| Profile | Blocks | p50 | p95 | FPS |
+|---|---|---|---|---|
+| MED (primitives) | 19 | 249.1 ms | 300.4 ms | 4.0 |
+| **FUSED** | 12 | **175.7 ms** | 187.8 ms | **5.7** |
+| FUSED, statistics off | 12 | 160.2 ms | 188.6 ms | 6.2 |
+| **WHOLE** (`isp.pipeline`) | 2 | **104.2 ms** | 145.0 ms | **9.6** |
+
+Fusion buys **1.64×** at 4K and **1.42×** at FHD; collapsing the whole chain into
+one dispatch buys **3.8×** and **2.4×**.
+
+### Where the 4K time goes
+
+Twelve blocks at 323 ms is 27 ms per block — more than bandwidth explains. Removing
+stages one at a time (`probe_4k_stages`, 15 frames each):
+
+| Removed | Saves | Share of the chain |
+|---|---|---|
+| all statistics | 225.3 ms | 67% |
+| `tone_stats` | 105.6 ms | 31% |
+| `zone_stats` | 82.4 ms | 24% |
+| `channel_means` | 40.6 ms | 12% |
+| saturation | 33.7 ms | 10% |
+| `ee` | −104.4 ms | noise |
+
+The 3A statistics are **two thirds** of the 4K cost. That is what the two run-time
+levers are for: `set_stats_interval(n)` measures every `n` frames (at 1/8 they cost
+~28 ms instead of 225), and `set_stats_enabled(false)` skips the readback entirely. A
+frame that skips reports `stats_measured == false`. Anything under ~10% in the table
+is inside run-to-run spread — `no ee` coming out negative is the honest reminder.
+
+### Historical
+
+The earlier figures in this README (680 / 438 / 78 FPS at HD / FHD / 4K) were
+per-block micro-benchmarks taken before the MNN DCE and fused-opset work. They
+measured a chain that did not run the same ops this one does; the numbers above
+supersede them.
 
 ## Pipeline Blocks
 
@@ -265,15 +308,15 @@ Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 ## Status
 
 - ✅ 52 ISP blocks, **801 lib tests** (`--features rectifier`), 0 failures
-- ✅ Full GPU ISP pipeline (MNN Vulkan):
-  - 4K→4K HEAVY profile: **79.8 FPS** (2394 frames / 30 s, P99 129.1 ms)
-  - 4K→4K UNIFIED profile (tiled 2×2): **141.2 FPS** (4236 frames / 30 s, P99 8.7 ms)
-  - 4K→FHD preview path: **~57 FPS** (older per-block measurement; pre-DCE fix)
+- ✅ Full GPU ISP pipeline (MNN Vulkan), measured end to end on-device:
+  - 3840×2160: MED 1.9 FPS · `FUSED` **3.1** · `WHOLE` **7.2**
+  - 1920×1080: MED 4.0 FPS · `FUSED` **5.7** · `WHOLE` **9.6**
+  - the 3A statistics are 67% of the 4K cost, hence `set_stats_interval` / `set_stats_enabled`
 - ✅ `CpuEngine` — 11-stage software ISP with SIMD backends
 - ✅ Deshake (CPU + GPU) and EIS stabilization
 - ✅ Runtime-feedable params (29 per-frame inputs across 11 blocks)
-- ✅ Fused `isp.*` opset — `FUSED` profile, 8 blocks at 150 ms where MED needs 15
-  at 166–242 ms; `WHOLE` profile, 2 blocks at 80–115 ms
+- ✅ Fused `isp.*` opset — `FUSED` profile: 12 blocks at 4K where MED needs 19
+  (323 vs 530 ms); `WHOLE` profile: 2 blocks at 139 ms
 - ✅ 3A statistics on a reduced CFA quad (`isp.cfa_downscale`) and a per-frame
   `stats_interval`, with `stats_measured` telling a consumer a frame skipped them
 - ✅ `PipelineBuilder` fluent API + 5 presets + config roundtrip
@@ -294,7 +337,7 @@ Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 ## Testing
 
 ```bash
-cargo test -p cam-isp --features rectifier           # 732 lib tests
+cargo test -p cam-isp --features rectifier           # 801 lib tests
 cargo test -p cam-isp --features mnn                 # GPU/ONNX backends
 cargo test --workspace --features mnn                # full workspace
 ```
