@@ -47,10 +47,32 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
   `WarpGridBlock` for GDC + EIS + lens-shading + rotation.
 - **Neural controller** — ONNX-based 3A (AWB/AE/AF/CCM/tone/scene) and a
   `NeuralController` that emits ISP params.
-- **Multiple profiles** — LITE / MED / HEAVY / PRO / UNIFIED (and scene-adaptive ISP).
+- **Multiple profiles** — LITE / MED / HEAVY / PRO / UNIFIED, plus **FUSED** and
+  **WHOLE** (whole-pipeline `isp.pipeline`).
 - **HAL integration** — bridges for Android Camera HAL3, V4L2, and AOSP binder HAL.
 - **Zero-copy memory** — CMA / ION / memfd buffer manager for camera → ISP → MNN.
-- **732 lib tests** pass with `--features rectifier`, 0 failures.
+- **801 lib tests** pass with `--features rectifier`, 0 failures.
+
+## Prebuilt APK
+
+A debug build of the camera app is checked in at
+[`releases/softisp-camera-debug.apk`](releases/softisp-camera-debug.apk) — 60 MB,
+arm64-v8a, package `com.softisp.camera`, signed with the standard debug keystore.
+
+```bash
+adb install -r releases/softisp-camera-debug.apk
+```
+
+It ships the whole fused stack: `libMNN.so`, the `libMNN_Vulkan.so` plugin with the
+`isp.*` shaders embedded, and `libMNNConvertDeps.so` for the same-process ONNX→MNN
+conversion. Nothing is fetched at run time.
+
+Building it yourself:
+
+```bash
+cd cam-rust && cargo apk2 build -p cam-camera-app   # debug profile
+# -> cam-rust/target/debug/apk/softisp-camera.apk
+```
 
 ## Quick Start
 
@@ -66,7 +88,7 @@ let frame = engine.process(&params)?;
 Build & test:
 
 ```bash
-cargo test -p cam-isp --features rectifier    # 732 lib tests
+cargo test -p cam-isp --features rectifier    # 801 lib tests
 cargo run --example camera_isp -p cam-isp --features mnn -- --width 640 --height 480
 ```
 
@@ -140,10 +162,51 @@ grouped by function:
 - `StatsBlock` — histogram / statistics extraction
 - `StageBlock` / `PluginBlock` — composable sub-pipelines
 
-### Block fusion (GPU)
-`IspChainFusion` fuses 32+ standard ONNX ops into **12 Vulkan "Extra" dispatches**
-(R1–R12b): `unpack_demosaic`, `ee_ldci`, `display`, plus warp/resize ops. This is
-what makes the full 4-stage pipeline run in ~12 GPU dispatches.
+### Fused `isp.*` opset
+
+Blocks can emit a purpose-built MNN op instead of a chain of ONNX primitives. The
+fused op is one Vulkan dispatch with its coefficients fed as per-frame tensors, so a
+stage that was five elementwise ops becomes one pass over the frame.
+
+`FuseStages` gates them one at a time, and each one in `FuseStages::ALL` is backed by
+a probe that compares it against its primitive form:
+
+| Stage | Replaces | Verified difference |
+|---|---|---|
+| `isp.unpack_blc_normal_cfa` | cast, div, sub, clip, CFA conv | mean\|Δ\| 0.00010 |
+| `isp.demosaic_ccm` + folded WB | demosaic, WB mul, CCM conv | pixel-identical |
+| `isp.ee` | 3×3 unsharp conv | peak\|Δ\| 0.0136 |
+| `isp.ldci` | local-contrast chain | mean\|Δ\| ≤ 0.001 |
+| `isp.downscale` | `Resize` | mean\|Δ\| 0.00037 |
+| `isp.display` | gamma pow + clip | mean\|Δ\| ≤ 0.001 |
+| `isp.cfa_downscale` | statistics tap `Resize` | statistics only |
+| `isp.pipeline` | the *whole* RAW→display chain | mean 0.6019 vs MED’s 0.6243 (box-filter demosaic) |
+
+`PipelineProfile::FUSED` enables the per-stage set — 8 blocks instead of MED's 15:
+
+```
+isp.unpack_blc_normal_cfa → isp.demosaic_ccm → tone → isp.ee
+  → saturation → isp.display                     (+ two stats taps)
+```
+
+`PipelineProfile::WHOLE` goes further and emits a single `isp.pipeline` dispatch for
+the entire chain (2 blocks, ~80–115 ms at 1296×970 against MED's ~190–260 ms). It
+trades away the 3A readback, edge-directed demosaic and the EIS warp, and it is not
+the app default for that reason.
+
+Measured at 1296×970, same stage set, on-device:
+
+| Profile | Blocks | ms |
+|---|---|---|
+| MED (primitives) | 15 | 166–242 |
+| FUSED | 8 | 150 |
+| WHOLE | 2 | 80–115 |
+
+The statistics are also a lever: `stats_downscale_max` reduces the CFA quad before
+the 3A blocks read it (`isp.cfa_downscale`), and
+`MnnEngine::set_stats_interval(n)` measures them every `n` frames instead of every
+frame. A skipped frame reports `IspAuxOutput::stats_measured == false`, so a
+consumer can tell "nothing new" from "the readback failed".
 
 ## Deshake (Video Stabilization)
 
@@ -201,7 +264,7 @@ Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 
 ## Status
 
-- ✅ 52 ISP blocks, **732 lib tests** (`--features rectifier`), 0 failures
+- ✅ 52 ISP blocks, **801 lib tests** (`--features rectifier`), 0 failures
 - ✅ Full GPU ISP pipeline (MNN Vulkan):
   - 4K→4K HEAVY profile: **79.8 FPS** (2394 frames / 30 s, P99 129.1 ms)
   - 4K→4K UNIFIED profile (tiled 2×2): **141.2 FPS** (4236 frames / 30 s, P99 8.7 ms)
@@ -209,7 +272,10 @@ Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 - ✅ `CpuEngine` — 11-stage software ISP with SIMD backends
 - ✅ Deshake (CPU + GPU) and EIS stabilization
 - ✅ Runtime-feedable params (29 per-frame inputs across 11 blocks)
-- ✅ 12 fusion rules (`IspChainFusion`) → 12 GPU dispatches
+- ✅ Fused `isp.*` opset — `FUSED` profile, 8 blocks at 150 ms where MED needs 15
+  at 166–242 ms; `WHOLE` profile, 2 blocks at 80–115 ms
+- ✅ 3A statistics on a reduced CFA quad (`isp.cfa_downscale`) and a per-frame
+  `stats_interval`, with `stats_measured` telling a consumer a frame skipped them
 - ✅ `PipelineBuilder` fluent API + 5 presets + config roundtrip
 - ✅ HAL integration module (Android HAL3 / V4L2 / binder) + zero-copy buffers
 - ✅ 3A controllers (AWB/AE/AF/CCM/Tone/Scene) + NeuralController
