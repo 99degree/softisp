@@ -56,7 +56,7 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 ## Prebuilt APK
 
 A debug build of the camera app is checked in at
-[`releases/softisp-camera-debug.apk`](releases/softisp-camera-debug.apk) — 60 MB,
+[`releases/softisp-camera-debug.apk`](releases/softisp-camera-debug.apk) — 37 MB,
 arm64-v8a, package `com.softisp.camera`, signed with the standard debug keystore.
 
 ```bash
