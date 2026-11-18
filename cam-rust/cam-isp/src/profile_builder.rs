@@ -65,15 +65,15 @@ impl PipelineProfile {
                     // packed input block — the shader reads those INT32 words
                     // directly — so this changes the middle of the head, not its
                     // interface.
+                    // One block, not two. The shader declares
+                    // `[1,2,H,W/2]` INT32 on the graph boundary itself, so a
+                    // `RawInputPackedBlock` in front of it would be a second
+                    // declaration of a boundary this block already owns — two
+                    // blocks and one ONNX node.
                     info!(
-                        "  head: RawInputPacked + isp.unpack_blc_normal_cfa \
-                         (fused unpack+normalize+blc+cfa)"
+                        "  head: isp.unpack_blc_normal_cfa \
+                         (fused unpack+normalize+blc+cfa, owns the graph input)"
                     );
-                    blocks.push(Box::new(
-                        RawInputPackedBlock::new()
-                            .with_concrete_width(full_w)
-                            .with_concrete_height(concrete_h),
-                    ));
                     blocks.push(Box::new(
                         NormalizeBlcUnpackCfa::new()
                             .with_concrete_dims(concrete_h, full_w)
