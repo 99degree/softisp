@@ -1,0 +1,232 @@
+//! 4K throughput: what the fused profiles do at a real sensor size.
+//!
+//! Everything measured so far ran at 1296x970 — half the sensor in each axis — because
+//! that is the RGB tail's geometry and the probes were about correctness. 4K is where
+//! the pipeline actually runs, and where the per-dispatch cost stops dominating.
+//!
+//! Reports mean/p50/p95/max over a fixed number of frames per profile, the 3A
+//! statistics switch on and off, and the same stage set built from primitives so the
+//! fusion's effect is visible at this size rather than extrapolated.
+//!
+//! Run:
+//!   cargo test -p cam-isp --test probe_4k_perf --features mnn -- --nocapture --ignored
+//!
+//! Overrides:
+//!   PERF_W / PERF_H   frame size (default 3840x2160)
+//!   PERF_FRAMES       frames per profile after warmup (default 40)
+
+#![cfg(feature = "mnn")]
+
+use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::mnnengine::{MnnBackend, MnnEngine};
+use cam_isp::profile::PipelineProfile;
+
+fn env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+struct Timing {
+    label: String,
+    blocks: usize,
+    p50: f64,
+    p95: f64,
+    max: f64,
+    fps: f64,
+    mean: f64,
+}
+
+fn run(
+    label: &str,
+    w: u32,
+    h: u32,
+    frames: usize,
+    stats_on: bool,
+    make: impl Fn(
+        u32,
+        u32,
+    ) -> (
+        Box<dyn cam_isp::pipeline::IspBlock>,
+        Vec<Box<dyn cam_isp::pipeline::IspBlock>>,
+    ),
+) -> Option<Timing> {
+    let (head, mut blocks) = make(w, h);
+    let n_blocks = blocks.len() + 1;
+
+    let mut engine = MnnEngine::with_pool_size(MnnBackend::Vulkan, 2);
+    engine.set_stats_enabled(stats_on);
+    if let Err(e) = engine.build(head, blocks.drain(..).collect(), None, 21) {
+        eprintln!("{label:<28} build failed: {e}");
+        return None;
+    }
+
+    // 4K raw: an 8-bit-ish ramp so the pipeline has real gradients to work on and
+    // the sensor-max divide lands well inside [0,1].
+    let raw: Vec<u8> = {
+        let mut v = vec![0u8; (w as usize) * (h as usize) * 2];
+        for (i, row) in v.chunks_exact_mut(w as usize * 2).enumerate() {
+            for (x, px) in row.chunks_exact_mut(2).enumerate() {
+                let s: u16 = ((x * 1023) / (w as usize).max(1)) as u16;
+                let s = s.saturating_add((i % 256) as u16 * 2).min(1023);
+                px[0] = (s & 0xFF) as u8;
+                px[1] = (s >> 8) as u8;
+            }
+        }
+        v
+    };
+
+    let params = ProcessParams {
+        width: w,
+        height: h,
+        stride_width: w,
+        buf: &raw,
+        sensor_max: 1023.0,
+        target_width: w,
+        target_height: h,
+        ccm_matrix: None,
+        tone_params: cam_isp::engine::default_tone_params(),
+        bayer_gains: None,
+        awb_gains: None,
+        bayer_pattern: 2,
+        analog_gain: 1.0,
+        scene_change: 0.0,
+        lsc_gains: None,
+        blc_values: None,
+        warp_grid: None,
+        warp_shading: None,
+        output_format: OutputFormat::FloatRgb,
+        timestamp_ns: 0,
+        isp_params: None,
+    };
+
+    // Warm up: the first frames include session allocation and shape propagation.
+    for _ in 0..8 {
+        if engine.process(&params).is_err() {
+            eprintln!("{label:<28} warmup failed");
+            return None;
+        }
+    }
+
+    let mut t: Vec<f64> = Vec::with_capacity(frames);
+    let mut sum = 0.0f64;
+    let mut picture = false;
+    for _ in 0..frames {
+        match engine.process(&params) {
+            Ok(f) => {
+                let ms = f.inference_duration_ns as f64 / 1e6;
+                t.push(ms);
+                sum += ms;
+                if !picture {
+                    let vals: Vec<f32> = f
+                        .data
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|b| f32::from_le_bytes(*b))
+                        .collect();
+                    let m = vals.iter().map(|v| *v as f64).sum::<f64>() / vals.len().max(1) as f64;
+                    picture = m > 0.02;
+                }
+            }
+            Err(e) => {
+                eprintln!("{label:<28} process failed: {e}");
+                return None;
+            }
+        }
+    }
+    t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p50 = t[t.len() / 2];
+    let p95 = t[(t.len() * 95) / 100];
+    let max = *t.last().unwrap();
+    let mean = sum / t.len() as f64;
+    if !picture {
+        eprintln!("{label:<28} produced a blank frame");
+        return None;
+    }
+    Some(Timing {
+        label: label.to_string(),
+        blocks: n_blocks,
+        p50,
+        p95,
+        max,
+        fps: 1000.0 / p50,
+        mean,
+    })
+}
+
+#[test]
+#[ignore]
+fn perf_4k() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .is_test(false)
+        .try_init();
+    cam_isp::init();
+
+    let w = env_usize("PERF_W", 3840) as u32;
+    let h = env_usize("PERF_H", 2160) as u32;
+    let frames = env_usize("PERF_FRAMES", 40);
+
+    let fused = || PipelineProfile::FUSED;
+    let med = || PipelineProfile::MED;
+    let whole = || PipelineProfile::WHOLE;
+
+    let build = |p: PipelineProfile| {
+        move |w: u32, h: u32| {
+            let mut p = p;
+            p.output_format = OutputFormat::FloatRgb;
+            let mut blocks = p.build_blocks(w, h, 2);
+            let head = blocks.remove(0);
+            let aux = p.build_aux_blocks(h as i64, w as i64);
+            blocks.extend(aux);
+            (head, blocks)
+        }
+    };
+
+    eprintln!("\n== {w}x{h}, {frames} frames after warmup ==");
+    eprintln!(
+        "{:<30} {:>7} {:>9} {:>9} {:>9} {:>8}",
+        "profile", "blocks", "p50 ms", "p95 ms", "max ms", "FPS"
+    );
+
+    let mut rows: Vec<Timing> = Vec::new();
+    for (label, p) in [
+        ("MED (primitives)", med()),
+        ("FUSED", fused()),
+        ("FUSED, stats off", fused()),
+        ("WHOLE", whole()),
+    ] {
+        let stats_on = !label.ends_with("stats off");
+        if let Some(t) = run(label, w, h, frames, stats_on, build(p)) {
+            eprintln!(
+                "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1}",
+                t.label, t.blocks, t.p50, t.p95, t.max, t.fps
+            );
+            rows.push(t);
+        }
+    }
+
+    if let (Some(med_r), Some(fused_r)) = (
+        rows.iter().find(|r| r.label.starts_with("MED")),
+        rows.iter().find(|r| r.label == "FUSED"),
+    ) {
+        eprintln!(
+            "\nfusion: {:.2}x at p50, mean {:.1} -> {:.1} ms",
+            med_r.p50 / fused_r.p50,
+            med_r.mean,
+            fused_r.mean
+        );
+    }
+    if let (Some(on), Some(off)) = (
+        rows.iter().find(|r| r.label == "FUSED"),
+        rows.iter().find(|r| r.label.ends_with("stats off")),
+    ) {
+        eprintln!(
+            "statistics readback: {:.1} ms per frame ({:.0}% of the p50)",
+            on.p50 - off.p50,
+            100.0 * (on.p50 - off.p50) / on.p50.max(0.01)
+        );
+    }
+}
