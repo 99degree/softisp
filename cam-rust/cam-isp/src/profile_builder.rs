@@ -4,6 +4,7 @@
 //! construction logic. Each ``PipelineProfile`` can build its block chain
 //! via the methods here.
 
+use crate::blocks::PipelineAllBlock;
 use crate::blocks::*;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
 use crate::profile::PipelineProfile;
@@ -54,8 +55,58 @@ impl PipelineProfile {
                 blocks.push(Box::new(YuvToRgbBlock::new()));
             }
             "raw" => {
-                // Standard RAW Bayer pipeline
+                // ── WHOLE PIPELINE ──────────────────────────────────────
+                //
+                // One `isp.pipeline` dispatch from the sensor plane to the
+                // display tensor. Checked first because it subsumes every
+                // per-stage decision below: there is no unpack, no normalize, no
+                // demosaic node — the op's stage mask is the chain.
+                //
+                // It takes a full-resolution float raw plane, so the head is
+                // `RawInput16Block` (declared INT16, upcast to f32 by the
+                // converter) even though the per-stage chain uses the packed
+                // INT32 head. That is not an inconsistency: the fused op reads
+                // one sample per pixel, so there is no packed pair to split.
                 if self
+                    .fuse_stages
+                    .allows(self.opset_mode, self.fuse_stages.whole_pipeline)
+                {
+                    let stages = crate::blocks::PipelineStages::PREVIEW
+                        // The 3A needs BLC/WB/CCM applied to the *same* values it
+                        // measures; with no stats readback in this chain there is
+                        // nothing to close the loop on, so leave them running but
+                        // fed from the controller snapshot the engine writes.
+                        .0;
+                    // `LIFT` is the S-curve; with shadow_lift 0 it is a no-op, so
+                    // leave it on — the bit is what makes `ToneParams` reachable
+                    // if a caller ever sets it.
+                    info!(
+                        "  head: isp.pipeline (whole RAW->display chain, stage mask 0x{stages:x})"
+                    );
+                    blocks.push(Box::new(
+                        RawInput16Block::new()
+                            .with_concrete_width(full_w)
+                            .with_concrete_height(concrete_h),
+                    ));
+                    blocks.push(Box::new(
+                        PipelineAllBlock::new(
+                            full_w,
+                            concrete_h,
+                            target_width as i64 / 2,
+                            (sensor_height / 2) as i64,
+                        )
+                        .with_bayer_pattern(bayer_pattern)
+                        .with_stages(crate::blocks::PipelineStages(
+                            stages | crate::blocks::PipelineStages::LEVELS,
+                        )),
+                    ));
+                    // Done: the op *is* the chain. Everything below builds the
+                    // per-stage version of the same picture, and appending it
+                    // after the fused op applies the whole ISP twice — which
+                    // renders (a second demosaic of an RGB frame) but is not what
+                    // this profile means.
+                    return crate::pipeline::GraphComposer::elide_noops(blocks);
+                } else if self
                     .fuse_stages
                     .allows(self.opset_mode, self.fuse_stages.unpack_blc_normal_cfa)
                 {

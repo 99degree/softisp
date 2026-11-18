@@ -1034,6 +1034,48 @@ impl MnnEngine {
         write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
         write_f32(pool, "DisplayBlock/zero", 0.0);
         write_f32(pool, "DisplayBlock/one", input_scale);
+        // ── The whole-pipeline op's own coefficients ──
+        //
+        // `isp.pipeline` has no ONNX attributes to carry these: VulkanFuse is
+        // positional and reads none of the attribute keys it knows as
+        // coefficients, so each value has to be a tensor the engine writes before
+        // every frame. The names are the ones `PipelineAllBlock` declares.
+        //
+        // Gated on the session actually having the tensors, so a per-stage chain
+        // pays nothing for this.
+        if find(pool, "isp_pipeline/stages").is_some() {
+            // `hw` is deliberately not written: it is the source and target rect,
+            // which only the block knows at build time. Its
+            // `extra_input_defaults` already carry the right numbers, and
+            // overwriting them from here — where there is no geometry — would
+            // replace them with zeroes and make the shader return immediately.
+            //
+            // White level: the shader divides by it, and it is also the scale a
+            // black level or a bad-pixel threshold means something against.
+            write_f32(pool, "isp_pipeline/white", white_level.max(1.0));
+            // Bayer gains per plane, in the plane order the phase table uses.
+            if let Some(g) = bayer {
+                write_f32_array(pool, "isp_pipeline/wb", g);
+            }
+            if let Some(m) = ccm {
+                write_f32_array(pool, "isp_pipeline/ccm", m);
+            }
+            // TONE_CURVE/GAMMA_RECIP, the same value `isp.display` consumes: the
+            // shader takes its reciprocal, so this is the display gamma.
+            write_f32(pool, "isp_pipeline/gamma", tone.gamma_recip.max(1e-4));
+            write_f32(pool, "isp_pipeline/lift", tone.shadow_lift.clamp(0.0, 1.0));
+            write_f32(
+                pool,
+                "isp_pipeline/pattern",
+                bayer_pattern.clamp(0, 3) as f32,
+            );
+            write_f32_array(pool, "isp_pipeline/sat", &[tone.saturation.clamp(0.0, 2.0)]);
+            // A bad pixel is one further from its 3x3 median than this, in raw
+            // counts — scaled off the white level so a 10-bit and a 12-bit sensor
+            // get the same *relative* threshold.
+            write_f32(pool, "isp_pipeline/dpc", white_level.max(1.0) * 0.02);
+        }
+
         // Every `Clip(x, <ns>/zero, <ns>/one)` in the chain assumes a [0,1]
         // frame. With the divide deferred it must allow the full white level,
         // or highlights saturate at a single count.
