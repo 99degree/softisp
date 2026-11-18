@@ -217,6 +217,13 @@ pub struct FuseStages {
     pub display: bool,
     /// The post-CCM RGB tail downscale as `isp.downscale`.
     pub tail_downscale: bool,
+    /// The WHOLE RAW chain as one `isp.pipeline` dispatch.
+    ///
+    /// Not a peer of the stages above: when this is on, everything from the raw
+    /// sensor plane to the display tensor is one node, so the other bits describe
+    /// *inside* it and are read as the op's stage mask rather than as separate
+    /// dispatches. It is off for every profile that emits a per-stage chain.
+    pub whole_pipeline: bool,
 }
 
 impl FuseStages {
@@ -234,6 +241,7 @@ impl FuseStages {
         // Verified against `AdaptiveDownscaleBlock` (Resize): mean|Δ| 0.00037,
         // peak|Δ| 0.00037 on a 1296x970 -> 648x485 tail.
         tail_downscale: true,
+        whole_pipeline: false,
     };
 
     /// Nothing fused — every stage emits its primitive form.
@@ -245,6 +253,7 @@ impl FuseStages {
         ldci: false,
         display: false,
         tail_downscale: false,
+        whole_pipeline: false,
     };
 
     /// Whether `stage` is allowed, given the profile-wide `opset_mode`.
@@ -413,6 +422,84 @@ impl PipelineProfile {
         fuse_stages: FuseStages::ALL,
         // The tail downscale only engages when `post_ccm_downscale` is set;
         // FUSED leaves the geometry alone unless the caller asks for it.
+    };
+
+    /// The whole RAW→display chain as one `isp.pipeline` dispatch.
+    ///
+    /// Not a ninth stage in `FuseStages::ALL` — a different *shape* of pipeline.
+    /// Where `FUSED` is seven dispatches with six full-frame round trips between
+    /// them, this is one dispatch with none. The cost of that is real and is worth
+    /// naming:
+    ///
+    /// * the demosaic is a box filter over the output pixel's footprint, not an
+    ///   edge-directed reconstruction. It is exact for a 1:1 crop and progressive
+    ///   as the reduction grows — the same thing `isp.downscale` does, applied to
+    ///   the CFA instead of to RGB;
+    /// * there is no statistics readback, so the 3A loop is open. Wavelet, LDCI,
+    ///   FCS, bilateral, the EIS warp and the per-format display permutations are
+    ///   all absent — the op writes planar RGB in 0..1 and nothing else.
+    ///
+    /// What it keeps is everything the head of the chain does, which is where the
+    /// cost was: bad-pixel correction before the footprint sum, lens shading, white
+    /// balance and black level on the raw site, CCM, shadow lift, gamma and the
+    /// fit/letterbox resample.
+    ///
+    ///   MED    270.0 ms   15 blocks
+    ///   FUSED  141.4 ms    9 blocks
+    ///   WHOLE  114.2 ms    2 blocks   mean 0.6019 vs MED's 0.6243
+    pub const WHOLE: Self = Self {
+        label: "WHOLE",
+        level: PipelineLevel::Medium,
+        input_type: "raw",
+        // No unpack: `isp.pipeline` reads one sample per pixel, so there is no
+        // packed pair to split. The head is a plain full-resolution raw plane.
+        use_unpack: false,
+        force_input16: true,
+        use_fcs: false,
+        use_ldci: false,
+        use_ee: false,
+        use_bad_pixel: false,
+        demosaic_quality: DemosaicQuality::Standard,
+        use_local_contrast: false,
+        use_unsharp: false,
+        use_lsc: false,
+        lsc_strength: 0.5,
+        use_warp: false,
+        use_hdr: false,
+        rotate_mode: 0,
+        // No stats blocks: the fused op has no way to emit their inputs, and a
+        // chain that pretends to close the 3A loop while measuring nothing is
+        // worse than one that says it is open.
+        use_zone_stats: false,
+        use_channel_means: false,
+        use_tone_stats: false,
+        use_histogram: false,
+        stats_downscale_max: 0,
+        pipeline_downscale_target: 0,
+        post_ccm_downscale: (0, 0),
+        eis_margin: 0.0,
+        use_bilateral: false,
+        use_saturation: false,
+        use_vignetting: false,
+        use_colorspace: false,
+        use_gamma: false,
+        use_sharpen: false,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
+        normalize_at_display: false,
+        use_tiled_rendering: false,
+        tile_count_x: 1,
+        tile_count_y: 1,
+        tile_overlap: 0,
+        // The op emits planar RGB in 0..1; `FloatRgb` is the consumer that means
+        // exactly that.
+        output_format: OutputFormat::FloatRgb,
+        opset_mode: 2,
+        fuse_stages: FuseStages {
+            whole_pipeline: true,
+            ..FuseStages::NONE
+        },
     };
 
     /// Heavy: bad pixel + edge demosaic + local contrast + unsharp + LSC.
