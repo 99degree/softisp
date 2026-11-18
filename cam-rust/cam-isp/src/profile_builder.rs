@@ -296,7 +296,19 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("lsc")));
         }
 
-        blocks.push(Box::new(BayerWbBlock::new()));
+        // White balance is a per-plane scalar, and `isp.demosaic_ccm` already
+        // multiplies the CFA quad by a 3x4 matrix — so WB is a scale on that
+        // matrix's columns, not a stage of its own. The engine folds it in when
+        // the block is absent, which is why this is a build-time decision and not
+        // a second coefficient path.
+        if self
+            .fuse_stages
+            .allows(self.opset_mode, self.fuse_stages.wb_into_demosaic)
+        {
+            info!("  white balance: fused into isp.demosaic_ccm weights");
+        } else {
+            blocks.push(Box::new(BayerWbBlock::new()));
+        }
 
         // Demosaic and CCM are one fused op or two primitive ones — never a mix.
         // `isp.demosaic_ccm` applies `CCM x demosaic` weights, so leaving a
