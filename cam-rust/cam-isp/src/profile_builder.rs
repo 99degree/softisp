@@ -651,7 +651,18 @@ impl PipelineProfile {
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }
-        // Calibration stats for AF (quad-level means/vars/mins/maxs)
+        // Calibration stats for AF (quad-level means/vars/mins/maxs).
+        //
+        // Only when a stats block actually runs. `CalibrationBlock` reads
+        // `aux_hook_src/out`, and that tap is a pass-through the builder only
+        // creates for a chain that has a mid-pipeline point to tap. A profile with
+        // every stats block off — `WHOLE`, where the fused op's only output is the
+        // display frame — has nothing for it to consume, and the graph is rejected
+        // for reading a tensor nothing produces.
+        if self.use_zone_stats
+            || self.use_channel_means
+            || self.use_tone_stats
+            || self.use_histogram
         {
             let mut b = CalibrationBlock::new().with_concrete_dims(input_h, input_w);
             b.set_input_source(stats_input);
