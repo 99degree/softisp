@@ -14,7 +14,7 @@
 use std::sync::Mutex;
 
 use log::{debug, error, info, warn};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Instant;
 
 /// The controller fields the graph is fed from, captured once per frame.
@@ -134,6 +134,16 @@ pub struct MnnEngine {
     /// `NormalizeBlock`). Defaults to true, the shape of every profile that
     /// keeps the block.
     normalizes_at_input: bool,
+    /// Measure the 3A statistics every N frames instead of every frame.
+    ///
+    /// Every statistics tensor is a full-frame reduction followed by a
+    /// host-side readback, and the readback is a GPU stall. The controller
+    /// smooths these numbers anyway, so a per-frame reduction buys accuracy
+    /// nobody uses — AWB at 1/8 the frame rate is indistinguishable in the
+    /// picture. `1` means every frame (the old behaviour).
+    stats_interval: u32,
+    /// Frames since the last measurement. `0` means the next frame measures.
+    stats_countdown: AtomicU32,
     /// Expected input tensor element count from model (for validation).
     expected_input_elements: Option<u32>,
     /// ISP controller for AWB/AE/CCM/tone parameter estimation.
@@ -207,6 +217,8 @@ impl MnnEngine {
             preserve_input_type: false,
             fp16_storage: true,
             normalizes_at_input: true,
+            stats_interval: 1,
+            stats_countdown: AtomicU32::new(0),
             expected_input_elements: None,
             controller: Mutex::new(IspController::new()),
             pool_size,
@@ -303,6 +315,24 @@ impl MnnEngine {
     /// Whether fp16 tensor storage is requested.
     pub fn fp16_storage(&self) -> bool {
         self.fp16_storage
+    }
+
+    /// Measure the 3A statistics every `n` frames instead of every frame.
+    ///
+    /// `n <= 1` restores the per-frame behaviour. The statistics are a
+    /// full-frame reduction plus a host readback (a GPU stall), and the
+    /// controller smooths them — at 1/8 the frame rate the picture is the same.
+    /// A frame that skips measurement reports `stats_measured == false` and
+    /// carries no statistics, so a consumer can tell "nothing new" from "the
+    /// readback failed".
+    pub fn set_stats_interval(&mut self, n: u32) {
+        self.stats_interval = n.max(1);
+        self.stats_countdown.store(0, Ordering::Relaxed);
+    }
+
+    /// How often the statistics are measured, in frames.
+    pub fn stats_interval(&self) -> u32 {
+        self.stats_interval
     }
 
     /// Declare whether the graph divides by `sensor_max` at its head.
@@ -2161,8 +2191,21 @@ impl IspEngine for MnnEngine {
             // After inference, all output tensors are available in the session.
             // Try reading known stats output names.  If a tensor doesn't exist
             // in the graph (block not enabled in this profile), get_output returns None.
+            // Measure the statistics on the first frame and every `n` frames
+            // after it. This is decided per frame, before any tensor is read, so a
+            // skipped frame costs no readback at all — the readback is the stall,
+            // not the reduction.
+            let measure_stats = if self.stats_countdown.load(Ordering::Relaxed) == 0 {
+                self.stats_countdown
+                    .store(self.stats_interval.max(1) - 1, Ordering::Relaxed);
+                true
+            } else {
+                self.stats_countdown.fetch_sub(1, Ordering::Relaxed);
+                false
+            };
+
             #[cfg(feature = "mnn")]
-            {
+            if measure_stats {
                 // ── Phase 1: Read raw stats tensors into local variables ──
                 // (Avoid borrow conflicts with ctrl write_stats() above)
                 let mut cm_vals: Option<[f32; 3]> = None;
@@ -2406,6 +2449,7 @@ impl IspEngine for MnnEngine {
             // The controller modifies its internal state for the next frame.
             frame.aux = Some(IspAuxOutput {
                 calibration_stats: calib_vals,
+                stats_measured: measure_stats,
                 ..Default::default()
             });
             frame.timestamp_ns = p.timestamp_ns;

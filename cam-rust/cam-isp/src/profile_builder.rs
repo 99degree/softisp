@@ -4,6 +4,7 @@
 //! construction logic. Each ``PipelineProfile`` can build its block chain
 //! via the methods here.
 
+use crate::blocks::CfaDownscaleBlock;
 use crate::blocks::PipelineAllBlock;
 use crate::blocks::*;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
@@ -596,45 +597,27 @@ impl PipelineProfile {
         };
         let mut stats_input_owned = String::from(stats_input_base);
 
-        // Stats downscale when pipeline_downscale_target > 0
+        // Statistics downscale.
+        //
+        // The 3A statistics do not need sensor resolution — a mean, a histogram and
+        // a focus metric are the same numbers at 1/4 or 1/8 the pixels to within
+        // noise, and the controller smooths every one of them anyway. This reduces
+        // the CFA quad *once*, before any statistics block sees it, so all four
+        // consumers read a small tensor instead of a large one.
+        //
+        // It replaces an `AdaptiveDownscaleBlock` (a `Resize`) that could not be
+        // built: MNN derives a Resize's output shape from its scale tensor while
+        // propagating shapes, and the resulting model was rejected. This op states
+        // its output rect in an attribute, so the boundary is fixed at build time.
         let stats_max = self.stats_downscale_max;
         if stats_max > 0 {
-            let max_dim = input_h.max(input_w) as f32;
-            let target = stats_max as f32;
-            if max_dim > target {
-                let factor = target / max_dim;
-                let pipe_factor = if self.pipeline_downscale_target > 0 {
-                    let pw = input_w as f32;
-                    let pt = self.pipeline_downscale_target as f32;
-                    if pw > pt {
-                        Some(pt / pw)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                let (src_h, src_w) = match pipe_factor {
-                    Some(pf) => {
-                        let ph = (input_h as f32 * pf).round() as i64;
-                        let pw = (input_w as f32 * pf).round() as i64;
-                        (ph.max(1), pw.max(1))
-                    }
-                    None => (input_h, input_w),
-                };
-                let tgt_h = (src_h as f32 * factor).ceil() as i64;
-                let tgt_w = (src_w as f32 * factor).ceil() as i64;
-                let mut ds =
-                    AdaptiveDownscaleBlock::new(tgt_w.max(1), tgt_h.max(1), 0, "constant", "crop")
-                        .with_concrete_dims(src_h, src_w);
+            let ds = CfaDownscaleBlock::fit_max_edge(input_w, input_h, stats_max);
+            if !ds.is_identity() {
+                let mut ds = ds;
                 ds.set_input_source(&stats_input_owned);
                 info!(
-                    "Stats downscale: {}×{} → {}×{} (factor={:.3}, crop mode)",
-                    src_h,
-                    src_w,
-                    tgt_h.max(1),
-                    tgt_w.max(1),
-                    factor
+                    "Stats downscale: {}×{} → {}×{} (isp.cfa_downscale)",
+                    input_h, input_w, ds.out_h, ds.out_w
                 );
                 stats_input_owned = ds.frame_tensor.clone();
                 aux.push(Box::new(ds));
