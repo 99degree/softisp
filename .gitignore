@@ -51,6 +51,12 @@ cam-rust/lib/aarch64/
 cam-rust/lib/arm64-v8a/
 cam-rust/lib/mesa/
 cam-rust/lib/**/libmnn_wrapper.a
+# The FFI archives are compiled in `build.rs` from the vendored sources; the
+# checked-in copies are a convenience for a clean clone and go stale every build.
+cam-rust/lib/**/libmnn_convert_api.a
+cam-rust/lib/**/libmnn_vulkan_stubs.a
+# Harness transcripts and compaction history are session artefacts.
+history.md
 # MNN converter shared lib (too large for GitHub: 123MB)
 
 # OS
