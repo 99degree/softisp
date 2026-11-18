@@ -258,6 +258,35 @@ pub trait IspBlock: Send + std::fmt::Debug {
         None
     }
 
+    /// Every output this block registers with the graph, in order.
+    ///
+    /// Most blocks produce one tensor and never override this. The plural form
+    /// exists because a fused op can legitimately produce more than one: a head
+    /// that writes a reduced copy of its frame for the statistics branch has two
+    /// outputs, and the graph has to declare both or MNN drops the second —
+    /// `OpType_Extra`'s shape computer sizes `outputs[0]` and leaves the rest
+    /// copying the *input* shape, which is a mismatch no message explains.
+    ///
+    /// Defaults to the singular `graph_output_name()`, so nothing that produces one
+    /// tensor has to change.
+    fn graph_output_names(&self) -> Vec<&str> {
+        match self.graph_output_name() {
+            Some(n) => vec![n],
+            None => vec![],
+        }
+    }
+
+    /// Value-info for each output, aligned with [`Self::graph_output_names`].
+    ///
+    /// A block that produces several outputs must override this too: the default
+    /// repeats the singular value-info, which is only correct when there is one.
+    fn graph_output_value_infos(&self) -> Vec<Vec<u8>> {
+        match self.output_value_info() {
+            Some(vi) => vec![vi],
+            None => vec![],
+        }
+    }
+
     /// Additional graph inputs (e.g., "sensor_max", "sizes").
     /// Each entry: (tensor_name, elem_type, shape_dims as i64).
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -590,10 +619,11 @@ impl GraphComposer {
             v
         };
 
-        // Collect all graph output names up front so we can skip their value_infos
+        // Collect all graph output names up front so we can skip their value_infos.
+        // Plural: a fused op may register more than one output tensor.
         let mut graph_output_names: HashSet<String> = HashSet::new();
         for blk in &all_blocks {
-            if let Some(name) = blk.graph_output_name() {
+            for name in blk.graph_output_names() {
                 graph_output_names.insert(name.to_string());
             }
         }
@@ -705,13 +735,22 @@ impl GraphComposer {
 
             // Graph output: all non-head blocks register outputs to prevent MNN DCE.
             // A single-block graph (head == tail) must still register its output.
+            //
+            // Plural so a fused op can register a second (auxiliary) output: every
+            // one it declares has to reach the graph, or MNN drops the extra tensor
+            // and the consumer of it reads nothing.
             let is_tail = std::ptr::eq(*blk as *const _, pipeline_tail as *const _);
             let is_head = std::ptr::eq(*blk as *const _, pipeline_head as *const _);
-            if let Some(name) = blk.graph_output_name() {
-                if let Some(vi) = blk.output_value_info() {
-                    if is_tail {
+            let names = blk.graph_output_names();
+            let infos = blk.graph_output_value_infos();
+            if !names.is_empty() && infos.len() == names.len() {
+                for (name, vi) in names.iter().zip(infos) {
+                    // Only the *first* output is the pipeline's frame; any further
+                    // ones are auxiliary and go after it so downstream consumers of
+                    // the frame keep their index.
+                    if is_tail && name == &names[0] {
                         all_outputs.insert(0, vi);
-                    } else if !is_head {
+                    } else if !is_head || name != &names[0] {
                         all_outputs.push(vi);
                     }
                     info!("{}: graph output: {} → {}", Self::TAG, blk.id(), name);
