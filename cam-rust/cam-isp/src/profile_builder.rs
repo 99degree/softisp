@@ -4,7 +4,6 @@
 //! construction logic. Each ``PipelineProfile`` can build its block chain
 //! via the methods here.
 
-use crate::blocks::CfaDownscaleBlock;
 use crate::blocks::PipelineAllBlock;
 use crate::blocks::*;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
@@ -595,34 +594,7 @@ impl PipelineProfile {
         } else {
             "aux_hook_src/out"
         };
-        let mut stats_input_owned = String::from(stats_input_base);
-
-        // Statistics downscale.
-        //
-        // The 3A statistics do not need sensor resolution — a mean, a histogram and
-        // a focus metric are the same numbers at 1/4 or 1/8 the pixels to within
-        // noise, and the controller smooths every one of them anyway. This reduces
-        // the CFA quad *once*, before any statistics block sees it, so all four
-        // consumers read a small tensor instead of a large one.
-        //
-        // It replaces an `AdaptiveDownscaleBlock` (a `Resize`) that could not be
-        // built: MNN derives a Resize's output shape from its scale tensor while
-        // propagating shapes, and the resulting model was rejected. This op states
-        // its output rect in an attribute, so the boundary is fixed at build time.
-        let stats_max = self.stats_downscale_max;
-        if stats_max > 0 {
-            let ds = CfaDownscaleBlock::fit_max_edge(input_w, input_h, stats_max);
-            if !ds.is_identity() {
-                let mut ds = ds;
-                ds.set_input_source(&stats_input_owned);
-                info!(
-                    "Stats downscale: {}×{} → {}×{} (isp.cfa_downscale)",
-                    input_h, input_w, ds.out_h, ds.out_w
-                );
-                stats_input_owned = ds.frame_tensor.clone();
-                aux.push(Box::new(ds));
-            }
-        }
+        let stats_input_owned = String::from(stats_input_base);
 
         let stats_input: &str = &stats_input_owned;
 
@@ -631,13 +603,33 @@ impl PipelineProfile {
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }
+        // Both reductions box-average their input first when asked to.
+        //
+        // A mean, a min and a max are unchanged by that filter — the statistics are
+        // the same numbers from 1/16 the samples — and what it saves is the
+        // reduction's own traversal of the frame. `stats_downscale_max` is the lever;
+        // 0 keeps them at full resolution.
+        let stat_factor: i64 = {
+            let longest = input_h.max(input_w).max(1) as f64;
+            let target = self.stats_downscale_max as f64;
+            if target > 0.0 && longest > target {
+                (longest / target).round().max(1.0) as i64
+            } else {
+                1
+            }
+        };
+
         if self.use_channel_means {
-            let mut b = ChannelMeansBlock::new();
+            let mut b = ChannelMeansBlock::new()
+                .with_concrete_dims(input_h, input_w)
+                .with_downscale(stat_factor as u32);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }
         if self.use_tone_stats {
-            let mut b = ToneStatsBlock::new();
+            let mut b = ToneStatsBlock::new()
+                .with_concrete_dims(input_h, input_w)
+                .with_downscale(stat_factor as u32);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }
