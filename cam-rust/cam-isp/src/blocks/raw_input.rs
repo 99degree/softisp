@@ -112,6 +112,10 @@ macro_rules! impl_raw_input_block {
             fn graph_input_name(&self) -> Option<&str> {
                 Some(&self.frame_tensor)
             }
+            /// These blocks *are* the graph input; they emit no node.
+            fn is_graph_input_placeholder(&self) -> bool {
+                true
+            }
             #[inline]
             fn input_elem_type(&self) -> i32 {
                 $elem

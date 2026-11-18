@@ -66,15 +66,41 @@ fn measure(label: &str, mut profile: PipelineProfile) -> Option<f64> {
         return None;
     }
 
-    let n = 3;
-    let mut infer = 0.0;
-    for _ in 0..n {
-        if let Ok(f) = engine.process(&params) {
-            infer = f.inference_duration_ns as f64 / 1e6;
+    // Warm up, then take the MEDIAN of several frames.
+    //
+    // Reporting the last of three frames measured GPU clock ramp, not the cost
+    // of the config: the first pipeline built after a cold start runs with the
+    // GPU at its lowest clocks, so whichever config was built first looked
+    // slowest and "turning a stage off" appeared to save 90 ms. The drift check
+    // in `per_stage_cost` now proves the clocks have settled before any of the
+    // numbers are compared.
+    const WARMUP: usize = 6;
+    const SAMPLES: usize = 9;
+    for _ in 0..WARMUP {
+        if engine.process(&params).is_err() {
+            eprintln!("  {label:<22} warmup failed");
+            return None;
         }
     }
-    eprintln!("  {label:<22} {n_blocks:>3} blocks   infer {infer:7.1} ms");
-    Some(infer)
+    let mut times: Vec<f64> = Vec::with_capacity(SAMPLES);
+    for _ in 0..SAMPLES {
+        match engine.process(&params) {
+            Ok(f) => times.push(f.inference_duration_ns as f64 / 1e6),
+            Err(e) => {
+                eprintln!("  {label:<22} process failed: {e}");
+                return None;
+            }
+        }
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = times[SAMPLES / 2];
+    eprintln!(
+        "  {label:<22} {n_blocks:>3} blocks   infer {median:7.1} ms  \
+         (min {:.1} max {:.1})",
+        times[0],
+        times[SAMPLES - 1]
+    );
+    Some(median)
 }
 
 #[test]
@@ -105,6 +131,21 @@ fn per_stage_cost() {
         if let Some(t) = measure(label, p) {
             results.push((label, base - t));
         }
+    }
+
+    // Re-measure the baseline. If the clocks drifted, every "saving" above is
+    // an artefact of measurement order rather than a property of the stage.
+    let end = measure("full MED (again)", PipelineProfile::MED).unwrap_or(base);
+    let drift = (end - base).abs();
+    eprintln!(
+        "\ndrift over the sweep: {drift:.1} ms ({:.0}% of {base:.1} ms)",
+        100.0 * drift / base.max(1.0)
+    );
+    if drift > 15.0 {
+        eprintln!(
+            "  the sweep is noisy — treat the per-stage numbers below as upper \
+             bounds, not measurements"
+        );
     }
 
     eprintln!("\ncost of each stage (measured by turning it off):");

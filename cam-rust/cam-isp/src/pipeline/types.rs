@@ -293,6 +293,26 @@ pub trait IspBlock: Send + std::fmt::Debug {
     fn is_noop(&self) -> bool {
         false
     }
+
+    /// True for the block that *is* a graph input rather than a stage over one.
+    ///
+    /// `RawInputPackedBlock` emits no node: its whole job is to declare
+    /// `[1,2,H,W/2]` INT32 on the graph boundary. When the block that consumes
+    /// that tensor declares the same boundary itself, the placeholder has
+    /// nothing left to do and can be dropped.
+    fn is_graph_input_placeholder(&self) -> bool {
+        false
+    }
+
+    /// Does this block read the graph input directly?
+    ///
+    /// A fused stage that spans the whole head — unpack, normalise, black level,
+    /// CFA — takes the sensor tensor as its *own* input, so keeping a
+    /// placeholder in front of it would leave two declarations of one boundary,
+    /// and one more block in the chain for no node in the graph.
+    fn is_graph_input_placeholder_for(&self) -> bool {
+        false
+    }
 }
 
 /// Whether a block's ONNX fragment uses custom or primitive ops.
@@ -816,8 +836,17 @@ impl GraphComposer {
     /// Returns the blocks that do something, wired to each other. A chain of
     /// nothing but noops comes back empty: there is no work to express.
     pub fn elide_noops(blocks: Vec<Box<dyn IspBlock>>) -> Vec<Box<dyn IspBlock>> {
-        let mut kept: Vec<Box<dyn IspBlock>> =
-            blocks.into_iter().filter(|b| !b.is_noop()).collect();
+        // A graph-input placeholder whose first consumer declares the boundary
+        // itself has nothing to declare. This is what makes the head one block:
+        // `raw_input_packed` -> `isp_unpack_blc_normal_cfa` is two blocks and one
+        // ONNX node, and the placeholder's only lasting effect was to be counted.
+        let adopts_input = blocks
+            .iter()
+            .any(|b| !b.is_graph_input_placeholder() && b.is_graph_input_placeholder_for());
+        let mut kept: Vec<Box<dyn IspBlock>> = blocks
+            .into_iter()
+            .filter(|b| !b.is_noop() && !(adopts_input && b.is_graph_input_placeholder()))
+            .collect();
         if kept.is_empty() {
             return kept;
         }

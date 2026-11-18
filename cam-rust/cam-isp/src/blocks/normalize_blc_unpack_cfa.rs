@@ -305,6 +305,14 @@ impl IspBlock for NormalizeBlcUnpackCfa {
         Some(&self.input_source)
     }
 
+    /// The fused head reads the sensor buffer itself: `isp_unpack_blc_normal_cfa`
+    /// takes `[1,2,H,W/2]` INT32 straight off the graph boundary. A
+    /// `RawInputPackedBlock` in front of it would be a second declaration of the
+    /// boundary this block already owns.
+    fn is_graph_input_placeholder_for(&self) -> bool {
+        self.opset_mode() == BlockOpsetMode::MnnIspMin
+    }
+
     fn graph_output_name(&self) -> Option<&str> {
         Some(&self.frame_tensor)
     }
@@ -329,19 +337,28 @@ impl IspBlock for NormalizeBlcUnpackCfa {
         vec![self.frame_tensor.clone()]
     }
 
+    /// The graph boundary is `[1,2,H,W/2]` INT32 — the engine's even/odd
+    /// parity planes, not a single packed word row.
+    ///
+    /// Channel count is load-bearing: `MnnEngine::build` reads the model's
+    /// declared input shape back out of the converted session and picks
+    /// `InputMode::SplitInt32` when `dims[1] == 2`. Declaring `[1,1,H,W/2]` here
+    /// makes the engine choose a single-plane feed, while
+    /// `isp_unpack_blc_normal_cfa` still reads two parity planes out of the
+    /// buffer — which faults inside MNN during session creation.
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let dims: Vec<Vec<u8>> = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
             let out_w = w / 2;
             vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2), // even/odd parity planes
                 Proto::tensor_dim_value(h),
                 Proto::tensor_dim_value(out_w),
             ]
         } else {
             vec![
                 Proto::tensor_dim_value(1),
-                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(2),
                 Proto::tensor_dim_param("H"),
                 Proto::tensor_dim_param("W2"),
             ]

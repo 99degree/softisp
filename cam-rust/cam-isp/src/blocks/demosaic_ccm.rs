@@ -352,7 +352,18 @@ impl IspBlock for DemosaicCcmBlock {
     fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/w", ns).to_string(), vec![]),
+            // The engine overwrites this with CCM x demosaic every frame. The
+            // default is the demosaic table alone, not empty bytes: an empty
+            // default leaves the descriptor zero-filled, and on the fused path
+            // `ccm` can legitimately be `None` (no controller yet) — which
+            // renders a black frame with no error anywhere.
+            (
+                format!("{}/w", ns).to_string(),
+                self.demosaic_weights()
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
             (
                 format!("{}/b", ns).to_string(),
                 [0.0f32; 3]
