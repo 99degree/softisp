@@ -131,6 +131,22 @@ MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend
         : MNN::BackendConfig::Precision_High;
     config.backendConfig = &backendConfig;
 
+    // Cache the static memory instead of collecting it on every resize.
+    //
+    // `Session_Memory_Collect` is MNN's default, and on Vulkan it calls
+    // `onGabageCollect(0)` after every realloc — which is
+    // `vkDeviceWaitIdle` + a full pool clear + `mPipelineFactory->reset()`,
+    // i.e. every compiled SPIR-V pipeline is destroyed and recompiled on the
+    // next frame (150-300 ms on Adreno).
+    //
+    // A camera changes geometry at most twice per session (preview -> capture,
+    // and back), so caching is the right trade: the free list is retained and
+    // peak memory is a little higher, but the resize no longer costs a shader
+    // recompile. Paired with fp16 storage where the chain allows it, that is
+    // affordable; a fused chain is fp32 (the `isp.*` shaders declare float[]),
+    // so watch peak memory if sessions are ever pooled by the dozen.
+    net->setSessionMode(MNN::Interpreter::Session_Memory_Cache);
+
     auto* session = net->createSession(config);
     return reinterpret_cast<MnnSession>(session);
 }
