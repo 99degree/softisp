@@ -705,6 +705,11 @@ impl IspBlock for ToneStatsBlock {
                 ],
             ),
             // ── Total pixel count ──
+            //
+            // `Size` has no Vulkan creator but needs none: MNN's `GeometrySize`
+            // computes it at *geometry* time from the extents and writes the count
+            // into a host int, so it never becomes a runtime command and arrives
+            // without a dispatch or a copy.
             Proto::node(
                 "Size",
                 &[&format!("{}/luma", ns)],
