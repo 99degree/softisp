@@ -1722,8 +1722,7 @@ impl IspEngine for MnnEngine {
         };
         // Map the callers [R, G, B] onto the sensors planes, which is what the
         // blocks and the fused op both index by.
-        if p.isp_params.is_some() {
-            let wb = p.isp_params.as_ref().unwrap();
+        if let Some(wb) = p.isp_params.as_ref() {
             isp_plane_gains =
                 crate::bayer_planes::gains_by_plane(&[wb.wb.r, wb.wb.g, wb.wb.b], bayer_pattern);
         }
