@@ -287,6 +287,17 @@ pub trait IspBlock: Send + std::fmt::Debug {
         }
     }
 
+    /// Spatial extent this block reads, and the one it writes, when it knows.
+    ///
+    /// `None` means "not stated" — most blocks pass a tensor through unchanged and
+    /// have nothing to say. The pairs exist so a chain can be checked for the one
+    /// invariant every stage in this pipeline holds: a later stage never reads more
+    /// pixels than the stage before it produced. A block that breaks that is not
+    /// slow, it is wrong — it is reading a tensor whose geometry it has mis-derived.
+    fn declared_extents(&self) -> Option<((i64, i64), (i64, i64))> {
+        None
+    }
+
     /// Additional graph inputs (e.g., "sensor_max", "sizes").
     /// Each entry: (tensor_name, elem_type, shape_dims as i64).
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -580,6 +591,20 @@ impl GraphComposer {
                 Self::TAG,
                 issues.len(),
                 issues.join("; ")
+            );
+        }
+
+        // And the invariant the chain depends on: a stage never reads more pixels
+        // than its predecessor wrote. The pipeline only shrinks spatially, so a
+        // violation means a block derived its geometry from the wrong size — which
+        // shows up as quietly wrong statistics rather than as an error.
+        let extents = Self::check_extent_monotonicity(pipeline);
+        if !extents.is_empty() {
+            warn!(
+                "{}: extent check ({} violations): {}",
+                Self::TAG,
+                extents.len(),
+                extents.join("; ")
             );
         }
 
@@ -1065,6 +1090,46 @@ impl GraphComposer {
             }
         }
 
+        issues
+    }
+
+    /// Check that no stage reads more pixels than its predecessor wrote.
+    ///
+    /// The pipeline only ever shrinks spatially — demosaic halves, a downscale
+    /// reduces, a statistics tap pools. A stage that declares a *larger* input than
+    /// the tensor feeding it has mis-derived its geometry from the size it was given
+    /// at build time, and the usual symptom is silently wrong values rather than an
+    /// error: `ZoneStatsBlock` computes its kernel as `h / rows`, so a stale `h`
+    /// makes the zones the wrong size and nothing in the graph complains.
+    ///
+    /// Returns the violations as human-readable strings; empty means the chain is
+    /// consistent. Blocks that do not state their extents are skipped.
+    pub fn check_extent_monotonicity(chain: &[&dyn IspBlock]) -> Vec<String> {
+        let mut issues = Vec::new();
+        let mut produced: std::collections::HashMap<String, (i64, i64)> =
+            std::collections::HashMap::new();
+
+        for blk in chain {
+            if let Some((inp, out)) = blk.declared_extents() {
+                if let Some(src) = blk.input_source() {
+                    if let Some(produced_dims) = produced.get(src) {
+                        if inp.0 > produced_dims.0 || inp.1 > produced_dims.1 {
+                            issues.push(format!(
+                                "Block '{}' reads {}x{} but '{}' produced {}x{}: \
+                                 a stage cannot grow",
+                                blk.id(),
+                                inp.1,
+                                inp.0,
+                                src,
+                                produced_dims.1,
+                                produced_dims.0
+                            ));
+                        }
+                    }
+                }
+                produced.insert(blk.frame_tensor().unwrap_or("").to_string(), out);
+            }
+        }
         issues
     }
 

@@ -14,6 +14,162 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 // ═══════════════════════════════════════════════════════════════════
+// StatsDownscaleBlock
+// ═══════════════════════════════════════════════════════════════════
+
+/// The one downscale the statistics share.
+///
+/// Every statistics block reads the same reduced tensor instead of each shrinking
+/// the frame for itself. Four blocks each pooling a 4K frame is four traversals of
+/// it; one pool followed by four reductions of a 1/16 tensor is one traversal.
+///
+/// Channel-agnostic on purpose: `AveragePool` with a spatial kernel keeps whatever
+/// plane count it is given, so the same block serves the 3-plane RGB consumers and
+/// the 4-plane CFA ones (`CalibrationBlock`) without a reshape.
+#[derive(Debug)]
+pub struct StatsDownscaleBlock {
+    pub id: String,
+    pub prev: Option<Box<dyn IspBlock>>,
+    pub next: Option<Box<dyn IspBlock>>,
+    pub frame_tensor: String,
+    pub input_source: String,
+    /// Pool factor: output is `1/factor` of the input in each spatial axis.
+    pub factor: i64,
+    pub in_h: Option<i64>,
+    pub in_w: Option<i64>,
+    /// Plane count of the tensor being reduced, for the declared shape.
+    pub channels: i64,
+}
+
+impl StatsDownscaleBlock {
+    pub fn new(factor: i64, channels: i64) -> Self {
+        Self {
+            id: "stats_downscale".into(),
+            prev: None,
+            next: None,
+            frame_tensor: "StatsDownscaleBlock/frame".into(),
+            input_source: String::new(),
+            factor: factor.max(1),
+            in_h: None,
+            in_w: None,
+            channels: channels.max(1),
+        }
+    }
+
+    pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
+        self.in_h = Some(h);
+        self.in_w = Some(w);
+        self
+    }
+
+    /// Output extent in each spatial axis, rounded up like `ceil_mode` does.
+    pub fn out_dims(&self) -> (i64, i64) {
+        let f = self.factor.max(1);
+        let h = self.in_h.map(|h| (h + f - 1) / f).unwrap_or(0);
+        let w = self.in_w.map(|w| (w + f - 1) / f).unwrap_or(0);
+        (h.max(1), w.max(1))
+    }
+}
+
+impl IspBlock for StatsDownscaleBlock {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn tensor_ns(&self) -> String {
+        "StatsDownscaleBlock".into()
+    }
+    fn frame_tensor(&self) -> Option<&str> {
+        Some(&self.frame_tensor)
+    }
+    fn input_source(&self) -> Option<&str> {
+        if self.input_source.is_empty() {
+            None
+        } else {
+            Some(&self.input_source)
+        }
+    }
+    fn set_input_source(&mut self, name: &str) {
+        self.input_source = name.to_string();
+    }
+    fn prev(&self) -> Option<&Box<dyn IspBlock>> {
+        self.prev.as_ref()
+    }
+    fn set_prev(&mut self, b: Box<dyn IspBlock>) {
+        self.prev = Some(b);
+    }
+    fn next(&self) -> Option<&Box<dyn IspBlock>> {
+        self.next.as_ref()
+    }
+    fn set_next(&mut self, b: Box<dyn IspBlock>) {
+        self.next = Some(b);
+    }
+    fn input_tensors(&self) -> Vec<String> {
+        vec![self.input_source.clone()]
+    }
+    fn output_tensors(&self) -> Vec<String> {
+        vec![self.frame_tensor.clone()]
+    }
+
+    fn input_value_info(&self) -> Option<Vec<u8>> {
+        let dims: Vec<Vec<u8>> = match (self.in_h, self.in_w) {
+            (Some(h), Some(w)) => vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(self.channels),
+                Proto::tensor_dim_value(h),
+                Proto::tensor_dim_value(w),
+            ],
+            _ => vec![
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(self.channels),
+                Proto::tensor_dim_param("H"),
+                Proto::tensor_dim_param("W"),
+            ],
+        };
+        Some(Proto::value_info(&self.input_source, &dims, 1))
+    }
+
+    fn output_value_info(&self) -> Option<Vec<u8>> {
+        let (oh, ow) = self.out_dims();
+        Some(Proto::value_info(
+            &self.frame_tensor,
+            &[
+                Proto::tensor_dim_value(1),
+                Proto::tensor_dim_value(self.channels),
+                Proto::tensor_dim_value(oh),
+                Proto::tensor_dim_value(ow),
+            ],
+            1,
+        ))
+    }
+
+    fn declared_extents(&self) -> Option<((i64, i64), (i64, i64))> {
+        let (ih, iw) = (self.in_h?, self.in_w?);
+        Some(((ih, iw), self.out_dims()))
+    }
+
+    fn nodes(&self) -> Vec<Vec<u8>> {
+        vec![Proto::node(
+            "AveragePool",
+            &[&self.input_source],
+            &[&self.frame_tensor],
+            &[
+                // Spatial kernel and stride equal to the factor: each output pixel
+                // is the mean of one f×f block. A mean is exact under that filter, so
+                // the reductions downstream compute the same numbers from fewer
+                // samples — this is a cheaper input, not an approximation.
+                Proto::attribute_ints("kernel_shape", &[self.factor, self.factor]),
+                Proto::attribute_ints("strides", &[self.factor, self.factor]),
+                Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                Proto::attribute_int("ceil_mode", 1),
+                // Pools each channel independently, so the plane count is carried
+                // through whatever the input had.
+                Proto::attribute_int("count_include_pad", 0),
+            ],
+        )]
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ZoneStatsBlock
 // ═══════════════════════════════════════════════════════════════════
 
@@ -53,6 +209,13 @@ impl ZoneStatsBlock {
             concrete_w: None,
         }
     }
+    /// Size of the tensor this block reads — not of the sensor frame.
+    ///
+    /// `kernel_h()`/`kernel_w()` divide this by the zone counts, so it has to
+    /// describe the tensor actually handed to the block. When the statistics share
+    /// one `StatsDownscaleBlock`, that is the *reduced* frame: passing the sensor
+    /// size here makes the kernel too large and the zones come out the wrong size,
+    /// with nothing in the graph saying so.
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
         self.concrete_h = Some(h);
         self.concrete_w = Some(w);
@@ -73,6 +236,11 @@ impl ZoneStatsBlock {
 }
 
 impl IspBlock for ZoneStatsBlock {
+    fn declared_extents(&self) -> Option<((i64, i64), (i64, i64))> {
+        let (h, w) = (self.concrete_h?, self.concrete_w?);
+        Some(((h, w), (self.zone_rows, self.zone_cols)))
+    }
+
     fn id(&self) -> &str {
         &self.id
     }
@@ -203,7 +371,11 @@ impl ChannelMeansBlock {
         self
     }
 
-    /// Average `factor`x`factor` blocks before taking the mean.
+    /// Pool factor the *shared* `StatsDownscaleBlock` applied upstream.
+    ///
+    /// This block does not pool: one `StatsDownscaleBlock` feeds every statistics
+    /// block, so pooling here would shrink the frame a second time. The value is
+    /// kept only so the declared input shape matches the tensor that arrives.
     pub fn with_downscale(mut self, factor: u32) -> Self {
         self.downscale = factor.max(1) as i64;
         self
@@ -211,6 +383,12 @@ impl ChannelMeansBlock {
 }
 
 impl IspBlock for ChannelMeansBlock {
+    fn declared_extents(&self) -> Option<((i64, i64), (i64, i64))> {
+        let (h, w) = (self.concrete_h?, self.concrete_w?);
+        // Its output is `[1, 3]` — a reduction, so it shrinks to 1x1 spatially.
+        Some(((h, w), (1, 1)))
+    }
+
     fn id(&self) -> &str {
         &self.id
     }
@@ -246,12 +424,15 @@ impl IspBlock for ChannelMeansBlock {
     }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
+        // The tensor that arrives is the pooled one, so `concrete_h/w` describe the
+        // *source* and the declared extent is that over the shared factor.
+        let f = self.downscale.max(1);
         let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
             vec![
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(3),
-                Proto::tensor_dim_value(h),
-                Proto::tensor_dim_value(w),
+                Proto::tensor_dim_value((h + f - 1) / f),
+                Proto::tensor_dim_value((w + f - 1) / f),
             ]
         } else {
             vec![
@@ -270,38 +451,18 @@ impl IspBlock for ChannelMeansBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        let reduce = |input: &str, out: &str| {
-            Proto::node(
-                "ReduceMean",
-                &[input],
-                &[out],
-                &[
-                    Proto::attribute_ints("axes", &[2, 3]),
-                    Proto::attribute_int("keepdims", 0),
-                ],
-            )
-        };
-        if self.downscale <= 1 {
-            return vec![reduce(&self.input_source, &self.frame_tensor)];
-        }
-        // Box-average first, then average the blocks. The mean is unchanged —
-        // only the number of samples the reduction walks.
-        let ns = self.tensor_ns();
-        let pooled = format!("{ns}/pooled");
-        vec![
-            Proto::node(
-                "AveragePool",
-                &[&self.input_source],
-                &[&pooled],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[self.downscale, self.downscale]),
-                    Proto::attribute_ints("strides", &[self.downscale, self.downscale]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                    Proto::attribute_int("ceil_mode", 1),
-                ],
-            ),
-            reduce(&pooled, &self.frame_tensor),
-        ]
+        // One op. The frame arrives already pooled by `StatsDownscaleBlock`, and a
+        // mean of means is the same mean — pooling here as well would shrink it
+        // twice and quietly change the answer.
+        vec![Proto::node(
+            "ReduceMean",
+            &[&self.input_source],
+            &[&self.frame_tensor],
+            &[
+                Proto::attribute_ints("axes", &[2, 3]),
+                Proto::attribute_int("keepdims", 0),
+            ],
+        )]
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
         vec![]
@@ -378,7 +539,10 @@ impl ToneStatsBlock {
         self
     }
 
-    /// Average `factor`x`factor` blocks before the luma reduction.
+    /// Pool factor the *shared* `StatsDownscaleBlock` applied upstream.
+    ///
+    /// Kept so the declared input shape matches the tensor that arrives; this block
+    /// does not pool, because one shared downscale feeds every statistics block.
     pub fn with_downscale(mut self, factor: u32) -> Self {
         self.downscale = factor.max(1) as i64;
         self
@@ -386,6 +550,11 @@ impl ToneStatsBlock {
 }
 
 impl IspBlock for ToneStatsBlock {
+    fn declared_extents(&self) -> Option<((i64, i64), (i64, i64))> {
+        let (h, w) = (self.concrete_h?, self.concrete_w?);
+        Some(((h, w), (1, 1)))
+    }
+
     fn id(&self) -> &str {
         &self.id
     }
@@ -421,12 +590,15 @@ impl IspBlock for ToneStatsBlock {
     }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
+        // The tensor that arrives is the pooled one: `concrete_h/w` describe the
+        // source, the declared extent is that over the shared factor.
+        let f = self.downscale.max(1);
         let dims = if let (Some(h), Some(w)) = (self.concrete_h, self.concrete_w) {
             vec![
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(4),
-                Proto::tensor_dim_value(h),
-                Proto::tensor_dim_value(w),
+                Proto::tensor_dim_value((h + f - 1) / f),
+                Proto::tensor_dim_value((w + f - 1) / f),
             ]
         } else {
             vec![
@@ -447,30 +619,11 @@ impl IspBlock for ToneStatsBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
 
-        // Box-average first when asked: the luma conv and every reduction below it
-        // then walk 1/factor² of the pixels. Mean, min and max of a smooth image
-        // are unchanged by the filter; only the sample count drops.
-        let pooled = format!("{ns}/pooled");
-        let stat_input = if self.downscale > 1 {
-            pooled.as_str()
-        } else {
-            self.input_source.as_str()
-        };
+        // The frame arrives already pooled by `StatsDownscaleBlock`, so the luma
+        // conv and every reduction below it walk the reduced grid directly.
+        let stat_input = self.input_source.as_str();
 
         let mut nodes: Vec<Vec<u8>> = Vec::new();
-        if self.downscale > 1 {
-            nodes.push(Proto::node(
-                "AveragePool",
-                &[&self.input_source],
-                &[&pooled],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[self.downscale, self.downscale]),
-                    Proto::attribute_ints("strides", &[self.downscale, self.downscale]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                    Proto::attribute_int("ceil_mode", 1),
-                ],
-            ));
-        }
 
         // Luma weights as a Conv1×1: [1, 3, 1, 1]
         // L = 0.299R + 0.587G + 0.114B
@@ -925,6 +1078,11 @@ impl CalibrationBlock {
 }
 
 impl IspBlock for CalibrationBlock {
+    fn declared_extents(&self) -> Option<((i64, i64), (i64, i64))> {
+        let (h, w) = (self.concrete_h?, self.concrete_w?);
+        Some(((h, w), (1, 1)))
+    }
+
     fn id(&self) -> &str {
         &self.id
     }

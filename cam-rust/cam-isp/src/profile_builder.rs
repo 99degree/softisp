@@ -594,21 +594,16 @@ impl PipelineProfile {
         } else {
             "aux_hook_src/out"
         };
-        let stats_input_owned = String::from(stats_input_base);
 
-        let stats_input: &str = &stats_input_owned;
-
-        if self.use_zone_stats {
-            let mut b = ZoneStatsBlock::new(6, 8).with_concrete_dims(input_h, input_w);
-            b.set_input_source(stats_input);
-            aux.push(Box::new(b));
-        }
-        // Both reductions box-average their input first when asked to.
+        // ── ONE downscale for all the statistics ────────────────────────────
         //
-        // A mean, a min and a max are unchanged by that filter — the statistics are
-        // the same numbers from 1/16 the samples — and what it saves is the
-        // reduction's own traversal of the frame. `stats_downscale_max` is the lever;
-        // 0 keeps them at full resolution.
+        // Every statistics block reads the same reduced tensor. Each shrinking the
+        // frame for itself would traverse it once per block; one pool followed by
+        // four reductions of a small tensor traverses it once.
+        //
+        // A mean is exact under a box filter, so this is a cheaper *input*, not an
+        // approximation: the same numbers from fewer samples. `stats_downscale_max`
+        // is the lever (0 keeps full resolution).
         let stat_factor: i64 = {
             let longest = input_h.max(input_w).max(1) as f64;
             let target = self.stats_downscale_max as f64;
@@ -619,16 +614,53 @@ impl PipelineProfile {
             }
         };
 
+        let (stat_h, stat_w) = if stat_factor > 1 {
+            let f = stat_factor;
+            (
+                ((input_h + f - 1) / f).max(1),
+                ((input_w + f - 1) / f).max(1),
+            )
+        } else {
+            (input_h, input_w)
+        };
+
+        let stats_input_owned = if stat_factor > 1 {
+            // The tap carries a CFA quad (4 planes) at this point in the chain, and
+            // the pool is plane-agnostic, so the same block serves the 3-plane RGB
+            // consumers and `CalibrationBlock`'s 4 planes.
+            let mut ds = crate::blocks::StatsDownscaleBlock::new(stat_factor, 4)
+                .with_concrete_dims(input_h, input_w);
+            ds.set_input_source(stats_input_base);
+            info!(
+                "  stats downscale: {}×{} → {}×{} (shared by every statistics block)",
+                input_h, input_w, stat_h, stat_w
+            );
+            let out = ds.frame_tensor.clone();
+            aux.push(Box::new(ds));
+            out
+        } else {
+            stats_input_base.to_string()
+        };
+
+        let stats_input: &str = &stats_input_owned;
+
+        if self.use_zone_stats {
+            // The kernel is `stat_h / rows`, so the block is told the size of the
+            // tensor it will actually read.
+            let mut b = ZoneStatsBlock::new(6, 8).with_concrete_dims(stat_h, stat_w);
+            b.set_input_source(stats_input);
+            aux.push(Box::new(b));
+        }
         if self.use_channel_means {
             let mut b = ChannelMeansBlock::new()
-                .with_concrete_dims(input_h, input_w)
+                .with_concrete_dims(stat_h, stat_w)
                 .with_downscale(stat_factor as u32);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }
         if self.use_tone_stats {
             let mut b = ToneStatsBlock::new()
-                .with_concrete_dims(input_h, input_w)
+                .with_concrete_dims(stat_h, stat_w)
                 .with_downscale(stat_factor as u32);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
@@ -651,7 +683,7 @@ impl PipelineProfile {
             || self.use_tone_stats
             || self.use_histogram
         {
-            let mut b = CalibrationBlock::new().with_concrete_dims(input_h, input_w);
+            let mut b = CalibrationBlock::new().with_concrete_dims(stat_h, stat_w);
             b.set_input_source(stats_input);
             aux.push(Box::new(b));
         }

@@ -135,7 +135,8 @@ pub use saturation::SaturationBlock;
 pub use sharpen::SharpenBlock;
 pub use stage::StageBlock;
 pub use stats::{
-    CalibrationBlock, ChannelMeansBlock, CoarseHistogramBlock, ToneStatsBlock, ZoneStatsBlock,
+    CalibrationBlock, ChannelMeansBlock, CoarseHistogramBlock, StatsDownscaleBlock, ToneStatsBlock,
+    ZoneStatsBlock,
 };
 pub use stereo_depth::StereoDepthBlock;
 pub use super_res::SuperResBlock;
