@@ -99,6 +99,19 @@ cargo run --example camera_isp -p cam-isp --features mnn -- --width 640 --height
 End-to-end, whole chain, raw Bayer in → planar RGB out, 8 frames warmup then
 20–30 measured. `p50` over the run, not an average of block times.
 
+**Measure with tracing off.** Every ISP trace — the per-command markers, the
+zero-copy log, the `[VulkanFuse-PERF]` dispatch report — is behind one switch that
+is off by default:
+
+```bash
+MNN_ISP_TRACE=1 <command>   # turn them all on, for one debugging run
+```
+
+With it off a timing run adds zero bytes to `/sdcard/Download/isp_vlog_trace` and
+emits no per-dispatch lines; with it on, one three-profile run writes 26 KB. An op
+that falls back off the GPU is still reported unconditionally, because that costs
+two full-frame copies and is worth more than any tuning.
+
 **3840×2160** (`PERF_FRAMES=30 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
 
 | Profile | Blocks | p50 | p95 | FPS |

@@ -147,36 +147,70 @@ of the non-zero-copy input/output contract documented in
 Ordered by expected wall-clock win per unit of risk. Measured against the
 current 4K path (HEAVY 79.8 FPS / UNIFIED 141.2 FPS per `CLAUDE.md`).
 
-### P0 — delete the unconditional trace (`Pipeline.cpp`)
+### P0 — gate the traces (`Pipeline.cpp`) — **done**
 
 **Win**: ~0.5-2 ms/frame, removes O(commands) syscalls and a 119 MB log.
-**Risk**: none (the data is already available under `ISP_DEBUG_VLOG`).
-**Change**: gate both blocks behind the existing `ispVlog()`-style check, or
-compile them out with `#ifdef MNN_ISP_TRACE`. Reuse
-`MNNIspTrace.hpp`'s `mnnIspTraceSink()` rather than opening per call.
+**Risk**: none.
+**Change**: every trace site now shares one sink, opened once and only when the
+`MNN_ISP_TRACE` environment variable is set:
 
-### P1 — stop rebuilding the session
+| Site | Was | Now |
+|---|---|---|
+| `core/Pipeline.cpp` per-frame counter | `fopen`/`fprintf`/`fclose`, unconditional | gated, cached sink |
+| `core/Pipeline.cpp` per-command marker | `fopen`/`fprintf`/`fclose`, per command | gated, cached sink |
+| `component/VulkanBuffer.cpp` zero-copy log | `fopen`/`fclose`, per AHB import | gated, cached sink |
+| `vulkan/.../VulkanBackend.cpp` wrapper log | `fopen`/`fclose`, per isp.* op | gated, cached sink |
+| `vulkan/.../VulkanFuse.hpp` creator logs (×3) | `fopen`/`fclose` | gated, cached sink |
+| `vulkan/.../VulkanFuse.cpp` `[VulkanFuse-PERF]` | `fprintf(stderr)` for the first 40 dispatches per thread | gated behind `MNN_ISP_TRACE` too |
+
+**How to use it.** Tracing is off by default — a timing run wants the frame loop
+silent, and 40 `fprintf(stderr)` calls during warmup are exactly the host work that
+shows up as slow first frames. Turn it on when you need to see which ops reached the
+Vulkan creator:
+
+```bash
+MNN_ISP_TRACE=1 cargo test -p cam-isp --test probe_fused_profile --features mnn -- --ignored --nocapture
+```
+
+Measured on device: with the switch off, four profiles over ~250 frames add **0
+bytes** to the trace file and emit **0** `[VulkanFuse-PERF]` lines. With
+`MNN_ISP_TRACE=1`, one three-profile run writes 26 KB — so the switch is doing what
+it says.
+
+**Kept, not deleted**: the per-frame `total/vk/cpu` command counter. It is how you
+learn that an op fell back to the CPU backend, which costs two full-frame copies
+plus a queue stall — more than everything else in this document put together. It is
+now reported through `MNN_PRINT` whenever `cpu > 0`, regardless of the trace switch.
+
+### P1 — stop rebuilding the session — **partly done (via P2)**
 
 Every `resizeSession` that actually changes shape costs a shader recompile
 (§2). In softisp the resize decision is already per-slot
-(`mnnengine.rs:1798`, `slot.resized_for != Some((w,h))`), so this only bites on
-a genuine geometry change — but a profile switch or a preview→capture
-resolution change pays 150-300 ms.
+(`mnnengine.rs`, `slot.resized_for != Some((w,h))`), so this only bites on a
+genuine geometry change — but a profile switch or a preview→capture resolution
+change pays 150-300 ms.
 
 **Win**: 150-300 ms of hitch, not steady-state FPS.
 **Change**: cache the compiled pipeline across resizes instead of
 `mPipelineFactory->reset()` in `onGabageCollect`. `VulkanPipelineFactory::reset`
-already keeps old pipelines alive via `SharedPtr`; making the cache
-*persistent* across the reset (keyed by shader hash, which `getPipeline`
-already does) removes the recompile.
+already keeps old pipelines alive via `SharedPtr`; making the cache *persistent*
+across the reset (keyed by shader hash, which `getPipeline` already does) removes
+the recompile.
 
-### P2 — `Session_Memory_Cache` instead of `Session_Memory_Collect`
+Not done as written. P2 achieves the same outcome from the supported side — with
+`Session_Memory_Cache` the allocator is never torn down, so `onGabageCollect` never
+runs and the pipeline factory is never reset. The remaining risk is a genuine
+`mPipelineFactory->reset()` from another path; if a hitch ever shows up in a
+profile switch, this is the place to look.
+
+### P2 — `Session_Memory_Cache` instead of `Session_Memory_Collect` — **done**
 
 `Session::ModeGroup` defaults to `Interpreter::Session_Memory_Collect`
 (`source/core/Session.hpp:34`), which in `Session::resize`
 (`Session.cpp:391-396`) calls `onGabageCollect(0)` on **every** runtime after
 every realloc. On Vulkan `onGabageCollect` is the
-`vkDeviceWaitIdle + clear + pipelineFactory.reset` path from §2.
+`vkDeviceWaitIdle + clear + pipelineFactory.reset` path from §2 — every compiled
+SPIR-V pipeline destroyed and recompiled on the next frame.
 
 ```cpp
 // mnn_wrapper.cpp — before createSession
@@ -185,11 +219,12 @@ net->setSessionMode(MNN::Interpreter::Session_Memory_Cache);
 
 **Win**: removes a device-wide idle + memory teardown + shader recompile on
 every resize. Effectively the upstream-supported form of P1.
-**Risk**: higher peak memory (the free list is retained). With
-`fp16_storage = true` that is affordable; with fp32 it is not — so pair it
-with P3.
+**Risk**: higher peak memory (the free list is retained). A camera changes
+geometry at most twice per session, so this is the right trade — but a fused
+chain is fp32 (the `isp.*` shaders declare `float[]`), so watch peak memory if
+sessions are ever pooled by the dozen.
 
-### P3 — fp16 tensor storage must stay the default
+### P3 — fp16 tensor storage: a memory lever, not a speed lever
 
 `VulkanBackend.cpp:176`:
 `mUseFP16 = (precision != Precision_High) && device supports fp16`, and
@@ -197,21 +232,40 @@ with P3.
 in the ISP chain is float, so at 2592×1940 this is the single largest lever on
 peak GPU memory (~38 MB instead of 77 MB for the RGBA display tensor alone).
 
-softisp already defaults `fp16_storage = true` (`mnnengine.rs:224`) and
-*forces* it off when a fused `isp.*` op is present
-(`mnnengine.rs:1416-1423`). That forcing is the documented correctness
-constraint — the `isp.*` shaders declare `float[]` storage buffers and read
-halves as floats. **Do not "optimise" it away**; instead shrink the fused-op
-chain so more of the graph can run fp16.
+softisp defaults `fp16_storage = true` and *forces* it off when a fused `isp.*`
+op is present (`chain_has_fused_op`). That forcing is the documented correctness
+constraint — the `isp.*` shaders declare `float[]` storage buffers and read halves
+as floats. **Do not "optimise" it away.**
 
-### P4 — eliminate CPU-fallback ops (the hidden 2-copy tax)
+`probe_fp16_storage` then measured what an fp16 variant of the shaders would be
+worth, and the answer is **nothing**:
+
+| Chain | fp32 | fp16 |
+|---|---|---|
+| MED | 104.2 ms | 122.4 ms |
+| FUSED | 72.5 ms | 80.8 ms (forced back to fp32 — one "forcing fp32" warning) |
+
+Inside the noise, because the arithmetic would still be fp32 and only the buffers
+would halve. So write fp16 shader variants only if *peak GPU memory* becomes the
+binding constraint — never for FPS.
+
+### P4 — eliminate CPU-fallback ops (the hidden 2-copy tax) — **measured, none found**
 
 Per §1.1, any op that lands on the CPU backup backend costs a full
-frame GPU→host→GPU. `Pipeline.cpp:1176-1194`'s counter (once the tracing in P0
-is gone, keep the count and log it at `debug` level once per frame) tells you
-whether any exist. If `cpu>0`, that op is worth more than everything else here.
+frame GPU→host→GPU plus a queue stall. `Pipeline.cpp`'s counter (kept through P0,
+reported via `MNN_PRINT` whenever `cpu > 0`) tells you whether any exist.
 
-Target: `vk == total` and `cpu == 0`.
+Measured on the FUSED chain at 1296×970 and 3840×2160: **`cpu == 0`** — no line is
+printed at any geometry. Worth re-checking after adding an op, because one
+CPU-fallback stage is worth more than everything else in this document.
+
+Two ops in the *statistics* branches have no Vulkan creator and are not problems:
+
+- `Size` — MNN's `GeometrySize` computes it from the extents at **geometry** time
+  and writes a host int, so it never becomes a runtime command.
+- `Concat` — lowers to `OpType_Raster`, and `VulkanRaster` exists.
+
+Target: `vk == total` and `cpu == 0`. Currently met.
 
 ### P5 — fewer, wider dispatches
 
@@ -264,7 +318,22 @@ Before touching anything, confirm the split between host and GPU:
 | Does `B` copy `A`'s output? | **No.** Pointer handoff via `workInputs`, zero memcpy. |
 | Does it alias it? | **No.** Two separate `deviceId()` buffers; 2× peak for the pair. |
 | Is memory reused across the chain? | **Yes**, via `EagerBufferAllocator`'s size-indexed free list and `useCount`-driven release. Steady state is 2× frame, not N×. |
-| Biggest available speedup | **Delete the unconditional per-command `fopen`** in `Pipeline.cpp:1229`. |
-| Biggest available memory/throughput lever | fp16 storage (**keep it**), then `Session_Memory_Cache` to stop the resize teardown. |
-| Biggest structural lever | Fewer `isp.*` dispatches via fusion; no CPU-fallback ops. |
+| Biggest available speedup | **The traces were it, and they are gone** (P0). Measured afterwards: host work is 6% of a 4K frame (`prep` 25.5 ms of 452.8), so no host-side lever left can be worth more than that. |
+| Biggest available memory lever | fp16 storage (**keep it**), then `Session_Memory_Cache` (**done**, P2) to stop the resize teardown. |
+| Biggest structural lever | Fewer `isp.*` dispatches via fusion; no CPU-fallback ops (**measured: none**, P4). |
 | Buffer aliasing between ops | Genuine memory win, no latency win — only worth it under memory pressure. |
+| Where the 4K frame actually goes | Not the host. The 3A statistics, ~38% of it — see `FUSED_PROFILE_OPTIMIZATION.md`. |
+
+### Keeping it off
+
+Every trace site shares one switch, and it is off by default:
+
+```bash
+MNN_ISP_TRACE=1 <command>    # turn every ISP trace on, for one run
+```
+
+With it off, four profiles over ~250 frames add zero bytes to
+`/sdcard/Download/isp_vlog_trace` and emit zero `[VulkanFuse-PERF]` lines. That is
+the state a timing run wants — the file on this device had reached 122 MB from
+unconditional per-command writes, and 40 `fprintf(stderr)` calls during warmup are
+exactly the host work that makes the first frames look slow.
