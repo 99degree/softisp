@@ -323,6 +323,8 @@ Before touching anything, confirm the split between host and GPU:
 | Biggest structural lever | Fewer `isp.*` dispatches via fusion; no CPU-fallback ops (**measured: none**, P4). |
 | Buffer aliasing between ops | Genuine memory win, no latency win — only worth it under memory pressure. |
 | Where the 4K frame actually goes | Not the host. The 3A statistics, ~38% of it — see `FUSED_PROFILE_OPTIMIZATION.md`. |
+| Current 4K FUSED p50 | 179.5 ms (5.6 FPS), FHD FUSED p50 74.5 ms (13.4 FPS). `UNIFIED` matches within noise. |
+| Current 4K WHOLE p50 | 81.9 ms (12.2 FPS), FHD 19.7 ms (50.8 FPS). A different shape — one `isp.pipeline` dispatch giving up 3A readback, edge demosaic, EIS warp. |
 
 ### Keeping it off
 

@@ -172,6 +172,7 @@ fn perf_4k() {
     let fused = || PipelineProfile::FUSED;
     let med = || PipelineProfile::MED;
     let whole = || PipelineProfile::WHOLE;
+    let unified = || PipelineProfile::UNIFIED;
 
     let build = |p: PipelineProfile| {
         move |w: u32, h: u32| {
@@ -197,6 +198,7 @@ fn perf_4k() {
         ("FUSED", fused()),
         ("FUSED, stats off", fused()),
         ("WHOLE", whole()),
+        ("UNIFIED", unified()),
     ] {
         let stats_on = !label.ends_with("stats off");
         if let Some(t) = run(label, w, h, frames, stats_on, build(p)) {

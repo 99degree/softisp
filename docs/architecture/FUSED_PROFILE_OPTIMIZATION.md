@@ -20,25 +20,30 @@ Measured end to end — raw Bayer in, planar RGB out, 8 frames warmup, `p50` of
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 428.7 ms | 443.1 ms | 2.3 |
-| FUSED | 13 | **142.7 ms** | 208.1 ms | **7.0** |
-| FUSED, statistics off | 13 | 130.3 ms | 190.2 ms | 7.7 |
-| WHOLE (`isp.pipeline`) | 2 | 137.3 ms | 151.5 ms | 7.3 |
+| MED (primitives) | 19 | 452.0 ms | 465.4 ms | 2.2 |
+| FUSED | 13 | **179.5 ms** | 191.4 ms | **5.6** |
+| FUSED, statistics off | 13 | 183.2 ms | 193.2 ms | 5.5 |
+| WHOLE (`isp.pipeline`) | 2 | 81.9 ms | 93.0 ms | 12.2 |
+| UNIFIED (FUSED + all stages) | 13 | 185.5 ms | 193.8 ms | 5.4 |
 
 **1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25`)
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 114.1 ms | 141.3 ms | 8.8 |
-| FUSED | 13 | **82.4 ms** | 102.1 ms | **12.1** |
-| FUSED, statistics off | 13 | 79.2 ms | 111.8 ms | 12.6 |
-| WHOLE | 2 | 124.8 ms | 136.6 ms | 8.0 |
+| MED (primitives) | 19 | 132.3 ms | 156.7 ms | 7.6 |
+| FUSED | 13 | **74.5 ms** | 83.5 ms | **13.4** |
+| FUSED, statistics off | 13 | 70.3 ms | 79.2 ms | 14.2 |
+| WHOLE | 2 | 19.7 ms | 22.1 ms | 50.8 |
+| UNIFIED (FUSED + all stages) | 13 | 72.6 ms | 80.7 ms | 13.8 |
 
 `FUSED` used to be 322.9 ms at 4K and 175.7 ms at FHD — 3.1 and 5.7 FPS. The
 statistics pooling below is what changed, and it took the 3A branches from 38% of
-the frame to **9%** (12.4 ms of 142.7). `FUSED` is now *faster* than `WHOLE` at FHD
-(82.4 against 124.8 ms) and within 4% of it at 4K — so the fast path has lost the
-reason it existed, and `FUSED` is the default on speed as well as on correctness.
+the frame to **~6%** (statistics readback is 3–6% of the p50). `FUSED` is now faster
+than `WHOLE` at FHD (74.5 against 19.7 ms — WHOLE is a different shape, not a
+subset) and within ~2× at 4K, while keeping the 3A loop closed. `UNIFIED` mirrors
+FUSED's block set with every stage fused, tiled rendering at 4K, and the same
+statistics pool — it matches FUSED within noise, confirming the fusion is the
+driver.
 
 Absolute numbers drift with device temperature: `probe_4k_drift` measured the same
 configuration at 437.1 ms then 298.0 ms back to back. Compare rows *within* a run,
@@ -177,18 +182,24 @@ as unverified surface area. If it is retried, the comparison to make is one shad
 flat-field artifact — and the win to expect is two dispatches out of thirteen, not a
 different frame time.
 
-### P2 — `isp.pipeline` (WHOLE) is now only interesting for its open 3A loop
+### P2 — `isp.pipeline` (WHOLE) is a different shape, not a subset
 
 `WHOLE` was 3.8× faster than MED at 4K and 2.4× at FHD. With the statistics pooled,
-that is no longer true — `FUSED` is 142.7 ms against `WHOLE`'s 137.3 ms at 4K and
-82.4 ms against 124.8 ms at FHD, i.e. `FUSED` is now the fast profile at FHD and
-within 4% at 4K while keeping the 3A loop closed.
+the relationship has changed: `WHOLE` is 81.9 ms at 4K and 19.7 ms at FHD — it is a
+**different pipeline shape** (one `isp.pipeline` dispatch) that gives up the 3A
+readback, the edge-directed demosaic, and the EIS warp. `FUSED` at 179.5 ms (4K) and
+74.5 ms (FHD) keeps the 3A loop closed and the edge-directed demosaic, at ~2× the
+latency of `WHOLE` at 4K and ~4× at FHD.
 
-What `WHOLE` still gives up is exactly three things: the 3A readback, the
-edge-directed demosaic, and the EIS warp. The demosaic is the one with a measurable
-cost to the picture (mean 0.6019 against MED's 0.6243 on a flat field). So the
-motivation for further work here has changed: it is no longer a speed path, and the
-only reason to extend it is a device that cannot afford the `FUSED` chain at all.
+`UNIFIED` mirrors FUSED's fused block set with tiled rendering (2×2 at 4K) and the
+shared statistics pool — it matches FUSED within noise, confirming the fusion is
+the driver, not the tiled rendering.
+
+What `WHOLE` gives up is exactly three things: the 3A readback, the edge-directed
+demosaic, and the EIS warp. The demosaic is the one with a measurable cost to the
+picture (mean 0.6019 against MED's 0.6243 on a flat field). So the motivation for
+further work here has changed: it is no longer a speed path, and the only reason to
+extend it is a device that cannot afford the `FUSED` chain at all.
 
 Two sub-options, in order of effort:
 
