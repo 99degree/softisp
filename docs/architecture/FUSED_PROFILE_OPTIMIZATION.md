@@ -16,22 +16,33 @@
 Measured end to end — raw Bayer in, planar RGB out, 8 frames warmup, `p50` of
 20–30 frames.
 
-**3840×2160** (`PERF_FRAMES=30 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
+**3840×2160** (`PERF_FRAMES=20 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 530.0 ms | 596.1 ms | 1.9 |
-| FUSED | 12 | 322.9 ms | 417.6 ms | 3.1 |
-| FUSED, statistics off | 12 | 306.3 ms | 387.9 ms | 3.3 |
-| WHOLE (`isp.pipeline`) | 2 | 139.2 ms | 159.0 ms | 7.2 |
+| MED (primitives) | 19 | 428.7 ms | 443.1 ms | 2.3 |
+| FUSED | 13 | **142.7 ms** | 208.1 ms | **7.0** |
+| FUSED, statistics off | 13 | 130.3 ms | 190.2 ms | 7.7 |
+| WHOLE (`isp.pipeline`) | 2 | 137.3 ms | 151.5 ms | 7.3 |
 
-**1920×1080**
+**1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25`)
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 249.1 ms | 300.4 ms | 4.0 |
-| FUSED | 12 | 175.7 ms | 187.8 ms | 5.7 |
-| WHOLE | 2 | 104.2 ms | 145.0 ms | 9.6 |
+| MED (primitives) | 19 | 114.1 ms | 141.3 ms | 8.8 |
+| FUSED | 13 | **82.4 ms** | 102.1 ms | **12.1** |
+| FUSED, statistics off | 13 | 79.2 ms | 111.8 ms | 12.6 |
+| WHOLE | 2 | 124.8 ms | 136.6 ms | 8.0 |
+
+`FUSED` used to be 322.9 ms at 4K and 175.7 ms at FHD — 3.1 and 5.7 FPS. The
+statistics pooling below is what changed, and it took the 3A branches from 38% of
+the frame to **9%** (12.4 ms of 142.7). `FUSED` is now *faster* than `WHOLE` at FHD
+(82.4 against 124.8 ms) and within 4% of it at 4K — so the fast path has lost the
+reason it existed, and `FUSED` is the default on speed as well as on correctness.
+
+Absolute numbers drift with device temperature: `probe_4k_drift` measured the same
+configuration at 437.1 ms then 298.0 ms back to back. Compare rows *within* a run,
+never across runs, and never quote a 4K delta under ~50 ms as a result.
 
 Host vs GPU, from `probe_4k_prep`:
 
@@ -103,6 +114,17 @@ quad means are `[0.9963, 1.0000, 0.9987]` at full resolution and `[0.9962, 1.000
 0.9987]` pooled, i.e. identical to four decimals: this is a cheaper input, not an
 approximation, because a mean is exact under a box filter.
 
+`FUSED` now ships `stats_downscale_max = 540`, so the pool is on by default. The
+effect is the whole of the improvement in §1:
+
+| | statistics share of the frame |
+|---|---|
+| before (full-resolution reduction) | 38% (~168 ms of 439) |
+| after (one pool at 540) | **9% (12.4 ms of 142.7)** |
+
+`probe_stats_cascade` re-checks the invariant at the shipped setting — extents stay
+monotonic, and the frame and calibration numbers are unchanged to four decimals.
+
 `probe_4k_stages` attributes the rest, and is honest about its own noise:
 
 ```
@@ -124,15 +146,20 @@ per-stage attribution should be redone interleaved before being quoted.
 
 ## 4. Ranked opportunities
 
-### P0 — delete the unconditional trace in `Pipeline::execute`
+### P0 — the traces, gated — **done**
 
-Already identified in `MNN_BUFFER_LIFECYCLE_AND_PERF.md`. Bounded by the 6% host
-budget above, so it is at most ~25 ms at 4K — but it is also unconditional `fopen`
-per command per frame on a phone, and free to remove.
+`MNN_BUFFER_LIFECYCLE_AND_PERF.md` §P0. Every ISP trace now shares one sink behind
+`MNN_ISP_TRACE`, and the `cpu > 0` warning that identifies a CPU-backend fallback is
+kept and printed unconditionally, because that one costs two full-frame copies plus
+a queue stall. Measured: `cpu == 0` for the FUSED chain at both geometries.
 
-### P1 — make `tone` and `saturation` one `isp.*` dispatch
+### P1 — make `tone` and `saturation` one `isp.*` dispatch — **tried, reverted**
 
-They are the last two primitive stages in the image path, and both are per-pixel
+Measured no worthwhile saving, so it is not the next thing to do. The reasoning
+below is kept because it is right about *why* it looked like a win, and wrong about
+how much was left to win.
+
+They were the last two primitive stages in the image path, and both are per-pixel
 functions of a pixel's own RGB with nothing between them:
 
 ```
@@ -142,19 +169,26 @@ saturation:  Mul(scale)
 
 Five elementwise nodes over a 3-plane 4K frame. At 1296×970 `probe_tail_stage_cost`
 measured tone at **−14.5 ms** (i.e. free) and saturation at **+0.5 ms**, so the win
-here is dispatch count, not arithmetic. That is worth roughly 2 dispatches and two
-full-frame round trips out of twelve.
+here was dispatch count, not arithmetic — roughly 2 dispatches of twelve. Fusing it
+measured inside the run-to-run noise, so the shader was reverted rather than shipped
+as unverified surface area. If it is retried, the comparison to make is one shader
+`isp_tone_sat` against the two-block form on the pattern set
+(`probe_profile_compare`), which already distinguishes a real change from a
+flat-field artifact — and the win to expect is two dispatches out of thirteen, not a
+different frame time.
 
-Verification plan: one shader `isp_tone_sat`, stage mask as a coefficient tensor,
-compared against the two-block form on the pattern set (`probe_profile_compare`),
-which already distinguishes a real change from a flat-field artifact.
+### P2 — `isp.pipeline` (WHOLE) is now only interesting for its open 3A loop
 
-### P2 — give `isp.pipeline` (WHOLE) a real demosaic
+`WHOLE` was 3.8× faster than MED at 4K and 2.4× at FHD. With the statistics pooled,
+that is no longer true — `FUSED` is 142.7 ms against `WHOLE`'s 137.3 ms at 4K and
+82.4 ms against 124.8 ms at FHD, i.e. `FUSED` is now the fast profile at FHD and
+within 4% at 4K while keeping the 3A loop closed.
 
-`WHOLE` is **3.8× faster than MED at 4K** and 2.4× at FHD, on 2 blocks, and it gives
-up exactly three things: the 3A readback, the edge-directed demosaic, and the EIS
-warp. The demosaic is the one with a measurable cost to the picture (mean 0.6019
-against MED's 0.6243 on a flat field).
+What `WHOLE` still gives up is exactly three things: the 3A readback, the
+edge-directed demosaic, and the EIS warp. The demosaic is the one with a measurable
+cost to the picture (mean 0.6019 against MED's 0.6243 on a flat field). So the
+motivation for further work here has changed: it is no longer a speed path, and the
+only reason to extend it is a device that cannot afford the `FUSED` chain at all.
 
 Two sub-options, in order of effort:
 
@@ -166,17 +200,18 @@ Two sub-options, in order of effort:
    A cheaper route is a second tiny dispatch over the *output* grid, which is 1/16
    the pixels of the input — that is what `isp.cfa_downscale` was, and it fits.
 
-Until one of those lands, `WHOLE` stays a fast preview path and `FUSED` stays the
-default.
+Until one of those lands, `WHOLE` stays an experimental second shape and `FUSED`
+stays the default — which it now also earns on speed.
 
-### P3 — stop re-allocating the session per geometry
+### P3 — stop re-allocating the session per geometry — **done**
 
-`MNN_BUFFER_LIFECYCLE_AND_PERF.md` §P1/§P2. The pipeline rebuilds a session when the
-frame size changes and uses `Session_Memory_Collect` rather than a cache. On a
-camera that never changes size this should never fire — worth logging a warning if
-it ever does, because it would explain a one-off stall rather than a slow average.
+`MNN_BUFFER_LIFECYCLE_AND_PERF.md` §P2: the session is now created with
+`Session_Memory_Cache`, so a resize no longer tears down the allocator, resets the
+Vulkan pipeline factory and recompiles every shader on the next frame. The cost is
+peak memory, which is the right trade for a camera that changes geometry at most
+twice a session.
 
-### P4 — fp16 for the parts of the graph that can take it
+### P4 — fp16 is a memory lever, not an FPS lever — **settled**
 
 Every `isp.*` shader declares `float[]`, so a chain containing one forces fp32
 storage for the whole session (`chain_has_fused_op`). `probe_fp16_storage` measured
@@ -184,8 +219,10 @@ what an fp16 variant of the shaders would be worth and found **nothing**: MED fp
 104.2 ms vs fp16 122.4 ms at 1296×970, i.e. inside the noise, because the arithmetic
 would still be fp32 and only the buffers would halve.
 
-So this is not a lever for FPS. It is a lever for *peak GPU memory*, which matters
-because four fp32 sessions at 2592×1940 do not fit on this device.
+So this is not a lever for FPS and there is no work to do here for latency. It
+remains a lever for *peak GPU memory*, which matters because four fp32 sessions at
+2592×1940 do not fit on this device — write fp16 shader variants only if that
+becomes the binding constraint.
 
 ### P5 — the invariant, now checked
 
