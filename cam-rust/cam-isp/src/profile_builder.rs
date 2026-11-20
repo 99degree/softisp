@@ -108,6 +108,26 @@ impl PipelineProfile {
                     return crate::pipeline::GraphComposer::elide_noops(blocks);
                 } else if self
                     .fuse_stages
+                    .allows(self.opset_mode, self.fuse_stages.unpack16_blc_normal_cfa)
+                {
+                    // One `isp.unpack16_blc_normal_cfa` dispatch replaces the four
+                    // blocks RawInput16 → UnpackCfa → Normalize → Blc, converting
+                    // INT16→FLOAT32, dividing by sensor_max, subtracting BLC, and
+                    // extracting the CFA quad — all in one GPU pass. The host passes
+                    // the INT16 sensor buffer verbatim; no host-side even/odd split.
+                    info!(
+                        "  head: isp.unpack16_blc_normal_cfa \
+                         (fused unpack+normalize+blc+cfa from INT16, owns the graph input)"
+                    );
+                    blocks.push(Box::new(
+                        NormalizeBlcUnpack16Cfa::new()
+                            .with_concrete_dims(concrete_h, full_w)
+                            .with_sensor_max(65535.0)
+                            .with_bayer_pattern(bayer_pattern)
+                            .with_opset_mode(BlockOpsetMode::MnnIspMin),
+                    ));
+                } else if self
+                    .fuse_stages
                     .allows(self.opset_mode, self.fuse_stages.unpack_blc_normal_cfa)
                 {
                     // One `isp.unpack_blc_normal_cfa` dispatch replaces the five
@@ -127,26 +147,6 @@ impl PipelineProfile {
                     );
                     blocks.push(Box::new(
                         NormalizeBlcUnpackCfa::new()
-                            .with_concrete_dims(concrete_h, full_w)
-                            .with_sensor_max(65535.0)
-                            .with_bayer_pattern(bayer_pattern)
-                            .with_opset_mode(BlockOpsetMode::MnnIspMin),
-                    ));
-                } else if self
-                    .fuse_stages
-                    .allows(self.opset_mode, self.fuse_stages.unpack16_blc_normal_cfa)
-                {
-                    // One `isp.unpack16_blc_normal_cfa` dispatch replaces the four
-                    // blocks RawInput16 → UnpackCfa → Normalize → Blc, converting
-                    // INT16→FLOAT32, dividing by sensor_max, subtracting BLC, and
-                    // extracting the CFA quad — all in one GPU pass. The host passes
-                    // the INT16 sensor buffer verbatim; no host-side even/odd split.
-                    info!(
-                        "  head: isp.unpack16_blc_normal_cfa \
-                         (fused unpack+normalize+blc+cfa from INT16, owns the graph input)"
-                    );
-                    blocks.push(Box::new(
-                        NormalizeBlcUnpack16Cfa::new()
                             .with_concrete_dims(concrete_h, full_w)
                             .with_sensor_max(65535.0)
                             .with_bayer_pattern(bayer_pattern)
