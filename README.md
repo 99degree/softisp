@@ -116,24 +116,27 @@ two full-frame copies and is worth more than any tuning.
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 428.7 ms | 443.1 ms | 2.3 |
-| **FUSED** | 13 | **142.7 ms** | 208.1 ms | **7.0** |
-| FUSED, statistics off | 13 | 130.3 ms | 190.2 ms | 7.7 |
-| WHOLE (`isp.pipeline`) | 2 | 137.3 ms | 151.5 ms | 7.3 |
+| MED (primitives) | 19 | 452.0 ms | 465.4 ms | 2.2 |
+| **FUSED** | 13 | **179.5 ms** | 191.4 ms | **5.6** |
+| FUSED, statistics off | 13 | 183.2 ms | 193.2 ms | 5.5 |
+| WHOLE (`isp.pipeline`) | 2 | 81.9 ms | 93.0 ms | 12.2 |
+| UNIFIED (FUSED + all stages + tiles) | 13 | 185.5 ms | 193.8 ms | 5.4 |
 
 **1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25 …`)
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 114.1 ms | 141.3 ms | 8.8 |
-| **FUSED** | 13 | **82.4 ms** | 102.1 ms | **12.1** |
-| FUSED, statistics off | 13 | 79.2 ms | 111.8 ms | 12.6 |
-| WHOLE (`isp.pipeline`) | 2 | 124.8 ms | 136.6 ms | 8.0 |
+| MED (primitives) | 19 | 132.3 ms | 156.7 ms | 7.6 |
+| **FUSED** | 13 | **74.5 ms** | 83.5 ms | **13.4** |
+| FUSED, statistics off | 13 | 70.3 ms | 79.2 ms | 14.2 |
+| WHOLE (`isp.pipeline`) | 2 | 19.7 ms | 22.1 ms | 50.8 |
+| UNIFIED (FUSED + all stages) | 13 | 72.6 ms | 80.7 ms | 13.8 |
 
-Fusion buys **3.00×** at 4K and **1.38×** at FHD. Collapsing the whole chain into one
-dispatch was worth 3.8× and 2.4× while the statistics still reduced the full frame;
-with them pooled, `FUSED` is faster than `WHOLE` at FHD and within 4% at 4K, so there
-is no longer a reason to give up the 3A loop for speed.
+Fusion buys **2.5×** at 4K and **1.8×** at FHD. Collapsing the whole chain into one
+dispatch (`WHOLE`) was worth 3.8× and 2.4× while the statistics still reduced the
+full frame; with them pooled, `FUSED` is within ~2× of `WHOLE` at 4K and ~4× at FHD
+while keeping the 3A loop closed. `UNIFIED` mirrors FUSED with tiled rendering at 4K
+and matches it within noise, confirming the fusion is the driver.
 
 Absolute numbers move with device temperature — the same configuration measured
 437.1 ms then 298.0 ms back to back (`probe_4k_drift`). Compare rows *within* a run.
@@ -153,10 +156,10 @@ itself, so four blocks meant four traversals of a 100 MB tensor:
 | `ee` | −104.4 ms | noise |
 
 They now share one `AveragePool` (`stats_downscale_max = 540`), and the 3A branches
-cost **12.4 ms of a 142.7 ms frame — 9%** instead of 38%. The numbers they hand the
-controller do not move: a mean is exact under a box filter, so the calibration quad
-means are `[0.9962, 1.0000, 0.9987]` pooled against `[0.9963, 1.0000, 0.9987]` at
-full resolution.
+cost **~6% of the frame** instead of 38%. The numbers they hand the controller do
+not move: a mean is exact under a box filter, so the calibration quad means are
+`[0.9962, 1.0000, 0.9987]` pooled against `[0.9963, 1.0000, 0.9987]` at full
+resolution.
 
 The two run-time levers still apply on top: `set_stats_interval(n)` measures every
 `n` frames, and `set_stats_enabled(false)` skips the readback entirely (a frame that

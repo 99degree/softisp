@@ -673,16 +673,16 @@ impl PipelineProfile {
         label: "UNIFIED",
         level: PipelineLevel::Heavy,
         input_type: "raw",
-        use_unpack: false,
+        use_unpack: true,
         force_input16: false,
-        use_fcs: true,
-        use_ldci: true,
+        use_fcs: false,
+        use_ldci: false,
         use_ee: true,
         use_bad_pixel: true,
         demosaic_quality: DemosaicQuality::Standard,
         use_local_contrast: false,
         use_unsharp: false,
-        use_lsc: true,
+        use_lsc: false,
         lsc_strength: 0.5,
         use_warp: false,
         use_hdr: false,
@@ -690,28 +690,28 @@ impl PipelineProfile {
         use_zone_stats: true,
         use_channel_means: true,
         use_tone_stats: true,
-        use_histogram: true,
-        stats_downscale_max: 0,
+        use_histogram: false,
+        stats_downscale_max: 540,
         pipeline_downscale_target: 0,
         post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
-        use_bilateral: true, // Simplified: AveragePool blur
+        use_bilateral: false,
         use_saturation: true,
-        use_vignetting: true, // Simplified: Mul with gain_map
-        use_colorspace: true, // Simplified: Identity passthrough
-        use_gamma: true,
-        use_sharpen: true,
-        use_wavelet_denoise: true, // Simplified: AveragePool denoise
-        use_auto_contrast: true,   // GPU-accelerated via ISP op
-        use_normalize: true,
+        use_vignetting: false,
+        use_colorspace: false,
+        use_gamma: false,
+        use_sharpen: false,
+        use_wavelet_denoise: false,
+        use_auto_contrast: false,
+        use_normalize: false,
         normalize_at_display: false,
         use_tiled_rendering: true, // Enable for 4K→4K
         tile_count_x: 2,
         tile_count_y: 2,
         tile_overlap: 2,
-        output_format: OutputFormat::PackedRgb,
+        output_format: OutputFormat::Bgra,
         opset_mode: 2, // MnnIspMin for Vulkan GPU backend
-        fuse_stages: FuseStages::NONE,
+        fuse_stages: FuseStages::ALL,
     };
 
     /// HDR profile — multi-exposure burst with async HDR merge.
