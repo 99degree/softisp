@@ -132,6 +132,26 @@ impl PipelineProfile {
                             .with_bayer_pattern(bayer_pattern)
                             .with_opset_mode(BlockOpsetMode::MnnIspMin),
                     ));
+                } else if self
+                    .fuse_stages
+                    .allows(self.opset_mode, self.fuse_stages.unpack16_blc_normal_cfa)
+                {
+                    // One `isp.unpack16_blc_normal_cfa` dispatch replaces the four
+                    // blocks RawInput16 → UnpackCfa → Normalize → Blc, converting
+                    // INT16→FLOAT32, dividing by sensor_max, subtracting BLC, and
+                    // extracting the CFA quad — all in one GPU pass. The host passes
+                    // the INT16 sensor buffer verbatim; no host-side even/odd split.
+                    info!(
+                        "  head: isp.unpack16_blc_normal_cfa \
+                         (fused unpack+normalize+blc+cfa from INT16, owns the graph input)"
+                    );
+                    blocks.push(Box::new(
+                        NormalizeBlcUnpack16Cfa::new()
+                            .with_concrete_dims(concrete_h, full_w)
+                            .with_sensor_max(65535.0)
+                            .with_bayer_pattern(bayer_pattern)
+                            .with_opset_mode(BlockOpsetMode::MnnIspMin),
+                    ));
                 } else if self.force_input16 {
                     // Pure 16-bit raw input [1,1,H,W] INT16 — no packed tensor, no
                     // split. MNN's converter upcasts the INT16 input to FLOAT32, and
