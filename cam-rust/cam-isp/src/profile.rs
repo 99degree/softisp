@@ -409,7 +409,20 @@ impl PipelineProfile {
         use_channel_means: true,
         use_tone_stats: true,
         use_histogram: false,
-        stats_downscale_max: 0,
+        // The one downscale every statistics block shares.
+        //
+        // Measured at 3840x2160 (`probe_4k_stats_shared`): 438.6 ms with the
+        // statistics reading the full frame against 270.7 ms pooled to 540 — about
+        // 38% of the frame. The numbers it produces do not move: calibration quad
+        // means [0.9963, 1.0000, 0.9987] at full resolution against [0.9962,
+        // 1.0000, 0.9987] at 648 and [0.9961, 1.0000, 0.9987] at 324, and the
+        // displayed frame is identical to four decimals at every level.
+        //
+        // 540 rather than a smaller edge: past it the pool's own dispatch cost
+        // dominates the reduction it saves (324 measured *slower* than 648 in one
+        // sweep), and a mean is exact under the box filter at any factor, so there
+        // is nothing to gain from going further.
+        stats_downscale_max: 540,
         pipeline_downscale_target: 0,
         post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
