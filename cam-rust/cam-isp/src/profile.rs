@@ -212,6 +212,11 @@ pub struct FuseStages {
     /// subtract BLC — with a single dispatch that reads the INT16 sensor buffer
     /// directly.
     pub unpack16_blc_normal_cfa: bool,
+    /// The RAW head as one `isp.unpack32_blc_normal_cfa`.
+    ///
+    /// Same as `unpack16_blc_normal_cfa` but reads FLOAT32 sensor samples
+    /// (engine `RawFloat` mode) instead of INT16.
+    pub unpack32_blc_normal_cfa: bool,
     /// `DemosaicBlock` + `CcmBlock` as one `isp.demosaic_ccm`.
     pub demosaic_ccm: bool,
     /// Fold `BayerWbBlock` into the `isp.demosaic_ccm` weights.
@@ -248,6 +253,7 @@ impl FuseStages {
     pub const ALL: Self = Self {
         unpack_blc_normal_cfa: true,
         unpack16_blc_normal_cfa: true,
+        unpack32_blc_normal_cfa: true,
         demosaic_ccm: true,
         ccm: true,
         ee: true,
@@ -266,6 +272,7 @@ impl FuseStages {
     pub const NONE: Self = Self {
         unpack_blc_normal_cfa: false,
         unpack16_blc_normal_cfa: false,
+        unpack32_blc_normal_cfa: false,
         demosaic_ccm: false,
         ccm: false,
         ee: false,
