@@ -205,6 +205,13 @@ pub struct FuseStages {
     /// frame — with a single dispatch that reads the packed sensor buffer and
     /// emits the quad directly.
     pub unpack_blc_normal_cfa: bool,
+    /// The RAW head as one `isp.unpack16_blc_normal_cfa`.
+    ///
+    /// Replaces `RawInput16 + UnpackCfa + Normalize + Blc` — four blocks that
+    /// convert INT16 to float, extract the CFA quad, divide by sensor_max, and
+    /// subtract BLC — with a single dispatch that reads the INT16 sensor buffer
+    /// directly.
+    pub unpack16_blc_normal_cfa: bool,
     /// `DemosaicBlock` + `CcmBlock` as one `isp.demosaic_ccm`.
     pub demosaic_ccm: bool,
     /// Fold `BayerWbBlock` into the `isp.demosaic_ccm` weights.
@@ -240,6 +247,7 @@ impl FuseStages {
     /// here; see `probe_enable_fused_stages` and `probe_fused_head`.
     pub const ALL: Self = Self {
         unpack_blc_normal_cfa: true,
+        unpack16_blc_normal_cfa: true,
         demosaic_ccm: true,
         ccm: true,
         ee: true,
@@ -257,6 +265,7 @@ impl FuseStages {
     /// Nothing fused — every stage emits its primitive form.
     pub const NONE: Self = Self {
         unpack_blc_normal_cfa: false,
+        unpack16_blc_normal_cfa: false,
         demosaic_ccm: false,
         ccm: false,
         ee: false,
