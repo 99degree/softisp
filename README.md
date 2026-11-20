@@ -112,31 +112,36 @@ emits no per-dispatch lines; with it on, one three-profile run writes 26 KB. An 
 that falls back off the GPU is still reported unconditionally, because that costs
 two full-frame copies and is worth more than any tuning.
 
-**3840×2160** (`PERF_FRAMES=30 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
+**3840×2160** (`PERF_FRAMES=20 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 530.0 ms | 596.1 ms | 1.9 |
-| **FUSED** | 12 | **322.9 ms** | 417.6 ms | **3.1** |
-| FUSED, statistics off | 12 | 306.3 ms | 387.9 ms | 3.3 |
-| **WHOLE** (`isp.pipeline`) | 2 | **139.2 ms** | 159.0 ms | **7.2** |
+| MED (primitives) | 19 | 428.7 ms | 443.1 ms | 2.3 |
+| **FUSED** | 13 | **142.7 ms** | 208.1 ms | **7.0** |
+| FUSED, statistics off | 13 | 130.3 ms | 190.2 ms | 7.7 |
+| WHOLE (`isp.pipeline`) | 2 | 137.3 ms | 151.5 ms | 7.3 |
 
-**1920×1080**
+**1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25 …`)
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 249.1 ms | 300.4 ms | 4.0 |
-| **FUSED** | 12 | **175.7 ms** | 187.8 ms | **5.7** |
-| FUSED, statistics off | 12 | 160.2 ms | 188.6 ms | 6.2 |
-| **WHOLE** (`isp.pipeline`) | 2 | **104.2 ms** | 145.0 ms | **9.6** |
+| MED (primitives) | 19 | 114.1 ms | 141.3 ms | 8.8 |
+| **FUSED** | 13 | **82.4 ms** | 102.1 ms | **12.1** |
+| FUSED, statistics off | 13 | 79.2 ms | 111.8 ms | 12.6 |
+| WHOLE (`isp.pipeline`) | 2 | 124.8 ms | 136.6 ms | 8.0 |
 
-Fusion buys **1.64×** at 4K and **1.42×** at FHD; collapsing the whole chain into
-one dispatch buys **3.8×** and **2.4×**.
+Fusion buys **3.00×** at 4K and **1.38×** at FHD. Collapsing the whole chain into one
+dispatch was worth 3.8× and 2.4× while the statistics still reduced the full frame;
+with them pooled, `FUSED` is faster than `WHOLE` at FHD and within 4% at 4K, so there
+is no longer a reason to give up the 3A loop for speed.
+
+Absolute numbers move with device temperature — the same configuration measured
+437.1 ms then 298.0 ms back to back (`probe_4k_drift`). Compare rows *within* a run.
 
 ### Where the 4K time goes
 
-Twelve blocks at 323 ms is 27 ms per block — more than bandwidth explains. Removing
-stages one at a time (`probe_4k_stages`, 15 frames each):
+The 3A statistics were the whole problem. Each block used to shrink the frame for
+itself, so four blocks meant four traversals of a 100 MB tensor:
 
 | Removed | Saves | Share of the chain |
 |---|---|---|
@@ -147,11 +152,16 @@ stages one at a time (`probe_4k_stages`, 15 frames each):
 | saturation | 33.7 ms | 10% |
 | `ee` | −104.4 ms | noise |
 
-The 3A statistics are **two thirds** of the 4K cost. That is what the two run-time
-levers are for: `set_stats_interval(n)` measures every `n` frames (at 1/8 they cost
-~28 ms instead of 225), and `set_stats_enabled(false)` skips the readback entirely. A
-frame that skips reports `stats_measured == false`. Anything under ~10% in the table
-is inside run-to-run spread — `no ee` coming out negative is the honest reminder.
+They now share one `AveragePool` (`stats_downscale_max = 540`), and the 3A branches
+cost **12.4 ms of a 142.7 ms frame — 9%** instead of 38%. The numbers they hand the
+controller do not move: a mean is exact under a box filter, so the calibration quad
+means are `[0.9962, 1.0000, 0.9987]` pooled against `[0.9963, 1.0000, 0.9987]` at
+full resolution.
+
+The two run-time levers still apply on top: `set_stats_interval(n)` measures every
+`n` frames, and `set_stats_enabled(false)` skips the readback entirely (a frame that
+skipped reports `stats_measured == false`). Anything under ~10% in the table above is
+inside run-to-run spread — `no ee` coming out negative is the honest reminder.
 
 ### Historical
 
