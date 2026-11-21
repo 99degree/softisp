@@ -291,6 +291,35 @@ impl FuseStages {
     pub fn allows(&self, opset_mode: i32, stage: bool) -> bool {
         opset_mode == 2 && stage
     }
+
+    /// The shader paths this stage set's fused heads select, in the order
+    /// `profile_builder` tries them.
+    ///
+    /// Both INT16 and INT32 fused heads are compiled in together
+    /// (`FuseStages::ALL` sets both), and the enum alone does not decide which
+    /// one a frame takes — `MnnEngine`'s `InputMode` does. A chain whose sensor
+    /// mode is `RawFloat` reads `isp.unpack32_*` (host already converted u16→f32),
+    /// and one that is `RawInt`/`SplitInt16` reads `isp.unpack16_*` (the shader
+    /// does the conversion). `FuseStages` gates *whether* fusion applies; the
+    /// raw buffer's element type decides which fused form.
+    pub fn fused_head_shader_paths(&self) -> Vec<&'static str> {
+        if self.unpack32_blc_normal_cfa {
+            vec![
+                "isp.unpack32_blc_normal_cfa",
+                "isp.unpack16_blc_normal_cfa",
+                "isp.unpack_blc_normal_cfa",
+            ]
+        } else if self.unpack16_blc_normal_cfa {
+            vec![
+                "isp.unpack16_blc_normal_cfa",
+                "isp.unpack_blc_normal_cfa",
+            ]
+        } else if self.unpack_blc_normal_cfa {
+            vec!["isp.unpack_blc_normal_cfa"]
+        } else {
+            vec![]
+        }
+    }
 }
 
 impl PipelineProfile {
@@ -961,6 +990,46 @@ impl PipelineProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_fused_heads_are_compiled_together() {
+        let f = FuseStages::ALL;
+        assert!(f.unpack32_blc_normal_cfa);
+        assert!(f.unpack16_blc_normal_cfa);
+        assert!(f.unpack_blc_normal_cfa);
+        let n = FuseStages::NONE;
+        assert!(!n.unpack32_blc_normal_cfa);
+        assert!(!n.unpack16_blc_normal_cfa);
+        assert!(!n.unpack_blc_normal_cfa);
+    }
+
+    #[test]
+    fn test_fused_head_shader_paths_all() {
+        let paths = FuseStages::ALL.fused_head_shader_paths();
+        assert_eq!(
+            paths,
+            vec![
+                "isp.unpack32_blc_normal_cfa",
+                "isp.unpack16_blc_normal_cfa",
+                "isp.unpack_blc_normal_cfa",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_fused_head_shader_paths_none_is_empty() {
+        assert!(FuseStages::NONE.fused_head_shader_paths().is_empty());
+    }
+
+    #[test]
+    fn test_fused_heads_require_mnn_isp_min() {
+        // Both fused heads only ever emit under opset 2 (MnnIspMin).
+        let f = FuseStages::ALL;
+        assert!(!f.allows(0, f.unpack32_blc_normal_cfa)); // Primitive
+        assert!(!f.allows(1, f.unpack16_blc_normal_cfa)); // Custom
+        assert!(f.allows(2, f.unpack32_blc_normal_cfa)); // MnnIspMin
+        assert!(f.allows(2, f.unpack16_blc_normal_cfa));
+    }
 
     #[test]
     fn test_lite_profile() {

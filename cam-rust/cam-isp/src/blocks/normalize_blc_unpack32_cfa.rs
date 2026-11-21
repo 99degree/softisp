@@ -5,7 +5,8 @@
 //! mode) and passes FLOAT32 sensor bytes; the shader divides by sensor_max, subtracts
 //! BLC, and extracts the Bayer CFA quad — all in one GPU pass.
 //!
-//! Bindings match the shader in `~/MNN/source/backend/vulkan/buffer/execution/isp_spv/`:
+//! Bindings match the shader in `~/MNN/source/backend/vulkan/buffer/execution/isp_spv/`
+//! — note bindings 0,1,2, NOT the packed form's 3/5/6/7:
 //!   binding 0 = Uniforms {width, height, sensor_max, gain, blc_r, blc_gr, blc_gb, blc_b, bayer_pattern}
 //!   binding 1 = input FLOAT32 plane (readonly)
 //!   binding 2 = output float quad planes (writeonly)
@@ -13,12 +14,6 @@
 use crate::onnx::proto::Proto;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
 
-/// Fused block that combines Normalize → BLC50 → UnpackCfa from FLOAT32 RAW into a single
-/// ISP operation using `isp.unpack32_blc_normal_cfa`.
-///
-/// This is the FLOAT32 counterpart of [`NormalizeBlcUnpack16Cfa`]. It is used when the
-/// engine is in `RawFloat` mode (input already converted u16→f32 on the host) rather than
-/// `RawInt`/`SplitInt16` mode where the input stays INT16.
 #[derive(Debug)]
 pub struct NormalizeBlcUnpack32Cfa {
     /// Input tensor name (e.g., "raw_frame")
@@ -84,19 +79,30 @@ impl NormalizeBlcUnpack32Cfa {
         self
     }
 
+    /// Emit the fused `isp.unpack32_blc_normal_cfa` Extra op.
+    ///
+    /// One dispatch replaces `UnpackCfa → Normalize → Blc` over the
+    /// full-resolution FLOAT32 frame. The node takes **tensors**, not
+    /// attributes, because `VulkanFuse` is positional.
+    ///
+    /// Input order decides the binding (`input[0]` is the frame at 1, then
+    /// `input[1..]` fill 3, 5, 6, …), matching the shader's declarations.
     fn emit_mnn_isp_min_node(&self) -> Vec<u8> {
         let ns = self.tensor_ns();
+        // The full name, not a bare one plus the domain: the converter copies
+        // op_type verbatim into Extra::type, so a bare name becomes an Extra
+        // with no `isp.` prefix and no lookup entry.
         Proto::node_with_domain(
             "isp.unpack32_blc_normal_cfa",
             "isp",
             &[
-                // binding 3 — `[1,1,H,W]` FLOAT32 raw Bayer plane
+                // binding 1 — `[1,1,H,W]` FLOAT32 raw Bayer plane
                 &self.input_source,
-                // binding 5 — black level per colour (R, Gr, Gb, B)
+                // binding 3 — black level per colour (R, Gr, Gb, B)
                 &format!("{}/blc_vals", ns),
-                // binding 6 — sensor white level
+                // binding 5 — the sensor's white level
                 &format!("{}/max_val", ns),
-                // binding 7 — CFA phase
+                // binding 6 — CFA phase, so the shader maps colour -> plane
                 &format!("{}/bayer_pattern", ns),
             ],
             &[&self.frame_tensor],
@@ -279,6 +285,10 @@ impl IspBlock for NormalizeBlcUnpack32Cfa {
         vec![]
     }
 
+    /// The fused head reads the sensor buffer itself: `isp.unpack32_blc_normal_cfa`
+    /// takes `[1,1,H,W]` FLOAT32 straight off the graph boundary. A
+    /// `RawInput16Block` in front of it would be a second declaration of the
+    /// boundary this block already owns.
     fn is_graph_input_placeholder_for(&self) -> bool {
         self.opset_mode() == BlockOpsetMode::MnnIspMin
     }
