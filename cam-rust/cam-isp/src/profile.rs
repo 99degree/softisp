@@ -252,12 +252,8 @@ impl FuseStages {
     /// here; see `probe_enable_fused_stages` and `probe_fused_head`.
     pub const ALL: Self = Self {
         unpack_blc_normal_cfa: true,
-        // unpack16_blc_normal_cfa and unpack32_blc_normal_cfa require a rebuilt
-        // libMNN.so with the ShapeIspExtra.cpp rule. They compile into softisp
-        // and are registered in MNN, but are disabled here until the device-side
-        // core library is updated; see docs/architecture/MNN_REBUILD_BLOCKER.md.
-        unpack16_blc_normal_cfa: false,
-        unpack32_blc_normal_cfa: false,
+        unpack16_blc_normal_cfa: true,
+        unpack32_blc_normal_cfa: true,
         demosaic_ccm: true,
         ccm: true,
         ee: true,
