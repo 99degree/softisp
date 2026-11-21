@@ -2026,15 +2026,45 @@ impl IspEngine for MnnEngine {
                     )
                 }
                 InputMode::RawInt => {
+                    // The graph head decides the wire dtype, not the enum name:
+                    //   isp.unpack16_blc_normal_cfa → INT16 input  → zero-copy u16 buffer
+                    //   isp.unpack32_blc_normal_cfa → FLOAT32 input → widen u16→f32 on CPU,
+                    //                                then feed the raw_f32 path
+                    // RawInt is only reached when the converter declared a single
+                    // non-packed channel, so [1,1,H,W] holds one sample per pixel.
                     let raw_shape = [1, 1, h as i32, w as i32];
                     let (code, bits) = self.model_input_type.unwrap_or((0, 16));
-                    (
-                        buf.as_ptr() as *const c_void,
-                        code,
-                        bits,
-                        raw_shape.to_vec(),
-                        "raw_zero_copy",
-                    )
+                    if code == 2 && bits == 32 {
+                        // Model expects FLOAT32 (isp.unpack32_blc_normal_cfa head):
+                        // widen the INT16 sensor buffer to f32 on CPU so the shader
+                        // receives the dtype it compiled for.
+                        let total = (w as usize) * (h as usize);
+                        let mut guard = self.scratch_f32.lock().unwrap();
+                        if guard.len() != total {
+                            guard.resize(total, 0.0);
+                        }
+                        let u16s: &[u16] = unsafe {
+                            std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+                        };
+                        for i in 0..total {
+                            guard[i] = u16s[i] as f32;
+                        }
+                        (
+                            guard.as_ptr() as *const c_void,
+                            2, // FLOAT32
+                            32,
+                            raw_shape.to_vec(),
+                            "raw_zero_copy",
+                        )
+                    } else {
+                        (
+                            buf.as_ptr() as *const c_void,
+                            code,
+                            bits,
+                            raw_shape.to_vec(),
+                            "raw_zero_copy",
+                        )
+                    }
                 }
             };
 

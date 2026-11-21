@@ -102,9 +102,9 @@ fn run(
     };
 
     // Warm up: the first frames include session allocation and shape propagation.
-    for _ in 0..8 {
-        if engine.process(&params).is_err() {
-            eprintln!("{label:<28} warmup failed");
+    for w in 0..8 {
+        if let Err(e) = engine.process(&params) {
+            eprintln!("{label:<28} warmup failed at frame {w}: {e}");
             return None;
         }
     }
