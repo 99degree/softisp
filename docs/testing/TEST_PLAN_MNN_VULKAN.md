@@ -104,7 +104,7 @@ Each test:
 #![cfg(feature = "mnn")]
 
 use cam_isp::blocks::*;
-use cam_isp::mnn_converter::{convert_onnx_buffer, MnnConvertOptions};
+use cam_isp::mnn_converter::convert_onnx_buffer;
 use cam_isp::mnn_sys::{MnnInterpreterSafe, MnnBackendType};
 use cam_isp::pipeline::{GraphComposer, IspBlock};
 use cam_isp::profile::PipelineProfile;
@@ -118,12 +118,11 @@ fn pass0_convert(block: &dyn IspBlock, name: &str) -> Result<Vec<u8>, String> {
     let onnx_bytes = GraphComposer::compose_from_vec(&refs, &[], 16)
         .map_err(|e| format!("ONNX compose failed for {}: {}", name, e))?;
 
-    // Convert ONNX → MNN in-process (zero disk writes)
-    let opts = MnnConvertOptions {
-        allow_custom_op: true,
-        preserve_input_type: true,
-        ..Default::default()
-    };
+    // Convert ONNX → MNN in-process (zero disk writes).
+    // NOTE: convert_onnx_buffer() takes no options — preserveInputType is
+    // hardcoded `true` inside MNN's MNNConvertBuffer.cpp, so INT16/UINT16
+    // graph inputs are kept regardless of MnnConvertOptions (see
+    // docs/architecture/ISP_UNPACK_BLC_NORMAL_CFA_INT16_F32.md §5.1).
     let mnn_bytes = convert_onnx_buffer(&onnx_bytes)
         .map_err(|e| format!("ONNX→MNN convert failed for {}: {}", name, e))?;
 
