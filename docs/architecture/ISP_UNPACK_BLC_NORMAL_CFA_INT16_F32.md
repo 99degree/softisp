@@ -17,7 +17,7 @@ Before this work the head was one of:
 | Packed INT32 (`isp.unpack_blc_normal_cfa`) | `[1,2,H,W/2]` INT32 | RawInputPackedBlock → UnpackBlock → NormalizeBlock → BlcBlock → CfaBlockPacked | host splits u16 pairs into even/odd i32 lanes; Cast INT32→FLOAT32 |
 | Native INT16 (`RawInput16Block`+`UnpackCfaBlock`) | `[1,1,H,W]` INT16 | RawInput16Block → UnpackCfaBlock (Conv) → NormalizeBlock → BlcBlock | none (INT16 passed verbatim), but **4 separate GPU dispatches** |
 
-The MNN converter upcasts a declared-INT16 input to FLOAT32, so a "native INT16" head still ends up as FLOAT32 inside MNN while the engine passes a u16 buffer — a type mismatch that silently wastes memory (2× buffer size per session at 5 Mpx ≈ 19 MB/session).
+Whether a declared-INT16 input survives ONNX→MNN conversion decides the memory cost below. Stock MNN (no `preserveInputType`) widens INT16/UINT16 graph inputs to **INT32** — not FLOAT32 as an earlier revision of this document claimed — while softisp's runtime conversion path always preserves them (see §5.1). A widened input means the engine must materialise a 4-byte-per-pixel buffer instead of 2, wasting 2× buffer size per session at 5 Mpx ≈ 19 MB/session.
 
 Every head also pays **five full-frame host↔GPU round trips** just to arrive at the same `[1,4,H/2,W/2]` quad the fused shader could produce in one dispatch.
 
@@ -133,7 +133,7 @@ The user wants `raw_int16` and `raw_f32` as explicit input-path settings that se
 `MnnEngine::build()` infers `InputMode` from the converted model's declared input dtype (lines 1483-1557 of `mnnengine.rs`):
 
 - `split && is_float` → `SplitFloat` (channels==2, FLOAT32)
-- `split && bits==16` → `SplitInt16` (channels==2, INT16 kept by converter via `--preserveInputType`)
+- `split && bits==16` → `SplitInt16` (channels==2, INT16 kept by converter — see §5.1)
 - `split && otherwise` → `SplitInt32` (packed INT32)
 - `!split && is_float` → `RawFloat` (channels==1, FLOAT32)
 - `!split && otherwise` → `RawInt` (channels==1, INT16)
@@ -148,6 +148,40 @@ else                                 → isp.unpack_blc_normal_cfa (packed INT32
 
 If the app wants an explicit toggle independent of model dtype, add a `ProcessParams::raw_input_mode` enum (`RawInt16` / `RawF32`) and pass it into `MnnEngine::build()` to override the inferred `InputMode`. The two fused blocks already accept either dtype through their `input_elem_type()` and `input_value_info()`, so no Rust-side change is needed beyond wiring that enum through `ProcessParams` → `MnnEngine` → head selection.
 
+### 5.1 What the converter does to a declared-INT16 input (`preserveInputType`)
+
+Two independent switches control whether an INT16 graph input survives conversion:
+
+1. **Compile-time `MNN_HAS_PRESERVE_INPUT_TYPE`** — guards the `config.preserveInputType = …` assignments in softisp's wrapper `cam-rust/cam-isp/mnn_sys/mnn_convert_api.cpp`. The macro is **never defined** in the current build (`build.rs` has no `.define()`; the old `cargo:rustc-cfg` detection was removed in `e87c940`), so all three wrapper assignments compile out and those entry points run with the struct default `false`.
+2. **Runtime `modelConfig::preserveInputType`** — read by the MNN converter (`onnxOpConverter::getPreserveInputType()` → `convertDataType()` and `CastOnnx.cpp`).
+
+Type mapping per flag state (graph inputs / constants):
+
+| ONNX type | flag **ON** | flag **OFF** — stock MNN | flag **OFF** — softisp fork `~/MNN` (`98aeaec8`) |
+|-----------|-------------|--------------------------|--------------------------------------------------|
+| FLOAT | DT_FLOAT | DT_FLOAT | DT_FLOAT |
+| FLOAT16 | DT_HALF | DT_HALF | DT_HALF |
+| INT16 | DT_INT16 | **DT_INT32** | **DT_INT16** (default map changed) |
+| UINT16 | DT_UINT16 | **DT_INT32** | **DT_UINT16** |
+| INT32 | DT_INT32 | DT_INT32 | DT_INT32 |
+| INT64 / BOOL / UINT32 / UINT64 | DT_INT32 | DT_INT32 | DT_INT32 |
+| Cast → FLOAT16 | kept FP16 | widened to FP32 | widened to FP32 |
+
+Which path actually runs:
+
+| Conversion path | Caller | Effective `preserveInputType` |
+|-----------------|--------|-------------------------------|
+| `mnn_convert_onnx_to_mnn_buffer` (in-memory, MNN's `MNNConvertBuffer.cpp`) | **`MnnEngine::build`** — the main runtime path | **`true`** (hardcoded in MNN; the Rust `set_preserve_input_type()` flag is only logged, never passed) |
+| `mnn_convert_onnx_buffer` (temp-file wrapper) | `warp_engine.rs` | `false` (macro undefined) — but the fork's default map still keeps INT16/UINT16 |
+| `mnn_convert_onnx_to_mnn` (file FFI) | no live callers | `false`, argument ignored |
+| CLI `convert_onnx_to_mnn` + `--preserveInputType` | examples / offline tooling | as requested (requires `MNNConvert` binary) |
+
+**Conclusions:**
+
+- Without the flag, stock MNN widens INT16/UINT16 → **INT32**, never to float; INT32 inputs are always supported natively. The only float-widening the flag gates is Cast-to-FLOAT16 → FLOAT32 in `CastOnnx`.
+- In softisp the question is mostly moot: the engine's conversion path hardcodes `preserveInputType = true`, and the fork's default map preserves INT16/UINT16 even when the flag is off — so `raw_int16` reaches the engine as DT_INT16 and `InputMode` inference selects `RawInt`/`SplitInt16`.
+- The `MNN_HAS_PRESERVE_INPUT_TYPE` macro only affects the three wrapper functions, which currently behave as flag-off (differing from flag-on only in fp16-Cast widening on the temp-file path).
+
 ---
 
 ## 6. Memory impact
@@ -158,7 +192,7 @@ At 5 Mpx (3840×2160):
 |------------|-------------|-------------|------------|
 | Packed INT32 (`[1,2,H,W/2]`) | 4 | 32 MB | 128 MB |
 | Native INT16 kept (`[1,1,H,W]`) | 2 | 16 MB | 64 MB |
-| Native INT16 widened to f32 | 4 | 32 MB | 128 MB |
+| Native INT16 widened to 32-bit (stock converter → INT32) | 4 | 32 MB | 128 MB |
 
 The INT16 fused head halves frame-buffer memory versus the packed INT32 path **and** collapses five dispatches into one — both reduce host↔GPU traffic and peak session memory.
 
