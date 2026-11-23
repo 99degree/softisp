@@ -15,10 +15,7 @@ fn bench_separate(h: u32, w_full: u32) -> (f64, String) {
 
     // Build blocks: raw → unpack → norm → cfa
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
-        Box::new(
-            RawInputBlock::new()
-                .with_concrete_dims(h_i64, pw_i64),
-        ),
+        Box::new(RawInputBlock::new().with_concrete_dims(h_i64, pw_i64)),
         Box::new(UnpackBlock::new().with_concrete_dims(h_i64, w_i64)),
         Box::new(NormalizeBlock::new()),
         Box::new(CfaBlock::new().with_concrete_dims(h_i64, w_i64)),
