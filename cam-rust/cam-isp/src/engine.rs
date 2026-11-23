@@ -160,8 +160,9 @@ pub struct ProcessParams<'a> {
     ///
     /// This avoids the intermediate `Vec<u8>` allocation and the
     /// `AHardwareBuffer → Vec` memcpy on the input side. On the Vulkan
-    /// backend MNN still does a host→device transfer internally, but the
-    /// extra copy into a heap buffer is eliminated.
+    /// backend MNN still does a host→device transfer internally unless
+    /// `input_ahb` is also set, in which case the AHardwareBuffer is imported
+    /// as Vulkan device memory via `mnn_import_ahb_as_device_memory`.
     pub input_buffer: Option<(*mut u8, usize)>,
 
     /// Optional caller-supplied output buffer for zero-copy inference.
@@ -177,6 +178,19 @@ pub struct ProcessParams<'a> {
     /// the buffer size; if the graph output exceeds `output_len`, inference
     /// is aborted with an error rather than silently truncating.
     pub output_buffer: Option<(*mut u8, usize)>,
+
+    /// Optional `AHardwareBuffer*` imported as Vulkan device memory for the
+    /// input tensor. When `Some` alongside `input_buffer`, MNN's Vulkan
+    /// backend binds the AHB fd as device memory and reads directly from GPU
+    /// memory, eliminating the host→device copy on Vulkan. The caller keeps
+    /// the buffer locked for the duration of `process()`.
+    pub input_ahb: Option<(*mut std::ffi::c_void, usize)>,
+
+    /// Optional `AHardwareBuffer*` imported as Vulkan device memory for the
+    /// output tensor. When `Some` alongside `output_buffer`, MNN's Vulkan
+    /// backend binds the AHB fd as device memory and writes directly to GPU
+    /// memory, eliminating the device→host copy on Vulkan.
+    pub output_ahb: Option<(*mut std::ffi::c_void, usize)>,
     /// Output format: PackedInt32 (raw) or Bgra (converted).
     pub output_format: OutputFormat,
     /// Capture timestamp in nanoseconds (from HAL/framework). Passed through to IspFrame.
@@ -212,6 +226,8 @@ impl<'a> ProcessParams<'a> {
             warp_shading: None,
             input_buffer: None,
             output_buffer: None,
+            input_ahb: None,
+            output_ahb: None,
         }
     }
 

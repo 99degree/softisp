@@ -246,6 +246,13 @@ impl CameraIspService {
         // without a temporary heap allocation or a memcpy at the end.
         params.output_buffer = Some((output.ptr, output.size));
 
+        // Import AHardwareBuffers as Vulkan device memory so MNN's Vulkan
+        // backend reads/writes GPU memory directly (eliminates host<->GPU
+        // copies on Vulkan). The input/output buffers are locked by the HAL
+        // for the duration of this call and unlocked by the caller afterwards.
+        params.input_ahb = Some((input.ptr as *mut std::ffi::c_void, input.size));
+        params.output_ahb = Some((output.ptr as *mut std::ffi::c_void, output.size));
+
         let frame = self.engine.process(&params).map_err(|e| e.to_string())?;
 
         // If MNN wrote into the external buffer, nothing to copy — the caller

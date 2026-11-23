@@ -2135,6 +2135,32 @@ impl IspEngine for MnnEngine {
                 // Choose the inference path: true zero-copy (caller's buffer)
                 // or the standard copy-in/copy-out path.
                 if zero_copy {
+                    // Import AHardwareBuffers as Vulkan device memory before
+                    // inference, so MNN's Vulkan backend reads/writes GPU
+                    // memory directly instead of host<->GPU copies.
+                    if let Some(&(ahb_ptr, _)) = p.input_ahb.as_ref() {
+                        let input_name_c = std::ffi::CString::new(output_name.clone())
+                            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+                        crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                            interp.as_ptr(),
+                            sess.as_ptr(),
+                            ahb_ptr as *const c_void,
+                            input_name_c.as_ptr(),
+                            1, // read_only: input tensor
+                        );
+                    }
+                    if let Some(&(ahb_ptr, _)) = p.output_ahb.as_ref() {
+                        let output_name_c = std::ffi::CString::new(output_name.clone())
+                            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+                        crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                            interp.as_ptr(),
+                            sess.as_ptr(),
+                            ahb_ptr as *const c_void,
+                            output_name_c.as_ptr(),
+                            0, // read_only: output tensor
+                        );
+                    }
+
                     n = crate::mnn_sys::mnn_run_true_zero_copy(
                         interp.as_ptr(),
                         sess.as_ptr(),
@@ -2146,6 +2172,26 @@ impl IspEngine for MnnEngine {
                         out_ptr,
                         max_out,
                     );
+                    // Release the AHB device-memory bindings after inference.
+                    if p.input_ahb.is_some() {
+                        let input_name_c = std::ffi::CString::new(output_name.clone())
+                            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+                        crate::mnn_sys::mnn_release_ahb_device_memory(
+                            interp.as_ptr(),
+                            sess.as_ptr(),
+                            input_name_c.as_ptr(),
+                        );
+                    }
+                    if p.output_ahb.is_some() {
+                        let output_name_c = std::ffi::CString::new(output_name.clone())
+                            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+                        crate::mnn_sys::mnn_release_ahb_device_memory(
+                            interp.as_ptr(),
+                            sess.as_ptr(),
+                            output_name_c.as_ptr(),
+                        );
+                    }
+
                     // true_zero_copy returns 0 on success; convert to an
                     // element count for the shared logic below.
                     if n == 0 {

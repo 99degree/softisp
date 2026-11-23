@@ -143,6 +143,27 @@ extern "C" {
         max_out: c_int,
     ) -> c_int;
 
+    /// Import an Android `AHardwareBuffer` as Vulkan device memory so MNN's
+    /// Vulkan backend can read/write it directly instead of allocating its own
+    /// device buffers and doing host<->GPU copies.
+    ///
+    /// This is the final zero-copy step: camera DMA buffer -> GPU tensor ->
+    /// GPU shader -> display DMA buffer, with no host memory traffic at all.
+    pub fn mnn_import_ahb_as_device_memory(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        ahb: *const c_void,
+        tensor_name: *const c_char,
+        read_only: c_int,
+    ) -> c_int;
+
+    /// Release a previously imported AHardwareBuffer device memory binding.
+    pub fn mnn_release_ahb_device_memory(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        tensor_name: *const c_char,
+    ) -> c_int;
+
     pub fn mnn_run_with_output(
         interpreter: *mut c_void,
         session: *mut c_void,

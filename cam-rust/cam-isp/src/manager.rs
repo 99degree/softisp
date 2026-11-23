@@ -230,6 +230,8 @@ impl PipelineManager {
             warp_shading: None,
             input_buffer: None,
             output_buffer: None,
+            input_ahb: None,
+            output_ahb: None,
             target_height: height,
             output_format: self.output_format,
             timestamp_ns: 0,

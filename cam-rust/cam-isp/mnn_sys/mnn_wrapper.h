@@ -322,30 +322,50 @@ extern "C" int mnn_run_zero_copy(
     int max_out
 );
 
+// ── True zero-copy inference ──────────────────────────────────────────────────
+
+/**
+ * Import an Android `AHardwareBuffer` as Vulkan device memory so MNN's Vulkan
+ * backend can read/write it directly instead of allocating its own device
+ * buffers and doing host<->GPU copies.
+ *
+ * This is the final zero-copy step: camera DMA buffer -> GPU tensor -> GPU
+ * shader -> display DMA buffer, with no host memory traffic at all.
+ *
+ * Steps performed:
+ *   1. Export the `AHardwareBuffer` to a dma-buf fd (AHardwareBuffer_getFd).
+ *   2. `vkGetMemoryAndroidHardwareBufferANDROID` / import fd as VkDeviceMemory.
+ *   3. Bind that memory to the session's input/output tensor buffers.
+ *
+ * The caller (Rust) keeps the AHardwareBuffer locked for the duration of the
+ * inference and unlocks it after `mnn_run_with_output` returns.
+ *
+ * @param interpreter   MNN interpreter handle.
+ * @param session       MNN session handle (Vulkan backend).
+ * @param ahb           AHardwareBuffer* to import.
+ * @param tensor_name   Name of the session tensor to bind (e.g. input or output).
+ * @param read_only     true for input tensors (MNN only reads), false for output.
+ * @return 0 on success, negative on failure.
+ */
+int mnn_import_ahb_as_device_memory(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    void* ahb,
+    const char* tensor_name,
+    int read_only);
+
+/**
+ * Release a previously imported AHardwareBuffer device memory binding.
+ * Call when the AHardwareBuffer is no longer needed by MNN.
+ */
+int mnn_release_ahb_device_memory(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const char* tensor_name);
+
 // ── Get model input type ──────────────────────────────────────────────────
 extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession session,
     int* out_code, int* out_bits);
-
-// ── True zero-copy inference ──────────────────────────────────────────────────
-
-// Model info enum
-typedef enum {
-    MNN_MODEL_INFO_MEMORY = 0,
-    MNN_MODEL_INFO_FLOPS = 1,
-    MNN_MODEL_INFO_BACKENDS = 2,
-    MNN_MODEL_INFO_RESIZE_STATUS = 3,
-    MNN_MODEL_INFO_THREAD_NUMBER = 4,
-} MnnModelInfo;
-
-/**
- * Get model info (MEMORY, FLOPS, etc.) for a session.
- * @param interpreter Opaque handle from mnn_interpreter_create_from_file.
- * @param session Opaque handle from mnn_session_create.
- * @param info_code One of MNN_MODEL_INFO_*.
- * @param out Pointer to store result (float for MEMORY/FLOPS, int for others).
- * @return 0 on success, non-zero on failure.
- */
-int mnn_get_model_info(MnnInterpreter interpreter, MnnSession session, MnnModelInfo info_code, void* out);
 
 // ── Benchmark with GPU synchronization ─────────────────────────────────
 
