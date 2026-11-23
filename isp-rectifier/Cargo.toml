@@ -34,13 +34,7 @@ approx = "0.5"
 proptest = "1.0"
 criterion = { version = "0.5", features = ["html_reports"] }
 
-
-[profile.release]
-lto = true
-opt-level = 3
-codegen-units = 1
-panic = "abort"
-
-[profile.bench]
-lto = true
-opt-level = 3
+# Profiles are declared at the workspace root (../Cargo.toml). Cargo ignores
+# `[profile.*]` in a non-root manifest — it printed
+#   "warning: profiles for the non root package will be ignored"
+# for every build — so these duplicates were dead weight.

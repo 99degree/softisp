@@ -1,17 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "cam-rust/cam-types",
-    "cam-rust/cam-isp",
-    "cam-rust/cam-hal",
-    "cam-rust/cam-hal-android",
-    "cam-rust/cam-hal-linux",
-    "cam-rust/cam-core",
-    "cam-rust/cam-onnx",
-    "cam-rust/cam-motion",
-    "cam-rust/cam-binder",
-    "cam-rust/cam-disp",
-    "cam-rust/cam-camera-app",
+    "isp-rectifier",
 ]
 
 [workspace.dependencies]
@@ -20,15 +10,26 @@ log = "0.4"
 thiserror = "2"
 env_logger = "0.10"
 android_logger = "0.14"
-# NativeActivity lifecycle + ANativeWindow (cam-rust/cam-camera-app).
-android-activity = { version = "0.6.1", features = ["native-activity"] }
-# Raw ACamera* / AImageReader* NDK bindings (cam-rust/cam-camera-app).
-ndk-sys = { version = "0.6", features = ["media"] }
 
+# ── Profiles ────────────────────────────────────────────────────────────────
+#
+# Inherited from cam-rust/Cargo.toml (the cam-* ISP engine workspace) so that
+# `cargo build` behaves consistently at the repo root and inside cam-rust/.
+# Profiles declared in non-root manifests are ignored by cargo, so these live
+# only at whichever manifest is the workspace root.
 [profile.dev]
-debug = true
-overflow-checks = true
+debug = 1
+overflow-checks = false
+opt-level = 2
 
 [profile.test]
-debug = true
-overflow-checks = true
+debug = 1
+overflow-checks = false
+opt-level = 2
+
+[profile.release]
+opt-level = 2
+debug = 1
+overflow-checks = false
+codegen-units = 1
+panic = "abort"
