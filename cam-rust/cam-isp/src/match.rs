@@ -123,6 +123,6 @@ mod tests {
     #[test]
     fn test_estimate_cct() {
         let cct = estimate_cct(0.5, 0.4);
-        assert!(cct >= 2000 && cct <= 10000);
+        assert!((2000..=10000).contains(&cct));
     }
 }

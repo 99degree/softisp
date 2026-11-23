@@ -180,7 +180,7 @@ mod tests {
         let b = WaveletDenoiseBlock::new();
         let nodes = b.nodes();
         // Simplified: just 1 AvgPool node
-        assert!(nodes.len() >= 1, "need >= 1 nodes, got {}", nodes.len());
+        assert!(!nodes.is_empty(), "need >= 1 nodes, got {}", nodes.len());
     }
 
     #[test]

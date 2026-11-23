@@ -46,7 +46,7 @@ fn main() {
 
     let mnn = std::fs::read(mnn_path).unwrap();
     let interp = MnnInterpreterSafe::from_buffer(&mnn).expect("interp");
-    let sess = interp.create_session(MnnBackendType::Cpu, 1).expect("sess");
+    let sess = interp.create_session(MnnBackendType::Vulkan, 1, false).expect("sess");
 
     // Input: R,G,B values
     let inp_values = [25.0f32, 51.0, 76.0];

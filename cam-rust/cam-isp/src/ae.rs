@@ -209,7 +209,7 @@ mod tests {
         let (exp, iso) = state.compute(0.5, 0.0, 0.1, 0.5);
         // Bright scene → shorter exposure or lower ISO
         assert!(exp <= 33_333_333);
-        assert!(iso >= 50 && iso <= 3200);
+        assert!((50..=3200).contains(&iso));
     }
 
     #[test]

@@ -496,7 +496,7 @@ mod tests {
     fn test_cct_estimation() {
         // Daylight: R/G ≈ 0.5, B/G ≈ 0.5 → CCT ≈ 4400 - 650 + 1050 = 4800
         let cct = IspController::estimate_cct(0.5, 0.5);
-        assert!(cct >= 2000 && cct <= 10000);
+        assert!((2000..=10000).contains(&cct));
     }
 
     #[test]

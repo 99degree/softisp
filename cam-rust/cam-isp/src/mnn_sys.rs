@@ -739,7 +739,6 @@ mod tests {
         // This test verifies that we gracefully handle missing MNN library.
         // Without libMNN.so / libmnn_wrapper.so, the FFI calls will fail
         // at link time. This test only runs when the feature is enabled.
-        assert!(true);
     }
 }
 

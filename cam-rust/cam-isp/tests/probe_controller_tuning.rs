@@ -11,7 +11,7 @@
 
 #![cfg(feature = "mnn")]
 
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::profile::PipelineProfile;
 
 /// Mean luminance of a planar f32 frame.

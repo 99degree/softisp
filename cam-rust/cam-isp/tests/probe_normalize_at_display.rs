@@ -43,7 +43,7 @@ fn render(defer: bool) -> Result<Vec<u8>, String> {
     // A gradient rather than a flat field: a wrong clamp would be invisible on
     // a constant.
     let mut buf = vec![0u8; (w * h * 2) as usize];
-    for (i, chunk) in buf.chunks_exact_mut(2).enumerate() {
+    for (i, chunk) in buf.as_chunks_mut::<2>().0.iter_mut().enumerate() {
         let v = ((i % w as usize) * 1023 / w as usize) as u16;
         chunk[0] = (v & 0xFF) as u8;
         chunk[1] = (v >> 8) as u8;

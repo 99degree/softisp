@@ -32,6 +32,7 @@ pub use types::*;
 // Public exports
 #[cfg(feature = "onnx-runtime")]
 pub use inference::{OptimizedInference, TractInference};
+pub use register_injector::inject_registers;
 pub use types::ISPRegisters;
 
 #[cfg(feature = "onnx-runtime")]

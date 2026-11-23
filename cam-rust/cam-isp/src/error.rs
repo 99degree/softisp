@@ -87,37 +87,6 @@ impl From<&str> for IspError {
 /// Result type alias for ISP operations.
 pub type IspResult<T> = Result<T, IspError>;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_display() {
-        let err = IspError::Config("invalid width".into());
-        assert_eq!(format!("{}", err), "configuration error: invalid width");
-    }
-
-    #[test]
-    fn test_error_from_string() {
-        let err: IspError = "something failed".into();
-        assert!(matches!(err, IspError::Pipeline(_)));
-    }
-
-    #[test]
-    fn test_error_from_io() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let err: IspError = io_err.into();
-        assert!(matches!(err, IspError::Io(_)));
-    }
-
-    #[test]
-    fn test_error_clone() {
-        let err = IspError::Mnn("test".into());
-        let cloned = err.clone();
-        assert_eq!(format!("{}", err), format!("{}", cloned));
-    }
-}
-
 impl From<PipelineError> for IspError {
     fn from(e: PipelineError) -> Self {
         match e {
@@ -164,5 +133,36 @@ impl From<std::num::ParseIntError> for IspError {
 impl From<std::num::ParseFloatError> for IspError {
     fn from(e: std::num::ParseFloatError) -> Self {
         Self::Config(format!("parse error: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display() {
+        let err = IspError::Config("invalid width".into());
+        assert_eq!(format!("{}", err), "configuration error: invalid width");
+    }
+
+    #[test]
+    fn test_error_from_string() {
+        let err: IspError = "something failed".into();
+        assert!(matches!(err, IspError::Pipeline(_)));
+    }
+
+    #[test]
+    fn test_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: IspError = io_err.into();
+        assert!(matches!(err, IspError::Io(_)));
+    }
+
+    #[test]
+    fn test_error_clone() {
+        let err = IspError::Mnn("test".into());
+        let cloned = err.clone();
+        assert_eq!(format!("{}", err), format!("{}", cloned));
     }
 }

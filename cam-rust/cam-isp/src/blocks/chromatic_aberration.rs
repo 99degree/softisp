@@ -268,7 +268,7 @@ mod tests {
     fn test_ca_grid_identity_at_center() {
         let grids = ChromaticAberrationBlock::generate_ca_grids(100, 100, 2.0);
         // G channel (index 1) should be identity grid
-        let g_offset = 1 * 100 * 100 * 2;
+        let g_offset = 100 * 100 * 2;
         let center = 50 * 100 + 50;
         let gx = grids[g_offset + center * 2];
         let gy = grids[g_offset + center * 2 + 1];

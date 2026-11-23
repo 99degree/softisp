@@ -39,8 +39,8 @@ fn bench_model(name: &str, path: &PathBuf) {
     eprintln!("Load time: {:?}", load_time);
 
     // Create input tensors
-    let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
-    let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
+    let hist = Tensor::from_shape(&[1, 256], &[0.5f32; 256]).unwrap();
+    let meta = Tensor::from_shape(&[1, 11], &[0.5f32; 11]).unwrap();
 
     // Warmup
     for _ in 0..5 {
@@ -156,8 +156,8 @@ fn bench_all_models_comparison() {
             .unwrap();
         let load_time = start.elapsed();
 
-        let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
-        let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
+        let hist = Tensor::from_shape(&[1, 256], &[0.5f32; 256]).unwrap();
+        let meta = Tensor::from_shape(&[1, 11], &[0.5f32; 11]).unwrap();
         let _ = model
             .run(tvec![hist.clone().into(), meta.clone().into()])
             .unwrap();

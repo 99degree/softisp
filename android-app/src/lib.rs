@@ -931,7 +931,8 @@ mod tests {
         // 1940x2592 RGB shares only small factors with the cap, so this stays
         // full-size rather than inventing a geometry.
         assert_eq!(post_ccm_downscale(1940, 2592), (970, 1296));
-        assert!(1296 <= super::TAIL_MAX_EDGE);
+        let (w, h) = post_ccm_downscale(1940, 2592);
+        assert!(w <= super::TAIL_MAX_EDGE && h <= super::TAIL_MAX_EDGE);
     }
 }
 

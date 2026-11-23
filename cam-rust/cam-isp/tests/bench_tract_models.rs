@@ -37,7 +37,7 @@ fn bench_fp32_tract() {
 
     // Create input tensors
     let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
-    let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
+    let meta = Tensor::from_shape(&[1, 11], &[0.5f32; 11]).unwrap();
 
     // Warmup
     let _ = model
@@ -88,7 +88,7 @@ fn bench_int8_tract() {
 
     // Create input tensors
     let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
-    let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
+    let meta = Tensor::from_shape(&[1, 11], &[0.5f32; 11]).unwrap();
 
     // Warmup
     let _ = model
@@ -143,7 +143,7 @@ fn bench_fp16_tract() {
 
     // Create input tensors
     let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
-    let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
+    let meta = Tensor::from_shape(&[1, 11], &[0.5f32; 11]).unwrap();
 
     // Warmup
     let _ = model
@@ -190,7 +190,7 @@ fn bench_all_models_comparison() {
         let load_time = start.elapsed();
 
         let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
-        let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
+        let meta = Tensor::from_shape(&[1, 11], &[0.5f32; 11]).unwrap();
         let _ = model
             .run(tvec![hist.clone().into(), meta.clone().into()])
             .unwrap();
@@ -222,7 +222,7 @@ fn bench_all_models_comparison() {
         let load_time = start.elapsed();
 
         let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
-        let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
+        let meta = Tensor::from_shape(&[1, 11], &[0.5f32; 11]).unwrap();
         let _ = model
             .run(tvec![hist.clone().into(), meta.clone().into()])
             .unwrap();
@@ -253,7 +253,7 @@ fn bench_all_models_comparison() {
                 let load_time = start.elapsed();
 
                 let hist = Tensor::from_shape(&[1, 256], &vec![0.5f32; 256]).unwrap();
-                let meta = Tensor::from_shape(&[1, 11], &vec![0.5f32; 11]).unwrap();
+                let meta = Tensor::from_shape(&[1, 11], &[0.5f32; 11]).unwrap();
                 let _ = model
                     .run(tvec![hist.clone().into(), meta.clone().into()])
                     .unwrap();

@@ -43,7 +43,7 @@ fn main() {
 
     let mnn = std::fs::read(mnn_path).unwrap();
     let interp = MnnInterpreterSafe::from_buffer(&mnn).expect("interp");
-    let sess = interp.create_session(MnnBackendType::Cpu, 1).expect("sess");
+    let sess = interp.create_session(MnnBackendType::Vulkan, 1, false).expect("sess");
 
     let inp_values = [0.1f32, 0.2, 0.3];
     let mut inp_bytes = Vec::with_capacity(12);

@@ -20,7 +20,7 @@
 use std::time::Instant;
 
 use cam_isp::blocks::*;
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::pipeline::{BlockOpsetMode, GraphComposer, IspBlock};
 
 /// Chain with `extras` blocks between demosaic and display.
@@ -55,7 +55,7 @@ fn time_chain(w: u32, h: u32, extras: usize) -> Option<f64> {
     engine.build(head, blocks, None, 21).ok()?;
 
     let mut buf = vec![0u8; (w as usize) * (h as usize) * 2];
-    for c in buf.chunks_exact_mut(2) {
+    for c in buf.as_chunks_mut::<2>().0 {
         c[0] = (sample & 0xFF) as u8;
         c[1] = (sample >> 8) as u8;
     }

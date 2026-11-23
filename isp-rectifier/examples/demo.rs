@@ -87,10 +87,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         total += start.elapsed();
     }
     println!("  Average: {:.2} ms", total.as_secs_f64() * 1000.0 / 100.0);
-    println!(
-        "  FPS: {:.1f}",
-        1000.0 / (total.as_secs_f64() * 1000.0 / 100.0)
-    );
+    let fps = 1000.0 / (total.as_secs_f64() * 1000.0 / 100.0);
+    println!("  FPS: {:.1}", fps);
 
     println!("\n✅ Demo completed successfully!");
     Ok(())

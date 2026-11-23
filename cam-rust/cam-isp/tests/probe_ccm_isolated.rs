@@ -16,7 +16,7 @@
 #![cfg(feature = "mnn")]
 
 use cam_isp::blocks::*;
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::pipeline::{BlockOpsetMode, GraphComposer, IspBlock};
 
 const W: u32 = 256;
@@ -73,7 +73,7 @@ fn run_matrix(tag: &str, ccm_mode: BlockOpsetMode, ccm_matrix: Option<[f32; 9]>)
     }
 
     let mut buf = vec![0u8; (W as usize) * (H as usize) * 2];
-    for c in buf.chunks_exact_mut(2) {
+    for c in buf.as_chunks_mut::<2>().0 {
         c[0] = (sample & 0xFF) as u8;
         c[1] = (sample >> 8) as u8;
     }
