@@ -310,10 +310,7 @@ impl FuseStages {
                 "isp.unpack_blc_normal_cfa",
             ]
         } else if self.unpack16_blc_normal_cfa {
-            vec![
-                "isp.unpack16_blc_normal_cfa",
-                "isp.unpack_blc_normal_cfa",
-            ]
+            vec!["isp.unpack16_blc_normal_cfa", "isp.unpack_blc_normal_cfa"]
         } else if self.unpack_blc_normal_cfa {
             vec!["isp.unpack_blc_normal_cfa"]
         } else {
