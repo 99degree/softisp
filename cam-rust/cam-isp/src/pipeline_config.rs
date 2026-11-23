@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn test_param_values() {
         let val_int: ParamValue = 42i64.into();
-        let val_float: ParamValue = f64::consts::PI.into();
+        let val_float: ParamValue = 3.14.into();
         let val_str: ParamValue = "test".into();
         let val_bool: ParamValue = true.into();
 
