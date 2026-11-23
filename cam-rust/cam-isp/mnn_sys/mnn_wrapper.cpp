@@ -23,6 +23,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
+#include <unistd.h>
 
 // ── Last inference error ───────────────────────────────────────────────
 // `mnn_run_with_output` can fail for several distinct reasons that all
