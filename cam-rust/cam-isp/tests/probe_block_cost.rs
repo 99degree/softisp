@@ -11,7 +11,6 @@
 
 #![cfg(feature = "mnn")]
 
-
 use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
 use cam_isp::profile::PipelineProfile;
 

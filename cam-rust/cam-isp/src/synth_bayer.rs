@@ -221,7 +221,9 @@ mod tests {
         let buf = bayer_rainbow(1920, 1080);
         assert_eq!(buf.len(), 1920 * 1080 * 2);
         let max_val = buf
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .max()
             .unwrap();
@@ -234,7 +236,9 @@ mod tests {
     fn test_bayer_maze_has_variation() {
         let buf = bayer_maze(256, 256);
         let vals: Vec<u16> = buf
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         let min = *vals.iter().min().unwrap();
@@ -248,7 +252,9 @@ mod tests {
         assert_eq!(buf.len(), 640 * 480 * 2);
         // No pixel should be zero (diffuse patterns have non-zero min)
         let min_val = buf
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .min()
             .unwrap();
@@ -259,7 +265,9 @@ mod tests {
     fn test_bayer_stress_full_range() {
         let buf = bayer_stress(320, 240);
         let vals: Vec<u16> = buf
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         let min = *vals.iter().min().unwrap();
