@@ -95,9 +95,13 @@ enum InputMode {
     /// width, so the split stays 16-bit: half the scratch memory of
     /// [`Self::SplitInt32`] and no widening pass.
     SplitInt16,
-    /// `[1,2,H,W/2]` FLOAT32 — native 2×int16 buffer split into even/odd f32
-    /// lanes on CPU. MNN's ONNX→MNN converter upcasts INT16-declared graph
-    /// inputs to FLOAT32, so a "2×int16" model arrives here as float.
+    /// `[1,2,H,W/2]` FLOAT32 — the same two lanes, widened to f32 on the host.
+    ///
+    /// Reached only when the converted model really declares a float input with
+    /// two channels. The width the graph ends up with is decided by the block's
+    /// ONNX `value_info` (INT16 stays INT16 / INT32 stays INT32), not by the
+    /// converter widening anything, so a two-lane float model is a deliberate
+    /// declaration rather than an accidental upcast.
     SplitFloat,
     /// `[1,1,H,W]` FLOAT32 — native int16 buffer converted to f32 on CPU
     /// (unpack_blc16 / UnpackCfa-style heads).
@@ -1779,8 +1783,17 @@ impl IspEngine for MnnEngine {
             // calls resizeSession on-demand if the element count changed,
             // so we skip our own call when the shape hasn't changed.
             let t_tensor_before: std::time::Instant = Instant::now();
+            // The extent the FRAME input takes. It has to match what the feed
+            // below hands over, or `resize` propagates a shape twice the width of
+            // the buffer:
+            //   split lanes          [1,2,H,W/2]
+            //   packed-word RAW      [1,1,H,W/2]  (u16 samples seen as int32 words)
+            //   one sample per pixel [1,1,H,W]
+            let packed_words = matches!(self.model_input_type, Some((0, 32)));
             let shape = if split {
                 vec![1, 2, h as i32, (w / 2).max(1) as i32]
+            } else if packed_words {
+                vec![1, 1, h as i32, (w / 2).max(1) as i32]
             } else {
                 vec![1, 1, h as i32, w as i32]
             };
@@ -2027,44 +2040,33 @@ impl IspEngine for MnnEngine {
                 }
                 InputMode::RawInt => {
                     // The graph head decides the wire dtype, not the enum name:
-                    //   isp.unpack16_blc_normal_cfa → INT16 input  → zero-copy u16 buffer
-                    //   isp.unpack32_blc_normal_cfa → FLOAT32 input → widen u16→f32 on CPU,
-                    //                                then feed the raw_f32 path
+                    //   isp.unpack16_blc_normal_cfa → INT16 input → zero-copy u16 buffer
+                    //   isp.unpack32_blc_normal_cfa → INT32 input → zero-copy u16 buffer
+                    //                                  (W/2 int32 words per row; the shader
+                    //                                   splits each word into its two int16
+                    //                                   lanes, then converts to float)
                     // RawInt is only reached when the converter declared a single
-                    // non-packed channel, so [1,1,H,W] holds one sample per pixel.
-                    let raw_shape = [1, 1, h as i32, w as i32];
+                    // non-packed channel, so one sample (or one packed word per two
+                    // samples) per lane.
                     let (code, bits) = self.model_input_type.unwrap_or((0, 16));
-                    if code == 2 && bits == 32 {
-                        // Model expects FLOAT32 (isp.unpack32_blc_normal_cfa head):
-                        // widen the INT16 sensor buffer to f32 on CPU so the shader
-                        // receives the dtype it compiled for.
-                        let total = (w as usize) * (h as usize);
-                        let mut guard = self.scratch_f32.lock().unwrap();
-                        if guard.len() != total {
-                            guard.resize(total, 0.0);
-                        }
-                        let u16s: &[u16] = unsafe {
-                            std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
-                        };
-                        for i in 0..total {
-                            guard[i] = u16s[i] as f32;
-                        }
-                        (
-                            guard.as_ptr() as *const c_void,
-                            2, // FLOAT32
-                            32,
-                            raw_shape.to_vec(),
-                            "raw_zero_copy",
-                        )
+                    // A 32-bit integer RAW input is the packed-word form: W*H
+                    // contiguous u16 samples are W/2 int32 words per row, so the
+                    // row extent halves and the byte count stays W*H*2. Feeding
+                    // the un-halved shape declares twice the elements the buffer
+                    // holds and the resize/upload is rejected.
+                    let packed_words = code == 0 && bits == 32;
+                    let raw_shape = if packed_words {
+                        [1, 1, h as i32, (w / 2).max(1) as i32]
                     } else {
-                        (
-                            buf.as_ptr() as *const c_void,
-                            code,
-                            bits,
-                            raw_shape.to_vec(),
-                            "raw_zero_copy",
-                        )
-                    }
+                        [1, 1, h as i32, w as i32]
+                    };
+                    (
+                        buf.as_ptr() as *const c_void,
+                        code,
+                        bits,
+                        raw_shape.to_vec(),
+                        "raw_zero_copy",
+                    )
                 }
             };
 
