@@ -33,6 +33,11 @@ pub struct PipelineResult {
     pub exposure_gain: f32,
     /// Channel means from controller.
     pub channel_means: [f32; 3],
+    /// Optional externally-owned buffer that MNN wrote into directly.
+    ///
+    /// When zero-copy inference was used, this points to the caller's
+    /// buffer (e.g. an `AHardwareBuffer`) instead of `data`.
+    pub external_data: Option<crate::pipeline::ExternalBuffer>,
 }
 
 /// Pipeline state flags.
@@ -223,6 +228,8 @@ impl PipelineManager {
             blc_values: None,
             warp_grid: None,
             warp_shading: None,
+            input_buffer: None,
+            output_buffer: None,
             target_height: height,
             output_format: self.output_format,
             timestamp_ns: 0,
@@ -253,6 +260,7 @@ impl PipelineManager {
             estimated_cct,
             exposure_gain,
             channel_means,
+            external_data: frame.external_data.clone(),
         })
     }
 
@@ -418,6 +426,7 @@ mod tests {
             estimated_cct: None,
             exposure_gain: 1.0,
             channel_means: [0.5; 3],
+            external_data: None,
         };
         assert_eq!(r.width, 0);
         assert!(r.data.is_empty());

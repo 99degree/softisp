@@ -317,6 +317,7 @@ impl UnifiedPipeline {
                 prep_duration_ns: 0,
                 inference_duration_ns: 0,
                 total_duration_ns: 0,
+                external_data: None,
             };
             self.controller.analyze_and_update(&frame)
         };
@@ -379,6 +380,7 @@ impl UnifiedPipeline {
             prep_duration_ns: 0,
             inference_duration_ns: 0,
             total_duration_ns: 0,
+            external_data: None,
         };
         let isp_params = self.controller.analyze_and_update(&frame_for_analysis);
         frame_for_analysis.params = isp_params.clone();
@@ -485,6 +487,7 @@ impl UnifiedPipeline {
                                 prep_duration_ns: post_output.prep_duration_ns,
                                 inference_duration_ns: post_output.inference_duration_ns,
                                 total_duration_ns: post_output.total_duration_ns,
+                                external_data: None,
                             }
                         }
                         Err(e) => {
@@ -652,6 +655,7 @@ impl UnifiedPipeline {
                             prep_duration_ns: 0,
                             inference_duration_ns: 0,
                             total_duration_ns: 0,
+                            external_data: None,
                         })
                         .clone(),
                 );
@@ -716,6 +720,7 @@ impl UnifiedPipeline {
             prep_duration_ns: 0,
             inference_duration_ns: 0,
             total_duration_ns: 0,
+            external_data: None,
         };
 
         // Apply GPU warp on stitched result if needed

@@ -118,7 +118,36 @@ pub struct IspFrame {
     pub inference_duration_ns: u64,
     /// Total pipeline duration (ns).
     pub total_duration_ns: u64,
+    /// Optional externally-owned buffer that MNN wrote into directly.
+    ///
+    /// When zero-copy inference is used (`ProcessParams.output_buffer`),
+    /// MNN writes the result into the caller's buffer instead of the
+    /// engine's heap-allocated `data`. This field holds a pointer + length
+    /// into that external memory, and `data` will be empty.
+    ///
+    /// SAFETY: The pointer must remain valid for the lifetime of the frame
+    /// consumer; the engine does not own this memory.
+    pub external_data: Option<ExternalBuffer>,
 }
+
+/// An externally-owned byte buffer that is not `Send`/`Sync` by virtue of
+/// containing a raw pointer, but is explicitly marked `Send` because the
+/// caller guarantees the buffer outlives any frame that references it.
+///
+/// Used for zero-copy inference output: MNN writes into caller-provided
+/// memory (e.g. an `AHardwareBuffer` or memfd) and the engine hands back
+/// a descriptor instead of copying pixels.
+#[derive(Debug, Clone)]
+pub struct ExternalBuffer {
+    pub ptr: *mut u8,
+    pub len: usize,
+}
+
+// The buffer is owned by the caller (Android HAL, memfd, CMA, etc.) and
+// its lifetime is managed externally, so it is safe to move between threads
+// as long as the caller guarantees it outlives the frame.
+unsafe impl Send for ExternalBuffer {}
+unsafe impl Sync for ExternalBuffer {}
 
 impl Default for IspAuxOutput {
     /// Everything empty except `stats_measured`, which defaults to `true`.
@@ -160,6 +189,7 @@ impl IspFrame {
             prep_duration_ns: 0,
             inference_duration_ns: 0,
             total_duration_ns: 0,
+            external_data: None,
         }
     }
 }

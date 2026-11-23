@@ -277,6 +277,7 @@ impl PostProcessPipeline {
                 prep_duration_ns: 0,
                 inference_duration_ns: 0,
                 total_duration_ns: 0,
+                external_data: None,
             };
             return Ok(frame);
         }
@@ -360,6 +361,7 @@ impl PostProcessPipeline {
             prep_duration_ns: 0,
             inference_duration_ns: 0,
             total_duration_ns: 0,
+            external_data: None,
         };
         Ok(frame)
     }

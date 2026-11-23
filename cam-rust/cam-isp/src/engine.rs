@@ -128,7 +128,6 @@ pub fn default_tone_params() -> ToneParams {
 
 /// Unified parameter bundle for ISP pipeline processing.
 /// Instead of passing 15 positional args to process(), construct this once.
-#[derive(Clone)]
 pub struct ProcessParams<'a> {
     pub width: u32,
     pub height: u32,
@@ -151,6 +150,33 @@ pub struct ProcessParams<'a> {
     pub warp_grid: Option<&'a [f32]>,
     /// Warp shading LUT `[1,3,H,W]` f32 — fed as runtime extra_input.
     pub warp_shading: Option<&'a [f32]>,
+    /// Optional caller-supplied input buffer for zero-copy inference.
+    ///
+    /// When `Some`, MNN reads the sensor frame directly from this buffer
+    /// instead of from `buf`. The caller (e.g. Android HAL) must ensure:
+    ///   1. The buffer remains valid (and locked) for the duration of `process()`.
+    ///   2. `input_len` matches the expected input size.
+    ///   3. The data type matches what the graph's input tensor expects.
+    ///
+    /// This avoids the intermediate `Vec<u8>` allocation and the
+    /// `AHardwareBuffer → Vec` memcpy on the input side. On the Vulkan
+    /// backend MNN still does a host→device transfer internally, but the
+    /// extra copy into a heap buffer is eliminated.
+    pub input_buffer: Option<(*mut u8, usize)>,
+
+    /// Optional caller-supplied output buffer for zero-copy inference.
+    ///
+    /// When `Some`, MNN writes the inference result directly into this buffer
+    /// via `mnn_run_true_zero_copy` instead of allocating a temporary
+    /// `Vec<u8>` and copying. The caller must ensure:
+    ///   1. The buffer remains valid for the duration of `process()`.
+    ///   2. `output_len` is at least as large as the graph output will produce.
+    ///   3. The data type matches what the graph's output tensor expects.
+    ///
+    /// The engine still reads back the output tensor shape/type to validate
+    /// the buffer size; if the graph output exceeds `output_len`, inference
+    /// is aborted with an error rather than silently truncating.
+    pub output_buffer: Option<(*mut u8, usize)>,
     /// Output format: PackedInt32 (raw) or Bgra (converted).
     pub output_format: OutputFormat,
     /// Capture timestamp in nanoseconds (from HAL/framework). Passed through to IspFrame.
@@ -184,6 +210,8 @@ impl<'a> ProcessParams<'a> {
             blc_values: None,
             warp_grid: None,
             warp_shading: None,
+            input_buffer: None,
+            output_buffer: None,
         }
     }
 

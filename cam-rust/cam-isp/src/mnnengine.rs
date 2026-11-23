@@ -40,7 +40,7 @@ type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 
 use crate::controller::IspController;
 use crate::engine::{IspEngine, OutputFormat, ProcessParams};
-use crate::pipeline::{IspAuxOutput, IspBlock, IspFrame};
+use crate::pipeline::{ExternalBuffer, IspAuxOutput, IspBlock, IspFrame};
 use cam_types::{FrameFormat, ToneParams};
 
 #[cfg(feature = "mnn")]
@@ -1768,11 +1768,30 @@ impl IspEngine for MnnEngine {
             );
 
             // ── Pre-allocate output buffer (zero-copy target) ──
-            // MNN writes directly into this Vec via host pointer.
-            // We return it as frame.data — no memcpy at all.
-            let max_out = (tw * h * 4) as usize; // max f32 elements: H×W×4
-            let mut out_bytes: Vec<u8> = vec![0u8; max_out * 4];
-            let out_ptr = out_bytes.as_mut_ptr() as *mut f32;
+            //
+            // When the caller supplied `output_buffer`, MNN writes directly into
+            // it via `mnn_run_true_zero_copy` — no temporary Vec, no memcpy.
+            // Otherwise we allocate a heap Vec and use `mnn_run_with_output`
+            // (which does copyFromHostTensor / copyToHostTensor).
+            let mut out_bytes: Vec<u8> = Vec::new();
+            let mut out_ptr: *mut f32 = std::ptr::null_mut();
+            let mut max_out: i32 = 0;
+            let zero_copy = p.output_buffer.is_some();
+            if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref() {
+                // The caller's buffer must hold at least max_out f32 elements.
+                max_out = (buf_len / 4) as i32;
+                if max_out <= 0 {
+                    return Err(crate::error::IspError::Config(
+                        "output_buffer too small for zero-copy inference".into(),
+                    ));
+                }
+                out_ptr = buf_ptr as *mut f32;
+            } else {
+                let alloc_max_out = (tw * h * 4) as usize; // max f32 elements: H×W×4
+                out_bytes = vec![0u8; alloc_max_out * 4];
+                out_ptr = out_bytes.as_mut_ptr() as *mut f32;
+                max_out = (alloc_max_out * 4) as i32 / 4;
+            }
 
             // Determine inference path based on the model's input convention
             // (inferred at build() from the converted model's shape + type).
@@ -2069,8 +2088,17 @@ impl IspEngine for MnnEngine {
                     } else {
                         [1, 1, h as i32, w as i32]
                     };
+                    // Zero-copy input: if the caller supplied input_buffer,
+                    // pass its pointer directly instead of p.buf.  This
+                    // eliminates the AHardwareBuffer → Vec<u8> memcpy on the
+                    // input side.
+                    let input_ptr = if let Some(&(ptr, _)) = p.input_buffer.as_ref() {
+                        ptr as *const c_void
+                    } else {
+                        buf.as_ptr() as *const c_void
+                    };
                     (
-                        buf.as_ptr() as *const c_void,
+                        input_ptr,
                         code,
                         bits,
                         raw_shape.to_vec(),
@@ -2091,7 +2119,7 @@ impl IspEngine for MnnEngine {
             let path: &str = path_str;
             let t_prep_end: std::time::Instant = Instant::now();
             let t_infer_start: std::time::Instant = Instant::now();
-            let n: i32;
+            let mut n: i32;
             // Frame input tensor name for the FFI call (None → nullptr for
             // single-input models; MNN then picks its first input).
             let frame_name_c = self
@@ -2105,19 +2133,47 @@ impl IspEngine for MnnEngine {
                 .as_ref()
                 .map_or(std::ptr::null(), |c| c.as_ptr());
             unsafe {
-                n = crate::mnn_sys::mnn_run_with_output(
-                    interp.as_ptr(),
-                    sess.as_ptr(),
-                    frame_name_ptr,
-                    buffer_ptr,
-                    buffer_type_code,
-                    buffer_type_bits,
-                    input_shape.as_ptr(),
-                    input_shape.len() as i32,
-                    output_name_ptr.as_ptr(),
-                    out_ptr,
-                    max_out as i32,
-                );
+                // Choose the inference path: true zero-copy (caller's buffer)
+                // or the standard copy-in/copy-out path.
+                if zero_copy {
+                    n = crate::mnn_sys::mnn_run_true_zero_copy(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        buffer_ptr,
+                        buffer_type_code,
+                        buffer_type_bits,
+                        input_shape.as_ptr(),
+                        input_shape.len() as i32,
+                        out_ptr,
+                        max_out,
+                    );
+                    // true_zero_copy returns 0 on success; convert to an
+                    // element count for the shared logic below.
+                    if n == 0 {
+                        // Determine the element count from the output tensor.
+                        if let Some(t) = interp.get_output(sess, &output_name) {
+                            n = t.shape().iter().map(|&d| d as i64).product::<i64>() as i32;
+                        } else {
+                            n = max_out;
+                        }
+                    } else if n < 0 {
+                        n = -1; // failure
+                    }
+                } else {
+                    n = crate::mnn_sys::mnn_run_with_output(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        frame_name_ptr,
+                        buffer_ptr,
+                        buffer_type_code,
+                        buffer_type_bits,
+                        input_shape.as_ptr(),
+                        input_shape.len() as i32,
+                        output_name_ptr.as_ptr(),
+                        out_ptr,
+                        max_out as i32,
+                    );
+                }
                 // ------------------------------------------------------------------
                 // Optional MNN profiling dump – prints per‑node timings if the
                 // MNN session was built with profiling enabled.
@@ -2244,16 +2300,26 @@ impl IspEngine for MnnEngine {
             let out_elems = n_valid.min(pixels * graph_channels);
             let graph_elem = if p.output_format.is_fp16() { 2 } else { 4 };
             let raw_bytes = out_elems * graph_elem;
-            unsafe {
-                out_bytes.set_len(raw_bytes);
-            }
 
             // Narrow f32 `[0,255]` → u8 only for the graph-native float path.
             // The graph does all colour work; this is only the type cast the
             // ONNX graph cannot express for a u8 consumer.
-            let data_out = if p.output_format.is_raw_output() || packed_display {
+            let data_out = if zero_copy {
+                // MNN wrote directly into the caller's buffer via
+                // mnn_run_true_zero_copy. Do NOT touch `out_bytes` — it is an
+                // empty placeholder Vec and calling set_len() on it would be
+                // UB (no allocation backs it). Return empty data; the real
+                // pixels live in `external_data` (set below).
+                Vec::new()
+            } else if p.output_format.is_raw_output() || packed_display {
+                unsafe {
+                    out_bytes.set_len(raw_bytes);
+                }
                 out_bytes
             } else {
+                unsafe {
+                    out_bytes.set_len(raw_bytes);
+                }
                 Self::f32_to_u8(&out_bytes)
             };
 
@@ -2520,7 +2586,21 @@ impl IspEngine for MnnEngine {
                 t_infer_elapsed);
             let total_duration_ns = t_total_elapsed.as_nanos() as u64;
             let mut frame = IspFrame::new(ow as u32, oh as u32, FrameFormat::Rgba8888);
-            frame.data = data_out;
+            if zero_copy {
+                // MNN wrote directly into the caller's buffer; hand back the
+                // external pointer so the consumer can display without a memcpy.
+                if let Some(&(ptr, _)) = p.output_buffer.as_ref() {
+                    frame.data = Vec::new(); // data is empty; external_data owns the pixels
+                    frame.external_data = Some(ExternalBuffer {
+                        ptr,
+                        len: out_elems * graph_elem,
+                    });
+                } else {
+                    frame.data = data_out;
+                }
+            } else {
+                frame.data = data_out;
+            }
             // Propagate controller params from ProcessParams to output frame
             frame.params = p.isp_params.clone().unwrap_or_default();
             // Stats are fed into the controller above (not returned in IspAuxOutput).

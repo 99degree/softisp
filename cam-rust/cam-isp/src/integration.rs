@@ -229,9 +229,8 @@ impl CameraIspService {
         input: &mut CameraInputBuffer,
         output: &mut IspOutputBuffer,
     ) -> Result<(), String> {
-        let mut params = crate::engine::ProcessParams::new(input.width, input.height, unsafe {
-            std::slice::from_raw_parts(input.ptr, input.size)
-        });
+        let input_slice = unsafe { std::slice::from_raw_parts(input.ptr, input.size) };
+        let mut params = crate::engine::ProcessParams::new(input.width, input.height, input_slice);
         params.sensor_max = self.config.sensor_max;
         params.bayer_pattern = self.config.bayer_pattern;
         params.timestamp_ns = SystemTime::now()
@@ -239,21 +238,41 @@ impl CameraIspService {
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
 
+        // Hand the input buffer directly to MNN so inference reads from it
+        // without a temporary heap allocation or an AHardwareBuffer → Vec copy.
+        params.input_buffer = Some((input.ptr, input.size));
+
+        // Hand the output buffer directly to MNN so inference writes into it
+        // without a temporary heap allocation or a memcpy at the end.
+        params.output_buffer = Some((output.ptr, output.size));
+
         let frame = self.engine.process(&params).map_err(|e| e.to_string())?;
 
-        // Copy output to zero-copy buffer
-        if frame.data.len() <= output.size {
+        // If MNN wrote into the external buffer, nothing to copy — the caller
+        // already owns the pixels via `output.ptr`. Otherwise copy from the
+        // engine's heap buffer.
+        if let Some(ext) = frame.external_data {
+            if ext.len > output.size {
+                return Err(format!(
+                    "Output buffer too small: need {}, have {}",
+                    ext.len, output.size
+                ));
+            }
+            // Data already lives in output.ptr; just mark it as used.
+            let _ = ext.ptr;
+        } else if frame.data.len() <= output.size {
             unsafe {
                 std::ptr::copy_nonoverlapping(frame.data.as_ptr(), output.ptr, frame.data.len());
             }
-            Ok(())
         } else {
-            Err(format!(
+            return Err(format!(
                 "Output buffer too small: need {}, have {}",
                 frame.data.len(),
                 output.size
-            ))
+            ));
         }
+
+        Ok(())
     }
 
     /// Get the underlying engine for advanced use
