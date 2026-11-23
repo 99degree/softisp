@@ -1,7 +1,7 @@
 //! Build script for cam-isp.
 //!
 //! Native libraries are stored in a single canonical location:
-//!   repo-root/lib/<abi>/
+//!   cam-rust/lib/<abi>/
 //!
 //! Supported ABIs:
 //!   - aarch64-v8a   (Android arm64)
@@ -18,8 +18,8 @@
 //! Override with:
 //!   MNN_DIR           — MNN source/build root (default: $HOME/MNN)
 //!   MNN_INCLUDE_DIR   — MNN include directory (default: $MNN_DIR/include)
-//!   MNN_LIB_DIR       — libMNN.so build directory (default: $MNN_DIR/build_vk/OFF)
-//!   MNN_CONVERT_DIR   — libMNNConvertDeps.so build directory (default: $MNN_DIR/build_vk/tools/converter/OFF)
+//!   MNN_LIB_DIR       — libMNN.so build directory (default: $MNN_DIR/build_isp)
+//!   MNN_CONVERT_DIR   — libMNNConvertDeps.so build directory (default: $MNN_DIR/build_isp/tools/converter)
 //!   MNN_CONVERT_INCLUDE_DIR — converter headers (default: $MNN_DIR/tools/converter/include)
 //!   MNN_SCHEMA_DIR    — generated flatbuffer headers (default: $MNN_DIR/schema/current)
 //!   ORT_LIB_DIR       — path to prebuilt libonnxruntime.so directory
@@ -335,19 +335,19 @@ fn link_mnn() {
     // Also copy companion shared libraries from their build locations
     let mnn_root = mnn_dir();
     copy_if_newer(
-        &mnn_root.join("build_vk/source/backend/vulkan/OFF/libMNN_Vulkan.so"),
+        &mnn_root.join("build_isp/libMNN_Vulkan.so"),
         &abi_dir.join("libMNN_Vulkan.so"),
     );
     copy_if_newer(
-        &mnn_root.join("build_vk/express/OFF/libMNN_Express.so"),
+        &mnn_root.join("build_isp/libMNN_Express.so"),
         &abi_dir.join("libMNN_Express.so"),
     );
     copy_if_newer(
-        &mnn_root.join("build_vk/tools/converter/OFF/libMNNConvertDeps.so"),
+        &mnn_root.join("build_isp/tools/converter/libMNNConvertDeps.so"),
         &abi_dir.join("libMNNConvertDeps.so"),
     );
     copy_if_newer(
-        &mnn_lib_src().join("../source/backend/vulkan/OFF/libMNN_Vulkan.so"),
+        &mnn_lib_src().join("source/backend/vulkan/libMNN_Vulkan.so"),
         &abi_dir.join("libMNN_Vulkan.so"),
     );
 
@@ -674,14 +674,14 @@ fn mnn_schema_dir() -> PathBuf {
 fn mnn_lib_src() -> PathBuf {
     std::env::var_os("MNN_LIB_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| mnn_dir().join("build_vk/OFF"))
+        .unwrap_or_else(|| mnn_dir().join("build_isp"))
 }
 
 #[allow(dead_code)]
 fn mnn_convert_lib_src() -> PathBuf {
     std::env::var_os("MNN_CONVERT_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| mnn_dir().join("build_vk/tools/converter/OFF"))
+        .unwrap_or_else(|| mnn_dir().join("build_isp/tools/converter"))
 }
 
 #[allow(dead_code)]
