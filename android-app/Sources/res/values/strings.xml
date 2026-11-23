@@ -1,13 +1,75 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">SoftISP Camera</string>
-    <string name="camera_error">Camera error</string>
-    <string name="processing">Processing frame...</string>
-    <string name="start">Start</string>
-    <string name="stop">Stop</string>
-    <string name="switch_camera">Switch Camera</string>
-    <string name="capture">Capture</string>
-    <string name="initializing">Initializing SoftISP...</string>
-    <string name="model_composed">Model composed: %1$s %2$d×%3$d (%4$d bytes)</string>
-    <string name="frame_processed">Frame processed: %1$dx%2$d</string>
+    <string name="app_name">CamApp</string>
+    <string name="bayer_label">Bayer RAW</string>
+    <string name="processed_label">Processed</string>
+    <string name="reference_label">Reference</string>
+    <string name="onnx_isp_label">ONNX ISP</string>
+    <string name="tap_to_focus">Tap to focus</string>
+    <string name="tap_to_expose">Tap to expose</string>
+    <string name="pinch_to_zoom">Pinch to zoom</string>
+    <string name="swipe_to_compare">Swipe to compare</string>
+
+    <!-- ISP Controls -->
+    <string name="ev">EV</string>
+    <string name="wb_mode">WB Mode</string>
+    <string name="brightness">Brightness</string>
+    <string name="contrast">Contrast</string>
+    <string name="saturation">Saturation</string>
+    <string name="highlights">Highlights</string>
+    <string name="shadows">Shadows</string>
+    <string name="denoise">Denoise</string>
+    <string name="sharpen">Sharpen</string>
+    <string name="ccm">CCM</string>
+
+    <!-- Locks -->
+    <string name="ae_lock">AE Lock</string>
+    <string name="af_lock">AF Lock</string>
+    <string name="wb_lock">WB Lock</string>
+
+    <!-- Models -->
+    <string name="select_model">Select Model</string>
+    <string name="algo_model">algo.onnx</string>
+    <string name="applier_model">applier.onnx</string>
+    <string name="no_models">No ONNX models found.\nPlace .onnx + .meta.json in /sdcard/CamApp/models/</string>
+    <string name="model_not_loaded">Model not loaded</string>
+
+    <!-- Pipeline -->
+    <string name="pipeline_editor">Pipeline Editor</string>
+    <string name="add_post_proc">Add Post-Processing</string>
+    <string name="clear_pipeline">Clear Pipeline</string>
+
+    <!-- Creative -->
+    <string name="creative_assist">Creative Assist</string>
+    <string name="creative_prompt_hint">Describe your desired look...</string>
+    <string name="generate">Generate</string>
+    <string name="apply_preset">Apply Preset</string>
+    <string name="presets">Presets</string>
+
+    <!-- Transform -->
+    <string name="transform">Transform</string>
+    <string name="follow_action">Follow Action</string>
+    <string name="cat_ears">Cat Ears</string>
+    <string name="dog_face">Dog Face</string>
+    <string name="angel_wings">Angel Wings</string>
+    <string name="monster">Monster</string>
+
+    <!-- Dual Camera -->
+    <string name="dual_cam">Dual Camera</string>
+    <string name="depth">Depth</string>
+    <string name="bokeh">Bokeh</string>
+
+    <!-- Status -->
+    <string name="fps">FPS: %1$.1f</string>
+    <string name="resolution">%1$dx%2$d</string>
+    <string name="zoom">%1$.1fx</string>
+    <string name="latency">%1$dms</string>
+
+    <!-- Actions -->
+    <string name="save">Save</string>
+    <string name="close">Close</string>
+    <string name="reset">Reset</string>
+    <string name="apply">Apply</string>
+    <string name="settings">Settings</string>
+    <string name="histogram">Histogram</string>
 </resources>

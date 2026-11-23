@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Block type names for display -->
+    <string-array name="block_names">
+        <item>RawInput</item>
+        <item>Crop</item>
+        <item>Normalize</item>
+        <item>BadPixel</item>
+        <item>Cfa (Unpack)</item>
+        <item>Blc (Black Level)</item>
+        <item>Demosaic</item>
+        <item>WbGains</item>
+        <item>Downscale</item>
+        <item>Ccm</item>
+        <item>Tone</item>
+        <item>LocalContrast</item>
+        <item>Unsharp</item>
+        <item>Display</item>
+    </string-array>
+
+    <!-- Block icons (emoji fallback, no icon font needed) -->
+    <string-array name="block_icons">
+        <item>📥</item>
+        <item>✂️</item>
+        <item>⚖️</item>
+        <item>🔧</item>
+        <item>🔲</item>
+        <item>⬛</item>
+        <item>🟩</item>
+        <item>🌈</item>
+        <item>🔽</item>
+        <item>🎨</item>
+        <item>☀️</item>
+        <item>✨</item>
+        <item>🔪</item>
+        <item>🖥️</item>
+    </string-array>
+
+    <!-- Block colors (ARGB hex) -->
+    <string-array name="block_colors">
+        <item>#FF4CAF50</item>
+        <item>#FFFF9800</item>
+        <item>#FF9C27B0</item>
+        <item>#FFFF5722</item>
+        <item>#FF00BCD4</item>
+        <item>#FF607D8B</item>
+        <item>#FF4CAF50</item>
+        <item>#FFFFEB3B</item>
+        <item>#FF2196F3</item>
+        <item>#FFE91E63</item>
+        <item>#FFFF9800</item>
+        <item>#FF00E5FF</item>
+        <item>#FF7C4DFF</item>
+        <item>#FF9E9E9E</item>
+    </string-array>
+</resources>

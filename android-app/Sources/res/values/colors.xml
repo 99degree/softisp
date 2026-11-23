@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_500">#7C4DFF</color>
+    <color name="purple_700">#651FFF</color>
+    <color name="teal_200">#1DE9B6</color>
+    <color name="surface_dark">#1A1A2E</color>
+    <color name="surface_card">#16213E</color>
+    <color name="accent_green">#00E676</color>
+    <color name="accent_amber">#FFD740</color>
+    <color name="accent_orange">#FF6D00</color>
+    <color name="accent_blue">#2979FF</color>
+    <color name="text_secondary">#B0B0B0</color>
+    <color name="text_primary">#FFFFFF</color>
+</resources>

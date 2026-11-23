@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CamApp" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">#7C4DFF</item>
+        <item name="colorPrimaryDark">#651FFF</item>
+        <item name="colorAccent">#1DE9B6</item>
+        <item name="android:statusBarColor">#FF000000</item>
+        <item name="android:navigationBarColor">#FF000000</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+
+</resources>
