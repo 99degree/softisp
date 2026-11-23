@@ -58,6 +58,9 @@ pub mod warp_engine;
 pub use warp_engine::GpuWarpParams;
 
 pub mod auto_profile;
+
+#[cfg(feature = "mnn")]
+pub mod dual_engine;
 pub mod frame_rate;
 #[cfg(test)]
 pub mod gpu_probe;

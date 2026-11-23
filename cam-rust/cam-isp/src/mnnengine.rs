@@ -313,6 +313,12 @@ impl MnnEngine {
         self.preserve_input_type
     }
 
+    /// Set the shared ISP controller. Used by dual-engine mode so that both
+    /// engine instances read the same AWB/AE/CCM/tone state.
+    pub fn set_controller(&mut self, ctrl: Mutex<IspController>) {
+        self.controller = ctrl;
+    }
+
     /// Choose fp16 (`true`, the default) or fp32 (`false`) tensor storage.
     ///
     /// Applies to the whole graph, not just the frame: the Vulkan backend's
@@ -442,15 +448,26 @@ impl MnnEngine {
     fn register_with_defaults() {
         use crate::engine::register_engine;
         use crate::engine::EngineFactory;
-        // Vulkan is the only supported MNN backend.
+        // Vulkan is the only supported MNN backend. Register two factory
+        // instances so `select_engine_by_name("mnn_vulkan_a")` and
+        // `select_engine_by_name("mnn_vulkan_b")` hand out two independent
+        // engines for dual-GPU ping-pong.
         let b = MnnBackend::Vulkan;
-        let create_fn = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
+        let create_fn_a = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
+        let create_fn_b = Box::new(move || Box::new(MnnEngine::new(b)) as Box<dyn IspEngine>);
         register_engine(EngineFactory {
-            name: b.id(),
+            name: "mnn_vulkan_a",
             priority: b.priority(),
-            create_fn,
+            create_fn: create_fn_a,
         });
-        info!("Registered MNN engine factory mnn_vulkan (default priority)");
+        register_engine(EngineFactory {
+            name: "mnn_vulkan_b",
+            priority: b.priority(),
+            create_fn: create_fn_b,
+        });
+        info!(
+            "Registered MNN engine factories mnn_vulkan_a and mnn_vulkan_b (default priority)"
+        );
     }
 
     /// Build a comprehensive benchmark .mnn model exercising all pipeline ops:
