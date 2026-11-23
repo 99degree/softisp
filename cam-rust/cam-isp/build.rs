@@ -479,6 +479,21 @@ fn link_mnnconvert() {
             .include(mnn_schema_dir())
             .include(vendor_mnn_dir().join("3rd_party/flatbuffers/include"));
 
+        // `MNN_HAS_PRESERVE_INPUT_TYPE` is a *C preprocessor* guard around
+        // `config.preserveInputType` in mnn_convert_api.cpp. Emitting it as
+        // `cargo:rustc-cfg` (what this detection used to do) only sets a Rust
+        // cfg and left the field unwritten, so the converter widened the
+        // INT16 RAW head input to FLOAT32 while `isp.unpack16_blc_normal_cfa`
+        // declares `int16_t in_data[]` — the shader then read float bytes as
+        // int16 and the quad came back as `mantissa halves / sensor_max`.
+        let config_hpp = convert_include.join("config.hpp");
+        println!("cargo:rerun-if-changed={}", config_hpp.display());
+        if let Ok(content) = std::fs::read_to_string(&config_hpp) {
+            if content.contains("preserveInputType") {
+                build.define("MNN_HAS_PRESERVE_INPUT_TYPE", "1");
+            }
+        }
+
         setup_cc_for_android(&mut build);
         build.compile("mnn_convert_api");
 

@@ -7,10 +7,14 @@
 //! by `sensor_max`, black-level subtraction, and Bayer quad-site selection.
 //!
 //! Bindings match the shader in `~/MNN/source/backend/vulkan/buffer/execution/isp_spv/`
-//! — note bindings 0,1,2, NOT the packed form's 3/5/6/7:
-//!   binding 0 = Uniforms {width, height, sensor_max, gain, blc_r, blc_gr, blc_gb, blc_b, bayer_pattern}
-//!   binding 1 = input INT16 plane (readonly)
-//!   binding 2 = output float quad planes (writeonly)
+//! and VulkanFuse's universal `isp.*` descriptor map (frame in@3, frame out@4,
+//! extras from 5):
+//!   binding 0 = Uniforms {width, height, ...}
+//!   binding 3 = input INT16 plane (readonly)  ← InBuf
+//!   binding 4 = output float quad planes       ← OutBuf
+//!   binding 5 = black level per colour (R, Gr, Gb, B)
+//!   binding 6 = sensor white level
+//!   binding 7 = CFA phase
 
 use crate::onnx::proto::Proto;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
@@ -86,8 +90,10 @@ impl NormalizeBlcUnpack16Cfa {
     /// full-resolution INT16 frame. The node takes **tensors**, not
     /// attributes, because `VulkanFuse` is positional.
     ///
-    /// Input order decides the binding (`input[0]` is the frame at 1, then
-    /// `input[1..]` fill 3, 5, 6, …), matching the shader's declarations.
+    /// Input order decides the binding (`input[0]` is the frame, then the
+    /// extras follow in order at the slots after the output), matching the
+    /// shader's declarations: InBuf@3, OutBuf@4, BlcBuf@5, MaxBuf@6,
+    /// BayerBuf@7.
     fn emit_mnn_isp_min_node(&self) -> Vec<u8> {
         let ns = self.tensor_ns();
         // The full name, not a bare one plus the domain: the converter copies
@@ -97,13 +103,13 @@ impl NormalizeBlcUnpack16Cfa {
             "isp.unpack16_blc_normal_cfa",
             "isp",
             &[
-                // binding 1 — `[1,1,H,W]` INT16 raw Bayer plane
+                // The frame — bound at InBuf@3 by VulkanFuse's universal map.
                 &self.input_source,
-                // binding 3 — black level per colour (R, Gr, Gb, B)
+                // binding 5 — black level per colour (R, Gr, Gb, B)
                 &format!("{}/blc_vals", ns),
-                // binding 5 — the sensor's white level
+                // binding 6 — the sensor's white level
                 &format!("{}/max_val", ns),
-                // binding 6 — CFA phase, so the shader maps colour -> plane
+                // binding 7 — CFA phase, so the shader maps colour -> plane
                 &format!("{}/bayer_pattern", ns),
             ],
             &[&self.frame_tensor],
@@ -247,6 +253,20 @@ impl IspBlock for NormalizeBlcUnpack16Cfa {
         Some(Proto::value_info(&self.frame_tensor, &dims, 1))
     }
 
+    fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
+        let ns = self.tensor_ns();
+        // `emit_mnn_isp_min_node` hands the shader three coefficient tensors, so
+        // they have to exist on the graph boundary or MNN has nothing to bind.
+        // Without this, `extra_input_defaults` warns "no tensor in the session",
+        // the shader reads unbound memory, and the quad comes back un-normalised
+        // (BLC and sensor_max never applied).
+        vec![
+            (format!("{}/blc_vals", ns), 1, vec![1, 4, 1, 1]),
+            (format!("{}/max_val", ns), 1, vec![1]),
+            (format!("{}/bayer_pattern", ns), 1, vec![1]),
+        ]
+    }
+
     fn extra_input_defaults(&self) -> Vec<(String, Vec<u8>)> {
         let blc_data: Vec<u8> = self
             .blc_offsets
@@ -259,15 +279,24 @@ impl IspBlock for NormalizeBlcUnpack16Cfa {
         vec![
             (format!("{}/blc_vals", self.tensor_ns()), blc_data),
             (format!("{}/max_val", self.tensor_ns()), max_data),
-            (
-                format!("{}/bayer_pattern", self.tensor_ns()),
-                pattern_data,
-            ),
+            (format!("{}/bayer_pattern", self.tensor_ns()), pattern_data),
         ]
     }
 
     fn opset_mode(&self) -> BlockOpsetMode {
         self.forced_mode.unwrap_or(BlockOpsetMode::Custom)
+    }
+
+    /// Declares this block as fusion-capable, which is what makes
+    /// `MnnEngine::chain_has_fused_op` force fp32 tensor storage for the session.
+    ///
+    /// The shader declares `float[]` storage buffers; MNN's Vulkan backend
+    /// allocates two bytes per element when fp16 is on, so without fp32 the
+    /// op reads halves as floats and the quad comes back ~100× too bright
+    /// (with NaNs where the halves land in the exponent) instead of
+    /// `count / sensor_max`.
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        Some(&["isp.unpack16_blc_normal_cfa"])
     }
 
     fn custom_opsets(&self) -> Vec<(String, i64)> {

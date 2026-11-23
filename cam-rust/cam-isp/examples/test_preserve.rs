@@ -31,6 +31,27 @@ fn main() {
     std::fs::write("_test_int16.onnx", &model).unwrap();
     println!("ONNX model written ({} bytes)", model.len());
 
+    // Buffer path — the one the engine actually uses at runtime
+    // (mnn_convert_onnx_to_mnn_buffer inside libMNNConvertDeps.so).
+    {
+        use cam_isp::mnn_converter::{convert_onnx_buffer, dump_mnn_to_json};
+        let mnn = convert_onnx_buffer(&model).expect("buffer conversion");
+        match dump_mnn_to_json(&mnn) {
+            Ok(json) => println!("  buffer JSON: {}", json),
+            Err(e) => println!("  buffer JSON dump failed: {}", e),
+        }
+        if let Some(interp) = MnnInterpreterSafe::from_buffer(&mnn) {
+            if let Some(sess) = interp.create_session(MnnBackendType::Vulkan, 1, false) {
+                let mut code = 0i32;
+                let mut bits = 0i32;
+                unsafe {
+                    mnn_get_model_input_type(interp.as_ptr(), sess.as_ptr(), &mut code, &mut bits);
+                }
+                println!("  buffer API: code={}, bits={}", code, bits);
+            }
+        }
+    }
+
     convert_onnx_to_mnn("_test_int16.onnx", "_test_int16_default.mnn", None).unwrap();
 
     let opts = MnnConvertOptions {
@@ -44,7 +65,7 @@ fn main() {
         ("preserved (flag)", "_test_int16_preserved.mnn"),
     ] {
         if let Some(interp) = MnnInterpreterSafe::from_file(path) {
-            if let Some(sess) = interp.create_session(MnnBackendType::Cpu, 1) {
+            if let Some(sess) = interp.create_session(MnnBackendType::Vulkan, 1, false) {
                 let mut code = 0i32;
                 let mut bits = 0i32;
                 unsafe {
