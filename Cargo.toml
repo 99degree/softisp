@@ -12,7 +12,7 @@ members = [
     "cam-rust/cam-motion",
     "cam-rust/cam-binder",
     "cam-rust/cam-disp",
-    "android-app/cam-camera-app",
+    "android-app",
 ]
 
 [workspace.dependencies]

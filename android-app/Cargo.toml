@@ -8,8 +8,8 @@ name = "cam_camera_app"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-cam-isp = { path = "../../cam-rust/cam-isp" }
-cam-types = { path = "../../cam-rust/cam-types" }
+cam-isp = { path = "../cam-rust/cam-isp" }
+cam-types = { path = "../cam-rust/cam-types" }
 log = { workspace = true }
 android-activity = { workspace = true }
 ndk-sys = { workspace = true }
