@@ -45,8 +45,8 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-            cam-rust/target
-          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('cam-rust/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -67,9 +67,6 @@ jobs:
             fi
             echo ""
           done
-          echo "=== clippy: cam-app ==="
-          cargo clippy -p cam-app --jobs $CARGO_BUILD_JOBS --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
-          echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed clippy"
             exit 1
@@ -131,7 +128,7 @@ jobs:
           cd /tmp
           git clone --depth 1 --branch 3.6.0 https://github.com/alibaba/MNN.git
           cd MNN
-          mkdir build_vk && cd build_vk
+          mkdir build_isp && cd build_isp
           cmake .. -G Ninja \
             -DMNN_BUILD_CONVERTER=ON \
             -DMNN_VULKAN=ON \
@@ -141,8 +138,8 @@ jobs:
           ninja -j$(nproc)
           sudo ninja install
           # Copy libs cmake doesn't install
-          find /tmp/MNN/build_vk -name "libMNN_Vulkan.so" -exec sudo cp {} /usr/local/lib/ \;
-          find /tmp/MNN/build_vk -name "libMNNConvertDeps.so" -exec sudo cp {} /usr/local/lib/ \;
+          find /tmp/MNN/build_isp -name "libMNN_Vulkan.so" -exec sudo cp {} /usr/local/lib/ \;
+          find /tmp/MNN/build_isp -name "libMNNConvertDeps.so" -exec sudo cp {} /usr/local/lib/ \;
           sudo ldconfig
           echo "=== Installed MNN libraries ==="
           ls -la /usr/local/lib/libMNN*.so
@@ -162,8 +159,8 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-            cam-rust/target
-          key: ${{ runner.os }}-cargo-lint-full-${{ hashFiles('cam-rust/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-lint-full-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-lint-
 
@@ -190,9 +187,6 @@ jobs:
             fi
             echo ""
           done
-          echo "=== clippy: cam-app ==="
-          cargo clippy -p cam-app --jobs $CARGO_BUILD_JOBS --all-features -- -D warnings 2>&1 || ERRORS=$((ERRORS+1))
-          echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed clippy"
             exit 1
@@ -236,8 +230,8 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-            cam-rust/target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('cam-rust/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -318,7 +312,7 @@ jobs:
           cd /tmp
           git clone --depth 1 --branch 3.6.0 https://github.com/alibaba/MNN.git
           cd MNN
-          mkdir build_vk && cd build_vk
+          mkdir build_isp && cd build_isp
           cmake .. -G Ninja \
             -DMNN_BUILD_CONVERTER=ON \
             -DMNN_VULKAN=ON \
@@ -327,8 +321,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr/local
           ninja -j$(nproc)
           sudo ninja install
-          find /tmp/MNN/build_vk -name "libMNN_Vulkan.so" -exec sudo cp {} /usr/local/lib/ \;
-          find /tmp/MNN/build_vk -name "libMNNConvertDeps.so" -exec sudo cp {} /usr/local/lib/ \;
+          find /tmp/MNN/build_isp -name "libMNN_Vulkan.so" -exec sudo cp {} /usr/local/lib/ \;
+          find /tmp/MNN/build_isp -name "libMNNConvertDeps.so" -exec sudo cp {} /usr/local/lib/ \;
           sudo ldconfig
           echo "=== Installed MNN libraries ==="
           ls -la /usr/local/lib/libMNN*.so
@@ -348,8 +342,8 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-            cam-rust/target
-          key: ${{ runner.os }}-cargo-test-mnn-${{ hashFiles('cam-rust/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-test-mnn-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-test-
 
@@ -432,7 +426,7 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-          key: ${{ runner.os }}-cargo-clean-${{ hashFiles('cam-rust/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-clean-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -453,9 +447,6 @@ jobs:
             fi
             echo ""
           done
-          echo "=== build app debug: cam-app (default features) ==="
-          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS 2>&1 || ERRORS=$((ERRORS+1))
-          echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed"
             exit 1
@@ -491,9 +482,6 @@ jobs:
             fi
             echo ""
           done
-          echo "=== build app release: cam-app (default features only, mnn requires external libs) ==="
-          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --release 2>&1 || ERRORS=$((ERRORS+1))
-          echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed"
             exit 1
@@ -564,7 +552,7 @@ jobs:
           cd /tmp
           git clone --depth 1 --branch 3.6.0 https://github.com/alibaba/MNN.git
           cd MNN
-          mkdir build_vk && cd build_vk
+          mkdir build_isp && cd build_isp
           cmake .. -G Ninja \
             -DMNN_BUILD_CONVERTER=ON \
             -DMNN_VULKAN=ON \
@@ -573,8 +561,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr/local
           ninja -j$(nproc)
           sudo ninja install
-          find /tmp/MNN/build_vk -name "libMNN_Vulkan.so" -exec sudo cp {} /usr/local/lib/ \;
-          find /tmp/MNN/build_vk -name "libMNNConvertDeps.so" -exec sudo cp {} /usr/local/lib/ \;
+          find /tmp/MNN/build_isp -name "libMNN_Vulkan.so" -exec sudo cp {} /usr/local/lib/ \;
+          find /tmp/MNN/build_isp -name "libMNNConvertDeps.so" -exec sudo cp {} /usr/local/lib/ \;
           sudo ldconfig
           echo "=== Installed MNN libraries ==="
           ls -la /usr/local/lib/libMNN*.so
@@ -594,7 +582,7 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-          key: ${{ runner.os }}-cargo-clean-mnn-${{ hashFiles('cam-rust/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-clean-mnn-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -621,9 +609,6 @@ jobs:
             fi
             echo ""
           done
-          echo "=== build app debug: cam-app (with MNN) ==="
-          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --features "mnn" 2>&1 || ERRORS=$((ERRORS+1))
-          echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed"
             exit 1
@@ -671,9 +656,6 @@ jobs:
             fi
             echo ""
           done
-          echo "=== build app release: cam-app (with MNN) ==="
-          cargo build -p cam-app --jobs $CARGO_BUILD_JOBS --release --features "mnn" 2>&1 || ERRORS=$((ERRORS+1))
-          echo ""
           if [ "$ERRORS" -ne 0 ]; then
             echo "❌ $ERRORS crate(s) failed"
             exit 1
