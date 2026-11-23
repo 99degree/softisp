@@ -12,7 +12,7 @@ SoftISP is a **complete camera ISP (Image Signal Processor) pipeline** implement
 Raw Bayer → BLC → White Balance → Demosaic → CCM → Tone → Display
 ```
 
-- **40+ ISP blocks** covering all standard camera processing
+- **52 ISP blocks** covering all standard camera processing
 - **Multiple pipeline profiles** (LITE/MED/HEAVY/PRO/UNIFIED)
 - **Real-time processing** at HD/FHD/4K resolutions
 
@@ -163,7 +163,7 @@ cargo run --example bench_heavy --release
 
 ## Build Status
 
-- ✅ **706+ unit tests passing**
+- ✅ **739 lib tests passing** (`cargo test --lib -p cam-isp`), 0 failures
 - ✅ **Vulkan GPU backend working**
 - ✅ **Neural controller integrated**
 - ✅ **4K processing verified**

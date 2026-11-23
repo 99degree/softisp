@@ -63,8 +63,8 @@ RUSTFLAGS="-C link-arg=-Wl,--warn-unresolved-symbols -C link-arg=-Wl,--noinhibit
 
 | Metric | Phone 1 | Phone 2 |
 |--------|---------|---------|
-| Total tests | 730 | |
-| Passed | 730 | |
+| Total tests | 813 | |
+| Passed | 813 | |
 | Failed | 0 | |
 | Ignored | 8 | |
 | Duration | 18.57s | |
@@ -219,7 +219,7 @@ needs_resize=false elapsed=~10µs   ← all subsequent frames (shape cached)
 
 | Category | Metric | Phone 1 (SD720G) | Phone 2 (SD888) | Delta |
 |----------|--------|-----------------|-----------------|-------|
-| **Unit** | Tests passed | 730/730 | **734/734** | +4 enabled |
+| **Unit** | Tests passed | 813/813 | **813/813** | +4 enabled |
 | **Integration** | Tests passed | 51/51 | 51/51 | — |
 | **4K→FHD** | FPS | 31.6 | **59.2** | **+87%** |
 | **4K→FHD** | Latency (ms) | 31.7 | **16.9** | **-47%** |

@@ -9,7 +9,7 @@ cargo test --lib -p cam-isp
 bash bench-tests.sh quick
 ```
 
-**Result:** 730 tests pass in ~18s
+**Result:** 813 tests pass in ~18s
 
 ## Extended Test (includes CPU pipeline)
 Runs all unit tests plus CPU pipeline integration tests (slow!):
@@ -87,7 +87,7 @@ test blocks::ccm::tests::test_ccm_with_channels ... ok      (FIXED)
 test blocks::ccm::tests::test_ccm_different_channels ... ok  (FIXED)
 test blocks::ccm::tests::test_ccm_nodes ... ok
 ...
-test result: ok. 730 passed; 0 failed; 8 ignored
+test result: ok. 813 passed; 0 failed; 2 ignored
 ```
 
 **Recent fix:** CCM block 4-channel support - matrix/bias changed from fixed `[f32;9]`/`[f32;3]` to `Vec<f32>` with dynamic sizing in `with_channels(ch)`.

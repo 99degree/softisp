@@ -2,14 +2,16 @@
 
 ## Current State
 
-✅ **All 133 unit tests pass** (no failures)
-✅ **Workspace builds** in release mode (3m 46s)
-⚠️ **CPU pipeline works** but is extremely slow (seconds per frame)
-❌ **ONNX/MNN backends** not available (missing native libraries)
+✅ **All 739 unit tests pass** (`cargo test --lib -p cam-isp`), 0 failures
+✅ **Workspace builds** in release mode
+✅ **MNN Vulkan GPU backend** working (dlopen plugin + ICD loader fix)
+✅ **ONNX/MNN backends** available via `mnn` feature (`libMNN.so` in `cam-rust/lib/aarch64-v8a/`)
 
 ## Quick Start
 
 ```bash
+cd cam-rust
+
 # Build all crates
 cargo build --release
 
@@ -18,6 +20,9 @@ cargo test --lib -p cam-isp
 
 # Run all tests including CPU pipeline (slow)
 cargo test --lib -p cam-isp -- --include-ignored
+
+# With MNN (Vulkan GPU backend)
+cargo test -p cam-isp --features mnn --lib --no-fail-fast
 ```
 
 ## Test Organization
@@ -55,14 +60,15 @@ Tests that invoke `CpuEngine::process()`:
 
 | Feature | Crate Flag | Dependency | Status |
 |---------|------------|------------|--------|
-| ONNX Runtime | `ort` | `libonnxruntime.so` | ❌ Not installed |
-| MNN | `mnn` | `libMNN.so` + headers | ❌ Headers missing |
+| ONNX Runtime | `ort` | `libonnxruntime.so` | ⚠️ Not installed (feature flag present, lib missing) |
+| MNN | `mnn` | `libMNN.so` + headers | ✅ `libMNN.so` in `cam-rust/lib/aarch64-v8a/` |
+| MNN Vulkan backend | `mnn` | `libMNN_Vulkan.so` + `libvulkan.so` | ✅ Both in `cam-rust/lib/aarch64-v8a/` |
 | MNN Buffer | `mnn_buffer` | (optional) | Code present |
 
 To enable MNN/ONNX:
-1. Install the native library (e.g., via apt, conda, or prebuilt .so)
-2. Set library path (LD_LIBRARY_PATH or rpath)
-3. Build with `--features mnn` or `--features ort`
+1. Native libraries already present: `cam-rust/lib/aarch64-v8a/libMNN.so`, `libMNN_Vulkan.so`, `libvulkan.so`
+2. Set library path: `LD_LIBRARY_PATH=$PWD/cam-rust/lib/aarch64-v8a`
+3. Build with `--features mnn`
 
 ## Examples
 

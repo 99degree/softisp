@@ -33,7 +33,7 @@
 
 ## Status (2026-07-15)
 
-- **cam-isp tests:** **754** lib tests pass with `--features mnn`, **0 failures, 0 warnings**
+- **cam-isp tests:** **813** lib tests pass with `--features mnn`, **0 failures, 0 warnings**
   (up from 741). Added 13 new colorspace conversion unit tests (HSV↔RGB roundtrip,
   LAB, interleaved buffer helpers).
 - **P2 items completed:** VCM injection → GpuWarpParams; HSV↔RGB/LAB CPU math

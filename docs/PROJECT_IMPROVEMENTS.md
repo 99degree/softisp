@@ -81,7 +81,7 @@ Train a lightweight CNN for multi-exposure fusion:
 |--------|--------|-------|--------|
 | Build warnings | 0 | 0 | 0 |
 | Doc warnings | 0 | 0 | 0 |
-| Test pass rate | 734/734 | 734/734 | 734/734 |
+| Test pass rate | 813/813 | 813/813 | 813/813 |
 | HDR merge latency (FHD) | ~5ms CPU | ~5ms CPU | <1ms GPU |
 | HDR align latency | 0ms (noop) | 0ms (noop) | <3ms (optical flow) |
 | mnnengine.rs lines | 1504 | 1390 | <800 |
