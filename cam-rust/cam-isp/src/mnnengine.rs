@@ -1774,8 +1774,8 @@ impl IspEngine for MnnEngine {
             // Otherwise we allocate a heap Vec and use `mnn_run_with_output`
             // (which does copyFromHostTensor / copyToHostTensor).
             let mut out_bytes: Vec<u8> = Vec::new();
-            let mut out_ptr: *mut f32 = std::ptr::null_mut();
-            let mut max_out: i32 = 0;
+            let mut out_ptr: *mut f32;
+            let mut max_out: i32;
             let zero_copy = p.output_buffer.is_some();
             if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref() {
                 // The caller's buffer must hold at least max_out f32 elements.
@@ -1792,7 +1792,6 @@ impl IspEngine for MnnEngine {
                 out_ptr = out_bytes.as_mut_ptr() as *mut f32;
                 max_out = (alloc_max_out * 4) as i32 / 4;
             }
-
             // Determine inference path based on the model's input convention
             // (inferred at build() from the converted model's shape + type).
             let mode = self.input_mode.unwrap_or(InputMode::RawInt);

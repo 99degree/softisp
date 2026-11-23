@@ -96,6 +96,8 @@ fn run(
         blc_values: None,
         warp_grid: None,
         warp_shading: None,
+        input_buffer: None,
+        output_buffer: None,
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
