@@ -4,7 +4,7 @@
 # `install-write` accepts the APK on stdin, which sidesteps the file access.
 set -euo pipefail
 
-APK="${1:-$(dirname "$0")/cam-rust/target/debug/apk/softisp-camera.apk}"
+APK="${1:-$(dirname "$0")/target/debug/apk/softisp-camera.apk}"
 [ -f "$APK" ] || { echo "no such apk: $APK" >&2; exit 1; }
 SIZE=$(stat -c %s "$APK")
 

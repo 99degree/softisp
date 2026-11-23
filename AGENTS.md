@@ -138,7 +138,8 @@ You must process every single engineering task through this strict, non-negotiab
 
 ```
 softisp/
-  cam-rust/                     # Cargo workspace — the Rust ISP engine (the meat of the repo)
+  Cargo.toml                    # Cargo workspace root — members: cam-rust/* crates, android-app, isp-rectifier
+  cam-rust/                     # The Rust ISP engine crates (the meat of the repo)
     cam-types/                  # Shared types: tensor/param enums, pixel formats, profiles.
     cam-isp/                    # 52 ISP blocks, engines (CPU/GPU), 3A controllers,
                                #   ONNX/MNN build+convert+inference, integration bridges.
@@ -149,7 +150,7 @@ softisp/
     cam-onnx/                   # ONNX protobuf serialization (proto.rs) + graph builders.
     cam-motion/                 # Motion estimation / deshake (block matching, trajectory smooth).
     cam-binder/                 # AOSP binder HAL ↔ ISP bridge (V4l2IspBridge, etc.).
-    cam-app/                    # Binary: CLI / example runner (default features only in CI).
+  android-app/                  # Android Camera APK crate (package `cam-camera-app`, built by `./build-apk.sh`).
   cam-hal/                      # C++ HAL implementation (AOSP).
   cpp/                          # C++ support: MNN FFI, convert API (mnn_convert_api.cpp), shaders.
   vulkan_isp/                   # Vulkan compute shaders / GLSL ("Extra" GPU ops).
@@ -169,22 +170,20 @@ Supporting docs you should read before a non-trivial change:
 
 ## 3. Build, test, lint — the CI gate
 
-Every PR must pass `ci.yml`. All cargo commands run **inside the `cam-rust` workspace**, so `cd cam-rust` first. Run these locally before pushing; they are the exact commands CI runs (per-crate loops collect *all* errors instead of stopping at the first).
+Every PR must pass `ci.yml`. All cargo commands run from the **workspace root** (the `Cargo.toml` at the repo root) — do not `cd cam-rust`. Run these locally before pushing; they are the exact commands CI runs (per-crate loops collect *all* errors instead of stopping at the first).
 
 ```bash
-cd cam-rust
-
 # Format gate (no rustfmt.toml — defaults only)
 cargo fmt --all -- --check
 
 # Clippy — per-crate loop, warnings are errors (-D warnings).
-# cam-isp gets the `rectifier` feature; cam-app uses all-features.
+# cam-isp gets the `rectifier` feature.
 for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core cam-onnx cam-motion cam-binder; do
   feat=""
   [ "$crate" = "cam-isp" ] && feat="--features rectifier"
   cargo clippy -p "$crate" --lib $feat -- -D warnings 2>&1
 done
-cargo clippy -p cam-app --all-features -- -D warnings 2>&1
+cargo clippy -p cam-camera-app --all-features -- -D warnings 2>&1
 
 # Unit / lib tests (hermetic — no network, no API keys)
 for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
@@ -216,7 +215,7 @@ cargo test -p cam-isp --test test_mnn_engine --features "mnn" -- --ignored --noc
 
 * The `mnn` feature requires external shared libs (`libmnncore.so`, `libMNN_Vulkan.so`, `libMNNConvertDeps.so`). CI builds them from source; locally they must be on `LD_LIBRARY_PATH`.
 * For fast iteration, depend on the `rectifier` feature (pure-Rust mock ONNX model, no external libs) for most unit tests. Only enable `mnn` when you actually touch the GPU/inference path.
-* The `cam-app` crate is built with **default features only** in CI's non-MNN jobs (it pulls in HAL targets that need the NDK).
+* The `cam-camera-app` crate (in `android-app/`) is built only by `./build-apk.sh`, which pins JDK 11 + NDK r29; it is not part of the default CI cargo loops.
 
 ### Format and lint config
 
@@ -228,18 +227,16 @@ There is **no `rustfmt.toml` and no `clippy.toml`** — defaults only. Do not ad
 * MNN-dependent or GPU-only tests are gated behind `#[cfg(feature = "mnn")]` or `#[ignore]`. Do not add GPU/network requirements to the default `cargo test` path.
 * If you add a test that needs the real MNN libs or a device, gate it with `#[ignore]` and document how to run it.
 
-### Install (Termux/Android)
+### Install (Android APK)
 
-After a successful host build, install the binary to both locations:
+Build the APK, then sideload it through a PackageManager session:
 
 ```bash
-rm -f /data/data/com.termux/files/usr/bin/softisp \
-      /data/data/com.termux/files/home/.cargo/bin/softisp
-cp cam-rust/target/debug/cam-app /data/data/com.termux/files/usr/bin/softisp
-cp cam-rust/target/debug/cam-app /data/data/com.termux/files/home/.cargo/bin/softisp
+./build-apk.sh       # -> target/debug/apk/softisp-camera.apk (workspace root)
+./install-apk.sh     # pm install-create / install-write / install-commit over stdin
 ```
 
-Both paths must be cleaned before copying (the binary may be locked if running). The `/usr/bin` path takes precedence in `$PATH`.
+`install-apk.sh` accepts an optional APK path as its first argument; the default is `target/debug/apk/softisp-camera.apk`. Do not use `pm install <path>` directly — Termux's private data dir is unreadable to `pm` under SELinux.
 
 ---
 
@@ -247,13 +244,13 @@ Both paths must be cleaned before copying (the binary may be locked if running).
 
 These are the patterns the existing code uses. Follow them; do not introduce parallel conventions.
 
-* **Error handling**: `thiserror`-based enums (workspace dep `thiserror = "2"`). Prefer returning `Result<T, SomeError>` with a subsystem error over `anyhow` in library code. `anyhow` is acceptable in `cam-app` and tests.
+* **Error handling**: `thiserror`-based enums (workspace dep `thiserror = "2"`). Prefer returning `Result<T, SomeError>` with a subsystem error over `anyhow` in library code. `anyhow` is acceptable in `android-app` and tests.
 * **Synchronous, compute-bound core**: This is a SIMD + GPU pipeline — it is **not** an async project. Keep hot paths synchronous; do not introduce a Tokio/async runtime without discussion. I/O that must be async is the exception, not the norm.
 * **ISP block trait**: Stages implement the `IspBlock` trait and compose into a pipeline. The `IspEngine` trait is the engine boundary — its `as_any` / `as_any_mut` downcast methods are **required** (a missing impl is a compile error, not a runtime panic). Add new blocks as `IspBlock`s; do not bypass the pipeline abstraction with free functions.
 * **ONNX/MNN three-stage isolation**: Build, convert, and inference are three separate stages with no state overlap (see §8). Do not link the `MNNConvertDeps` lib into the inference path; do not leak conversion concerns into `cam-isp`'s runtime engine.
 * **ISP params as MNN tensors**: All per-frame ISP parameters flow through MNN tensors, never Rust function arguments (see §8.2). Tensors are the runtime contract between controller and warp block.
 * **Configuration / features**: layered `user → project → env → CLI flags`. Feature flags are `rectifier`, `mnn`, and the HAL targets (`cam-hal-android`, `cam-hal-linux`). Do not invert precedence. New config keys go with a doc comment.
-* **No new crates in the workspace** without discussion — the 10-crate split (`cam-types`, `cam-isp`, `cam-hal`, `cam-hal-android`, `cam-hal-linux`, `cam-core`, `cam-onnx`, `cam-motion`, `cam-binder`, `cam-app`) is intentional.
+* **No new crates in the workspace** without discussion — the 10-crate split (`cam-types`, `cam-isp`, `cam-hal`, `cam-hal-android`, `cam-hal-linux`, `cam-core`, `cam-onnx`, `cam-motion`, `cam-binder`, `cam-disp`) is intentional.
 * **Licensing**: the project is **GPL-3.0-or-later** (see `README.md` / `LICENSE`). Dependencies must be GPL-compatible (MIT / Apache-2.0 / MPL-2.0 / BSD / Unlicense / CC0 are fine). Do **not** add proprietary, GPL-incompatible, or AGPL dependencies.
 * **Comments**: default to none. Write one only when the *why* is non-obvious (e.g., a SIMD alignment requirement, a MNN op quirk, a zero-copy buffer lifetime). Do not narrate what the code does.
 

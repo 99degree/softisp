@@ -4,7 +4,7 @@
 //
 // Build: g++ -std=c++11 -I/path/to/MNN/include -I/path/to/MNN -I/path/to/MNN/schema/current
 //        -I/path/to/MNN/3rd_party/flatbuffers/include -o test_isp_pipeline test_isp_pipeline.cpp
-//        -L/path/to/MNN/build_vk/OFF -L/path/to/MNN/build_vk/express/OFF -L/path/to/MNN/build_vk/source/backend/vulkan/OFF
+//        -L/path/to/MNN/build_isp
 //        -lMNN -lMNN_Express -lMNN_Vulkan -lpthread -ldl
 //
 // Run: LD_LIBRARY_PATH=... ./test_isp_pipeline

@@ -94,7 +94,7 @@ fn main() {
     println!("Model saved: {} ({} bytes)", output_path, model.len());
     println!("\nTo convert to MNN:");
     println!(
-        "  cd ~/MNN/build_vk && ./MNNConvert -f ONNX --modelFile {} --MNNModel fused_isp.mnn",
+        "  cd ~/MNN/build_isp && ./MNNConvert -f ONNX --modelFile {} --MNNModel fused_isp.mnn",
         output_path
     );
     println!("To run:");

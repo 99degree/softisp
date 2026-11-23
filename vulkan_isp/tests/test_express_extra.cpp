@@ -2,9 +2,7 @@
 //
 // Build:
 //   g++ -std=c++11 -I~/MNN/include -o test_express_extra test_express_extra.cpp \
-//       -L~/MNN/build_vk/OFF -lMNN \
-//       -L~/MNN/build_vk/express/OFF -lMNN_Express \
-//       -L~/MNN/build_vk/source/backend/vulkan/OFF -lMNN_Vulkan \
+//       -L~/MNN/build_isp -lMNN -lMNN_Express -lMNN_Vulkan \
 //       -lpthread -ldl
 
 #include <MNN/expr/ExprCreator.hpp>

@@ -1,6 +1,6 @@
 // bench_vulkanfuse.cpp — Benchmark MNN's VulkanFuse with our fused ISP SPIR-V
-// Compile: cd ~/MNN/build_vk && g++ -std=c++17 -O2 -I../include -I.. -I../source -I../schema/current -I../3rd_party/flatbuffers/include -L./OFF ../softisp/vulkan_isp/bench_vulkanfuse.cpp -lMNN -lpthread -ldl -o bench_vulkanfuse
-// Run: LD_LIBRARY_PATH=./OFF ./bench_vulkanfuse
+// Compile: cd ~/MNN/build_isp && g++ -std=c++17 -O2 -I../include -I.. -I../source -I../schema/current -I../3rd_party/flatbuffers/include -L. ../softisp/vulkan_isp/bench_vulkanfuse.cpp -lMNN -lpthread -ldl -o bench_vulkanfuse
+// Run: LD_LIBRARY_PATH=. ./bench_vulkanfuse
 
 #include <MNN/Interpreter.hpp>
 #include <MNN/Tensor.hpp>

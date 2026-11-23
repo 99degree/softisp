@@ -60,7 +60,7 @@ fn main() {
     // Convert to MNN
     println!("\nTo convert:");
     println!(
-        "  cd ~/MNN/build_vk && ./MNNConvert -f ONNX --modelFile {} --MNNModel test_diag.mnn",
+        "  cd ~/MNN/build_isp && ./MNNConvert -f ONNX --modelFile {} --MNNModel test_diag.mnn",
         output_path
     );
 }

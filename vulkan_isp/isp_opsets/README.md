@@ -28,7 +28,7 @@ isp.display     — Brightness/Contrast/Saturation + Gamma (sRGB)
 ```bash
 BASE=/path/to/MNN
 INCS="-I\$BASE/include -I\$BASE -I\$BASE/schema/current -I\$BASE/3rd_party/flatbuffers/include"
-LIBS="-L\$BASE/build_vk/OFF -L\$BASE/build_vk/express/OFF -L\$BASE/build_vk/source/backend/vulkan/OFF -lMNN -lMNN_Express -lMNN_Vulkan -lpthread -ldl"
+LIBS="-L\$BASE/build_isp -lMNN -lMNN_Express -lMNN_Vulkan -lpthread -ldl"
 
 g++ -std=c++11 \$INCS -o test_all_opsets test_all_opsets.cpp \$LIBS
 ./test_all_opsets

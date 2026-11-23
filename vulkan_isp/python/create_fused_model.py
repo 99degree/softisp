@@ -105,7 +105,7 @@ def main():
 
     # Convert to MNN
     result = subprocess.run([
-        '/data/data/com.termux/files/home/MNN/build_vk/MNNConvert',
+        '/data/data/com.termux/files/home/MNN/build_isp/MNNConvert',
         '-f', 'ONNX',
         '--modelFile', onnx_path,
         '--MNNModel', 'fused_isp.mnn',

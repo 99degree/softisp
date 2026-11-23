@@ -1,6 +1,6 @@
 // create_fused_mnn.cpp — Build MNN model with fused ISP Extra op using MNN C++ Express API
-// Compile: cd ~/MNN/build_vk && g++ -std=c++17 -O2 -I../include -I.. -I../source -I../schema/current -I../3rd_party/flatbuffers/include -L./OFF ../softisp/vulkan_isp/create_fused_mnn.cpp -lMNN -lpthread -ldl -o create_fused_mnn
-// Run: LD_LIBRARY_PATH=./OFF ./create_fused_mnn
+// Compile: cd ~/MNN/build_isp && g++ -std=c++17 -O2 -I../include -I.. -I../source -I../schema/current -I../3rd_party/flatbuffers/include -L. ../softisp/vulkan_isp/create_fused_mnn.cpp -lMNN -lpthread -ldl -o create_fused_mnn
+// Run: LD_LIBRARY_PATH=. ./create_fused_mnn
 
 #include <MNN/Interpreter.hpp>
 #include <MNN/expr/ExprCreator.hpp>

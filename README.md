@@ -73,7 +73,7 @@ Building it yourself:
 
 ```bash
 cd cam-rust && cargo apk2 build -p cam-camera-app   # debug profile
-# -> cam-rust/target/debug/apk/softisp-camera.apk
+# -> target/debug/apk/softisp-camera.apk (workspace root)
 ```
 
 ## Quick Start

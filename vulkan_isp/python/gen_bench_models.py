@@ -9,7 +9,7 @@ sizes = [
 ]
 
 gen_script = os.path.expanduser("~/softisp/vulkan_isp/gen_isp_onnx_standard.py")
-mnn_convert = os.path.expanduser("~/MNN/build_vk/MNNConvert")
+mnn_convert = os.path.expanduser("~/MNN/build_isp/MNNConvert")
 
 for name, w, h in sizes:
     bW, bH = w * 2, h * 2
