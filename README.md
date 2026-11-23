@@ -112,15 +112,15 @@ emits no per-dispatch lines; with it on, one three-profile run writes 26 KB. An 
 that falls back off the GPU is still reported unconditionally, because that costs
 two full-frame copies and is worth more than any tuning.
 
-**3840×2160** (`PERF_FRAMES=20 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
+**3840×2160** (`PERF_FRAMES=40 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
 
 | Profile | Blocks | p50 | p95 | FPS |
 |---|---|---|---|---|
-| MED (primitives) | 19 | 452.0 ms | 465.4 ms | 2.2 |
-| **FUSED** | 13 | **179.5 ms** | 191.4 ms | **5.6** |
-| FUSED, statistics off | 13 | 183.2 ms | 193.2 ms | 5.5 |
-| WHOLE (`isp.pipeline`) | 2 | 81.9 ms | 93.0 ms | 12.2 |
-| UNIFIED (FUSED + all stages + tiles) | 13 | 185.5 ms | 193.8 ms | 5.4 |
+| MED (primitives) | 19 | 467.6 ms | 488.0 ms | 2.1 |
+| **FUSED** | 13 | **140.0 ms** | 216.4 ms | **7.1** |
+| FUSED, statistics off | 13 | 116.5 ms | 135.0 ms | 8.6 |
+| WHOLE (`isp.pipeline`) | 2 | 135.8 ms | 182.6 ms | 7.4 |
+| UNIFIED (FUSED + all stages + tiles) | 13 | 151.9 ms | 204.4 ms | 6.6 |
 
 **1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25 …`)
 
