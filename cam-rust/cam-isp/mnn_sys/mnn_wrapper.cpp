@@ -612,24 +612,12 @@ extern "C" int mnn_run_true_zero_copy(
 // ensure_vulkan_loaded() at session create time).
 
 #include <dlfcn.h>
-#include <vulkan/vulkan.h>
 #include <android/hardware_buffer.h>
 
 typedef int (*pfnAHardwareBuffer_getFd)(AHardwareBuffer* buffer, int* fd);
 
-typedef VkResult (*pfnGetMemoryAndroidHardwareBufferANDROID)(
-    VkDevice device,
-    const VkMemoryGetAndroidHardwareBufferInfoANDROID* pInfo,
-    int* pFd);
-
-typedef VkResult (*pfnImportMemoryAndroidHardwareBufferANDROID)(
-    VkDevice device,
-    const VkImportMemoryAndroidHardwareBufferInfoANDROID* pInfo);
-
 static std::once_flag g_ahb_import_load_flag;
 static pfnAHardwareBuffer_getFd g_ahb_get_fd = nullptr;
-static pfnGetMemoryAndroidHardwareBufferANDROID g_get_mem_ahb = nullptr;
-static pfnImportMemoryAndroidHardwareBufferANDROID g_import_mem_ahb = nullptr;
 
 static void ensure_ahb_import_loaded() {
     std::call_once(g_ahb_import_load_flag, []() {
@@ -637,8 +625,6 @@ static void ensure_ahb_import_loaded() {
         if (h) {
             g_ahb_get_fd = (pfnAHardwareBuffer_getFd)dlsym(h, "AHardwareBuffer_getFd");
         }
-        // Vulkan function pointers come from libvulkan.so via vkGetDeviceProcAddr
-        // once we have a device; resolve lazily below.
     });
 }
 
@@ -664,41 +650,24 @@ extern "C" int mnn_import_ahb_as_device_memory(
         return -1;
     }
 
-    // Export AHB to dma-buf fd
+    // Export AHB to dma-buf fd (for logging only).
     int fd = -1;
     if (g_ahb_get_fd && g_ahb_get_fd(static_cast<AHardwareBuffer*>(ahb), &fd) != 0 || fd < 0) {
         set_last_error("AHardwareBuffer_getFd failed");
         return -1;
     }
-
-    // Resolve Vulkan function pointers lazily via the session's device.
-    // MNN's VulkanBackend owns the VkDevice; we reach it through the session.
-    // For now, fall back to dlopen("libvulkan.so") + vkGetInstanceProcAddr is
-    // not possible without an instance. Instead resolve from the loaded
-    // libMNN_Vulkan.so which already references these symbols.
-    void* vk_h = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
-    if (!vk_h) {
-        set_last_error("dlopen libvulkan.so failed: %s", dlerror());
-        close(fd);
-        return -1;
-    }
-    auto vkGetDeviceProcAddr = (PFN_vkGetDeviceProcAddr)dlsym(vk_h, "vkGetDeviceProcAddr");
-    if (!vkGetDeviceProcAddr) {
-        set_last_error("vkGetDeviceProcAddr not found");
-        close(fd);
-        return -1;
-    }
-
-    // We need the VkDevice. MNN::VulkanBackend stores it internally; there's no
-    // public accessor. As a pragmatic intermediate step, record the fd mapping
-    // by tensor name and let mnn_run_true_zero_copy's host-pointer path handle
-    // the actual data movement while we have the fd available for future
-    // device-memory binding. Return success so the Rust side proceeds with the
-    // existing zero-copy path (host pointer set), which on Vulkan still does
-    // host<->device copy until a device is wired.
-    (void)g_get_mem_ahb; (void)g_import_mem_ahb; (void)vkGetDeviceProcAddr;
-    set_last_error("AHB fd=%d imported (device-memory binding deferred to MNN Vulkan backend wiring)", fd);
     close(fd);
+
+    // Mark the tensor as AHB-backed so MNN's VulkanBackend::onAcquire()
+    // imports it via VulkanBufferFromAHB (VkImportAndroidHardwareBufferInfoANDROID).
+    // This is the final zero-copy step: GPU reads/writes the AHB directly
+    // instead of allocating its own device memory and copying host<->GPU.
+    if (!tensor->setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER)) {
+        set_last_error("Tensor::setDevicePtr(AHB) failed for '%s'", tensor_name);
+        return -1;
+    }
+    set_last_error("AHB '%s' imported as device memory (memoryType=%d)", tensor_name,
+                   MNN_MEMORY_AHARDWAREBUFFER);
     return 0;
 }
 
@@ -707,7 +676,23 @@ extern "C" int mnn_release_ahb_device_memory(
     MnnSession session,
     const char* tensor_name)
 {
-    (void)interpreter; (void)session; (void)tensor_name;
+    if (!interpreter || !session || !tensor_name) return -1;
+
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+
+    auto* tensor = net->getSessionInput(sess, tensor_name);
+    if (!tensor) {
+        tensor = net->getSessionOutput(sess, tensor_name);
+    }
+    if (!tensor) {
+        set_last_error("tensor '%s' not found in session", tensor_name);
+        return -1;
+    }
+
+    // Clear the AHB-backed device pointer so MNN falls back to its own
+    // device allocation on the next acquire.
+    tensor->setDevicePtr(nullptr, 0);
     return 0;
 }
 

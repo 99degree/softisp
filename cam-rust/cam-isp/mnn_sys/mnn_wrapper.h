@@ -37,6 +37,17 @@ typedef enum {
 } MnnBackendType;
 
 /**
+ * Session info codes matching MNN::Interpreter::SessionInfoCode.
+ */
+typedef enum {
+    MNN_MODEL_INFO_MEMORY = 0,
+    MNN_MODEL_INFO_FLOPS = 1,
+    MNN_MODEL_INFO_BACKENDS = 2,
+    MNN_MODEL_INFO_RESIZE_STATUS = 3,
+    MNN_MODEL_INFO_THREAD_NUMBER = 4,
+} MnnModelInfo;
+
+/**
  * MNN data types (matching MNN::Tensor::getType().code)
  */
 #define MNN_DATA_TYPE_FLOAT  1
