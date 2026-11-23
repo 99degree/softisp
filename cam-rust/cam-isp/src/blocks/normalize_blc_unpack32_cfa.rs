@@ -1,16 +1,19 @@
-//! `isp.unpack32_blc_normal_cfa` — normalize + BLC + quad unpack from FLOAT32 RAW.
+//! `isp.unpack32_blc_normal_cfa` — normalize + BLC + quad unpack from packed INT32 RAW.
 //!
 //! One dispatch replaces `RawInput16Block → UnpackCfaBlock → NormalizeBlock → BlcBlock`
-//! (four blocks) with a single GPU pass. The engine converts u16→f32 on CPU (RawFloat
-//! mode) and passes FLOAT32 sensor bytes; the shader divides by sensor_max, subtracts
+//! (four blocks) with a single GPU pass. A RAW16 sensor plane is W*H contiguous
+//! u16 samples, which on a little-endian host is exactly W/2 int32 words per row,
+//! so the graph input is `[1,1,H,W/2]` INT32 and the sensor buffer is handed over
+//! verbatim — no host-side split, no widening pass. The shader splits each word
+//! into its two int16 lanes, converts to float, divides by sensor_max, subtracts
 //! BLC, and extracts the Bayer CFA quad — all in one GPU pass.
 //!
 //! Bindings match the shader in `~/MNN/source/backend/vulkan/buffer/execution/isp_spv/`
 //! and VulkanFuse's universal `isp.*` descriptor map (frame in@3, frame out@4,
 //! extras from 5):
 //!   binding 0 = Uniforms {width, height, ...}
-//!   binding 3 = input FLOAT32 plane (readonly)  ← InBuf
-//!   binding 4 = output float quad planes         ← OutBuf
+//!   binding 3 = input INT32 packed plane (readonly)  ← InBuf
+//!   binding 4 = output float quad planes              ← OutBuf
 //!   binding 5 = black level per colour (R, Gr, Gb, B)
 //!   binding 6 = sensor white level
 //!   binding 7 = CFA phase
@@ -188,7 +191,7 @@ impl IspBlock for NormalizeBlcUnpack32Cfa {
     }
 
     fn input_elem_type(&self) -> i32 {
-        1 // FLOAT32 (onnx.TensorProto_DataType_FLOAT)
+        6 // INT32 (onnx.TensorProto_DataType_INT32) — packed u16 pairs
     }
 
     fn output_elem_type(&self) -> i32 {
@@ -208,32 +211,34 @@ impl IspBlock for NormalizeBlcUnpack32Cfa {
     }
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
+        // `[1,1,H,W/2]` INT32. A RAW16 sensor plane is W*H contiguous u16
+        // samples, which on a little-endian host is exactly W/2 int32 words per
+        // row, so the sensor buffer is the graph input verbatim: no split, no
+        // widen, no per-frame CPU pass. The shader splits each word into its two
+        // int16 lanes and converts to float on the GPU.
         let dims = match (self.concrete_h, self.concrete_w) {
             (Some(h), Some(w)) => vec![
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(h),
-                Proto::tensor_dim_value(w),
+                Proto::tensor_dim_value(w / 2),
             ],
             (None, Some(w)) => vec![
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_param("H"),
-                Proto::tensor_dim_value(w),
+                Proto::tensor_dim_value(w / 2),
             ],
             _ => vec![
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_value(1),
                 Proto::tensor_dim_param("H"),
-                Proto::tensor_dim_param("W"),
+                Proto::tensor_dim_param("W/2"),
             ],
         };
-        // elem_type 1 = onnx.TensorProto_DataType_FLOAT. It is NOT the MNN
-        // `data_type()` code (where 4 is float) — this field is the ONNX
-        // TensorProto enum the converter reads, so 2 would declare UINT8 and
-        // the model input came out `code=1 bits=8` (an 8-bit raw plane the
-        // engine then refused to feed f32 data to).
-        Some(Proto::value_info(&self.input_source, &dims, 1))
+        // elem_type 6 = onnx.TensorProto_DataType_INT32. This field is the ONNX
+        // TensorProto enum the converter reads, not MNN's `data_type()` code.
+        Some(Proto::value_info(&self.input_source, &dims, 6))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
@@ -343,7 +348,7 @@ mod tests {
     #[test]
     fn test_unpack32_blc_input_elem_type() {
         let b = NormalizeBlcUnpack32Cfa::new();
-        assert_eq!(b.input_elem_type(), 1); // FLOAT32 (ONNX TensorProto 1)
+        assert_eq!(b.input_elem_type(), 6); // INT32 (ONNX TensorProto 6)
     }
 
     #[test]
