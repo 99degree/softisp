@@ -12,7 +12,7 @@ members = [
     "cam-rust/cam-motion",
     "cam-rust/cam-binder",
     "cam-rust/cam-disp",
-    "cam-rust/cam-camera-app",
+    "android-app/cam-camera-app",
 ]
 
 [workspace.dependencies]
@@ -21,9 +21,9 @@ log = "0.4"
 thiserror = "2"
 env_logger = "0.10"
 android_logger = "0.14"
-# NativeActivity lifecycle + ANativeWindow (cam-rust/cam-camera-app).
+# NativeActivity lifecycle + ANativeWindow (android-app/cam-camera-app).
 android-activity = { version = "0.6.1", features = ["native-activity"] }
-# Raw ACamera* / AImageReader* NDK bindings (cam-rust/cam-camera-app).
+# Raw ACamera* / AImageReader* NDK bindings (android-app/cam-camera-app).
 ndk-sys = { version = "0.6", features = ["media"] }
 
 # ── Profiles ────────────────────────────────────────────────────────────────
