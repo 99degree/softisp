@@ -26,7 +26,7 @@
 #![cfg(feature = "mnn")]
 
 use cam_isp::blocks::*;
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::onnx::proto::Proto;
 use cam_isp::pipeline::{BlockOpsetMode, GraphComposer, IspBlock};
 

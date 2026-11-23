@@ -1127,7 +1127,7 @@ mod tests {
             output_format: EngineOutputFormat::Argb,
             ..UnifiedConfig::default()
         };
-        let mut pipeline = UnifiedPipeline::new(config).expect("pipeline build should succeed");
+        let pipeline = UnifiedPipeline::new(config).expect("pipeline build should succeed");
         // 4K bayer: 3840×2160, u16 per pixel = 2 bytes
         let raw = vec![128u8; 3840 * 2160 * 2];
         let params = ProcessParams::new(3840, 2160, &raw);
@@ -1151,7 +1151,7 @@ mod tests {
             target_width: 640,
             ..UnifiedConfig::default()
         };
-        let mut pipeline = UnifiedPipeline::new(config).expect("pipeline build should succeed");
+        let pipeline = UnifiedPipeline::new(config).expect("pipeline build should succeed");
         // HD bayer: 1280×720, u16 per pixel = 2 bytes
         let raw = vec![128u8; 1280 * 720 * 2];
         let params = ProcessParams::new(1280, 720, &raw);
@@ -1178,7 +1178,7 @@ mod tests {
             output_format: EngineOutputFormat::Argb,
             ..UnifiedConfig::default()
         };
-        let mut pipeline = UnifiedPipeline::new(config).expect("pipeline build");
+        let pipeline = UnifiedPipeline::new(config).expect("pipeline build");
         let raw = vec![128u8; 3840 * 2160 * 2];
         let params = ProcessParams::new(3840, 2160, &raw);
 

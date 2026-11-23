@@ -109,7 +109,7 @@ fn stats_downscale_cost() {
         let tag = if max == 0 {
             "full (1296)".to_string()
         } else {
-            format!("{max} edge")
+            format!("{} edge", max)
         };
         match render(max) {
             Some(o) => eprintln!(

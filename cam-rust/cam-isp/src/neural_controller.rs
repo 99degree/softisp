@@ -326,6 +326,20 @@ impl Default for NeuralController {
     }
 }
 
+impl crate::controller_api::ControllerApi for NeuralController {
+    fn analyze_and_update(&mut self, frame: &IspFrame) -> IspParams {
+        self.analyze_and_update(frame)
+    }
+
+    fn has_model(&self) -> bool {
+        self.has_model()
+    }
+
+    fn last_params(&self) -> Option<&IspParams> {
+        self.last_params.as_ref()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,19 +451,5 @@ mod tests {
 
         // Should be similar (temporal smoothing)
         assert!((params1.wb.r - params2.wb.r).abs() < 0.2);
-    }
-}
-
-impl crate::controller_api::ControllerApi for NeuralController {
-    fn analyze_and_update(&mut self, frame: &IspFrame) -> IspParams {
-        self.analyze_and_update(frame)
-    }
-
-    fn has_model(&self) -> bool {
-        self.has_model()
-    }
-
-    fn last_params(&self) -> Option<&IspParams> {
-        self.last_params.as_ref()
     }
 }

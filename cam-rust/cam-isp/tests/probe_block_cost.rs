@@ -11,7 +11,6 @@
 
 #![cfg(feature = "mnn")]
 
-use std::time::Instant;
 
 use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
 use cam_isp::profile::PipelineProfile;
@@ -33,7 +32,7 @@ fn measure(label: &str, mut profile: PipelineProfile) -> Option<f64> {
     }
 
     let mut buf = vec![0u8; (w as usize) * (h as usize) * 2];
-    for c in buf.chunks_exact_mut(2) {
+    for c in buf.as_chunks_mut::<2>().0 {
         c[0] = (sample & 0xFF) as u8;
         c[1] = (sample >> 8) as u8;
     }

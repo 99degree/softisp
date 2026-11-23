@@ -558,7 +558,7 @@ mod tests {
         assert!(!positions.is_empty());
         // All positions should be within ±48 of 512
         for &p in &positions {
-            assert!(p >= 464 && p <= 560, "Position {} out of fine range", p);
+            assert!((464..=560).contains(&p), "Position {} out of fine range", p);
         }
     }
 

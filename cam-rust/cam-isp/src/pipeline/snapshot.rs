@@ -144,9 +144,9 @@ mod tests {
         };
         // No model loaded — restore_engine should return an error
         let result = snap.restore_engine();
-        if result.is_ok() {
+        if let Ok(engine) = result {
             // Engine created but model not loaded is acceptable
-            let _engine = result.unwrap();
+            let _engine = engine;
         }
     }
 }

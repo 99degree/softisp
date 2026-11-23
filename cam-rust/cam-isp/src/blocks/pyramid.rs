@@ -152,7 +152,7 @@ mod tests {
         // Each output channel oc reads from its corresponding input channel ic
         // weight[oc][ic][y][x] = 1.0 if oc==ic && y==0 && x==0
         // Build the expected weight array
-        let mut expected = vec![0.0f32; 36];
+        let mut expected = [0.0f32; 36];
         for oc in 0..3 {
             let idx = oc * 3 * 2 * 2 + oc * 2 * 2; // (oc, oc, 0, 0)
             expected[idx] = 1.0;

@@ -252,8 +252,8 @@ mod tests {
         let b2 = pool.acquire(test_desc(HalPixelFormat::Rgba8888)).unwrap();
         let result = pool.acquire(test_desc(HalPixelFormat::Rgba8888));
         assert!(result.is_err(), "Pool should reject excess allocations");
-        drop(b1);
-        drop(b2);
+        pool.release(b1);
+        pool.release(b2);
     }
 
     #[test]

@@ -451,7 +451,7 @@ mod tests {
     fn test_colorspace_rgb_to_hsv() {
         let block = ColorSpaceBlock::rgb_to_hsv();
         assert_eq!(block.id(), "rgb_to_hsv");
-        assert!(block.nodes().len() > 0);
+        assert!(!block.nodes().is_empty());
     }
 
     #[test]
@@ -501,14 +501,14 @@ mod tests {
 
     #[test]
     fn test_rgb_to_hsv_pixel_white() {
-        let (h, s, v) = rgb_to_hsv_pixel(1.0, 1.0, 1.0);
+        let (_h, s, v) = rgb_to_hsv_pixel(1.0, 1.0, 1.0);
         assert!((s - 0.0).abs() < 0.01, "s={}", s);
         assert!((v - 1.0).abs() < 0.01, "v={}", v);
     }
 
     #[test]
     fn test_rgb_to_hsv_pixel_gray() {
-        let (h, s, v) = rgb_to_hsv_pixel(0.5, 0.5, 0.5);
+        let (_h, s, v) = rgb_to_hsv_pixel(0.5, 0.5, 0.5);
         assert!((s - 0.0).abs() < 0.01, "s={}", s);
         assert!((v - 0.5).abs() < 0.01, "v={}", v);
     }

@@ -70,9 +70,9 @@ fn enumerate_physical_device_count() -> u32 {
         let destroy: VkDestroyInstance = std::mem::transmute(sym(b"vkDestroyInstance\0"));
         // The loader's ABI version is all we get to test against; if any core
         // 1.0 entry point is missing, treat the driver as unusable.
-        if create as *const () == std::ptr::null()
-            || enumerate as *const () == std::ptr::null()
-            || destroy as *const () == std::ptr::null()
+        if Option::<VkCreateInstance>::from(create).is_none()
+            || Option::<VkEnumeratePhysicalDevices>::from(enumerate).is_none()
+            || Option::<VkDestroyInstance>::from(destroy).is_none()
         {
             return 0;
         }
