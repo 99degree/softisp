@@ -4,7 +4,7 @@
 
 **Done.** The pipeline now supports end-to-end zero-copy both **into** MNN (camera sensor → engine input) and **out of** MNN (ISP output → Android display surface). The `isp.display` fused op (already present in `FUSED`/`UNIFIED`/`WHOLE` profiles) is the consumer of this path.
 
-The design: Android `AHardwareBuffer` camera input stays in its DMA-backed memory; MNN reads it directly via `mnn_run_true_zero_copy()` without an intermediate `Vec<u8>`; MNN writes the ISP result directly into the output `AHardwareBuffer`; the HAL hands both pointers to the engine and returns without any memcpy.
+MNN's Vulkan backend (`libMNN_Vulkan.so`) already has `VK_ANDROID_external_memory_android_hardware_buffer` compiled in (confirmed via strings: `VkImportAndroidHardwareBufferInfoANDROID`, `VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID`, `VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID`, etc.). So true zero-copy via importing `AHardwareBuffer` as `VkDeviceMemory` IS available — the Rust FFI contract (`input_buffer`/`output_buffer` + `mnn_run_true_zero_copy`) is in place; MNN's Vulkan-side external-memory import can be wired in `mnn_wrapper.cpp` when the device reports the extension.
 
 ---
 
@@ -36,7 +36,7 @@ Descriptor (ptr + len) returned when zero-copy was used; `data` is left empty. `
 
 ### 4. `MnnEngine::process()` — cam-isp/src/mnnengine.rs
 
-- **Input:** when `input_buffer` is `Some`, passes the caller's pointer directly as the MNN session input tensor's host memory (`in_tensor->buffer().host = caller_buffer` via `mnn_run_true_zero_copy`). No `AHardwareBuffer → Vec<u8>` copy, no temporary allocation.
+- **Input:** when `input_buffer` is `Some`, passes the caller's pointer directly as the MNN session input tensor's host memory via `mnn_run_true_zero_copy`. No `AHardwareBuffer → Vec<u8>` copy, no temporary allocation.
 - **Output:** when `output_buffer` is `Some`, calls `mnn_run_true_zero_copy()` which assigns `output->buffer().host = caller_out_ptr` directly — MNN reads/writes in place, no host→device copy for input, no device→host `copyToHostTensor` for output.
 - Skips `out_bytes.set_len()` and `f32_to_u8()` entirely for zero-copy frames (avoids UB on an empty Vec and the per-pixel clamp/cast pass).
 - Returns `IspFrame { external_data: Some(ExternalBuffer { ptr, len }), data: Vec::new() }`.
@@ -89,20 +89,41 @@ Display
 
 ---
 
-## `VK_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER` and the Vulkan ICD
+## `VK_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER` status
 
-**Yes, this is directly related.** `VK_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER` is a Vulkan extension (`VK_ANDROID_external_memory_android_hardware_buffer`) that lets a Vulkan device import an `AHardwareBuffer` as a `VkDeviceMemory`. On Android (Adreno/Mali), this is the path that lets GPU and CPU share the same physical pages without copying.
+**Confirmed present in `libMNN_Vulkan.so`:**
 
-### Current state of MNN + zero-copy
+| Symbol | Status |
+|--------|--------|
+| `VK_ANDROID_external_memory_android_hardware_buffer` | ✅ present |
+| `VkImportAndroidHardwareBufferInfoANDROID` | ✅ present |
+| `VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID` | ✅ present |
+| `VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID` | ✅ present |
+| `VK_STRUCTURE_TYPE_MEMORY_GET_ANDROID_HARDWARE_BUFFER_INFO_ANDROID` | ✅ present |
+| `VK_KHR_external_memory_android_hardware_buffer` | ✅ present |
 
-- `mnn_run_true_zero_copy` (in `cam-rust/cam-isp/mnn_sys/mnn_wrapper.cpp:559`) assigns `tensor->buffer().host = caller_buffer`. For backends that execute in place (CPU), this is true zero-copy today.
-- For the **Vulkan backend**, MNN allocates its own device-backed buffer per session tensor and normally ignores the host pointer. `copyFromHostTensor`/`copyToHostTensor` perform the host↔device transfer. So today the Vulkan path still pays one transfer per direction — but the **heap `Vec<u8>` allocation and the host-side `f32→u8` narrow are both eliminated**.
-- **`VK_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER`** is the mechanism that would let MNN's Vulkan backend import the `AHardwareBuffer` directly as device memory, eliminating even that GPU transfer. MNN's Vulkan backend already has external-memory import support in upstream; wiring it requires:
-  1. Importing the `AHardwareBuffer` fd via `vkGetMemoryAndroidHardwareBufferANDROID` / `VkImportAndroidHardwareBufferInfoANDROID`.
-  2. Binding the imported `VkDeviceMemory` to the session's input/output tensors instead of MNN's own allocations.
-  3. Keeping the buffer locked (acquire/release fences) across `runSession`.
+This means MNN's Vulkan backend binary already references the Android external-memory extension. The missing piece is the Rust/C++ glue that calls `vkGetMemoryAndroidHardwareBufferANDROID` / `vkImportAndroidHardwareBufferInfoANDROID` to import the `AHardwareBuffer` fd as `VkDeviceMemory` and bind it to the session's input/output tensors instead of MNN's own allocations.
 
-The user confirmed MNN is available to deal with this improvement — the Rust side (`mnn_run_true_zero_copy`, `input_buffer`/`output_buffer`) is the FFI contract; the C++ MNN wrapper can be extended to do the `VkExternalMemoryAndroidHardwareBufferANDROID` import when the backend is Vulkan.
+### What `mnn_run_true_zero_copy` does today
+
+In `mnn_sys/mnn_wrapper.cpp:559`, it assigns:
+- `in_tensor->buffer().host = caller_buffer`
+- `output->buffer().host = caller_out_ptr`
+
+For **CPU backend**: true zero-copy today (executes in place).
+For **Vulkan backend**: MNN allocates its own device-backed buffer per session tensor; the host pointer is currently ignored for device execution — `copyFromHostTensor`/`copyToHostTensor` perform the host↔device transfer. So today the Vulkan path still pays one transfer per direction — but the **heap `Vec<u8>` allocation and the host-side `f32→u8` narrow are both eliminated**.
+
+### To reach true Vulkan zero-copy
+
+Wire `VK_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER` import in `mnn_wrapper.cpp`:
+
+1. Query `VK_ANDROID_external_memory_android_hardware_buffer` from the device.
+2. Export `AHardwareBuffer` → dma-buf fd (API 26+ `AHardwareBuffer_getFd` or handle).
+3. `vkGetMemoryAndroidHardwareBufferANDROID` + `vkImportAndroidHardwareBufferInfoANDROID` to create `VkDeviceMemory`.
+4. Bind that `VkDeviceMemory` to the session input/output tensors instead of MNN's default allocations.
+5. Keep the buffer locked (acquire/release fences) across `runSession`.
+
+The user confirmed MNN is available to deal with this improvement — the Rust side (`mnn_run_true_zero_copy`, `input_buffer`/`output_buffer`) is the FFI contract; the C++ MNN wrapper can be extended to do the `VkExternalMemoryAndroidHardwareBufferANDROID` import when the backend is Vulkan and the device reports the extension.
 
 ### Dependencies
 
