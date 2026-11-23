@@ -67,20 +67,22 @@ build_and_copy() {
         fi
     done
 
-    # libMNN_Vulkan.so links against libvulkan.so.1, but on-device Android
-    # ships libvulkan.so (soname libvulkan.so). Do not ship our own copy;
-    # instead retune libMNN_Vulkan.so's NEEDED entry to libvulkan.so so the
+    # libMNN_Vulkan.so / libMNNConvertDeps.so link against libvulkan.so.1, but
+    # on-device Android ships libvulkan.so (soname libvulkan.so). Do not ship
+    # our own copy; instead retune each NEEDED entry to libvulkan.so so the
     # device's system ICD loader resolves it (cargo-apk2 bundles runtime_libs
     # but we deliberately exclude libvulkan.so from the APK).
     if command -v patchelf >/dev/null 2>&1; then
-        local target="$RUNTIME_DIR/$abi/libMNN_Vulkan.so"
-        if [ -f "$target" ]; then
-            patchelf --replace-needed libvulkan.so.1 libvulkan.so "$target"
-            echo "  patchelf: $target libvulkan.so.1 -> libvulkan.so"
-            copied=$((copied + 1))
-        fi
+        for target in "$RUNTIME_DIR/$abi/libMNN_Vulkan.so" \
+                      "$RUNTIME_DIR/$abi/libMNNConvertDeps.so"; do
+            if [ -f "$target" ]; then
+                patchelf --replace-needed libvulkan.so.1 libvulkan.so "$target"
+                echo "  patchelf: $target libvulkan.so.1 -> libvulkan.so"
+                copied=$((copied + 1))
+            fi
+        done
     else
-        echo "  WARN: patchelf not found; libMNN_Vulkan.so keeps libvulkan.so.1 NEEDED"
+        echo "  WARN: patchelf not found; libs keep libvulkan.so.1 NEEDED"
     fi
 
     echo "============================================================"
