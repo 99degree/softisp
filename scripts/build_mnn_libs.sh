@@ -1,13 +1,21 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Build MNN Vulkan libraries and copy all .so files to softisp runtime dirs.
 #
-# Usage: ./scripts/build_mnn_libs.sh [aarch64-v8a|arm64-v8a|both]
+# Usage: ./scripts/build_mnn_libs.sh [aarch64-v8a|arm64-v8a|armeabi-v7a|both]
 #
 # Default: build arm64-v8a (Termux native clang targets this).
-# The "both" target builds both ABIs.
+# The "both" target builds arm64-v8a and armeabi-v7a.
 #
-# After a successful build, every *.so from build_isp/ is copied to
-# cam-rust/lib/<abi>/ so the softisp runtime picks up the fresh binaries.
+# After a successful build every libMNN*.so produced under build_isp/ is
+# installed into cam-rust/lib/<abi>/ and patchelf'd (libvulkan.so.1 ->
+# libvulkan.so). The same arm64 build is installed under BOTH directory
+# names the Rust side uses:
+#
+#   arm64-v8a    — cargo-apk2's runtime_libs/<android_abi>: bundled into the APK
+#   aarch64-v8a  — cam-isp build.rs abi_dir(): rustc -L search path + rpath
+#
+# build_vulkan_android.sh only accepts Android ABI names, so aarch64-v8a is
+# normalized to arm64-v8a before the build starts.
 
 set -euo pipefail
 
@@ -27,7 +35,7 @@ if [ ! -d "$SOFTISP_ROOT" ]; then
     exit 1
 fi
 
-# Map ABI → build dir and runtime subdir
+# Map ABI → Android ABI name understood by build_vulkan_android.sh
 abi_map() {
     case "$1" in
         aarch64-v8a|arm64-v8a) echo "arm64-v8a" ;;
@@ -39,54 +47,71 @@ abi_map() {
 }
 
 build_and_copy() {
-    local abi="$1"
+    local build_abi
+    build_abi="$(abi_map "$1")"
     local build_dir="build_isp"
 
     echo "============================================================"
-    echo "Building MNN for ABI=$abi"
+    echo "Building MNN for ABI=$build_abi (requested: $1)"
     echo "  MNN_ROOT   = $MNN_ROOT"
     echo "  BUILD_DIR  = $build_dir"
-    echo "  RUNTIME    = $RUNTIME_DIR/$abi"
+    echo "  RUNTIME    = $RUNTIME_DIR/{${build_abi},aarch64-v8a}"
     echo "============================================================"
 
     cd "$MNN_ROOT"
 
     # Build MNN with Vulkan, converter enabled (ON).
-    ./build_vulkan_android.sh "$build_dir" "$abi" "android-21" "ON"
+    ./build_vulkan_android.sh "$build_dir" "$build_abi" "android-21" "ON"
 
-    # Create runtime dir if missing
-    mkdir -p "$RUNTIME_DIR/$abi"
+    # With MNN_SEP_BUILD=ON the outputs land in different subtrees of the
+    # build dir (root, source/, express/, tools/converter/), so search the
+    # whole tree instead of relying on a single glob.
+    local built=()
+    while IFS= read -r so; do
+        built+=("$so")
+    done < <(find "$build_dir" -name 'libMNN*.so' | sort)
 
-    # Copy every shared object produced by the build.
+    if [ "${#built[@]}" -eq 0 ]; then
+        echo "ERROR: no libMNN*.so produced under $MNN_ROOT/$build_dir" >&2
+        exit 1
+    fi
+
+    # One arm64 build serves both on-disk ABI names (see header).
+    local dests=("$RUNTIME_DIR/$build_abi")
+    if [ "$build_abi" = "arm64-v8a" ]; then
+        dests+=("$RUNTIME_DIR/aarch64-v8a")
+    fi
+
     local copied=0
-    for so in build_isp/libMNN*.so build_isp/tools/converter/libMNNConvertDeps.so; do
-        if [ -f "$so" ]; then
-            cp -f "$so" "$RUNTIME_DIR/$abi/"
-            echo "  copied: $so -> $RUNTIME_DIR/$abi/$(basename "$so")"
+    local dest so target
+    for dest in "${dests[@]}"; do
+        mkdir -p "$dest"
+
+        for so in "${built[@]}"; do
+            cp -f "$so" "$dest/"
+            echo "  copied: $so -> $dest/$(basename "$so")"
             copied=$((copied + 1))
+        done
+
+        # libMNN_Vulkan.so / libMNNConvertDeps.so link against libvulkan.so.1, but
+        # on-device Android ships libvulkan.so (soname libvulkan.so). Do not ship
+        # our own copy; instead retune each NEEDED entry to libvulkan.so so the
+        # device's system ICD loader resolves it (cargo-apk2 bundles runtime_libs
+        # but we deliberately exclude libvulkan.so from the APK).
+        if command -v patchelf >/dev/null 2>&1; then
+            for target in "$dest/libMNN_Vulkan.so" "$dest/libMNNConvertDeps.so"; do
+                if [ -f "$target" ]; then
+                    patchelf --replace-needed libvulkan.so.1 libvulkan.so "$target"
+                    echo "  patchelf: $target libvulkan.so.1 -> libvulkan.so"
+                fi
+            done
+        else
+            echo "  WARN: patchelf not found; libs keep libvulkan.so.1 NEEDED"
         fi
     done
 
-    # libMNN_Vulkan.so / libMNNConvertDeps.so link against libvulkan.so.1, but
-    # on-device Android ships libvulkan.so (soname libvulkan.so). Do not ship
-    # our own copy; instead retune each NEEDED entry to libvulkan.so so the
-    # device's system ICD loader resolves it (cargo-apk2 bundles runtime_libs
-    # but we deliberately exclude libvulkan.so from the APK).
-    if command -v patchelf >/dev/null 2>&1; then
-        for target in "$RUNTIME_DIR/$abi/libMNN_Vulkan.so" \
-                      "$RUNTIME_DIR/$abi/libMNNConvertDeps.so"; do
-            if [ -f "$target" ]; then
-                patchelf --replace-needed libvulkan.so.1 libvulkan.so "$target"
-                echo "  patchelf: $target libvulkan.so.1 -> libvulkan.so"
-                copied=$((copied + 1))
-            fi
-        done
-    else
-        echo "  WARN: patchelf not found; libs keep libvulkan.so.1 NEEDED"
-    fi
-
     echo "============================================================"
-    echo "Done for ABI=$abi — $copied file(s) copied."
+    echo "Done for ABI=$build_abi — $copied file(s) installed."
     echo "============================================================"
 }
 
