@@ -1,17 +1,23 @@
-//! `isp.unpack16_blc_normal_cfa` — normalize + BLC + quad unpack from INT16 RAW.
+//! `isp.unpack16_blc_normal_cfa` — normalize + BLC + quad unpack from RAW16.
 //!
 //! One dispatch replaces `RawInput16Block → UnpackCfaBlock → NormalizeBlock → BlcBlock`
-//! (four blocks) with a single GPU pass. The host passes the INT16 sensor buffer
-//! verbatim; the MNN converter keeps the input declared INT16 (via
-//! `preserve_input_type`) and the shader does the INT16→FLOAT32 conversion, division
-//! by `sensor_max`, black-level subtraction, and Bayer quad-site selection.
+//! (four blocks) with a single GPU pass. The graph input is `[1,1,H,W]` with one
+//! sample per pixel, and the shader divides by `sensor_max`, subtracts the black
+//! level, and selects the Bayer quad sites.
+//!
+//! The boundary type is FLOAT32. MNN's converter widens a declared INT16 graph
+//! input to float — verified on this tree: an INT16-declared model converts to
+//! `code=2 bits=32` with and without `preserve_input_type`. Declaring INT16 here
+//! made the shader read float bytes as int16 (the quad came back as raw mantissa
+//! halves), so the block declares float and the engine widens the u16 sensor
+//! buffer on the CPU (`InputMode::RawFloat`).
 //!
 //! Bindings match the shader in `~/MNN/source/backend/vulkan/buffer/execution/isp_spv/`
 //! and VulkanFuse's universal `isp.*` descriptor map (frame in@3, frame out@4,
 //! extras from 5):
 //!   binding 0 = Uniforms {width, height, ...}
-//!   binding 3 = input INT16 plane (readonly)  ← InBuf
-//!   binding 4 = output float quad planes       ← OutBuf
+//!   binding 3 = input FLOAT32 plane (readonly)  ← InBuf
+//!   binding 4 = output float quad planes         ← OutBuf
 //!   binding 5 = black level per colour (R, Gr, Gb, B)
 //!   binding 6 = sensor white level
 //!   binding 7 = CFA phase
@@ -189,7 +195,7 @@ impl IspBlock for NormalizeBlcUnpack16Cfa {
     }
 
     fn input_elem_type(&self) -> i32 {
-        5 // INT16 (raw Bayer)
+        1 // FLOAT32 — the converter widens a declared INT16 input
     }
 
     fn output_elem_type(&self) -> i32 {
@@ -229,7 +235,7 @@ impl IspBlock for NormalizeBlcUnpack16Cfa {
                 Proto::tensor_dim_param("W"),
             ],
         };
-        Some(Proto::value_info(&self.input_source, &dims, 5))
+        Some(Proto::value_info(&self.input_source, &dims, 1))
     }
 
     fn output_value_info(&self) -> Option<Vec<u8>> {
@@ -341,7 +347,7 @@ mod tests {
     #[test]
     fn test_unpack16_blc_input_elem_type() {
         let b = NormalizeBlcUnpack16Cfa::new();
-        assert_eq!(b.input_elem_type(), 5); // INT16
+        assert_eq!(b.input_elem_type(), 1); // FLOAT32
     }
 
     #[test]
