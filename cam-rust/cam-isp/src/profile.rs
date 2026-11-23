@@ -521,13 +521,15 @@ impl PipelineProfile {
         // packed pair to split. The head is a plain full-resolution raw plane.
         use_unpack: false,
         force_input16: true,
+        // Match FUSED's feature set so the single `isp.pipeline` dispatch has
+        // every stage bit enabled via `PipelineStages::PREVIEW` (ALL_STAGES).
         use_fcs: false,
         use_ldci: false,
-        use_ee: false,
-        use_bad_pixel: false,
+        use_ee: true,
+        use_bad_pixel: true,
         demosaic_quality: DemosaicQuality::Standard,
         use_local_contrast: false,
-        use_unsharp: false,
+        use_unsharp: true,
         use_lsc: false,
         lsc_strength: 0.5,
         use_warp: false,
@@ -545,7 +547,7 @@ impl PipelineProfile {
         post_ccm_downscale: (0, 0),
         eis_margin: 0.0,
         use_bilateral: false,
-        use_saturation: false,
+        use_saturation: true,
         use_vignetting: false,
         use_colorspace: false,
         use_gamma: false,
