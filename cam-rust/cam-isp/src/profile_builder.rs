@@ -112,12 +112,14 @@ impl PipelineProfile {
                 {
                     // One `isp.unpack32_blc_normal_cfa` dispatch replaces the four
                     // blocks RawInput16 → UnpackCfa → Normalize → Blc, converting
-                    // FLOAT32 input, dividing by sensor_max, subtracting BLC, and
-                    // extracting the CFA quad — all in one GPU pass. The engine
-                    // converts u16→f32 on CPU (RawFloat mode); no host-side split.
+                    // the packed INT32 RAW word pair into float, dividing by
+                    // sensor_max, subtracting BLC, and extracting the CFA quad —
+                    // all in one GPU pass. The host passes the sensor buffer
+                    // verbatim (W*H u16 samples are W/2 int32 words per row); no
+                    // host-side split and no widening.
                     info!(
                         "  head: isp.unpack32_blc_normal_cfa \
-                         (fused unpack+normalize+blc+cfa from FLOAT32, owns the graph input)"
+                         (fused unpack+normalize+blc+cfa from packed INT32 RAW, owns the graph input)"
                     );
                     blocks.push(Box::new(
                         NormalizeBlcUnpack32Cfa::new()

@@ -1006,33 +1006,42 @@ impl MnnEngine {
         }
         write_f32_array(pool, "EeBlock/bias_ee", &[0.0f32; 3]);
 
-        // isp.unpack_blc_normal_cfa/bayer_pattern [1] — CFA phase.
+        // The fused RAW heads — `isp.unpack_blc_normal_cfa` (packed INT32),
+        // `isp.unpack16_blc_normal_cfa` (INT16), `isp.unpack32_blc_normal_cfa`
+        // (packed INT32, W/2 words per row) — all read the same three
+        // coefficient tensors, each under its own block namespace.
         //
-        // The fused head subtracts black level by *colour* but emits planes in
+        // The head subtracts black level by *colour* but emits planes in
         // physical quad order, so it needs the phase to know which plane is
-        // which. Written from `ProcessParams::bayer_pattern`, not from the
-        // block's construction-time default, so a profile cannot carry a stale
-        // phase into a different sensor.
-        write_f32(pool, "isp_unpack_blc/bayer_pattern", bayer_pattern as f32);
-
-        // isp.unpack_blc/max_val [1] — the white level the fused head divides by.
+        // which. Both are written from `ProcessParams`, not from the block's
+        // construction-time defaults, so a profile cannot carry a stale phase or
+        // white level into a different sensor.
         //
-        // The primitive head divides inside `NormalizeBlock`, which reads
-        // `NormalizeBlock/max_val`. The fused head does the same divide in its
-        // shader, so it needs the same number under its own tensor name. Left
-        // unwritten it kept the block's construction-time default of 65535, and
-        // a 10-bit sensor's 1023-count frame came out at 0.016 — a nearly black
-        // picture at the end of an otherwise correct chain.
-        write_f32(
-            pool,
-            "isp_unpack_blc/max_val",
-            if input_scale > 1.0 {
-                input_scale
-            } else {
-                white_level
-            }
-            .max(1.0),
-        );
+        // Writing only the packed-form name was a real defect: a profile that
+        // fused its head to one of the other two kept the block default of
+        // 65535, so a 10-bit sensor's 1023-count frame came out at 0.016 — a
+        // nearly black picture at the end of an otherwise correct chain.
+        for ns in ["isp_unpack_blc", "isp_unpack16_blc", "isp_unpack32_blc"] {
+            // `int bayer_pattern[]` in every one of these shaders — four bytes of
+            // int, not four bytes of float bits. Uploading `2.0f` put 0x40000000
+            // in the buffer, which matches none of the four phases and fell
+            // through to the BGGR `else`, rotating every plane.
+            write_raw(
+                pool,
+                &format!("{ns}/bayer_pattern"),
+                &bayer_pattern.to_le_bytes(),
+            );
+            write_f32(
+                pool,
+                &format!("{ns}/max_val"),
+                if input_scale > 1.0 {
+                    input_scale
+                } else {
+                    white_level
+                }
+                .max(1.0),
+            );
+        }
 
         // DisplayBlock/gamma — `isp.display` computes `pow(x, 1/gamma)` and reads
         // gamma from binding 0. Left at zero the shader's `pow(x, 0)` yields 1.0
