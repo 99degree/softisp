@@ -108,6 +108,21 @@ build_and_copy() {
         else
             echo "  WARN: patchelf not found; libs keep libvulkan.so.1 NEEDED"
         fi
+
+        # MNN (built by the NDK clang) needs symbols from the device's system
+        # libc++_shared (e.g. __ndk1::__hash_memory). The NDK r29 stub under
+        # $ANDROID_NDK_ROOT/sysroot ships an older libc++ that lacks them, which
+        # makes the APK fail at load with "cannot locate symbol". Termux's own
+        # /data/data/com.termux/files/usr/lib/libc++_shared.so is built against
+        # the same bionic as the device and carries the missing symbols, so copy
+        # it into the runtime dir so cargo-apk2 bundles it into the APK.
+        termux_libcpp="/data/data/com.termux/files/usr/lib/libc++_shared.so"
+        if [ -f "$termux_libcpp" ]; then
+            cp -f "$termux_libcpp" "$dest/libc++_shared.so"
+            echo "  copied: $termux_libcpp -> $dest/libc++_shared.so"
+        else
+            echo "  WARN: Termux libc++_shared.so not found at $termux_libcpp; APK may fail to load libMNN.so"
+        fi
     done
 
     echo "============================================================"
