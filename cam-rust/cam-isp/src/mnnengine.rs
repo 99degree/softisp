@@ -2432,7 +2432,7 @@ impl IspEngine for MnnEngine {
             // Inferring the encoding from the element *count* instead would
             // misfire, because a 1×1 Conv output of `pixels/channels` lands on
             // the same count.
-            let _out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
+            let packed_display = !p.output_format.is_raw_output() && out_type != 4;
             let n_valid = n.max(0) as usize;
             let out_elems = n_valid.min(pixels * graph_channels);
             let graph_elem = if p.output_format.is_fp16() { 2 } else { 4 };
@@ -2441,20 +2441,44 @@ impl IspEngine for MnnEngine {
             // Narrow f32 `[0,255]` → u8 only for the graph-native float path.
             // The graph does all colour work; this is only the type cast the
             // ONNX graph cannot express for a u8 consumer.
+            //
+            // Only convert `out_elems` f32 values (not the whole pool buffer):
+            // for `FloatRgb` (3 channels) the valid output is `pixels*3` f32,
+            // but the pool holds `tw*h*4` f32 elements. Passing the full buffer
+            // would decode trailing garbage as u8 → near-zero mean → blank frame.
+            let valid_bytes = out_elems * graph_elem;
             let data_out = if zero_copy {
                 // MNN wrote directly into the caller's buffer via
                 // mnn_run_true_zero_copy. Return empty data; the real
                 // pixels live in `external_data` (set below).
                 Vec::new()
-            } else {
-                // Both raw_output/packed_display and SplitInt32 paths read
-                // f32 from the pool buffer and clamp to u8.
+            } else if p.output_format.is_raw_output() {
+                // Float graph output (e.g. FloatRgb): clamp f32 [0,255] → u8.
                 let buf_id = buf_id_for_release.expect("pool buffer id");
                 let mut pool = self.buf_pool.lock().unwrap();
                 let buf = pool.buffer_mut(buf_id);
-                // Reinterpret f32 buffer as u8 bytes for clamping conversion.
                 let buf_bytes = unsafe {
-                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * 4)
+                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, valid_bytes)
+                };
+                Self::f32_to_u8(buf_bytes)
+            } else if packed_display {
+                // Fused `isp.display_*` shader wrote packed INT32 words — one
+                // BGRA u8 pixel per word, little-endian. These bytes are *already*
+                // the final answer; do NOT reinterpret as f32 (that collapses
+                // every pixel to ~0 → blank frame).
+                let buf_id = buf_id_for_release.expect("pool buffer id");
+                let mut pool = self.buf_pool.lock().unwrap();
+                let buf = pool.buffer_mut(buf_id);
+                let buf_bytes =
+                    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, valid_bytes) };
+                buf_bytes.to_vec()
+            } else {
+                // SplitInt32 path: read f32 from pool buffer, clamp to u8.
+                let buf_id = buf_id_for_release.expect("pool buffer id");
+                let mut pool = self.buf_pool.lock().unwrap();
+                let buf = pool.buffer_mut(buf_id);
+                let buf_bytes = unsafe {
+                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, valid_bytes)
                 };
                 Self::f32_to_u8(buf_bytes)
             };

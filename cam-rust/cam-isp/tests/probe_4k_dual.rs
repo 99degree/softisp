@@ -101,7 +101,7 @@ fn run_dual(
         output_buffer: None,
         input_ahb: None,
         output_ahb: None,
-        output_format: OutputFormat::FloatRgb,
+        output_format: OutputFormat::Bgra,
         timestamp_ns: 0,
         isp_params: None,
     };
@@ -127,15 +127,10 @@ fn run_dual(
                 t.push(ms);
                 sum += ms;
                 if !picture {
-                    let vals: Vec<f32> = f
-                        .data
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .map(|b| f32::from_le_bytes(*b))
-                        .collect();
-                    let m = vals.iter().map(|v| *v as f64).sum::<f64>() / vals.len().max(1) as f64;
-                    picture = m > 0.02;
+                    // data is u8 (BGRA) for non-Float* formats — check mean byte value.
+                    let m =
+                        f.data.iter().map(|v| *v as f64).sum::<f64>() / f.data.len().max(1) as f64;
+                    picture = m > 5.0; // > ~2% of 255
                 }
             }
             Err(e) => {
@@ -182,7 +177,7 @@ fn perf_4k_dual() {
     let build = |p: PipelineProfile| {
         move |w: u32, h: u32| {
             let mut p = p;
-            p.output_format = OutputFormat::FloatRgb;
+            p.output_format = OutputFormat::Bgra;
             let mut blocks = p.build_blocks(w, h, 2);
             let head = blocks.remove(0);
             let aux = p.build_aux_blocks(h as i64, w as i64);
