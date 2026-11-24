@@ -37,31 +37,24 @@ The debug APK uses `~/.android/debug.keystore` for signing and ships
 
 ---
 
-## 1. Install the APK (no adb)
+## 1. Install the APK (let the user install it — no `install-apk.sh` / `pm` in Termux)
 
-`adb install` is not available / cannot read Termux's private data dir because
-of SELinux. Use the bundled `install-apk.sh`, which feeds the APK to
-`pm install-write` on stdin:
+Do **not** run `install-apk.sh`, `pm install-create`, `pm install-write`, or
+`pm install-commit` from Termux. The APK is signed with the debug keystore and
+is ready to sideload as-is:
 
-```bash
-cd /data/data/com.termux/files/home/softisp
-./install-apk.sh
-# or point at a different APK:
-./install-apk.sh /path/to/softisp-camera.apk
+```
+target/debug/apk/softisp-camera.apk
 ```
 
-This creates a package install session, writes the APK into it, and commits it.
-The app id is `com.softisp.camera`.
+Transfer that file to the device however you normally move files from Termux
+(copy to `~/shared`, `termux-share`, etc.) and let the user install it through
+the normal Android install flow (open the APK file, or drop it via the device's
+file manager). The app id is `com.softisp.camera`.
 
-By-hand equivalent (all on-device, no adb):
-
-```bash
-SIZE=$(stat -c %s target/debug/apk/softisp-camera.apk)
-OUT=$(pm install-create -r -t --user 0 -i com.termux -S "$SIZE")
-SID=$(printf '%s' "$OUT" | sed -n 's/.*\[\([0-9][0-9]*\)\].*/\1/p')
-cat target/debug/apk/softisp-camera.apk | pm install-write -S "$SIZE" "$SID" base -
-pm install-commit "$SID"
-```
+If you already have the APK installed and just need to reinstall, uninstall the
+old one first from Settings → Apps → SoftISP Camera → Uninstall, then install
+the new APK.
 
 ---
 
@@ -71,15 +64,9 @@ Because it is a `NativeActivity` with a launcher intent, open it from the app
 drawer ("SoftISP Camera"). There is no `am start` return value to inspect — the
 process simply starts `android_main` in `cam-camera-app/src/lib.rs`.
 
-To invoke it from the shell (same thing the launcher does, all on-device):
-
-```bash
-am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
-  com.softisp.camera
-```
-
-`am start` returns immediately with no output on success; failure prints an
-error to stderr. The real signal is whether the preview surface appears.
+`am start` is optional (you can try it from the device shell, but prefer the
+launcher); it returns immediately with no output on success. The real signal is
+whether the preview surface appears.
 
 ---
 

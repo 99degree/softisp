@@ -116,7 +116,7 @@ You must process every single engineering task through this strict, non-negotiab
 
 * **Session created**: 2026-06-21
 * All work executes in the Pi harness inside Termux on Android. The Rust toolchain is pinned via `rust-toolchain.toml` (stable, with `rustfmt` + `clippy` components).
-* **No adb on the device:** Termux/Android is the test machine — there is no `adb`. Install the APK via `install-apk.sh` (pm install-write), launch from the launcher or `am start`, and read diagnostics from the crash log file (`/sdcard/download/softisp-app.log` or fallback) plus `logcat` run directly on the device. Reference `docs/build/DEBUG_APK.md` for the full no-adb debugging procedure.
+* **No adb on the device:** Termux/Android is the test machine — there is no `adb`. Let the user install the APK (`target/debug/apk/softisp-camera.apk`) via the normal Android install flow and launch from the launcher or `am start`; read diagnostics from the crash log file (`/sdcard/download/softisp-app.log` or fallback) plus `logcat` run directly on the device. Reference `docs/build/DEBUG_APK.md` for the full no-adb debugging procedure.
 
 ### 1.8 ACTIVE EXTENSIONS
 
