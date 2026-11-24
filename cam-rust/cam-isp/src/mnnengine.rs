@@ -2424,7 +2424,6 @@ impl IspEngine for MnnEngine {
             // misfire, because a 1×1 Conv output of `pixels/channels` lands on
             // the same count.
             let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
-            let packed_display = !p.output_format.is_raw_output() && out_type != 4;
             let n_valid = n.max(0) as usize;
             let out_elems = n_valid.min(pixels * graph_channels);
             let graph_elem = if p.output_format.is_fp16() { 2 } else { 4 };
@@ -2438,20 +2437,10 @@ impl IspEngine for MnnEngine {
                 // mnn_run_true_zero_copy. Return empty data; the real
                 // pixels live in `external_data` (set below).
                 Vec::new()
-            } else if p.output_format.is_raw_output() || packed_display {
-                // The pool buffer already has the correct size; just get a
-                // mutable reference to its bytes.
-                let buf_id = buf_id_for_release.unwrap();
-                let mut pool = self.buf_pool.lock().unwrap();
-                let buf = pool.buffer_mut(buf_id);
-                // Reinterpret f32 buffer as u8 bytes for clamping conversion.
-                let buf_bytes = unsafe {
-                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * 4)
-                };
-                Self::f32_to_u8(buf_bytes)
             } else {
-                // SplitInt32 path: read f32 from pool buffer, clamp to u8.
-                let buf_id = buf_id_for_release.unwrap();
+                // Both raw_output/packed_display and SplitInt32 paths read
+                // f32 from the pool buffer and clamp to u8.
+                let buf_id = buf_id_for_release.expect("pool buffer id");
                 let mut pool = self.buf_pool.lock().unwrap();
                 let buf = pool.buffer_mut(buf_id);
                 // Reinterpret f32 buffer as u8 bytes for clamping conversion.
