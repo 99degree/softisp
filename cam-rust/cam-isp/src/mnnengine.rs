@@ -2461,9 +2461,8 @@ impl IspEngine for MnnEngine {
                 let buf_id = buf_id_for_release.expect("pool buffer id");
                 let mut pool = self.buf_pool.lock().unwrap();
                 let buf = pool.buffer_mut(buf_id);
-                let buf_bytes = unsafe {
-                    std::slice::from_raw_parts(buf.as_ptr() as *const u8, valid_bytes)
-                };
+                let buf_bytes =
+                    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, valid_bytes) };
                 buf_bytes.to_vec()
             } else if packed_display {
                 // Fused `isp.display_*` shader wrote packed INT32 words — one

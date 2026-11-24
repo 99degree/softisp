@@ -45,6 +45,7 @@ fn run_single(
     h: u32,
     frames: usize,
     stats_on: bool,
+    fmt: OutputFormat,
     make: impl Fn(
         u32,
         u32,
@@ -169,6 +170,7 @@ fn run_dual(
     w: u32,
     h: u32,
     frames: usize,
+    fmt: OutputFormat,
     make: impl Fn(
         u32,
         u32,
@@ -316,10 +318,10 @@ fn perf_4k() {
     let whole = || PipelineProfile::WHOLE;
     let unified = || PipelineProfile::UNIFIED;
 
-    let build = |p: PipelineProfile| {
+    let build = |p: PipelineProfile, fmt: OutputFormat| {
         move |w: u32, h: u32| {
             let mut p = p;
-            p.output_format = OutputFormat::FloatRgb;
+            p.output_format = fmt;
             let mut blocks = p.build_blocks(w, h, 2);
             let head = blocks.remove(0);
             let aux = p.build_aux_blocks(h as i64, w as i64);
@@ -328,27 +330,35 @@ fn perf_4k() {
         }
     };
 
-    eprintln!("\n== {w}x{h}, {frames} frames after warmup ==");
-    eprintln!(
-        "{:<30} {:>7} {:>9} {:>9} {:>9} {:>8}",
-        "profile", "blocks", "p50 ms", "p95 ms", "max ms", "FPS"
-    );
+    let formats = [
+        ("PackedRgb", OutputFormat::PackedRgb),
+        ("Bgra", OutputFormat::Bgra),
+        ("Argb", OutputFormat::Argb),
+    ];
 
     let mut rows: Vec<Timing> = Vec::new();
-    for (label, p) in [
-        ("MED (primitives)", med()),
-        ("FUSED", fused()),
-        ("FUSED, stats off", fused()),
-        ("WHOLE", whole()),
-        ("UNIFIED", unified()),
-    ] {
-        let stats_on = !label.ends_with("stats off");
-        if let Some(t) = run_single(label, w, h, frames, stats_on, build(p)) {
-            eprintln!(
-                "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1}",
-                t.label, t.blocks, t.p50, t.p95, t.max, t.fps
-            );
-            rows.push(t);
+    for (fmt_name, fmt) in formats {
+        for (label, p) in [
+            ("MED (primitives)", med()),
+            ("FUSED", fused()),
+            ("FUSED, stats off", fused()),
+            ("WHOLE", whole()),
+            ("UNIFIED", unified()),
+        ] {
+            let stats_on = !label.ends_with("stats off");
+            if let Some(t) = run_single(label, w, h, frames, stats_on, fmt, build(p, fmt)) {
+                eprintln!(
+                    "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
+                    format!("{} ({})", t.label, fmt_name),
+                    t.blocks,
+                    t.p50,
+                    t.p95,
+                    t.max,
+                    t.fps,
+                    fmt_name
+                );
+                rows.push(t);
+            }
         }
     }
 
@@ -390,10 +400,10 @@ fn perf_4k_dual() {
 
     let fused = || PipelineProfile::FUSED;
 
-    let build = |p: PipelineProfile| {
+    let build = |p: PipelineProfile, fmt: OutputFormat| {
         move |w: u32, h: u32| {
             let mut p = p;
-            p.output_format = OutputFormat::FloatRgb;
+            p.output_format = fmt;
             let mut blocks = p.build_blocks(w, h, 2);
             let head = blocks.remove(0);
             let aux = p.build_aux_blocks(h as i64, w as i64);
@@ -402,20 +412,35 @@ fn perf_4k_dual() {
         }
     };
 
+    let formats = [
+        ("PackedRgb", OutputFormat::PackedRgb),
+        ("Bgra", OutputFormat::Bgra),
+        ("Argb", OutputFormat::Argb),
+    ];
+
     eprintln!("\n== {w}x{h}, {frames} frames after warmup (DUAL GPU engine) ==");
     eprintln!(
-        "{:<30} {:>7} {:>9} {:>9} {:>9} {:>8}",
-        "profile", "blocks", "p50 ms", "p95 ms", "max ms", "FPS"
+        "{:<30} {:>7} {:>9} {:>9} {:>9} {:>8} {:<10}",
+        "profile", "blocks", "p50 ms", "p95 ms", "max ms", "FPS", "format"
     );
 
     let mut rows: Vec<Timing> = Vec::new();
-    for (label, p) in [("DUAL fused", fused())] {
-        if let Some(t) = run_dual(label, w, h, frames, build(p)) {
-            eprintln!(
-                "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1}",
-                t.label, t.blocks, t.p50, t.p95, t.max, t.fps
-            );
-            rows.push(t);
+    for (fmt_name, fmt) in formats {
+        for (label, p) in [("DUAL fused", fused())] {
+            let stats_on = !label.ends_with("stats off");
+            if let Some(t) = run_dual(label, w, h, frames, fmt, build(p, fmt)) {
+                eprintln!(
+                    "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
+                    format!("{} ({})", t.label, fmt_name),
+                    t.blocks,
+                    t.p50,
+                    t.p95,
+                    t.max,
+                    t.fps,
+                    fmt_name
+                );
+                rows.push(t);
+            }
         }
     }
 
