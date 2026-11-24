@@ -195,7 +195,7 @@ fn run_dual(
         return None;
     }
 
-    let mut dual = DualGpuEngine::new(engine_a, engine_b);
+    let mut dual = DualGpuEngine::new(engine_a, Box::new(engine_b));
 
     // 4K raw: an 8-bit-ish ramp so the pipeline has real gradients to work on and
     // the sensor-max divide lands well inside [0,1].
