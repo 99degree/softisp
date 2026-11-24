@@ -191,6 +191,10 @@ pub struct MnnEngine {
     /// Populated at build() from each block's `extra_input_defaults()`.
     #[cfg(feature = "mnn")]
     default_inputs: Mutex<Vec<(String, Vec<u8>)>>,
+    /// Per-value delta cache for `set_extra_inputs` write_* calls.
+    /// Skips re-uploading unchanged tensors every frame.
+    #[cfg(feature = "mnn")]
+    extra_input_cache: Mutex<HashMap<String, Vec<u8>>>,
 }
 
 #[cfg(feature = "mnn")]
@@ -246,6 +250,8 @@ impl MnnEngine {
             scratch_f32: Mutex::new(Vec::new()),
             #[cfg(feature = "mnn")]
             default_inputs: Mutex::new(Vec::new()),
+            #[cfg(feature = "mnn")]
+            extra_input_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -799,6 +805,7 @@ impl MnnEngine {
     fn set_extra_inputs(
         &self,
         pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
+        cache: &Mutex<HashMap<String, Vec<u8>>>,
         ccm: Option<&[f32; 9]>,
         tone: &ToneParams,
         bayer: Option<&[f32; 4]>,
@@ -825,17 +832,21 @@ impl MnnEngine {
         /// Scalars are uploaded with an explicit `[1]` shape: MNN reports a
         /// rank-0 tensor's shape as empty, and an empty-shape upload carries
         /// no elements, so these values would otherwise never be written.
-        fn write_f32(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, val: f32) {
+        fn write_f32(
+            pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
+            cache: &Mutex<HashMap<String, Vec<u8>>>,
+            name: &str,
+            val: f32,
+        ) {
             // Delta tracking: skip if value unchanged since last frame
-            if let Some(cache) = &self.extra_input_cache {
-                let mut cache = cache.lock().unwrap();
-                let key = name.to_string();
-                let val_bytes = val.to_le_bytes().to_vec();
-                if cache.get(&key) == Some(&val_bytes) {
-                    return; // unchanged, skip upload
-                }
-                cache.insert(key, val_bytes);
+            let mut cache = cache.lock().unwrap();
+            let key = name.to_string();
+            let val_bytes = val.to_le_bytes().to_vec();
+            if cache.get(&key) == Some(&val_bytes) {
+                return; // unchanged, skip upload
             }
+            cache.insert(key, val_bytes);
+            drop(cache);
             if let Some(t) = find(pool, name) {
                 t.upload_f32_shaped(&[1], &[val]);
             }
@@ -845,19 +856,19 @@ impl MnnEngine {
         /// No-op if the tensor is missing or too small.
         fn write_f32_array(
             pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
+            cache: &Mutex<HashMap<String, Vec<u8>>>,
             name: &str,
             vals: &[f32],
         ) {
             // Delta tracking: skip if values unchanged since last frame
             let val_bytes: Vec<u8> = vals.iter().flat_map(|v| v.to_le_bytes()).collect();
-            if let Some(cache) = &self.extra_input_cache {
-                let mut cache = cache.lock().unwrap();
-                let key = name.to_string();
-                if cache.get(&key) == Some(&val_bytes) {
-                    return; // unchanged, skip upload
-                }
-                cache.insert(key, val_bytes);
+            let mut cache = cache.lock().unwrap();
+            let key = name.to_string();
+            if cache.get(&key) == Some(&val_bytes) {
+                return; // unchanged, skip upload
             }
+            cache.insert(key, val_bytes);
+            drop(cache);
             // A failed upload leaves the tensor at whatever it was allocated
             // with — usually zeros. That turns into a silently black or
             // unmodified stage, so say so instead of swallowing the bool.
@@ -877,17 +888,21 @@ impl MnnEngine {
         /// Write raw bytes into a named tensor (for int64 / int32 / float
         /// tensors that were formerly baked as initializers).  No-op if the
         /// tensor is missing or too small.
-        fn write_raw(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, data: &[u8]) {
+        fn write_raw(
+            pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
+            cache: &Mutex<HashMap<String, Vec<u8>>>,
+            name: &str,
+            data: &[u8],
+        ) {
             // Delta tracking: skip if bytes unchanged since last frame
-            if let Some(cache) = &self.extra_input_cache {
-                let mut cache = cache.lock().unwrap();
-                let key = name.to_string();
-                let data_bytes = data.to_vec();
-                if cache.get(&key) == Some(&data_bytes) {
-                    return; // unchanged, skip upload
-                }
-                cache.insert(key, data_bytes);
+            let mut cache = cache.lock().unwrap();
+            let key = name.to_string();
+            let data_bytes = data.to_vec();
+            if cache.get(&key) == Some(&data_bytes) {
+                return; // unchanged, skip upload
             }
+            cache.insert(key, data_bytes);
+            drop(cache);
             match find(pool, name) {
                 Some(t) => {
                     // `extra_input_defaults` are serialized f32 values.
@@ -921,10 +936,10 @@ impl MnnEngine {
                             .to_vec()
                     })
                     .collect();
-                write_raw(pool, name, &scaled);
+                write_raw(pool, cache, name, &scaled);
                 continue;
             }
-            write_raw(pool, name, data);
+            write_raw(pool, cache, name, data);
         }
         drop(defaults);
 
@@ -1020,7 +1035,7 @@ impl MnnEngine {
         } else {
             [tone.brightness; 3]
         };
-        write_f32_array(pool, "DemosaicCcmBlock/b", &demosaic_bias);
+        write_f32_array(pool, cache, "DemosaicCcmBlock/b", &demosaic_bias);
 
         // ── Coefficient buffers for the fused isp.* ops ──
         //
@@ -1050,7 +1065,7 @@ impl MnnEngine {
                 warn!("EeBlock/kernel_ee: upload failed");
             }
         }
-        write_f32_array(pool, "EeBlock/bias_ee", &[0.0f32; 3]);
+        write_f32_array(pool, cache, "EeBlock/bias_ee", &[0.0f32; 3]);
 
         // The fused RAW heads — `isp.unpack_blc_normal_cfa` (packed INT32),
         // `isp.unpack16_blc_normal_cfa` (INT16), `isp.unpack32_blc_normal_cfa`
@@ -1074,11 +1089,13 @@ impl MnnEngine {
             // through to the BGGR `else`, rotating every plane.
             write_raw(
                 pool,
+                cache,
                 &format!("{ns}/bayer_pattern"),
                 &bayer_pattern.to_le_bytes(),
             );
             write_f32(
                 pool,
+                cache,
                 &format!("{ns}/max_val"),
                 if input_scale > 1.0 {
                     input_scale
@@ -1093,7 +1110,7 @@ impl MnnEngine {
         // gamma from binding 0. Left at zero the shader's `pow(x, 0)` yields 1.0
         // everywhere, i.e. a white frame. The primitive path uses 1/2.4 as an
         // exponent, so the shader wants its reciprocal.
-        write_f32(pool, "DisplayBlock/gamma", 2.4);
+        write_f32(pool, cache, "DisplayBlock/gamma", 2.4);
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains.
         //
         // This must ALWAYS be written. `BayerWbBlock::extra_input_defaults`
@@ -1104,6 +1121,7 @@ impl MnnEngine {
         let identity_gains = [1.0f32; 4];
         write_f32_array(
             pool,
+            cache,
             "BayerWbBlock/gains",
             bayer.map_or(&identity_gains[..], |g| g),
         );
@@ -1111,35 +1129,35 @@ impl MnnEngine {
         // (depend on the sensor Bayer pattern). CcmBlock_ccm/matrix [3,3] —
         // color matrix (identity when not provided). All three are true
         // runtime inputs on the production pipeline (no initializer defaults).
-        write_f32_array(pool, "DemosaicBlock/w", demo);
-        write_f32_array(pool, "DemosaicBlock/b", &[0.0f32; 3]);
+        write_f32_array(pool, cache, "DemosaicBlock/w", demo);
+        write_f32_array(pool, cache, "DemosaicBlock/b", &[0.0f32; 3]);
         let ccm_mat: [f32; 9] = match ccm {
             Some(m) => *m,
             None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
         };
-        write_f32_array(pool, "CcmBlock_ccm/matrix", &ccm_mat);
+        write_f32_array(pool, cache, "CcmBlock_ccm/matrix", &ccm_mat);
         // ToneBlock/contrast [1]
-        write_f32(pool, "ToneBlock/contrast", tone.contrast);
+        write_f32(pool, cache, "ToneBlock/contrast", tone.contrast);
         // ToneBlock/brightness [1]
-        write_f32(pool, "ToneBlock/brightness", tone.brightness);
+        write_f32(pool, cache, "ToneBlock/brightness", tone.brightness);
         // ToneBlock/gamma_recip [1]
-        write_f32(pool, "ToneBlock/gamma_recip", tone.gamma_recip);
+        write_f32(pool, cache, "ToneBlock/gamma_recip", tone.gamma_recip);
         // SaturationBlock/scale [3] — per-channel saturation, from the tone
         // controller. Its `tone_saturation` was previously ignored here, so the
         // stage always ran at 1.0 and the controller's tuning never reached the
         // picture.
         let sat = tone.saturation.clamp(0.0, 2.0);
-        write_f32_array(pool, "saturation/scale", &[sat; 3]);
+        write_f32_array(pool, cache, "saturation/scale", &[sat; 3]);
         // ToneBlock/exposure [1] — AE gain, applied before contrast/brightness.
-        write_f32(pool, "ToneBlock/exposure", exposure_gain.max(0.05));
+        write_f32(pool, cache, "ToneBlock/exposure", exposure_gain.max(0.05));
         // Sharpen/strength [1] — sharpening strength
-        write_f32(pool, "Sharpen/strength", 1.0);
+        write_f32(pool, cache, "Sharpen/strength", 1.0);
         // LdciBlock/strength [1] — local contrast strength
-        write_f32(pool, "LdciBlock/strength", 1.0);
+        write_f32(pool, cache, "LdciBlock/strength", 1.0);
         // FcsBlock/gain [3] — per-channel gain (default: identity)
-        write_f32_array(pool, "FcsBlock/gain", &[1.0f32; 3]);
+        write_f32_array(pool, cache, "FcsBlock/gain", &[1.0f32; 3]);
         // FcsBlock/bias [3] — per-channel bias (default: zero)
-        write_f32_array(pool, "FcsBlock/bias", &[0.0f32; 3]);
+        write_f32_array(pool, cache, "FcsBlock/bias", &[0.0f32; 3]);
         // NormalizeBlock/max_val [1] — the divisor that maps sensor counts to
         // [0,1].
         //
@@ -1156,24 +1174,24 @@ impl MnnEngine {
         } else {
             white_level
         };
-        write_f32(pool, "NormalizeBlock/max_val", divisor.max(1.0));
+        write_f32(pool, cache, "NormalizeBlock/max_val", divisor.max(1.0));
         // GammaBlock / AutoContrastBlock / DisplayBlock — always write
         // defaults so pure-input tensors are never left uninitialized when
         // no isp_params are supplied; the isp_params branch below overrides.
-        write_f32(pool, "Gamma/inv_gamma", 1.0 / 2.2);
-        write_f32(pool, "Gamma/min", 0.0);
-        write_f32(pool, "Gamma/max", 1.0);
-        write_f32(pool, "Gamma/lift", 0.0);
-        write_f32(pool, "Gamma/norm", 1.0);
-        write_f32(pool, "AutoContrast/lift", 0.0);
-        write_f32(pool, "AutoContrast/half", 0.5);
-        write_f32(pool, "AutoContrast/contrast_w", 1.0);
-        write_f32(pool, "AutoContrast/zero", 0.0);
-        write_f32(pool, "AutoContrast/one", 1.0);
-        write_f32(pool, "DisplayBlock/scale", 1.0);
-        write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
-        write_f32(pool, "DisplayBlock/zero", 0.0);
-        write_f32(pool, "DisplayBlock/one", input_scale);
+        write_f32(pool, cache, "Gamma/inv_gamma", 1.0 / 2.2);
+        write_f32(pool, cache, "Gamma/min", 0.0);
+        write_f32(pool, cache, "Gamma/max", 1.0);
+        write_f32(pool, cache, "Gamma/lift", 0.0);
+        write_f32(pool, cache, "Gamma/norm", 1.0);
+        write_f32(pool, cache, "AutoContrast/lift", 0.0);
+        write_f32(pool, cache, "AutoContrast/half", 0.5);
+        write_f32(pool, cache, "AutoContrast/contrast_w", 1.0);
+        write_f32(pool, cache, "AutoContrast/zero", 0.0);
+        write_f32(pool, cache, "AutoContrast/one", 1.0);
+        write_f32(pool, cache, "DisplayBlock/scale", 1.0);
+        write_f32(pool, cache, "DisplayBlock/gamma_exp", 1.0 / 2.4);
+        write_f32(pool, cache, "DisplayBlock/zero", 0.0);
+        write_f32(pool, cache, "DisplayBlock/one", input_scale);
         // ── The whole-pipeline op's own coefficients ──
         //
         // `isp.pipeline` has no ONNX attributes to carry these: VulkanFuse is
@@ -1192,28 +1210,44 @@ impl MnnEngine {
             //
             // White level: the shader divides by it, and it is also the scale a
             // black level or a bad-pixel threshold means something against.
-            write_f32(pool, "isp_pipeline/white", white_level.max(1.0));
+            write_f32(pool, cache, "isp_pipeline/white", white_level.max(1.0));
             // Bayer gains per plane, in the plane order the phase table uses.
             if let Some(g) = bayer {
-                write_f32_array(pool, "isp_pipeline/wb", g);
+                write_f32_array(pool, cache, "isp_pipeline/wb", g);
             }
             if let Some(m) = ccm {
-                write_f32_array(pool, "isp_pipeline/ccm", m);
+                write_f32_array(pool, cache, "isp_pipeline/ccm", m);
             }
             // TONE_CURVE/GAMMA_RECIP, the same value `isp.display` consumes: the
             // shader takes its reciprocal, so this is the display gamma.
-            write_f32(pool, "isp_pipeline/gamma", tone.gamma_recip.max(1e-4));
-            write_f32(pool, "isp_pipeline/lift", tone.shadow_lift.clamp(0.0, 1.0));
             write_f32(
                 pool,
+                cache,
+                "isp_pipeline/gamma",
+                tone.gamma_recip.max(1e-4),
+            );
+            write_f32(
+                pool,
+                cache,
+                "isp_pipeline/lift",
+                tone.shadow_lift.clamp(0.0, 1.0),
+            );
+            write_f32(
+                pool,
+                cache,
                 "isp_pipeline/pattern",
                 bayer_pattern.clamp(0, 3) as f32,
             );
-            write_f32_array(pool, "isp_pipeline/sat", &[tone.saturation.clamp(0.0, 2.0)]);
+            write_f32_array(
+                pool,
+                cache,
+                "isp_pipeline/sat",
+                &[tone.saturation.clamp(0.0, 2.0)],
+            );
             // A bad pixel is one further from its 3x3 median than this, in raw
             // counts — scaled off the white level so a 10-bit and a 12-bit sensor
             // get the same *relative* threshold.
-            write_f32(pool, "isp_pipeline/dpc", white_level.max(1.0) * 0.02);
+            write_f32(pool, cache, "isp_pipeline/dpc", white_level.max(1.0) * 0.02);
         }
 
         // Every `Clip(x, <ns>/zero, <ns>/one)` in the chain assumes a [0,1]
@@ -1228,8 +1262,8 @@ impl MnnEngine {
                 "ToneBlock",
                 "SaturationBlock",
             ] {
-                write_f32(pool, &format!("{ns}/one"), input_scale);
-                write_f32(pool, &format!("{ns}/zero"), 0.0);
+                write_f32(pool, cache, &format!("{ns}/one"), input_scale);
+                write_f32(pool, cache, &format!("{ns}/zero"), 0.0);
             }
         }
         // GammaBlock — inv_gamma, min, max, lift, norm
@@ -1239,37 +1273,42 @@ impl MnnEngine {
             } else {
                 1.0
             };
-            write_f32(pool, "Gamma/inv_gamma", inv_gamma);
-            write_f32(pool, "Gamma/min", isp.tone.black_crush);
-            write_f32(pool, "Gamma/max", isp.tone.white_clip);
-            write_f32(pool, "Gamma/lift", isp.tone.black_crush);
-            write_f32(pool, "Gamma/norm", 1.0);
+            write_f32(pool, cache, "Gamma/inv_gamma", inv_gamma);
+            write_f32(pool, cache, "Gamma/min", isp.tone.black_crush);
+            write_f32(pool, cache, "Gamma/max", isp.tone.white_clip);
+            write_f32(pool, cache, "Gamma/lift", isp.tone.black_crush);
+            write_f32(pool, cache, "Gamma/norm", 1.0);
             // AutoContrastBlock — lift, half, contrast_w, zero, one
-            write_f32(pool, "AutoContrast/lift", isp.tone.black_crush);
-            write_f32(pool, "AutoContrast/half", 0.5);
-            write_f32(pool, "AutoContrast/contrast_w", isp.tone.contrast);
-            write_f32(pool, "AutoContrast/zero", 0.0);
-            write_f32(pool, "AutoContrast/one", 1.0);
+            write_f32(pool, cache, "AutoContrast/lift", isp.tone.black_crush);
+            write_f32(pool, cache, "AutoContrast/half", 0.5);
+            write_f32(pool, cache, "AutoContrast/contrast_w", isp.tone.contrast);
+            write_f32(pool, cache, "AutoContrast/zero", 0.0);
+            write_f32(pool, cache, "AutoContrast/one", 1.0);
             // DisplayBlock — scale, gamma_exp, zero, one (FloatRgb path)
-            write_f32(pool, "DisplayBlock/scale", 1.0);
-            write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
-            write_f32(pool, "DisplayBlock/zero", 0.0);
-            write_f32(pool, "DisplayBlock/one", input_scale);
+            write_f32(pool, cache, "DisplayBlock/scale", 1.0);
+            write_f32(pool, cache, "DisplayBlock/gamma_exp", 1.0 / 2.4);
+            write_f32(pool, cache, "DisplayBlock/zero", 0.0);
+            write_f32(pool, cache, "DisplayBlock/one", input_scale);
             // SaturationBlock/scale [3] — from saturation.factor
-            write_f32_array(pool, "saturation/scale", &[isp.saturation.factor; 3]);
+            write_f32_array(pool, cache, "saturation/scale", &[isp.saturation.factor; 3]);
             // Sharpen/strength [1] — from sharpen.amount
-            write_f32(pool, "Sharpen/strength", isp.sharpen.amount);
+            write_f32(pool, cache, "Sharpen/strength", isp.sharpen.amount);
             // LdciBlock/strength [1] — from denoise params (use sharpen radius as proxy)
-            write_f32(pool, "LdciBlock/strength", isp.sharpen.radius.max(0.1));
+            write_f32(
+                pool,
+                cache,
+                "LdciBlock/strength",
+                isp.sharpen.radius.max(0.1),
+            );
             // FcsBlock/gain [3] — per-channel gain from CCM diagonal
             let fcs_gain = if let Some(ccm) = ccm {
                 [ccm[0], ccm[4], ccm[8]]
             } else {
                 [1.0f32; 3]
             };
-            write_f32_array(pool, "FcsBlock/gain", &fcs_gain);
+            write_f32_array(pool, cache, "FcsBlock/gain", &fcs_gain);
             // FcsBlock/bias [3] — per-channel bias
-            write_f32_array(pool, "FcsBlock/bias", &[isp.tone.brightness; 3]);
+            write_f32_array(pool, cache, "FcsBlock/bias", &[isp.tone.brightness; 3]);
             // NormalizeBlock/max_val [1] — the sensor's white level, same
             // value as the default path above. Deriving it from `blc.r` was
             // wrong: black level and white level are unrelated quantities.
@@ -1278,7 +1317,7 @@ impl MnnEngine {
             } else {
                 white_level
             };
-            write_f32(pool, "NormalizeBlock/max_val", divisor.max(1.0));
+            write_f32(pool, cache, "NormalizeBlock/max_val", divisor.max(1.0));
         }
 
         // ── Warp grid + shading LUT (runtime extra_inputs) ────────
@@ -1286,10 +1325,10 @@ impl MnnEngine {
         // MNN from DCE-ing the ISP graph. The engine writes the actual
         // per-frame data here.
         if let Some(grid) = warp_grid {
-            write_f32_array(pool, "WarpGrid/grid", grid);
+            write_f32_array(pool, cache, "WarpGrid/grid", grid);
         }
         if let Some(lut) = warp_shading {
-            write_f32_array(pool, "WarpGrid/shading_lut", lut);
+            write_f32_array(pool, cache, "WarpGrid/shading_lut", lut);
         }
     }
 
@@ -1819,8 +1858,6 @@ impl IspEngine for MnnEngine {
             // it via `mnn_run_true_zero_copy` — no temporary Vec, no memcpy.
             // Otherwise we use the pre-allocated OutputBufferPool to avoid
             // per-frame 132 MB zero-fill at 4K.
-            let mut out_ptr: *mut f32;
-            let mut max_out: i32;
             let zero_copy = p.output_buffer.is_some();
             let (out_ptr, max_out, buf_id_for_release) =
                 if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref() {
@@ -1839,7 +1876,7 @@ impl IspEngine for MnnEngine {
                     let (buf_id, buf) = pool.acquire();
                     // Capacity is H×W×4 f32 elements (set at build time).
                     let max_out = buf.len() as i32;
-                    (buf.as_mut_ptr() as *mut f32, max_out, Some(buf_id))
+                    (buf.as_mut_ptr(), max_out, Some(buf_id))
                 };
             // Determine inference path based on the model's input convention
             // (inferred at build() from the converted model's shape + type).
@@ -1935,8 +1972,12 @@ impl IspEngine for MnnEngine {
                 slot.refresh_tensors(interp);
             }
             let sess = &slot.sess;
+            // Pass a reference to the cache so nested closure functions can
+            // capture it instead of `self` (which closures cannot do).
+            let cache = &self.extra_input_cache;
             self.set_extra_inputs(
                 &slot.tensor_pool,
+                cache,
                 ccm,
                 tone,
                 bayer,
@@ -2259,7 +2300,7 @@ impl IspEngine for MnnEngine {
                         input_shape.len() as i32,
                         output_name_ptr.as_ptr(),
                         out_ptr,
-                        max_out as i32,
+                        max_out,
                     );
                 }
                 // ------------------------------------------------------------------
@@ -2387,7 +2428,7 @@ impl IspEngine for MnnEngine {
             let n_valid = n.max(0) as usize;
             let out_elems = n_valid.min(pixels * graph_channels);
             let graph_elem = if p.output_format.is_fp16() { 2 } else { 4 };
-            let raw_bytes = out_elems * graph_elem;
+            let _raw_bytes = out_elems * graph_elem;
 
             // Narrow f32 `[0,255]` → u8 only for the graph-native float path.
             // The graph does all colour work; this is only the type cast the
@@ -2400,6 +2441,7 @@ impl IspEngine for MnnEngine {
             } else if p.output_format.is_raw_output() || packed_display {
                 // The pool buffer already has the correct size; just get a
                 // mutable reference to its bytes.
+                let buf_id = buf_id_for_release.unwrap();
                 let mut pool = self.buf_pool.lock().unwrap();
                 let buf = pool.buffer_mut(buf_id);
                 // Reinterpret f32 buffer as u8 bytes for clamping conversion.
@@ -2409,6 +2451,7 @@ impl IspEngine for MnnEngine {
                 Self::f32_to_u8(buf_bytes)
             } else {
                 // SplitInt32 path: read f32 from pool buffer, clamp to u8.
+                let buf_id = buf_id_for_release.unwrap();
                 let mut pool = self.buf_pool.lock().unwrap();
                 let buf = pool.buffer_mut(buf_id);
                 // Reinterpret f32 buffer as u8 bytes for clamping conversion.
