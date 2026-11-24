@@ -195,6 +195,10 @@ pub struct MnnEngine {
     /// Skips re-uploading unchanged tensors every frame.
     #[cfg(feature = "mnn")]
     extra_input_cache: Mutex<HashMap<String, Vec<u8>>>,
+    /// Whether the chain contains fused `isp.display_*` ops.
+    /// Computed at build() and used in process() for output decoding.
+    #[cfg(feature = "mnn")]
+    has_fused_display: bool,
 }
 
 #[cfg(feature = "mnn")]
@@ -252,6 +256,8 @@ impl MnnEngine {
             default_inputs: Mutex::new(Vec::new()),
             #[cfg(feature = "mnn")]
             extra_input_cache: Mutex::new(HashMap::new()),
+            #[cfg(feature = "mnn")]
+            has_fused_display: false,
         }
     }
 
@@ -1415,6 +1421,19 @@ pub fn chain_has_fused_op(chain: &[Box<dyn IspBlock>]) -> bool {
     })
 }
 
+/// Check if the chain contains fused `isp.display_*` ops.
+/// These ops write packed INT32 BGRA pixels, which the engine must
+/// return as raw bytes without f32 reinterpretation.
+pub fn chain_has_fused_op_for_display(chain: &[Box<dyn IspBlock>]) -> bool {
+    chain.iter().any(|b| {
+        if let Some(types) = b.custom_op_types() {
+            types.iter().any(|t| t.starts_with("isp.display"))
+        } else {
+            false
+        }
+    })
+}
+
 impl IspEngine for MnnEngine {
     fn backend_name(&self) -> &'static str {
         self.backend.id()
@@ -1519,6 +1538,9 @@ impl IspEngine for MnnEngine {
                         );
                         self.fp16_storage = false;
                     }
+
+                    // Record whether the chain has fused display ops for output decoding.
+                    self.has_fused_display = crate::mnnengine::chain_has_fused_op_for_display(&all);
 
                     // Collect default values for extra inputs from every block
                     // before we discard the block list.  These replace the
@@ -2433,7 +2455,15 @@ impl IspEngine for MnnEngine {
             // misfire, because a 1×1 Conv output of `pixels/channels` lands on
             // the same count.
             let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
-            let packed_display = !p.output_format.is_raw_output() && out_type != 4;
+            let packed_display_by_type = !p.output_format.is_raw_output() && out_type != 4;
+
+            // Robust fallback: MNN may report FLOAT (type 4) for fused
+            // `isp.display_*` outputs even though the shader writes INT32.
+            let has_fused_display = self.has_fused_display;
+            let is_u8_format = !p.output_format.is_raw_output()
+                && !matches!(p.output_format, OutputFormat::PackedRgb);
+            let packed_display = packed_display_by_type || (has_fused_display && is_u8_format);
+
             let n_valid = n.max(0) as usize;
             let out_elems = n_valid.min(pixels * graph_channels);
             let graph_elem = if p.output_format.is_fp16() { 2 } else { 4 };
