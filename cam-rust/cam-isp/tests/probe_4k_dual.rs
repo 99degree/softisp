@@ -1,10 +1,18 @@
-//! Dual-GPU engine probe: two `isp.*` Vulkan engine instances alternate frames
-//! (engine A frame N, engine B frame N+1) to overlap GPU inference with host-side
-//! frame prep. Both engines run the same fused `isp.*` chain (fp32 tensor storage)
-//! and share one `IspController` so AWB/AE/CCM state stays consistent.
+//! Combined probe: DUAL engine + timing report at 4K.
+//!
+//! Two sub-probes, each run with stats ON/OFF:
+//!   1. Single Vulkan engine (baseline)
+//!   2. Dual-GpuEngine ping-pong (engine A stats ON, engine B stats OFF)
+//!
+//! Reports p50/p95/max/FPS per probe, plus mean. Blank-frame detection is
+//! gated so a single bad frame doesn't abort the run.
 //!
 //! Run:
 //!   cargo test -p cam-isp --test probe_4k_dual --features mnn -- --nocapture --ignored
+//!
+//! Overrides:
+//!   PERF_W / PERF_H   frame size (default 3840x2160)
+//!   PERF_FRAMES       frames per probe after warmup (default 40)
 
 #![cfg(feature = "mnn")]
 
@@ -30,11 +38,13 @@ struct Timing {
     mean: f64,
 }
 
-fn run_dual(
+fn run_probe(
     label: &str,
     w: u32,
     h: u32,
     frames: usize,
+    stats_on: bool,
+    dual: bool,
     make: impl Fn(
         u32,
         u32,
@@ -47,21 +57,27 @@ fn run_dual(
     let n_blocks = blocks_a.len() + 1;
 
     let mut engine_a = MnnEngine::with_pool_size(MnnBackend::Vulkan, 1);
-    engine_a.set_stats_enabled(true); // engine A reads stats every frame
+    engine_a.set_stats_enabled(stats_on);
     if let Err(e) = engine_a.build(head_a, blocks_a, None, 21) {
         eprintln!("{label:<28} engine A build failed: {e}");
         return None;
     }
 
-    let mut engine_b = MnnEngine::with_pool_size(MnnBackend::Vulkan, 1);
-    engine_b.set_stats_enabled(false); // engine B skips stats entirely
-    let (head_b, blocks_b) = make(w, h);
-    if let Err(e) = engine_b.build(head_b, blocks_b, None, 21) {
-        eprintln!("{label:<28} engine B build failed: {e}");
-        return None;
-    }
-
-    let mut dual = DualGpuEngine::new(Box::new(engine_a), Box::new(engine_b));
+    let mut runner: Box<
+        dyn FnMut(&ProcessParams) -> cam_isp::error::IspResult<cam_isp::pipeline::IspFrame>,
+    > = if dual {
+        let (head_b, blocks_b) = make(w, h);
+        let mut engine_b = MnnEngine::with_pool_size(MnnBackend::Vulkan, 1);
+        engine_b.set_stats_enabled(false); // engine B skips stats entirely
+        if let Err(e) = engine_b.build(head_b, blocks_b, None, 21) {
+            eprintln!("{label:<28} engine B build failed: {e}");
+            return None;
+        }
+        let mut dual_engine = DualGpuEngine::new(Box::new(engine_a), Box::new(engine_b));
+        Box::new(move |p| dual_engine.next().process(p))
+    } else {
+        Box::new(move |p| engine_a.process(p))
+    };
 
     // 4K raw: an 8-bit-ish ramp so the pipeline has real gradients to work on and
     // the sensor-max divide lands well inside [0,1].
@@ -78,7 +94,7 @@ fn run_dual(
         v
     };
 
-    let params = ProcessParams {
+    let mut params = ProcessParams {
         width: w,
         height: h,
         stride_width: w,
@@ -108,7 +124,7 @@ fn run_dual(
 
     // Warm up: the first frames include session allocation and shape propagation.
     for _ in 0..8 {
-        match dual.next().process(&params) {
+        match runner(&params) {
             Ok(_) => {}
             Err(e) => {
                 eprintln!("{label:<28} warmup failed: {e}");
@@ -119,18 +135,24 @@ fn run_dual(
 
     let mut t: Vec<f64> = Vec::with_capacity(frames);
     let mut sum = 0.0f64;
-    let mut picture = false;
+    let mut picture_seen = false;
+    let mut blank_count = 0usize;
     for _ in 0..frames {
-        match dual.next().process(&params) {
+        match runner(&params) {
             Ok(f) => {
                 let ms = f.inference_duration_ns as f64 / 1e6;
                 t.push(ms);
                 sum += ms;
-                if !picture {
+                if !picture_seen {
                     // data is u8 (BGRA) for non-Float* formats — check mean byte value.
                     let m =
                         f.data.iter().map(|v| *v as f64).sum::<f64>() / f.data.len().max(1) as f64;
-                    picture = m > 5.0; // > ~2% of 255
+                    if m > 5.0 {
+                        // > ~2% of 255
+                        picture_seen = true;
+                    } else {
+                        blank_count += 1;
+                    }
                 }
             }
             Err(e) => {
@@ -139,13 +161,14 @@ fn run_dual(
             }
         }
     }
+
     t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let p50 = t[t.len() / 2];
     let p95 = t[(t.len() * 95) / 100];
     let max = *t.last().unwrap();
     let mean = sum / t.len() as f64;
-    if !picture {
-        eprintln!("{label:<28} produced a blank frame");
+    if !picture_seen {
+        eprintln!("{label:<28} produced a blank frame (blanks={blank_count})");
         return None;
     }
     Some(Timing {
@@ -161,7 +184,7 @@ fn run_dual(
 
 #[test]
 #[ignore]
-fn perf_4k_dual() {
+fn perf_4k_combined() {
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Warn)
         .is_test(false)
@@ -186,27 +209,65 @@ fn perf_4k_dual() {
         }
     };
 
-    eprintln!("\n== {w}x{h}, {frames} frames after warmup (DUAL GPU engine) ==");
+    eprintln!("\n== {w}x{h}, {frames} frames after warmup ==");
     eprintln!(
         "{:<30} {:>7} {:>9} {:>9} {:>9} {:>8}",
-        "profile", "blocks", "p50 ms", "p95 ms", "max ms", "FPS"
+        "probe", "blocks", "p50 ms", "p95 ms", "max ms", "FPS"
     );
 
     let mut rows: Vec<Timing> = Vec::new();
-    for (label, p) in [("DUAL fused", fused())] {
-        if let Some(t) = run_dual(label, w, h, frames, build(p)) {
-            eprintln!(
-                "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1}",
-                t.label, t.blocks, t.p50, t.p95, t.max, t.fps
-            );
-            rows.push(t);
-        }
+
+    // Probe 1: single engine, stats ON
+    if let Some(t) = run_probe("single stats ON", w, h, frames, true, false, build(fused())) {
+        eprintln!(
+            "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1}",
+            t.label, t.blocks, t.p50, t.p95, t.max, t.fps
+        );
+        rows.push(t);
     }
 
-    if let Some(fused_r) = rows.first() {
+    // Probe 2: single engine, stats OFF
+    if let Some(t) = run_probe(
+        "single stats OFF",
+        w,
+        h,
+        frames,
+        false,
+        false,
+        build(fused()),
+    ) {
         eprintln!(
-            "\nDUAL engine: engine A stats ON + engine B stats OFF, mean {:.1} ms",
-            fused_r.mean
+            "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1}",
+            t.label, t.blocks, t.p50, t.p95, t.max, t.fps
         );
+        rows.push(t);
+    }
+
+    // Probe 3: dual engine (A stats ON, B stats OFF)
+    if let Some(t) = run_probe(
+        "dual stats ON/OFF",
+        w,
+        h,
+        frames,
+        true,
+        true,
+        build(fused()),
+    ) {
+        eprintln!(
+            "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1}",
+            t.label, t.blocks, t.p50, t.p95, t.max, t.fps
+        );
+        rows.push(t);
+    }
+
+    eprintln!("\n== summary ==");
+    if let Some(dual_row) = rows.iter().find(|r| r.label == "dual stats ON/OFF") {
+        if let Some(single_row) = rows.iter().find(|r| r.label == "single stats ON") {
+            let speedup = single_row.p50 / dual_row.p50;
+            eprintln!(
+                "dual vs single p50: {:.1} ms vs {:.1} ms = {:.2}x",
+                dual_row.p50, single_row.p50, speedup
+            );
+        }
     }
 }
