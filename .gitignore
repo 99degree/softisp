@@ -91,6 +91,9 @@ test_*.onnx
 # Session files
 pi-session-*.html
 
+# Local scratch dir (Termux: /tmp unavailable, use repo-local .tmp/)
+.tmp/
+
 # Scratch / debug probe files
 cam-rust/.probe_*.log
 cam-rust/.probe_*.json
