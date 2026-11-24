@@ -11,17 +11,17 @@ use crate::camera::RawFrame;
 
 /// The output format both the graph and the engine must agree on.
 ///
-/// `FloatRgb` emits `[1,3,H,W]` f32 in `[0,1]` through a convolution-free
-/// `Pow + Clip`, so the host only has to interleave three planes. Every u8
-/// format (`Bgra`, `Rgba`, ...) instead ends in a `Conv(1x1)` that permutes
-/// channels and applies the x255 scale, and MNN's Vulkan backend zero-fills
-/// such a kernel unless the weights are baked into the operator — the picture
-/// comes back with a 255 alpha plane and black RGB.
+/// `PackedRgb` is the production path: the fused `isp.display_uint32_rgba`
+/// shader writes one INT32 word per two pixels, whose bytes are already
+/// little-endian BGRA. The host presents them directly, with no plane
+/// interleave and no per-pixel conversion. Float RGB is not a camera-preview
+/// format — it leaves the display in the graph's float tail and needs a host
+/// conversion path that hides readback errors.
 ///
 /// This is shared so the graph's `DisplayBlock` and `ProcessParams` cannot
 /// disagree: a mismatch is silent, because the frame keeps the right length and
 /// `present()` still returns `Ok`.
-pub const OUTPUT_FORMAT: OutputFormat = OutputFormat::FloatRgb;
+pub const OUTPUT_FORMAT: OutputFormat = OutputFormat::PackedRgb;
 
 /// Reusable staging buffers for the `u16` → `Vec<u8>` widening the API needs.
 pub struct FrameStager {
@@ -67,10 +67,10 @@ pub struct PipelineConfig {
 impl PipelineConfig {
     /// Whether the engine emits planar f32 RGB rather than bytes.
     ///
-    /// Both variants of this config request `FloatRgb`; the flag exists so the
-    /// frame loop does not have to keep a second copy of the format decision.
+    /// The production path emits packed RGB (BGRA bytes), so this is always
+    /// false; the flag keeps the frame loop from duplicating the format choice.
     pub fn float_output(&self) -> bool {
-        true
+        false
     }
 
     /// Build `ProcessParams` for one frame.
@@ -88,12 +88,8 @@ impl PipelineConfig {
         let mut params = ProcessParams::new(width, height, staged);
         params.sensor_max = self.sensor_max;
         params.bayer_pattern = self.bayer_pattern;
-        // `FloatRgb`: the graph emits `[1,3,H,W]` f32 in [0,1] with no
-        // convolution. The u8 display formats instead emit a Conv(1x1) that
-        // applies the format permutation and the x255 scale — and on Vulkan
-        // that kernel comes out zero (the backend reads weights from the
-        // operator, not from a graph input), so those formats render black.
-        // The planar RGB is converted to BGRA on the host instead.
+        // `PackedRgb`: the fused display shader writes packed BGRA bytes,
+        // which the window can present without any host-side conversion.
         params.output_format = OUTPUT_FORMAT;
         params.timestamp_ns = ts_ns;
         params

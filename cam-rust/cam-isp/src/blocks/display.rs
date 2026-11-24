@@ -7,8 +7,9 @@
 //! Format → ONNX subgraph:
 //! - `FloatRgb`:  identity Mul(1.0) → `[1,3,H,W]` f32 RGB `[0,1]`
 //! - `FloatBgra`: Conv(1×1) BGR permutation + alpha=255 → `[1,4,H,W]` f32 BGRA `[0,255]`
-//! - `PackedRgb`: adjacent-pixel pack → `[1,1,H,W/2]` INT32
-//!   word = (pixel0.R << 8) | pixel0.G | (pixel1.B << 24) | (pixel1.A << 16)
+//! - `PackedRgb`: primitive path packs two pixels per INT32 word (`[1,1,H,W/2]`);
+//!   the fused `isp.display_uint32_rgba` path emits one BGRA uint32 per pixel
+//!   (`[1,1,H,W]`)
 //! - `Bgra`:      same Conv as FloatBgra → `[1,4,H,W]` f32 BGRA `[0,255]`
 //! - `Rgba`:      Conv(1×1) identity permutation + alpha=255 → `[1,4,H,W]` f32 RGBA `[0,255]`
 //! - `Argb`:      Conv(1×1) alpha-first permutation → `[1,4,H,W]` f32 ARGB `[0,255]`
@@ -42,8 +43,9 @@ pub struct DisplayBlock {
     pub in_w: Option<i64>,
     /// Output pixel format — determines the ONNX subgraph (Conv, Mul, Cast, etc.).
     pub output_format: OutputFormat,
-    /// PackedRgb stores two RGBA pixels per INT32 word:
-    /// lower 16 bits = pixel0.R|G, upper 16 bits = pixel1.B|A.
+    /// PackedRgb stores two RGBA pixels per INT32 word on the primitive path:
+    /// lower 16 bits = pixel0.R|G, upper 16 bits = pixel1.B|A. The fused
+    /// shader ignores this and writes one BGRA uint32 per pixel instead.
     pub pack_two_pixels: bool,
     /// Optional float output tensor name for post-processing pipeline.
     /// When set, the block produces an additional `[1,3,H,W]` float32 tensor
@@ -222,7 +224,15 @@ impl DisplayBlock {
     }
 
     fn packed_output_width(&self, width: i64) -> i64 {
-        if self.output_format == OutputFormat::PackedRgb && self.pack_two_pixels {
+        // The fused `isp.display_uint32_rgba` shader writes ONE uint32 per
+        // pixel (BGRA bytes), not two pixels per word: its `pack_two_pixels`
+        // attribute is ignored. Declaring W/2 here would allocate half the
+        // words the shader writes and `copyToHostTensor` would return half a
+        // frame. The primitive PackedRgb path does pack two pixels per word.
+        if self.output_format == OutputFormat::PackedRgb
+            && self.pack_two_pixels
+            && self.opset_mode() != BlockOpsetMode::MnnIspMin
+        {
             (width / 2).max(1)
         } else {
             width
@@ -301,7 +311,7 @@ impl DisplayBlock {
         // Rotation attributes
         attrs.push(Proto::attribute_int("rotate_mode", self.rotate_mode as i64));
 
-        // Packing attributes (only used by isp.display_uint32_rgba for PackedRgb)
+        // Packing attribute: the fused shader writes one BGRA uint32 per pixel.
         attrs.push(Proto::attribute_int(
             "pack_two_pixels",
             if self.pack_two_pixels { 1 } else { 0 },
@@ -926,6 +936,17 @@ mod tests {
     fn test_display_tensor_ns() {
         let b = DisplayBlock::new(640);
         assert!(!b.tensor_ns().is_empty());
+    }
+
+    #[test]
+    fn fused_packed_rgb_declares_one_word_per_pixel() {
+        let mut fused = DisplayBlock::new(640).with_output_format(OutputFormat::PackedRgb);
+        fused.set_opset_mode(BlockOpsetMode::MnnIspMin);
+        assert_eq!(fused.packed_output_width(640), 640);
+
+        // The primitive path still packs two pixels per INT32 word.
+        let primitive = DisplayBlock::new(640).with_output_format(OutputFormat::PackedRgb);
+        assert_eq!(primitive.packed_output_width(640), 320);
     }
 
     #[test]

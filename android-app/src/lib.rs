@@ -201,9 +201,9 @@ fn raw_stats(samples: &[u16]) -> RawStats {
 enum FrameKind {
     /// Interleaved BGRA bytes, one pixel per 4 bytes.
     Bgra,
-    /// Planar RGB f32 (`[1,3,H,W]` in `[0,1]`), as `DisplayBlock::FloatRgb`
-    /// emits. The engine cannot hand back interleaved pixels because every u8
-    /// display format needs a `Conv(1x1)` whose Vulkan kernel is zero-filled.
+    /// Planar RGB f32 (`[1,3,H,W]` in `[0,1]`), only for non-production
+    /// chains built with `DisplayBlock::FloatRgb`. The camera preview uses
+    /// packed RGB and never takes this path.
     PlanarRgbF32,
 }
 
@@ -576,8 +576,8 @@ impl Preview {
                     match result {
                         Ok(out) => {
                             self.frames += 1;
-                            // `FloatRgb` hands back planar f32; anything else
-                            // is already bytes the window can take.
+                            // Packed RGB comes back as BGRA bytes; only a
+                            // non-production float chain needs replanning.
                             let kind = if self.config.float_output() {
                                 FrameKind::PlanarRgbF32
                             } else {
