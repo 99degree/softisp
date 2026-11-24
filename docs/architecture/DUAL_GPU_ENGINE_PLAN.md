@@ -157,14 +157,10 @@ If the engine pool ever grows >1 per engine (parallel sessions), an output seque
 
 ### 10. Implementation checklist
 
-- [ ] `DualGpuEngine` struct in `cam-rust/cam-isp/src/engine.rs` (or a new `cam-rust/cam-isp/src/dual_engine.rs`) wrapping two `Box<dyn IspEngine>` with round-robin `next()`.
-- [ ] `MnnEngine` gains `set_controller(&Mutex<IspController>)` or constructor param so both instances share one controller (needed for correct 3A feedback).
-- [ ] `cam_isp::init()` registers `mnn_vulkan_a` and `mnn_vulkan_b` factories (pool_size=1 each).
-- [ ] `CameraIspService` / `Preview::new` builds `DualGpuEngine` when sensor width ≥ 2560 (4K class) or env `SOFTISP_DUAL_GPU=1`.
-- [ ] `probe_4k_perf` gains a `DUAL` row comparing single vs dual engine at 3840×2160.
-- [ ] `probe_fused_profile` extended to optionally run dual.
-- [ ] Verify no session churn: both engines built once at init, reused every frame.
-- [ ] Verify fp32 storage forced on both (already automatic via `chain_has_fused_op`).
+- [x] `DualGpuEngine` struct in `cam-rust/cam-isp/src/dual_engine.rs` wrapping two `Box<dyn IspEngine>` with round-robin `next()`.
+- [x] `MnnEngine::set_controller(&Mutex<IspController>)` added to `mnnengine.rs` so both engine instances share one controller.
+- [x] `cam_isp::init()` registers `mnn_vulkan_a` and `mnn_vulkan_b` factories (pool_size=1 each) in `mnnengine.rs::register_with_defaults\).
+- [ ] `CameraIspService` / `Preview::new` builds `DualGpuEngine` when sensor width ≥2560 (4K class) or env `SOFTISP_DUAL_GPU=1\).
 
 ### 11. Risks / open questions
 
