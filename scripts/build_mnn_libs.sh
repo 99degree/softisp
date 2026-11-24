@@ -105,23 +105,36 @@ build_and_copy() {
                     echo "  patchelf: $target libvulkan.so.1 -> libvulkan.so"
                 fi
             done
-        else
-            echo "  WARN: patchelf not found; libs keep libvulkan.so.1 NEEDED"
-        fi
 
-        # MNN (built by the NDK clang) needs symbols from the device's system
-        # libc++_shared (e.g. __ndk1::__hash_memory). The NDK r29 stub under
-        # $ANDROID_NDK_ROOT/sysroot ships an older libc++ that lacks them, which
-        # makes the APK fail at load with "cannot locate symbol". Termux's own
-        # /data/data/com.termux/files/usr/lib/libc++_shared.so is built against
-        # the same bionic as the device and carries the missing symbols, so copy
-        # it into the runtime dir so cargo-apk2 bundles it into the APK.
-        termux_libcpp="/data/data/com.termux/files/usr/lib/libc++_shared.so"
-        if [ -f "$termux_libcpp" ]; then
-            cp -f "$termux_libcpp" "$dest/libc++_shared.so"
-            echo "  copied: $termux_libcpp -> $dest/libc++_shared.so"
+            # MNN is built by NDK clang against its libc++_shared, which needs
+            # symbols like __ndk1::__hash_memory that the device's old system
+            # libc++_shared.so (/vendor/lib64/) lacks. Android's dynamic linker
+            # resolves libc++_shared.so from the system path first, so simply
+            # bundling our own libc++_shared.so in the APK does not help — the
+            # system's stale one wins and libMNN.so fails to load.
+            #
+            # Fix: give our bundled libc++ a unique SONAME so the linker loads
+            # ours instead of the system's, and retune every MNN lib's NEEDED
+            # entry to point at it.
+            termux_libcpp="/data/data/com.termux/files/usr/lib/libc++_shared.so"
+            if [ -f "$termux_libcpp" ]; then
+                local cpp_dest="$dest/libsoftisp_cpp_shared.so"
+                cp -f "$termux_libcpp" "$cpp_dest"
+                patchelf --set-soname libsoftisp_cpp_shared.so "$cpp_dest"
+                echo "  copied+soname: $termux_libcpp -> $cpp_dest (SONAME=libsoftisp_cpp_shared.so)"
+
+                for target in "$dest/libMNN.so" "$dest/libMNN_Vulkan.so" \
+                              "$dest/libMNN_Express.so" "$dest/libMNNConvertDeps.so"; do
+                    if [ -f "$target" ]; then
+                        patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so "$target"
+                        echo "  patchelf: $target libc++_shared.so -> libsoftisp_cpp_shared.so"
+                    fi
+                done
+            else
+                echo "  WARN: Termux libc++_shared.so not found at $termux_libcpp; APK may fail to load libMNN.so"
+            fi
         else
-            echo "  WARN: Termux libc++_shared.so not found at $termux_libcpp; APK may fail to load libMNN.so"
+            echo "  WARN: patchelf not found; libs keep libc++_shared.so NEEDED"
         fi
     done
 
