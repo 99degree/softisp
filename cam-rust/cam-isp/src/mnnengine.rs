@@ -2329,7 +2329,7 @@ impl IspEngine for MnnEngine {
             if let Some(t) = &out_tensor {
                 let shape = t.shape();
                 // Trust any concrete `[1,C,H,W]` shape, including PackedRgb:
-                // the fused `isp.display_uint32_rgba` op declares one uint32
+                // the fused `isp.display_uint32_bgra` op declares one uint32
                 // per pixel (this was fixed alongside the shader's packing
                 // semantics), so its last dim is the real output width.
                 // Reporting the *requested* geometry here instead makes the
@@ -2382,7 +2382,7 @@ impl IspEngine for MnnEngine {
             let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
             let packed_display_by_type = !p.output_format.is_raw_output() && out_type != 4;
 
-            // `isp.display_uint32_rgba` writes one BGRA uint32 per pixel. MNN
+            // `isp.display_uint32_bgra` writes one BGRA uint32 per pixel. MNN
             // reports its element type as UINT32 (6), or INT32 (5) when the
             // shader's unsigned bits are preserved through the Vulkan path.
             // `is_raw_output()` alone cannot tell that from a float tail, so

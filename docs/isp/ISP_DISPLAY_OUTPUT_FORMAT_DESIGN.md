@@ -45,7 +45,7 @@ Map `OutputFormat` enum variants to the correct `isp.display_*` op type in `emit
 |--------------|---------------|---------------|
 | `FloatRgb` | `isp.display` | `[1,3,H,W]` float32 planar RGB [0,1] |
 | `FloatBgra` | `isp.display_rgb` | `[1,3,H,W]` float32 planar (fallback, uses Conv in primitive path) |
-| `PackedRgb` | `isp.display_uint32_rgba` | `[1,1,H,W]` uint32 packed (2 pixels/word) |
+| `PackedRgb` | `isp.display_uint32_bgra` | `[1,1,H,W]` uint32, one BGRA pixel/word |
 | `Bgra` | `isp.display_uint8_bgra` | `[1,4,H,W]` uint8 interleaved BGRA |
 | `Rgba` | `isp.display_uint8_rgba` | `[1,4,H,W]` uint8 interleaved RGBA |
 | `Argb` | `isp.display_uint8_argb` | `[1,4,H,W]` uint8 interleaved ARGB |
@@ -64,7 +64,7 @@ pub fn isp_display_op_type(self) -> &'static str {
     match self {
         Self::FloatRgb => "isp.display",
         Self::FloatBgra => "isp.display_rgb",
-        Self::PackedRgb => "isp.display_uint32_rgba",
+        Self::PackedRgb => "isp.display_uint32_bgra",
         Self::Bgra => "isp.display_uint8_bgra",
         Self::Rgba => "isp.display_uint8_rgba",
         Self::Argb => "isp.display_uint8_argb",
@@ -81,7 +81,7 @@ pub fn isp_display_op_type(self) -> &'static str {
 
 - Removed the `output_format` attribute (was ignored by VulkanFuse)
 - Use `self.output_format.isp_display_op_type()` to select the correct op type
-- The `pack_two_pixels` attribute is still passed (used by `isp.display_uint32_rgba` for PackedRgb)
+- The `pack_two_pixels` attribute is still passed (used by `isp.display_uint32_bgra` for PackedRgb)
 
 ## Verification
 

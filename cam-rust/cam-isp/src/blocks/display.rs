@@ -8,7 +8,7 @@
 //! - `FloatRgb`:  identity Mul(1.0) → `[1,3,H,W]` f32 RGB `[0,1]`
 //! - `FloatBgra`: Conv(1×1) BGR permutation + alpha=255 → `[1,4,H,W]` f32 BGRA `[0,255]`
 //! - `PackedRgb`: primitive path packs two pixels per INT32 word (`[1,1,H,W/2]`);
-//!   the fused `isp.display_uint32_rgba` path emits one BGRA uint32 per pixel
+//!   the fused `isp.display_uint32_bgra` path emits one BGRA uint32 per pixel
 //!   (`[1,1,H,W]`)
 //! - `Bgra`:      same Conv as FloatBgra → `[1,4,H,W]` f32 BGRA `[0,255]`
 //! - `Rgba`:      Conv(1×1) identity permutation + alpha=255 → `[1,4,H,W]` f32 RGBA `[0,255]`
@@ -224,7 +224,7 @@ impl DisplayBlock {
     }
 
     fn packed_output_width(&self, width: i64) -> i64 {
-        // The fused `isp.display_uint32_rgba` shader writes ONE uint32 per
+        // The fused `isp.display_uint32_bgra` shader writes ONE uint32 per
         // pixel (BGRA bytes), not two pixels per word: its `pack_two_pixels`
         // attribute is ignored. Declaring W/2 here would allocate half the
         // words the shader writes and `copyToHostTensor` would return half a
@@ -302,7 +302,7 @@ impl DisplayBlock {
 
         // Map OutputFormat to the correct isp.display_* op type.
         // MNN's VulkanFuse selects shaders by exact op type name (e.g.,
-        // "isp.display_uint32_rgba"), not by reading an output_format attribute.
+        // "isp.display_uint32_bgra"), not by reading an output_format attribute.
         let op_type = self.output_format.isp_display_op_type();
 
         // Build attributes for the isp.display shader

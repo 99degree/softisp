@@ -11,7 +11,7 @@ use crate::camera::RawFrame;
 
 /// The output format both the graph and the engine must agree on.
 ///
-/// `PackedRgb` is the production path: the fused `isp.display_uint32_rgba`
+/// `PackedRgb` is the production path: the fused `isp.display_uint32_bgra`
 /// shader writes one INT32 word per two pixels, whose bytes are already
 /// little-endian BGRA. The host presents them directly, with no plane
 /// interleave and no per-pixel conversion. Float RGB is not a camera-preview

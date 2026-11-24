@@ -123,10 +123,13 @@ impl OutputFormat {
         match self {
             Self::FloatRgb => "isp.display", // [1,3,H,W] float32 planar RGB [0,1]
             Self::FloatBgra => "isp.display_rgb", // [1,3,H,W] float32 planar (fallback, uses Conv in primitive path)
-            Self::PackedRgb => "isp.display_uint32_rgba", // [1,1,H,W] uint32 packed (2 pixels/word)
-            Self::Bgra => "isp.display_uint8_bgra", // [1,4,H,W] uint8 interleaved BGRA
-            Self::Rgba => "isp.display_uint8_rgba", // [1,4,H,W] uint8 interleaved RGBA
-            Self::Argb => "isp.display_uint8_argb", // [1,4,H,W] uint8 interleaved ARGB
+            // The BGRA variant writes BGRA bytes into the low three bytes of
+            // each uint32, which is what the host's window blit expects. The
+            // RGBA variant swaps R/B and shows an inverted-colour preview.
+            Self::PackedRgb => "isp.display_uint32_bgra", // [1,1,H,W] uint32, one BGRA pixel/word
+            Self::Bgra => "isp.display_uint8_bgra",       // [1,4,H,W] uint8 interleaved BGRA
+            Self::Rgba => "isp.display_uint8_rgba",       // [1,4,H,W] uint8 interleaved RGBA
+            Self::Argb => "isp.display_uint8_argb",       // [1,4,H,W] uint8 interleaved ARGB
             Self::Abgr => "isp.display_uint8_bgra", // [1,4,H,W] uint8 interleaved ABGR (same shader as BGRA, diff channel order)
             Self::Rgb => "isp.display_rgb",         // [1,3,H,W] float32 planar RGB [0,255]
             Self::Bgr => "isp.display_rgb",         // [1,3,H,W] float32 planar BGR [0,255]
