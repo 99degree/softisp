@@ -20,7 +20,7 @@ use android_activity::ndk::native_window::NativeWindow;
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use cam_isp::dual_engine::DualGpuEngine;
 use cam_isp::engine::{select_engine_by_name, IspEngine};
-use cam_isp::mnnengine::{MnnBackend, MnnEngine};
+use cam_isp::mnnengine::MnnEngine;
 use cam_isp::profile::PipelineProfile;
 use cam_isp::{release_native_window, set_native_window};
 use camera::CameraSession;
@@ -421,7 +421,7 @@ impl Preview {
             .map_err(|e| format!("engine.build failed: {e}"))?;
 
         let dual_engine = DualGpuEngine::new(engine_a, engine_b);
-        let mut engine: Box<dyn IspEngine> = Box::new(dual_engine);
+        let engine: Box<dyn IspEngine> = Box::new(dual_engine);
 
         log::info!(
             "pipeline built: profile {} at {}x{}px{} (dual GPU engine)",
