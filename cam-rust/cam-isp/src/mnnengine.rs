@@ -2432,6 +2432,7 @@ impl IspEngine for MnnEngine {
             // Inferring the encoding from the element *count* instead would
             // misfire, because a 1×1 Conv output of `pixels/channels` lands on
             // the same count.
+            let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
             let packed_display = !p.output_format.is_raw_output() && out_type != 4;
             let n_valid = n.max(0) as usize;
             let out_elems = n_valid.min(pixels * graph_channels);
