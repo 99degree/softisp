@@ -146,7 +146,7 @@ The host pointer (`tensor->buffer().host = caller_buffer`) is still set as the f
 | 3 | Batch extra-input uploads into single const buffer + `MNNVulkanHotSwapConstBuffer` | `mnnengine.rs:set_extra_inputs()` + `mnn_wrapper.cpp` | Removes ~25 per-frame host→device copies | Medium |
 | 4 | Remove CPU lane-split scratch (SplitInt32/SplitFloat) — do split in Vulkan shader | `mnnengine.rs:1934-2007` + shader | Removes O(H×W) CPU pass + mutex lock | Medium (shader + MNN) |
 | 5 | Wire `OutputBufferPool` into non-zero-copy output path to reuse `Vec<f32>` — **done** | `mnn_buffer/mod.rs:OutputBufferPool` + `mnnengine.rs:1790` | Eliminates per-frame 132 MB zero-fill at 4K | Done |
-| 6 | Skip unchanged extra-input uploads (delta tracking) | `mnnengine.rs:set_extra_inputs()` | Reduces host→device traffic for static 3A params | Low |
+| 6 | Skip unchanged extra-input uploads (delta tracking) — **done** | `mnnengine.rs:set_extra_inputs()` + `extra_input_cache` | Reduces host→device traffic for static 3A params | Done |
 | 7 | Session geometry cache across pool — pre-resize all sessions at common resolutions | `mnn_session_pool.rs:SessionSlot.resized_for` | Avoids first-frame resize stalls when switching preview↔capture | Low |
 
 ---
