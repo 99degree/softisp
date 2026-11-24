@@ -150,6 +150,11 @@ impl OutputBufferPool {
         log::info!("bufpool release: idx={}/{}", idx, self.pool_size);
     }
 
+    /// Get mutable reference to buffer by index.
+    pub fn buffer_mut(&mut self, idx: usize) -> &mut [f32] {
+        &mut self.buffers[idx]
+    }
+
     /// Number of buffers in the pool.
     pub fn len(&self) -> usize {
         self.pool_size

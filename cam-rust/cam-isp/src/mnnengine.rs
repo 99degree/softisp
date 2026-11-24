@@ -1786,27 +1786,30 @@ impl IspEngine for MnnEngine {
             //
             // When the caller supplied `output_buffer`, MNN writes directly into
             // it via `mnn_run_true_zero_copy` — no temporary Vec, no memcpy.
-            // Otherwise we allocate a heap Vec and use `mnn_run_with_output`
-            // (which does copyFromHostTensor / copyToHostTensor).
-            let mut out_bytes: Vec<u8> = Vec::new();
+            // Otherwise we use the pre-allocated OutputBufferPool to avoid
+            // per-frame 132 MB zero-fill at 4K.
             let mut out_ptr: *mut f32;
             let mut max_out: i32;
             let zero_copy = p.output_buffer.is_some();
-            if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref() {
-                // The caller's buffer must hold at least max_out f32 elements.
-                max_out = (buf_len / 4) as i32;
-                if max_out <= 0 {
-                    return Err(crate::error::IspError::Config(
-                        "output_buffer too small for zero-copy inference".into(),
-                    ));
-                }
-                out_ptr = buf_ptr as *mut f32;
-            } else {
-                let alloc_max_out = (tw * h * 4) as usize; // max f32 elements: H×W×4
-                out_bytes = vec![0u8; alloc_max_out * 4];
-                out_ptr = out_bytes.as_mut_ptr() as *mut f32;
-                max_out = (alloc_max_out * 4) as i32 / 4;
-            }
+            let (out_ptr, max_out, buf_id_for_release) =
+                if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref() {
+                    // The caller's buffer must hold at least max_out f32 elements.
+                    let max_out = (buf_len / 4) as i32;
+                    if max_out <= 0 {
+                        return Err(crate::error::IspError::Config(
+                            "output_buffer too small for zero-copy inference".into(),
+                        ));
+                    }
+                    (buf_ptr as *mut f32, max_out, None)
+                } else {
+                    // Fallback: use pre-allocated OutputBufferPool to avoid per-frame
+                    // 132 MB zero-fill at 4K (H×W×4 f32 elements = 64 MB f32 = 132 MB u8).
+                    let mut pool = self.buf_pool.lock().unwrap();
+                    let (buf_id, buf) = pool.acquire();
+                    // Capacity is H×W×4 f32 elements (set at build time).
+                    let max_out = buf.len() as i32;
+                    (buf.as_mut_ptr() as *mut f32, max_out, Some(buf_id))
+                };
             // Determine inference path based on the model's input convention
             // (inferred at build() from the converted model's shape + type).
             let mode = self.input_mode.unwrap_or(InputMode::RawInt);
@@ -2360,22 +2363,29 @@ impl IspEngine for MnnEngine {
             // ONNX graph cannot express for a u8 consumer.
             let data_out = if zero_copy {
                 // MNN wrote directly into the caller's buffer via
-                // mnn_run_true_zero_copy. Do NOT touch `out_bytes` — it is an
-                // empty placeholder Vec and calling set_len() on it would be
-                // UB (no allocation backs it). Return empty data; the real
+                // mnn_run_true_zero_copy. Return empty data; the real
                 // pixels live in `external_data` (set below).
                 Vec::new()
             } else if p.output_format.is_raw_output() || packed_display {
-                unsafe {
-                    out_bytes.set_len(raw_bytes);
-                }
-                out_bytes
+                // The pool buffer already has the correct size; just get a
+                // mutable reference to its bytes.
+                let mut pool = self.buf_pool.lock().unwrap();
+                let buf = pool.buffer_mut(buf_id);
+                // Reinterpret f32 buffer as u8 bytes for clamping conversion.
+                let buf_bytes = unsafe {
+                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * 4)
+                };
+                Self::f32_to_u8(buf_bytes)
             } else {
-                unsafe {
-                    out_bytes.set_len(raw_bytes);
-                }
-                Self::f32_to_u8(&out_bytes)
-            };
+                // SplitInt32 path: read f32 from pool buffer, clamp to u8.
+                let mut pool = self.buf_pool.lock().unwrap();
+                let buf = pool.buffer_mut(buf_id);
+                // Reinterpret f32 buffer as u8 bytes for clamping conversion.
+                let buf_bytes = unsafe {
+                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * 4)
+                };
+                Self::f32_to_u8(buf_bytes)
+            } else if p.output_format.is_raw_output() || packed_display {
 
             // ── Read stats output tensors from MNN session and feed to controller ──
             let mut calib_vals: Option<[f32; 24]> = None;
