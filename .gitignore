@@ -7,7 +7,6 @@ cam-rust/build_android_hal.log
 # Signing material — never commit keys
 *.keystore
 *.jks
-android-app/
 
 # Agent prompt instructions
 AGENTS.md
