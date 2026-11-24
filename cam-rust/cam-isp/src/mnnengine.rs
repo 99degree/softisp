@@ -1872,9 +1872,18 @@ impl IspEngine for MnnEngine {
                 } else {
                     // Fallback: use pre-allocated OutputBufferPool to avoid per-frame
                     // 132 MB zero-fill at 4K (H×W×4 f32 elements = 64 MB f32 = 132 MB u8).
+                    //
+                    // The element count must match what the FFI hands to MNN as
+                    // `max_out`: a 4K frame writes ~33M f32 through `out_ptr`, and a
+                    // smaller pool buffer is silently overflowed by `runSession`
+                    // (heap corruption → SIGSEGV). The graph's own output geometry
+                    // (display downscale etc.) is only known AFTER inference, so the
+                    // worst case — full sensor area × 4 channels — is the safe
+                    // ceiling; acquire() grows the pool once, lazily.
+                    let needed_capacity = (tw * h * 4) as usize;
                     let mut pool = self.buf_pool.lock().unwrap();
-                    let (buf_id, buf) = pool.acquire();
-                    // Capacity is H×W×4 f32 elements (set at build time).
+                    let (buf_id, buf) = pool.acquire(needed_capacity);
+                    // Capacity is now guaranteed >= needed_capacity f32 elements.
                     let max_out = buf.len() as i32;
                     (buf.as_mut_ptr(), max_out, Some(buf_id))
                 };

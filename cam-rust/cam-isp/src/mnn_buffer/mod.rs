@@ -130,8 +130,30 @@ impl OutputBufferPool {
 
     /// Acquire the next buffer for inference output.
     /// Round-robin across all buffers. Never blocks.
+    ///
+    /// `min_capacity` is the f32-element count the caller will write through
+    /// `max_out` (`mnn_run_with_output` / `mnn_run_true_zero_copy` both take
+    /// `buf.len()` as the element ceiling). The pool is constructed before any
+    /// frame geometry is known (`OutputBufferPool::new(3, 1)`), so without this
+    /// the first 4K frame hands MNN a 4-byte buffer while it writes ~33M
+    /// elements — heap corruption and a SIGSEGV in `runSession`. Every buffer
+    /// is grown once, lazily, so the common steady-state path stays a
+    /// round-robin pointer swap with no reallocation.
+    ///
     /// Returns (buffer_id, &mut [f32]) where buffer_id is used for release().
-    pub fn acquire(&mut self) -> (usize, &mut [f32]) {
+    pub fn acquire(&mut self, min_capacity: usize) -> (usize, &mut [f32]) {
+        if min_capacity > self.buffers.first().map(|b| b.len()).unwrap_or(0) {
+            let total_mb = (self.pool_size * min_capacity * 4) as f64 / 1_048_576.0;
+            log::info!(
+                "bufpool grow: {} buffers -> {} f32 = {:.1} MB",
+                self.pool_size,
+                min_capacity,
+                total_mb
+            );
+            for buf in self.buffers.iter_mut() {
+                buf.resize(min_capacity, 0.0);
+            }
+        }
         let idx = self.next_idx;
         self.next_idx = (idx + 1) % self.pool_size;
         log::info!(
@@ -284,23 +306,43 @@ mod tests {
         assert_eq!(pool.len(), 3);
 
         // Acquire first buffer, verify, then release
-        let (id0, buf0) = pool.acquire();
+        let (id0, buf0) = pool.acquire(100);
         assert_eq!(buf0.len(), 100);
         assert_eq!(id0, 0);
         pool.release(id0);
 
         // Acquire second buffer, verify distinct from first, then release
-        let (id1, _buf1) = pool.acquire();
+        let (id1, _buf1) = pool.acquire(100);
         assert_eq!(id1, 1);
         pool.release(id1);
 
         // Acquire third, wraps around
-        let (id2, _) = pool.acquire();
+        let (id2, _) = pool.acquire(100);
         assert_eq!(id2, 2);
         pool.release(id2);
 
-        let (id3, _) = pool.acquire();
+        let (id3, _) = pool.acquire(100);
         assert_eq!(id3, 0);
         pool.release(id3);
+    }
+
+    #[test]
+    fn test_output_buffer_pool_grows_to_geometry() {
+        // Constructed with a placeholder capacity (the engine builds the pool
+        // before it knows any frame size); the first acquire at a real geometry
+        // must grow every buffer, not just the one handed out.
+        let mut pool = OutputBufferPool::new(3, 1);
+        let (id0, buf) = pool.acquire(256);
+        assert_eq!(id0, 0);
+        assert_eq!(buf.len(), 256);
+        drop(buf);
+        pool.release(id0);
+        // The other two buffers grew too — a later acquire must not hand back
+        // the 4-byte placeholder again.
+        let (_id1, buf1) = pool.acquire(256);
+        assert_eq!(buf1.len(), 256);
+        // An equal-or-smaller request must not reallocate: same capacity.
+        let (_id2, buf2) = pool.acquire(64);
+        assert_eq!(buf2.len(), 256);
     }
 }

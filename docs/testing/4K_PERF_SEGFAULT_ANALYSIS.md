@@ -1,7 +1,7 @@
 # 4K Perf Test Segfault Analysis
 
 ## Summary
-The `probe_4k_perf` integration test **segfaulted (SIGSEGV, signal 11)** during per-frame `process()` calls at 4K resolution (3840x2160) with the DUAL GPU engine mode. Multiple root causes were identified and fixed; one remaining runtime segfault persists at 4K.
+The `probe_4k_perf` integration test **segfaulted (SIGSEGV, signal 11)** during per-frame `process()` calls at 4K resolution (3840x2160) with the DUAL GPU engine mode. Multiple root causes were identified and fixed. **The segfault is resolved: the 4K test now runs to completion with exit 0.** (Frames are blank at all resolutions — see "Blank frames (separate, pre-existing issue)" below.)
 
 ## Root Causes Found & Fixed
 
@@ -27,43 +27,26 @@ Added `extra_input_cache: Mutex<HashMap<String, Vec<u8>>>` to `MnnEngine`. `writ
 - `cargo test --lib -p cam-isp --no-fail-fast` → **813 passed**
 - `cargo clippy -p cam-isp --lib --features rectifier -- -D warnings` → **clean**
 - `cargo fmt --all -- --check` → **clean**
-- Compilation of `probe_4k_perf` test → **passes** (was failing before fix)
+- `cargo check -p cam-isp --lib --features rectifier` → **clean**
+- `PERF_FRAMES=3 PERF_W=640 PERF_H=480 probe_4k_perf` → **2 passed, no segfault**
+- `PERF_FRAMES=2 PERF_W=3840 PERF_H=2160 probe_4k_perf` → **2 passed, no segfault** (previously crashed at first frame with SIGSEGV)
 
-## Remaining Issue: 4K Runtime Segfault (NOT YET FIXED)
+## Blank Frames (separate, pre-existing issue — NOT a segfault)
 
-After all code fixes, the test **compiles and runs but still crashes with SIGSEGV at 4K** during frame processing. The crash occurs in `MnnEngine::process()` → `mnn_run_with_output()` → `net->runSession(sess)`.
+Every profile reports **"produced a blank frame"** at 4K (and at 640×480 too). This is **not** caused by the pool fix. Verified by `git stash` on the pre-fix tree: same blank-frame output at 640×480 with exit 101 (SIGSEGV) — so blank frames exist independently of the crash.
 
-### Evidence from crash log
-1. Both engines build successfully (VulkanFuse ops accepted, sessions created)
-2. Session logs show `tensorNumber=0` — **no input/output tensors registered** in the session
-3. Warnings: `"no such tensor in the session"` for CalibrationBlock/shape, DemosaicCcmBlock/b, bayer_pattern tensors, BayerWbBlock/gains, FcsBlock/gain/bias
-4. Warning: `"MISSING isp.* opset at convert"` — ONNX graph had isp-domain nodes but MNN model has 0 isp.* Extra ops
-5. **SIGSEGV occurs during first `process()` call**, after engine build completes
+The blank-frame behavior is consistent with the session logs:
+- `[MNN-ISP-CONVERT] isp-domain model=0 isp Extra ops emitted=0` — no fused `isp.*` ops in the model
+- `[MNN-ISP-SESSION] Extra op count=0` — VulkanFuse never sees an isp.* op
+- Warnings `"no such tensor in the session"` for CalibrationBlock/shape, DemosaicCcmBlock/b, BayerWbBlock/gains, FcsBlock/gain/bias — per-frame weight tensors are absent from the session, so the graph runs with zeros
 
-### Hypotheses for Remaining Segfault
+The ONNX graph is built from primitives (no fused ops), so it runs through MNN's CPU/Vulkan primitive path rather than the custom `isp.*` shaders. Whether that produces visible output is a separate question from the SIGSEGV and is out of scope for this fix.
 
-| Hypothesis | Likelihood | Evidence |
-|------------|------------|----------|
-| Session `tensorNumber=0` means `getSessionInput(sess, nullptr)` returns invalid/wrong tensor | High | Session log shows `tensorNumber=0`; `getSessionInput(nullptr)` returns first tensor alphabetically, which may be a weight tensor not the frame input |
-| Vulkan backend can't handle 4K frame buffers (GPU memory limits) | Medium | 4K = 33M elements × 4 bytes = 128MB per buffer; Vulkan may fail allocation |
-| Input tensor type mismatch: raw u16 data vs INT32 tensor expectation | Medium | `input_buffer` is None, so raw u16 buffer is used; tensor expects INT32 packed lanes |
-| `refresh_tensors()` doesn't re-resolve handles after `resize()` | Low | Code explicitly calls `slot.refresh_tensors(interp)` after resize |
-
-### Reproduction
-```
-cd cam-rust
-PERF_FRAMES=10 PERF_W=3840 PERF_H=2160 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture
-```
-Crashes at 4K with SIGSEGV during frame processing.
-
-### Workaround for Testing
-Run at lower resolution (e.g., PERF_W=1296 PERF_H=970) to test at FHD, or run single-engine (non-dual) mode to isolate whether the issue is dual-engine specific or affects all 4K inference.
-
-### Files Modified
+## Files Modified
 | File | Change |
 |------|--------|
-| `cam-rust/cam-isp/src/mnn_buffer/mod.rs` | `acquire()` takes `min_capacity`, grows buffers lazily |
-| `cam-rust/cam-isp/src/mnnengine.rs` | Pass `needed_capacity` to `pool.acquire()`; add `extra_input_cache`; delta tracking in write_* closures; pass `cache` ref to set_extra_inputs |
+| `cam-rust/cam-isp/src/mnn_buffer/mod.rs` | `acquire()` takes `min_capacity`, grows buffers lazily; added `test_output_buffer_pool_grows_to_geometry` |
+| `cam-rust/cam-isp/src/mnnengine.rs` | Pass `needed_capacity` to `pool.acquire()` |
 | `cam-rust/cam-isp/src/dual_engine.rs` | `toggle: AtomicBool`, `next(&self)` |
 | `cam-rust/cam-isp/tests/probe_4k_perf.rs` | Wrap both engines in `Box::new()` |
 | `docs/testing/4K_PERF_SEGFAULT_ANALYSIS.md` | This document |
@@ -79,7 +62,8 @@ Run at lower resolution (e.g., PERF_W=1296 PERF_H=970) to test at FHD, or run si
 | 5 | Wire `OutputBufferPool` into non-zero-copy path | **Done** |
 | 6 | Skip unchanged extra-input uploads (delta tracking) | **Done** |
 | 7 | Session geometry cache across pool | Pending |
+| 8 | Investigate blank-frame output at all resolutions | Pending (not a segfault) |
 
 ## Bottom Line
 
-The 4K perf test segfault was primarily caused by an undersized `OutputBufferPool` (capacity=1 f32 element instead of ~33M for 4K). Lazy buffer growth in `acquire()` fixes this. The test now **compiles and runs** but still crashes with SIGSEGV at 4K during frame processing — likely due to `tensorNumber=0` in the MNN session (no input/output tensors registered) or Vulkan backend limitations at 4K resolution. Further investigation needed at the MNN Vulkan backend level or by testing at lower resolutions.
+The 4K perf test segfault was caused by an undersized `OutputBufferPool` (capacity=1 f32 element instead of ~33M for 4K). Lazy buffer growth in `acquire()` fixes this without knowing geometry at construction time. The test now **compiles and runs** at 4K with **no SIGSEGV**. Blank frames remain — a separate output path issue unrelated to the crash, present at every resolution.
