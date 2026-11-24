@@ -39,7 +39,7 @@ struct Timing {
     mean: f64,
 }
 
-fn run(
+fn run_single(
     label: &str,
     w: u32,
     h: u32,
@@ -343,7 +343,7 @@ fn perf_4k() {
         ("UNIFIED", unified()),
     ] {
         let stats_on = !label.ends_with("stats off");
-        if let Some(t) = run(label, w, h, frames, stats_on, build(p)) {
+        if let Some(t) = run_single(label, w, h, frames, stats_on, build(p)) {
             eprintln!(
                 "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1}",
                 t.label, t.blocks, t.p50, t.p95, t.max, t.fps
