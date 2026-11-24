@@ -1,9 +1,15 @@
 # Debugging a SoftISP Camera APK Crash / Failure
 
 The SoftISP camera app runs as an Android **NativeActivity** — there is no Java
-layer, no `Activity` subclass, and no `adb` on the dev machine (the Termux
+layer, no `Activity` subclass, and **no `adb` on the dev machine** (the Termux
 device is the test machine). You install the APK manually, launch it from the
-launcher, and diagnose failures from the on-device log file plus `logcat`.
+launcher, and diagnose failures from the on-device crash log file plus `logcat`
+run directly on the device.
+
+> **Termux rule:** do not reach for `adb`. Everything below runs on the device
+> itself (Termux shell on the same phone).
+
+---
 
 ## 0. Build the APK (first)
 
@@ -12,7 +18,7 @@ See [`docs/build/README_BUILD_APK.md`](README_BUILD_APK.md) — short version:
 ```bash
 cd /data/data/com.termux/files/home/softisp
 
-# 1. Build MNN libs first (see the MNN section below)
+# 1. Build MNN libs first (MNN is a subproject; see section 6).
 ./scripts/build_mnn_libs.sh arm64-v8a
 
 # 2. Build the APK
@@ -31,11 +37,11 @@ The debug APK uses `~/.android/debug.keystore` for signing and ships
 
 ---
 
-## 1. Install the APK (no adb needed)
+## 1. Install the APK (no adb)
 
-`adb install` cannot read Termux's private data dir because of SELinux, so use
-the bundled `install-apk.sh`, which feeds the APK to `pm install-write` on
-stdin:
+`adb install` is not available / cannot read Termux's private data dir because
+of SELinux. Use the bundled `install-apk.sh`, which feeds the APK to
+`pm install-write` on stdin:
 
 ```bash
 cd /data/data/com.termux/files/home/softisp
@@ -47,7 +53,7 @@ cd /data/data/com.termux/files/home/softisp
 This creates a package install session, writes the APK into it, and commits it.
 The app id is `com.softisp.camera`.
 
-If you prefer doing it by hand:
+By-hand equivalent (all on-device, no adb):
 
 ```bash
 SIZE=$(stat -c %s target/debug/apk/softisp-camera.apk)
@@ -65,11 +71,9 @@ Because it is a `NativeActivity` with a launcher intent, open it from the app
 drawer ("SoftISP Camera"). There is no `am start` return value to inspect — the
 process simply starts `android_main` in `cam-camera-app/src/lib.rs`.
 
-If you want to invoke it from the shell (same thing the launcher does):
+To invoke it from the shell (same thing the launcher does, all on-device):
 
 ```bash
-am start -n com.softisp.camera/.MainActivity
-# or, if the activity name differs, the launcher intent filter resolves it:
 am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
   com.softisp.camera
 ```
@@ -82,9 +86,10 @@ error to stderr. The real signal is whether the preview surface appears.
 ## 3. Read the crash log (primary diagnostic)
 
 The app writes every startup line, every ISP frame result, every panic, and
-every `log::` record to a file. `logcat` is a secondary source — it needs the
-`READ_LOWS` grant and its ring buffers drain quickly — so **the file is the
-authoritative log**.
+every `log::` record to a file. `logcat` is a secondary source — on Termux it
+usually needs the `READ_LOWS` grant (which itself needs adb) and its 256 KiB
+ring buffers drain quickly — so **the file is the authoritative log**. Read it
+directly on the device.
 
 ### Where the log lands
 
@@ -111,9 +116,9 @@ Until that grant is given, the app falls back to
 `/data/data/com.softisp.camera/files/softisp-app.log` (or the app's external
 files dir equivalent) — still fully diagnostic, just not in Download.
 
-### How to fetch it
+### How to read it
 
-You do not need adb. From the device shell (Termux on the same phone):
+All on-device, no adb:
 
 ```bash
 # The spec path if you granted All files access:
@@ -157,11 +162,11 @@ Failure signatures:
 
 ---
 
-## 4. Capture logcat (secondary)
+## 4. Capture logcat (secondary, on-device only)
 
-On the device, `logcat` reads the kernel/Android log ring. The app's tag is
-`cam_hal_rust` (set by `init_logger_with_tag`), and panic messages go under
-`softisp`.
+Run `logcat` directly on the device in Termux — do not use `adb logcat`. The
+app's tag is `cam_hal_rust` (set by `init_logger_with_tag`), and panic messages
+go under `softisp`.
 
 ```bash
 logcat -d | grep -E "cam_hal_rust|softisp|MNN|ISP"
@@ -170,12 +175,12 @@ logcat -d -s cam_hal_rust   # only our tag
 
 Caveats:
 
-* `logcat` needs `READ_LOGS` (`adb shell pm grant com.softisp.camera
+* `logcat` needs `READ_LOGS` (`pm grant com.softisp.camera
   android.permission.READ_LOGS`) — which itself usually needs adb, so on a
   plain install you may get nothing.
 * The ring is ~256 KiB and drains fast under system load, so a per-frame error
   can push out the startup lines that actually explain the failure. That is why
-  the **file log** is the primary source.
+  the **file log** (section 3) is the primary source.
 
 ---
 
