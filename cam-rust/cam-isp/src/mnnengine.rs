@@ -2454,14 +2454,17 @@ impl IspEngine for MnnEngine {
                 // pixels live in `external_data` (set below).
                 Vec::new()
             } else if p.output_format.is_raw_output() {
-                // Float graph output (e.g. FloatRgb): clamp f32 [0,255] → u8.
+                // Float graph output (e.g. FloatRgb): return raw bytes as-is.
+                // The graph already emits the final layout (f32 planar for
+                // FloatRgb), so no narrowing is needed — the consumer
+                // reinterprets these bytes as f32 values.
                 let buf_id = buf_id_for_release.expect("pool buffer id");
                 let mut pool = self.buf_pool.lock().unwrap();
                 let buf = pool.buffer_mut(buf_id);
                 let buf_bytes = unsafe {
-                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, valid_bytes)
+                    std::slice::from_raw_parts(buf.as_ptr() as *const u8, valid_bytes)
                 };
-                Self::f32_to_u8(buf_bytes)
+                buf_bytes.to_vec()
             } else if packed_display {
                 // Fused `isp.display_*` shader wrote packed INT32 words — one
                 // BGRA u8 pixel per word, little-endian. These bytes are *already*
