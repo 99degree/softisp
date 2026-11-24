@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use android_activity::ndk::native_window::NativeWindow;
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
+use cam_isp::dual_engine::DualGpuEngine;
 use cam_isp::engine::{select_engine_by_name, IspEngine};
 use cam_isp::mnnengine::MnnEngine;
 use cam_isp::profile::PipelineProfile;
@@ -405,14 +406,27 @@ impl Preview {
         // in 0..1, and every pixel lands 8x too large in the wrong channel.
         profile.output_format = pipeline::OUTPUT_FORMAT;
 
-        // Build the pipeline blocks
+        // Build the pipeline blocks once, then build two engines with identical chains
+        // for dual-GPU ping-pong (engine A / engine B).
         let mut blocks = profile.build_blocks(pipeline_width, pipeline_height, bayer_pattern);
         if blocks.is_empty() {
             return Err(format!("profile {} produced no blocks", profile.label));
         }
-        let head = blocks.remove(0);
-        let aux = profile.build_aux_blocks(pipeline_height as i64, pipeline_width as i64);
-        blocks.extend(aux);
+        let head_a = blocks.remove(0);
+        let aux_a = profile.build_aux_blocks(pipeline_height as i64, pipeline_width as i64);
+        blocks.extend(aux_a);
+
+        // Build a second identical set of blocks for the second engine.
+        let mut blocks_b = profile.build_blocks(pipeline_width, pipeline_height, bayer_pattern);
+        if blocks_b.is_empty() {
+            return Err(format!(
+                "profile {} produced no blocks (second set)",
+                profile.label
+            ));
+        }
+        let head_b = blocks_b.remove(0);
+        let aux_b = profile.build_aux_blocks(pipeline_height as i64, pipeline_width as i64);
+        blocks_b.extend(aux_b);
 
         // Tell the engine whether the chain divides by `sensor_max` up front.
         // With `normalize_at_display` there is no NormalizeBlock, so the graph
@@ -423,11 +437,24 @@ impl Preview {
         }
 
         engine
-            .build(head, blocks, None, 21)
+            .build(head_a, blocks, None, 21)
+            .map_err(|e| format!("engine.build failed: {e}"))?;
+        let engine_a = engine;
+
+        let mut engine_b: Box<dyn IspEngine> = select_engine_by_name(engine_name)
+            .ok_or_else(|| format!("no ISP engine matching '{engine_name}'"))?;
+        if let Some(mnn) = engine_b.as_any_mut().downcast_mut::<MnnEngine>() {
+            mnn.set_normalizes_at_input(!profile.normalize_at_display);
+        }
+        engine_b
+            .build(head_b, blocks_b, None, 21)
             .map_err(|e| format!("engine.build failed: {e}"))?;
 
+        let dual_engine = DualGpuEngine::new(engine_a, engine_b);
+        let engine: Box<dyn IspEngine> = Box::new(dual_engine);
+
         log::info!(
-            "pipeline built: profile {} at {}x{}px{} (single GPU engine)",
+            "pipeline built: profile {} at {}x{}px{} (dual GPU engine)",
             profile.label,
             pipeline_width,
             pipeline_height,
