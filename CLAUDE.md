@@ -15,13 +15,22 @@ Pipeline stages are `IspBlock`s composable into ONNX, fused into GPU `isp.*` ops
 - MNN C++ FFI wrapper lives in `cam-rust/cam-isp/mnn_sys/` (`mnn_wrapper.cpp/h`), compiled against `libMNN.so`/`libMNN_Vulkan.so`.
 
 ## Where to find more info (docs/)
-- `README.md` — overview, key features, quick start, APK build
-- `docs/overview/` — PROJECT_STATUS.md, ROADMAP.md, SUMMARY.md, PROGRESS.md, TECH_SUMMARY.md
-- `docs/architecture/` — pipeline blocks, custom opset design, ISP ops plan
-- `docs/mnn/` — MNN status, Vulkan backend, convert, zero-copy optimization (ARCH_ISP_OUTPUT_ZERO_COPY.md), profile optimization
-- `docs/testing/` — test plan, results
-- `cam-rust/README.md` — build/test/lint (CI gate), APK build guide
-- `docs/guides/` — MNN Vulkan guide, memfd guide, NDK camera capture study
+
+| Dev stage | Doc | What it covers |
+|-----------|-----|----------------|
+| Overview / getting started | `README.md` | project summary, key features, quick start, APK build |
+| Project status / roadmap | `docs/overview/` — PROJECT_STATUS.md, ROADMAP.md, SUMMARY.md, PROGRESS.md, TECH_SUMMARY.md | where the project is, what's next, tech summary |
+| Pipeline / block design | `docs/architecture/` — PIPELINE_BLOCKS.md, CUSTOM_OPSET_DESIGN.md, ISP_OPS_PLAN.md, ARCHITECTURE.md | ISP block I/O, custom opset design, architecture |
+| ISP / shader work | `docs/isp/` — ISP_OP_AUDIT.md, ISP_SHADER_FIXES.md, KEY_DESIGN_DECISIONS.md, FHD_BENCHMARK.md | ISP math, shader fixes, benchmarks |
+| MNN rebuild / convert | `docs/mnn/` — MNN_STATUS.md, MNN_CONVERT.md, MNN_VULKAN_BACKEND.md, MNN_ZERO_COPY_OPTIMIZATION.md, ARCH_ISP_OUTPUT_ZERO_COPY.md, MNN_REBUILD_BLOCKER.md | MNN state, convert flow, Vulkan backend, zero-copy |
+| MNN Vulkan deep dive | `docs/guides/MNN_VULKAN_GUIDE.md` | MNN + Vulkan on Android |
+| Memfd / zero-copy buffers | `docs/guides/MEMFD_MNN_GUIDE.md` | memfd/CMA buffer handling for MNN |
+| NDK camera capture | `docs/guides/NDK_CAMERA_CAPTURE_STUDY.md` | Android Camera2 HAL3 capture study |
+| **Build the APK** | `docs/build/README_BUILD_APK.md` | toolchain, MNN subproject build first, env vars, cargo-apk2, CI gate, troubleshooting |
+| **Debug APK crash/fail** | `docs/build/DEBUG_APK.md` | install without adb, launch, read crash log (`/sdcard/download/softisp-app.log`), logcat, env/feature flags, common failure checklist |
+| CI gate / lint / test | `cam-rust/README.md` | build/test/lint commands (same as below) |
+| Test plan / results | `docs/testing/` — TESTING.md, TEST_PLAN_MNN_VULKAN.md, TEST_RESULTS.md | how tests are organized and results |
+| Other guides | `docs/guides/` — MNN_SOLUTION_SUMMARY.md, profiles-technical.md, mnn-inference-guide.md | MNN solution summary, profile tech, inference guide |
 
 ## Build / test / lint (CI gate)
 ```

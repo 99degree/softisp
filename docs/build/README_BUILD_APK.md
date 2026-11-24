@@ -11,6 +11,38 @@ This document describes how to cross-compile the `cam-camera-app` crate into an 
 - **Java**: **Java 11** (`/usr/lib/jvm/java-11-openjdk`) — **NOT Java 21**. cargo-apk2's R8 (D8) rejects class files with major version 65 (Java 21).
 - **MNN libraries**: prebuilt in `cam-rust/lib/aarch64-v8a/` (libMNN.so, libMNN_Vulkan.so, libMNNConvertDeps.so, libvulkan.so, libc++_shared.so)
 
+### MNN is a subproject — build its libs first
+
+MNN lives at `~/MNN` and is **not part of this repository**. It is treated as a
+subproject: the APK bundles prebuilt `libMNN*.so` files from
+`cam-rust/lib/<abi>/`, and those must be current with the MNN source you are
+testing. Always build MNN before building the APK so the fresh `.so` files are
+copied into the runtime dir:
+
+```bash
+cd /data/data/com.termux/files/home/softisp
+
+# Build MNN Vulkan libs and copy every .so into cam-rust/lib/aarch64-v8a/
+./scripts/build_mnn_libs.sh arm64-v8a
+
+# Verify the expected files landed:
+ls -l cam-rust/lib/aarch64-v8a/libMNN.so \
+     cam-rust/lib/aarch64-v8a/libMNN_Vulkan.so \
+     cam-rust/lib/aarch64-v8a/libMNN_Express.so \
+     cam-rust/lib/aarch64-v8a/libMNNConvertDeps.so \
+     cam-rust/lib/aarch64-v8a/libc++_shared.so
+```
+
+`scripts/build_mnn_libs.sh` runs `build_vulkan_android.sh` inside `~/MNN`, then
+copies every `libMNN*.so` plus `libMNNConvertDeps.so` into
+`cam-rust/lib/aarch64-v8a/`. It also rewrites `libvulkan.so.1` → `libvulkan.so`
+in `libMNN_Vulkan.so` / `libMNNConvertDeps.so` so the device's system ICD
+loader resolves the Vulkan entry point (the APK deliberately does not ship its
+own `libvulkan.so`).
+
+If you rebuild MNN and forget this step, the APK ships stale libraries and
+you will chase MNN-side bugs that are already fixed upstream.
+
 ### Environment Variables
 ```bash
 export JAVA_HOME=/data/data/com.termux/files/usr/lib/jvm/java-11-openjdk
