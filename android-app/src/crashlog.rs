@@ -368,7 +368,11 @@ pub fn install_logger() {
 
     static LOGGER: FileLogger = FileLogger;
     if log::set_logger(&LOGGER).is_ok() {
-        log::set_max_level(log::LevelFilter::Info);
+        // Hardcoded to Debug so ISP diagnostics (engine choice, pipeline
+        // geometry, capture format, per-frame timing) are always captured
+        // in the app log — never silently dropped by a release build's
+        // default max level.
+        log::set_max_level(log::LevelFilter::Debug);
     }
     // A second call (activity recreated) leaves the first logger installed:
     // `set_logger` fails and the existing one keeps writing.
