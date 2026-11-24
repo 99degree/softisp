@@ -290,19 +290,18 @@ impl DisplayBlock {
         let inp = self.effective_input();
         let final_output = &self.frame_tensor;
 
+        // Map OutputFormat to the correct isp.display_* op type.
+        // MNN's VulkanFuse selects shaders by exact op type name (e.g.,
+        // "isp.display_uint32_rgba"), not by reading an output_format attribute.
+        let op_type = self.output_format.isp_display_op_type();
+
         // Build attributes for the isp.display shader
         let mut attrs = Vec::new();
 
         // Rotation attributes
         attrs.push(Proto::attribute_int("rotate_mode", self.rotate_mode as i64));
 
-        // Format attributes
-        attrs.push(Proto::attribute_int(
-            "output_format",
-            self.output_format as i64,
-        ));
-
-        // Packing attributes
+        // Packing attributes (only used by isp.display_uint32_rgba for PackedRgb)
         attrs.push(Proto::attribute_int(
             "pack_two_pixels",
             if self.pack_two_pixels { 1 } else { 0 },
@@ -342,7 +341,7 @@ impl DisplayBlock {
         let gamma = format!("{}/gamma", self.tensor_ns());
 
         vec![Proto::node_with_domain(
-            "isp.display",
+            op_type,
             "isp",
             &[&inp, &gamma],
             &[final_output],

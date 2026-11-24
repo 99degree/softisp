@@ -156,6 +156,7 @@ pub fn save_model(path: &str) -> Result<(), std::io::Error> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "rectifier")]
 mod tests {
     use super::*;
 

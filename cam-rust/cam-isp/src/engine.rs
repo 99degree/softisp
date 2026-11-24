@@ -113,6 +113,27 @@ impl OutputFormat {
             1
         }
     }
+    /// Returns the MNN `isp.display_*` op type string for this output format.
+    ///
+    /// MNN's VulkanFuse selects shaders by exact op type name (e.g.,
+    /// `"isp.display_uint32_rgba"`), not by reading an `output_format`
+    /// attribute. This method maps each `OutputFormat` to the corresponding
+    /// fused shader op type that produces the desired output layout.
+    pub fn isp_display_op_type(self) -> &'static str {
+        match self {
+            Self::FloatRgb => "isp.display", // [1,3,H,W] float32 planar RGB [0,1]
+            Self::FloatBgra => "isp.display_rgb", // [1,3,H,W] float32 planar (fallback, uses Conv in primitive path)
+            Self::PackedRgb => "isp.display_uint32_rgba", // [1,1,H,W] uint32 packed (2 pixels/word)
+            Self::Bgra => "isp.display_uint8_bgra", // [1,4,H,W] uint8 interleaved BGRA
+            Self::Rgba => "isp.display_uint8_rgba", // [1,4,H,W] uint8 interleaved RGBA
+            Self::Argb => "isp.display_uint8_argb", // [1,4,H,W] uint8 interleaved ARGB
+            Self::Abgr => "isp.display_uint8_bgra", // [1,4,H,W] uint8 interleaved ABGR (same shader as BGRA, diff channel order)
+            Self::Rgb => "isp.display_rgb",         // [1,3,H,W] float32 planar RGB [0,255]
+            Self::Bgr => "isp.display_rgb",         // [1,3,H,W] float32 planar BGR [0,255]
+            Self::Float16Rgb => "isp.display_rgba_f16", // [1,4,H,W] float16 interleaved RGBA [0,1]
+            Self::Float16Bgra => "isp.display_rgba_f16", // [1,4,H,W] float16 interleaved BGRA [0,1]
+        }
+    }
 }
 
 /// Default tone parameters for the ISP pipeline.

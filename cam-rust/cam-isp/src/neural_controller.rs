@@ -341,6 +341,7 @@ impl crate::controller_api::ControllerApi for NeuralController {
 }
 
 #[cfg(test)]
+#[cfg(feature = "rectifier")]
 mod tests {
     use super::*;
 
@@ -394,25 +395,15 @@ mod tests {
     fn test_mock_model_load_from_bytes() {
         let model_bytes = crate::rectifier_model::generate_rectifier_model();
 
-        #[cfg(feature = "rectifier")]
-        {
-            let result = NeuralController::load_from_bytes(&model_bytes);
-            assert!(result.is_ok());
+        let result = NeuralController::load_from_bytes(&model_bytes);
+        assert!(result.is_ok());
 
-            let mut ctrl = result.unwrap();
-            assert!(ctrl.has_model());
+        let mut ctrl = result.unwrap();
+        assert!(ctrl.has_model());
 
-            let frame = create_test_frame();
-            let params = ctrl.analyze_and_update(&frame);
-            assert!(params.wb.r > 0.0);
-        }
-
-        #[cfg(not(feature = "rectifier"))]
-        {
-            // Without rectifier feature, load_from_bytes is not available
-            // but generate_rectifier_model should still work
-            assert!(!model_bytes.is_empty());
-        }
+        let frame = create_test_frame();
+        let params = ctrl.analyze_and_update(&frame);
+        assert!(params.wb.r > 0.0);
     }
 
     #[test]

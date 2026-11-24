@@ -114,6 +114,7 @@ impl Default for Controller {
 }
 
 #[cfg(test)]
+#[cfg(feature = "rectifier")]
 mod tests {
     use super::*;
     use crate::pipeline::IspFrame;
