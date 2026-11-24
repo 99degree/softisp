@@ -27,7 +27,7 @@ Pipeline stages are `IspBlock`s composable into ONNX, fused into GPU `isp.*` ops
 | Memfd / zero-copy buffers | `docs/guides/MEMFD_MNN_GUIDE.md` | memfd/CMA buffer handling for MNN |
 | NDK camera capture | `docs/guides/NDK_CAMERA_CAPTURE_STUDY.md` | Android Camera2 HAL3 capture study |
 | **Build the APK** | `docs/build/README_BUILD_APK.md` | toolchain, MNN subproject build first, env vars, cargo-apk2, CI gate, troubleshooting |
-| **Debug APK crash/fail** | `docs/build/DEBUG_APK.md` | install without adb, launch, read crash log (`/sdcard/download/softisp-app.log`), logcat, env/feature flags, common failure checklist |
+| **Debug APK crash/fail** | `docs/build/DEBUG_APK.md` | install without adb (Termux device is the test machine), launch via launcher/am start, read crash log (`/sdcard/download/softisp-app.log` or fallback), run `logcat` directly on device — no `adb` |
 | CI gate / lint / test | `cam-rust/README.md` | build/test/lint commands (same as below) |
 | Test plan / results | `docs/testing/` — TESTING.md, TEST_PLAN_MNN_VULKAN.md, TEST_RESULTS.md | how tests are organized and results |
 | Other guides | `docs/guides/` — MNN_SOLUTION_SUMMARY.md, profiles-technical.md, mnn-inference-guide.md | MNN solution summary, profile tech, inference guide |
