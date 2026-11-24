@@ -1,6 +1,6 @@
 # Building the SoftISP Camera APK
 
-This document describes how to cross-compile the `cam-camera-app` crate into an Android APK.
+This document describes how to cross-compile the `cam-camera-app` crate (source in `android-app/`) into an Android APK.
 
 ## Prerequisites
 

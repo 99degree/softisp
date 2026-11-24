@@ -329,7 +329,7 @@ Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 | `cam-onnx` | ONNX Runtime bindings (`ort` v2.0.0-rc.12) |
 | `cam-motion` | MotionCompensator (EIS/deshake glue) |
 | `cam-binder` | Android AIDL-style binder HAL + ISP session integration |
-| `cam-app` | Binary entry, ONNX model generator |
+| `cam-camera-app` | Camera app binary (NativeActivity, ISP pipeline driver) |
 
 ## Status
 

@@ -1,10 +1,10 @@
 # Profile ↔ Block Comparison
 
-How `cam-app` arranges ISP blocks per profile.
+How `cam-camera-app` arranges ISP blocks per profile.
 
 ## How it works
 
-`cam-app` calls `profile.build_blocks(width, bayer_pattern)` (`profile_builder.rs`).
+`cam-camera-app` calls `profile.build_blocks(width, bayer_pattern)` (`profile_builder.rs`).
 That method walks the profile flags and appends either a **real block** or an **IdentityBlock** (passthrough placeholder) for each slot.
 
 **Every profile produces exactly 24 main-chain blocks.** The difference is which slots are real vs identity.
