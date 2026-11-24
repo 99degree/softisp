@@ -11,21 +11,21 @@
 //! output and no reorder buffer is needed.
 //!
 //! Usage:
-//!   let engine_a = MnnEngine::new(MnnBackend::Vulkan);
-//!   let engine_b = MnnEngine::new(MnnBackend::Vulkan);
-//!   engine_a.build(head_a, blocks_a.clone(), None, 21)?;
-//!   engine_b.build(head_b, blocks_b.clone(), None, 21)?;
+//!   let mut engine_a = MnnEngine::new(MnnBackend::Vulkan);
+//!   let mut engine_b = MnnEngine::new(MnnBackend::Vulkan);
+//!   engine_a.build(head_a, blocks_a, None, 21)?;
+//!   engine_b.build(head_b, blocks_b, None, 21)?;
 //!   let mut dual = DualGpuEngine::new(engine_a, engine_b);
 //!   dual.next().process(&params)?; // frame N -> engine A
 //!   dual.next().process(&params)?; // frame N+1 -> engine B
 //!
-//! Both engines should share the same `IspController` (AWB/AE/CCM/tone state)
-//! so that 3A feedback is consistent across frames. Call
-//! `mnn_engine_a.set_controller(ctrl.clone())` and
-//! `mnn_engine_b.set_controller(ctrl.clone())` before build, or pass the same
-//! `Arc<Mutex<IspController>>` when constructing.
+//! Both engines share the same `IspController` (AWB/AE/CCM/tone state) so that
+//! 3A feedback is consistent across frames. Call
+//! `MnnEngine::set_controller(ctrl.clone())` on each engine before wrapping
+//! them in `DualGpuEngine` to share controller state.
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::controller::IspController;
 use crate::engine::{IspEngine, ProcessParams};
@@ -35,48 +35,39 @@ use crate::pipeline::{IspBlock, IspFrame};
 /// frame N -> engine A, frame N+1 -> engine B, frame N+2 -> engine A, ...
 pub struct DualGpuEngine {
     engines: [Box<dyn IspEngine>; 2],
-    toggle: bool,
+    toggle: AtomicBool,
     /// Shared controller so both engines see the same AWB/AE/CCM/tone state.
+    ///
+    /// Set via [`Self::set_controller`] on each engine before wrapping, or via
+    /// `MnnEngine::set_controller` on each individual engine. The `DualGpuEngine`
+    /// exposes engine A's controller through [`IspEngine::controller`].
     controller: Mutex<IspController>,
 }
 
 impl DualGpuEngine {
     /// Create a new dual engine from two already-built `MnnEngine` instances.
     ///
-    /// Both engines must have been built with the same block chain. The
-    /// controller from `engine_a` is adopted as the shared controller; if you
-    /// want a specific shared controller, call `set_controller` on both
-    /// engines before the first `process`.
+    /// Both engines must have been built with the same block chain. The engine
+    /// instances keep their own `IspController`; callers who want shared state
+    /// should call `set_controller` on each `MnnEngine` before wrapping them
+    /// here.
     pub fn new(engine_a: Box<dyn IspEngine>, engine_b: Box<dyn IspEngine>) -> Self {
-        let controller = engine_a.controller().clone();
         Self {
             engines: [engine_a, engine_b],
-            toggle: false,
+            toggle: AtomicBool::new(false),
             controller: Mutex::new(IspController::default()),
         }
     }
 
     /// Returns the next engine in round-robin order (A, B, A, B, ...).
-    pub fn next(&mut self) -> &mut dyn IspEngine {
-        let idx = self.toggle as usize;
-        self.toggle = !self.toggle;
-        &mut *self.engines[idx]
+    pub fn next(&self) -> &dyn IspEngine {
+        let idx = self.toggle.fetch_xor(true, Ordering::Relaxed) as usize;
+        &*self.engines[idx]
     }
 
-    /// Returns the shared controller (engine A's controller).
+    /// Returns engine A's controller (`IspEngine::controller()`).
     pub fn controller(&self) -> &Mutex<IspController> {
-        &self.controller
-    }
-
-    /// Replace the shared controller on both engines.
-    pub fn set_controller(&mut self, ctrl: Mutex<IspController>) {
-        self.controller = ctrl;
-        // Both engines declare their own controller field; we can't reach into
-        // the dyn trait object to set it, so callers should call
-        // `MnnEngine::set_controller` on each engine before wrapping. This
-        // method exists for API symmetry and is a no-op on the dyn objects.
-        let _ = self.engines[0].controller();
-        let _ = self.engines[1].controller();
+        self.engines[0].controller()
     }
 }
 
@@ -105,19 +96,30 @@ impl IspEngine for DualGpuEngine {
         &self.controller
     }
 
+    /// Build both engines with identical chains.
+    ///
+    /// Because `build()` takes ownership of `head` and `aux`, the caller must
+    /// provide two separate block lists (one per engine). There is no clone
+    /// path because `IspBlock` is not `Clone`.
+    /// Build both engines with identical chains.
+    ///
+    /// Because `build()` takes ownership of `head` and `aux`, both engines
+    /// cannot be built from the same block list — `IspBlock` is not `Clone`.
+    /// Callers should instead build two `MnnEngine` instances separately
+    /// (each with its own block list) and pass them to `DualGpuEngine::new()`.
+    ///
+    /// This method always returns an error; use [`Self::new`] instead.
     fn build(
         &mut self,
-        head: Box<dyn IspBlock>,
-        aux: Vec<Box<dyn IspBlock>>,
-        warp: Option<Box<dyn IspBlock>>,
-        opset: i64,
+        _head: Box<dyn IspBlock>,
+        _aux: Vec<Box<dyn IspBlock>>,
+        _warp: Option<Box<dyn IspBlock>>,
+        _opset: i64,
     ) -> crate::error::IspResult<()> {
-        // Both engines must be built with identical chains. The caller is
-        // responsible for constructing two separate block lists (build takes
-        // ownership of head/aux). Build engine A first, then engine B.
-        self.engines[0].build(head, aux, warp.clone(), opset)?;
-        self.engines[1].build(head, aux, warp, opset)?;
-        Ok(())
+        Err(crate::error::IspError::Config(
+            "DualGpuEngine does not support build(); use DualGpuEngine::new() \
+             with two pre-built engines instead".into(),
+        ))
     }
 
     fn process(&self, params: &crate::engine::ProcessParams) -> crate::error::IspResult<IspFrame> {
