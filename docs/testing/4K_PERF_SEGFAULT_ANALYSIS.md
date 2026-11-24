@@ -30,6 +30,8 @@ Added `extra_input_cache: Mutex<HashMap<String, Vec<u8>>>` to `MnnEngine`. `writ
 - `cargo check -p cam-isp --lib --features rectifier` → **clean**
 - `PERF_FRAMES=3 PERF_W=640 PERF_H=480 probe_4k_perf` → **2 passed, no segfault**
 - `PERF_FRAMES=2 PERF_W=3840 PERF_H=2160 probe_4k_perf` → **2 passed, no segfault** (previously crashed at first frame with SIGSEGV)
+- `PERF_FRAMES=20 PERF_W=3840 PERF_H=2160 probe_4k_perf` → **20 frames through to completion, exit 0, no segfault**
+- `PERF_FRAMES=40 PERF_W=3840 PERF_H=2160 probe_4k_perf` → **40 frames through to completion, exit 0, no segfault** (the default; ~75 s warmup+infer)
 
 ## Blank Frames (separate, pre-existing issue — NOT a segfault)
 
