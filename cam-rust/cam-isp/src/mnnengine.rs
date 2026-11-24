@@ -2328,19 +2328,15 @@ impl IspEngine for MnnEngine {
             let mut graph_channels = p.output_format.channel_count();
             if let Some(t) = &out_tensor {
                 let shape = t.shape();
-                // Only trust a concrete `[1,C,H,W]`; dynamic dims come back as
-                // 0/-1. PackedRgb is excluded because its last dim is the
-                // *packed* half-width, not the pixel width.
-                // `PackedRgb`'s last dim is the *packed* half-width, so its
-                // shape cannot describe pixels; every other format, including
-                // the float RGB ones, is a plain `[1,C,H,W]`. Excluding all raw
-                // outputs here made `FloatRgb` report the *requested* geometry
-                // — 2592x1940 when demosaic had already produced 1296x970 —
-                // so callers sized their buffers from a frame that never
-                // existed.
-                if p.output_format == OutputFormat::PackedRgb {
-                    // keep the request untouched
-                } else if shape.len() == 4 && shape[2] > 0 && shape[3] > 0 {
+                // Trust any concrete `[1,C,H,W]` shape, including PackedRgb:
+                // the fused `isp.display_uint32_rgba` op declares one uint32
+                // per pixel (this was fixed alongside the shader's packing
+                // semantics), so its last dim is the real output width.
+                // Reporting the *requested* geometry here instead makes the
+                // caller size a full-size BGRA buffer for a half-size packed
+                // frame; `present()` then rejects it as "source frame too
+                // small" and the preview stays black.
+                if shape.len() == 4 && shape[2] > 0 && shape[3] > 0 {
                     graph_channels = shape[1].max(1) as usize;
                     oh = shape[2] as usize;
                     ow = shape[3] as usize;
@@ -2471,7 +2467,10 @@ impl IspEngine for MnnEngine {
             // output to tell the two apart. Allocations happen only when a
             // black frame is already detected.
             if !data_out.is_empty() {
-                let step = (data_out.len() / 128).max(1);
+                // Odd step: an even (especially multiple-of-4) stride would
+                // always land on the zero low byte of a packed BGRA word and
+                // report an opaque-black frame as "all zero".
+                let step = (data_out.len() / 128).max(1) | 1;
                 if data_out.iter().step_by(step).all(|&b| b == 0) {
                     let mut probe = vec![0.0f32; (oh * ow * graph_channels).max(4)];
                     let disp_n = interp.read_output_floats(sess, "DisplayBlock/frame", &mut probe);
