@@ -11,6 +11,7 @@
 //!   3. Run session
 //!   4. Read output float32 → BGRA U8
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use log::{debug, error, info, warn};
@@ -825,6 +826,16 @@ impl MnnEngine {
         /// rank-0 tensor's shape as empty, and an empty-shape upload carries
         /// no elements, so these values would otherwise never be written.
         fn write_f32(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, val: f32) {
+            // Delta tracking: skip if value unchanged since last frame
+            if let Some(cache) = &self.extra_input_cache {
+                let mut cache = cache.lock().unwrap();
+                let key = name.to_string();
+                let val_bytes = val.to_le_bytes().to_vec();
+                if cache.get(&key) == Some(&val_bytes) {
+                    return; // unchanged, skip upload
+                }
+                cache.insert(key, val_bytes);
+            }
             if let Some(t) = find(pool, name) {
                 t.upload_f32_shaped(&[1], &[val]);
             }
@@ -837,6 +848,16 @@ impl MnnEngine {
             name: &str,
             vals: &[f32],
         ) {
+            // Delta tracking: skip if values unchanged since last frame
+            let val_bytes: Vec<u8> = vals.iter().flat_map(|v| v.to_le_bytes()).collect();
+            if let Some(cache) = &self.extra_input_cache {
+                let mut cache = cache.lock().unwrap();
+                let key = name.to_string();
+                if cache.get(&key) == Some(&val_bytes) {
+                    return; // unchanged, skip upload
+                }
+                cache.insert(key, val_bytes);
+            }
             // A failed upload leaves the tensor at whatever it was allocated
             // with — usually zeros. That turns into a silently black or
             // unmodified stage, so say so instead of swallowing the bool.
@@ -857,6 +878,16 @@ impl MnnEngine {
         /// tensors that were formerly baked as initializers).  No-op if the
         /// tensor is missing or too small.
         fn write_raw(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, data: &[u8]) {
+            // Delta tracking: skip if bytes unchanged since last frame
+            if let Some(cache) = &self.extra_input_cache {
+                let mut cache = cache.lock().unwrap();
+                let key = name.to_string();
+                let data_bytes = data.to_vec();
+                if cache.get(&key) == Some(&data_bytes) {
+                    return; // unchanged, skip upload
+                }
+                cache.insert(key, data_bytes);
+            }
             match find(pool, name) {
                 Some(t) => {
                     // `extra_input_defaults` are serialized f32 values.
