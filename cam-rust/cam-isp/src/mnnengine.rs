@@ -2385,7 +2385,7 @@ impl IspEngine for MnnEngine {
                     std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * 4)
                 };
                 Self::f32_to_u8(buf_bytes)
-            } else if p.output_format.is_raw_output() || packed_display {
+            };
 
             // ── Read stats output tensors from MNN session and feed to controller ──
             let mut calib_vals: Option<[f32; 24]> = None;
