@@ -36,6 +36,11 @@ cargo test -p cam-isp --lib --features rectifier --no-fail-fast   # 813 lib test
 - `mnn_import_ahb_as_device_memory()`/`mnn_release_ahb_device_memory()` — AHardwareBuffer → VkDeviceMemory import via Tensor::setDevicePtr(MNN_MEMORY_AHARDWAREBUFFER)
 - Remaining: bind imported VkDeviceMemory to MNN Vulkan session input/output tensors for true host↔GPU zero-copy on Vulkan
 
+## Dual-GPU engine
+- `DualGpuEngine` alternates between two `MnnEngine` instances for ping-pong inference (frame N on A, N+1 on B)
+- Both engines share `IspController` for consistent 3A state
+- Registered as `mnn_vulkan_a` and `mnn_vulkan_b` factories
+
 ## Performance (MNN Vulkan, Snapdragon-class)
 - HEAVY 4K→4K: **79.8 FPS** avg; UNIFIED 4K→4K tiled 2×2: **141.2 FPS** avg
 - Primitive chain: 1.9 / 4.0 FPS at 4K/FHD

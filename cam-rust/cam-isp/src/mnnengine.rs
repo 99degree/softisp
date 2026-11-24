@@ -465,9 +465,7 @@ impl MnnEngine {
             priority: b.priority(),
             create_fn: create_fn_b,
         });
-        info!(
-            "Registered MNN engine factories mnn_vulkan_a and mnn_vulkan_b (default priority)"
-        );
+        info!("Registered MNN engine factories mnn_vulkan_a and mnn_vulkan_b (default priority)");
     }
 
     /// Build a comprehensive benchmark .mnn model exercising all pipeline ops:
@@ -2113,13 +2111,7 @@ impl IspEngine for MnnEngine {
                     } else {
                         buf.as_ptr() as *const c_void
                     };
-                    (
-                        input_ptr,
-                        code,
-                        bits,
-                        raw_shape.to_vec(),
-                        "raw_zero_copy",
-                    )
+                    (input_ptr, code, bits, raw_shape.to_vec(), "raw_zero_copy")
                 }
             };
 

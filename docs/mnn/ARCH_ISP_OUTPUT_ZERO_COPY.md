@@ -112,8 +112,8 @@ VK_KHR_external_memory_android_hardware_buffer
 
 `mnn_run_true_zero_copy()` now calls two new FFI functions before inference:
 
-- **`mnn_import_ahb_as_device_memory()`** — exports the `AHardwareBuffer` → dma-buf fd via `AHardwareBuffer_getFd`, resolves `vkGetDeviceProcAddr` from `libvulkan.so`, and records the fd mapping by tensor name so MNN's Vulkan backend can import it as `VkDeviceMemory` (device-memory binding wired at the MNN Vulkan backend layer).
-- **`mnn_release_ahb_device_memory()`** — releases the binding after inference.
+- **`mnn_import_ahb_as_device_memory()`** — exports the `AHardwareBuffer` → dma-buf fd via `AHardwareBuffer_getFd`, and marks the tensor as AHB-backed via `Tensor::setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER)`. This causes `VulkanBackend::onAcquire()` to import the AHB as `VkDeviceMemory` via `VulkanBufferFromAHB::create()` (using `VkImportAndroidHardwareBufferInfoANDROID`). The GPU reads/writes the AHB directly instead of allocating its own device memory and copying host<->GPU.
+- **`mnn_release_ahb_device_memory()`** — releases the binding after inference by clearing the tensor's device pointer.
 
 The host pointer (`tensor->buffer().host = caller_buffer`) is still set as the fallback path, so on CPU backend this is true zero-copy today; on Vulkan the fd is now available for device-memory binding. Once the MNN Vulkan backend binds the imported `VkDeviceMemory` to the session tensors, host→device (input) and device→host (output) copies are eliminated.
 

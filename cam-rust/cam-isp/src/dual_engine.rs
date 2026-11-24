@@ -24,8 +24,10 @@
 //! `MnnEngine::set_controller(ctrl.clone())` on each engine before wrapping
 //! them in `DualGpuEngine` to share controller state.
 
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 
 use crate::controller::IspController;
 use crate::engine::{IspEngine, ProcessParams};
@@ -118,7 +120,8 @@ impl IspEngine for DualGpuEngine {
     ) -> crate::error::IspResult<()> {
         Err(crate::error::IspError::Config(
             "DualGpuEngine does not support build(); use DualGpuEngine::new() \
-             with two pre-built engines instead".into(),
+             with two pre-built engines instead"
+                .into(),
         ))
     }
 

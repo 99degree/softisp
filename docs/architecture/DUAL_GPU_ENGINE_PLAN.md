@@ -1,7 +1,7 @@
 # Dual GPU Engine Plan — Frame N to Engine 1, Frame N+1 to Engine 2
 
 ## Status
-Draft — not yet implemented.
+**Implemented** — `DualGpuEngine` in `cam-rust/cam-isp/src/dual_engine.rs`, factories `mnn_vulkan_a` / `mnn_vulkan_b` registered in `mnnengine.rs::register_with_defaults()`.
 
 ## Motivation
 The ISP chain (ISP engine) currently runs a **single MNN/Vulkan session per frame**. At 4K, the MNN/Vulkan session is the bottleneck (≈110–140 ms p50 for `FUSED`/`WHOLE` at 3840×2160 in `probe_4k_perf`). While `probe_fused_profile` showed `FUSED` ≈ 55–72 ms at 1296×970, the 4K path is far more session-bound.
@@ -159,12 +159,12 @@ If the engine pool ever grows >1 per engine (parallel sessions), an output seque
 
 - [x] `DualGpuEngine` struct in `cam-rust/cam-isp/src/dual_engine.rs` wrapping two `Box<dyn IspEngine>` with round-robin `next()`.
 - [x] `MnnEngine::set_controller(&Mutex<IspController>)` added to `mnnengine.rs` so both engine instances share one controller.
-- [x] `cam_isp::init()` registers `mnn_vulkan_a` and `mnn_vulkan_b` factories (pool_size=1 each) in `mnnengine.rs::register_with_defaults\).
-- [ ] `CameraIspService` / `Preview::new` builds `DualGpuEngine` when sensor width ≥2560 (4K class) or env `SOFTISP_DUAL_GPU=1\).
-
-### 11. Risks / open questions
-
-- **MNN Vulkan multi-session concurrency:** two sessions on one GPU may serialize at the driver level, in which case dual-engine gives no throughput gain and only adds memory. The probe will measure this; if serialized, the feature is a no-op and should be disabled by default.
+- [x] `cam_isp::init()` registers `mnn_vulkan_a` and `mnn_vulkan_b` factories (pool_size=1 each) in `mnnengine.rs::register_with_defaults`).
+- [ ] `CameraIspService` / `Preview::new` builds `DualGpuEngine` when sensor width ≥2560 (4K class) or env `SOFTISP_DUAL_GPU=1`.
+- [ ] `probe_4k_perf` gains a `DUAL` row comparing single vs dual engine at 3840×2160.
+- [ ] `probe_fused_profile` extended to optionally run dual.
+- [ ] Verify no session churn: both engines built once at init, reused every frame.
+- [ ] Verify fp32 storage forced on both (already automatic via `chain_has_fused_op`).
 - **Memory:** two graph sessions ≈ 2× tensor allocations. Must verify at 4K that the device does not OOM.
 - **fc16 vs fp32:** both engines must stay fp32; `chain_has_fused_op` handles this automatically but must not be bypassed for one engine only.
 
