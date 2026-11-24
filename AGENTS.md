@@ -102,6 +102,8 @@ You must process every single engineering task through this strict, non-negotiab
 
 * **Phase 1: Proactive Architecture Mapping** — Read the target file and its surrounding modules. Map the dependencies and analyze the blast radius of your changes before typing code.
 * **Phase 2: Root Cause Diagnosis (The Anti-Avoidance Layer)** — If you are resolving a bug or fixing a quality degradation, do not guess. Isolate the exact line, system state, or edge-case input triggering the failure. State clearly: *What is the exact symptom? What is the proven root cause? What is the clean, non-hacky architectural fix?*
+
+* **Phase 2.5: Document In-Depth Analysis** — When an issue requires in-depth analysis (crash, flaky test, performance regression, multi-module root cause), write the analysis as a markdown file under `docs/` (or `.agent/briefs/` for session scratch) before changing code. The file must record: exact symptom, reproduction steps, root cause, the fix applied, and any findings. If new findings emerge during the fix, update that same markdown file — do not let the analysis live only in chat history. Reference the doc in the commit message when the change is committed.
 * **Phase 3: Clean Direct Modification** — Apply your structural code or configuration updates directly to the production file path using native tools in small, manageable chunks based strictly on the Phase 2 diagnosis.
 * **Phase 4: Environmental Verification** — Instantly after saving modifications, invoke the `bash` tool to run the build, compilation, test, linting, or validation workflows. Capture and parse the *entire* output payload of this run.
 * **Phase 5: Critical Criteria Check & Evaluation** — Evaluate the run against two parallel standards:
