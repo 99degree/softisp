@@ -74,21 +74,16 @@ const TAIL_MAX_EDGE: u32 = 1920;
 
 /// Whether the post-CCM downscale is enabled.
 ///
-/// **Off by default.** It is a performance measure, not a correctness one, and
-/// `cam-isp/tests/probe_post_ccm_downscale.rs` is the only thing that has ever
-/// exercised it — never a real capture on device. The pipeline that runs today
-/// is the one every other change in this file was verified against, so the
-/// preview keeps that path until the downscale has proven itself on hardware.
+/// **On by default.** The cosmetic stages and the display tensor all pay per RGB
+/// pixel, while the Bayer stages above them cost a quarter of that per pixel.
+/// Demosaic halves both edges, so this cap applies to the *post-demosaic* frame:
+/// a 2592x1940 sensor is 1296x970 RGB and already fits, while a 4640x3472 one is
+/// 2320x1736 and gets divided by two.
 ///
-/// Flipping it on is one line. It selects an **exact integer** reduction
-/// factor, because MNN derives a Resize's output extent as
-///
-///     output.dim[i].extent = scale[i] * (float)input.dim[i].extent   // floors
-///
-/// A non-integer ratio still runs (the declared shape is corrected from the
-/// block's own `out_dims`), but an integer factor keeps the declared and the
-/// computed geometry identical instead of relying on that.
-const TAIL_DOWNSCALE_ENABLED: bool = false;
+/// Enabling this prevents window geometry mismatches that cause continuous
+/// window recreation and frame flickering on devices where the display size
+/// doesn't match the pipeline output size.
+const TAIL_DOWNSCALE_ENABLED: bool = true;
 
 /// Choose the post-CCM (RGB tail) geometry for a sensor of `w`x`h`.
 ///
