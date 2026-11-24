@@ -69,6 +69,10 @@ pub struct SensorInfo {
     pub height: i32,
     /// CFA phase, one of [`RGGB`], [`GRBG`], [`GBRG`], [`BGGR`].
     pub bayer_pattern: i32,
+    /// Sensor orientation in degrees (0, 90, 180, 270) clockwise from
+    /// the device's natural orientation. Matches
+    /// `ACAMERA_SENSOR_INFO_ORIENTATION`.
+    pub sensor_orientation: i32,
     /// Full-well capacity: the sample value the sensor saturates at.
     pub sensor_max: f32,
     /// `true` when the camera advertises the RAW capability.
@@ -113,6 +117,7 @@ pub struct CameraSession {
     raw: bool,
     sensor_width: u32,
     sensor_height: u32,
+    sensor_orientation: i32,
 }
 
 // The NDK handles are owned exclusively by this struct: it is created and
@@ -141,6 +146,7 @@ impl CameraSession {
             raw: true,
             sensor_width: 0,
             sensor_height: 0,
+            sensor_orientation: 0,
         };
 
         let ids = session.list_camera_ids()?;
@@ -312,6 +318,7 @@ impl CameraSession {
                         // must be built from them.
                         self.sensor_width = size.width as u32;
                         self.sensor_height = size.height as u32;
+                        self.sensor_orientation = info.sensor_orientation;
                         return Ok(());
                     }
                     Err(e) => {
@@ -349,6 +356,7 @@ impl CameraSession {
         self.bayer_pattern = info.bayer_pattern;
         self.sensor_width = w as u32;
         self.sensor_height = h as u32;
+        self.sensor_orientation = info.sensor_orientation;
         // `copy_pixels` scales the 8-bit luma plane to full `u16` range
         // (`v * 257`), so the YUV path saturates at 65535 — not at the RAW
         // white level, which would clip everything above ~4 % of full scale.
@@ -375,6 +383,10 @@ impl CameraSession {
             Some(v) if !v.is_empty() => cfa_to_bayer(v[0] as i32),
             _ => BGGR,
         };
+        let orientation_tag = sys::acamera_metadata_tag::ACAMERA_SENSOR_ORIENTATION.0;
+        let sensor_orientation = entry_i32(chars, orientation_tag)
+            .and_then(|v| v.first().copied())
+            .unwrap_or(0);
         let white_tag = sys::acamera_metadata_tag::ACAMERA_SENSOR_INFO_WHITE_LEVEL.0;
         let white_level = entry_i32(chars, white_tag)
             .and_then(|v| v.first().copied())
@@ -391,6 +403,7 @@ impl CameraSession {
             width,
             height,
             bayer_pattern,
+            sensor_orientation,
             sensor_max: white_level.max(1) as f32,
             raw_supported,
             capture: sizes[0],
@@ -512,6 +525,11 @@ impl CameraSession {
     /// Active array height of the sensor.
     pub fn sensor_height(&self) -> u32 {
         self.sensor_height
+    }
+
+    /// Sensor orientation in degrees clockwise from device natural orientation.
+    pub fn sensor_orientation(&self) -> i32 {
+        self.sensor_orientation
     }
 
     /// Acquire the next queued frame and copy its pixels out as RAW `u16`.

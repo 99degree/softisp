@@ -292,31 +292,48 @@ impl Preview {
         // If the camera permission isn't granted yet (common on first launch),
         // fall back to safe defaults so the pipeline can still be built and the
         // app can launch instead of crashing.
-        let (session, has_raw, sensor_max, bayer_pattern, sensor_width, sensor_height) =
-            match CameraSession::open_default() {
-                Ok(s) => {
-                    log::info!(
-                        "Camera supports RAW16={}, sensor_max={}, bayer={}, sensor={}x{}",
-                        s.is_raw(),
-                        s.sensor_max(),
-                        s.bayer_pattern(),
-                        s.sensor_width(),
-                        s.sensor_height()
-                    );
-                    let props = (
+        let (
+            session,
+            has_raw,
+            sensor_max,
+            bayer_pattern,
+            sensor_width,
+            sensor_height,
+            sensor_orientation,
+        ) = match CameraSession::open_default() {
+            Ok(s) => {
+                log::info!(
+                        "Camera supports RAW16={}, sensor_max={}, bayer={}, sensor={}x{} orientation={}",
                         s.is_raw(),
                         s.sensor_max(),
                         s.bayer_pattern(),
                         s.sensor_width(),
                         s.sensor_height(),
+                        s.sensor_orientation()
                     );
-                    (Some(s), props.0, props.1, props.2, props.3, props.4)
-                }
-                Err(e) => {
-                    log::warn!("Could not open camera for capability check: {e}");
-                    (None, false, 1023.0, camera::BGGR, 1600, 1200)
-                }
-            };
+                let props = (
+                    s.is_raw(),
+                    s.sensor_max(),
+                    s.bayer_pattern(),
+                    s.sensor_width(),
+                    s.sensor_height(),
+                    s.sensor_orientation(),
+                );
+                (
+                    Some(s),
+                    props.0,
+                    props.1,
+                    props.2,
+                    props.3,
+                    props.4,
+                    props.5,
+                )
+            }
+            Err(e) => {
+                log::warn!("Could not open camera for capability check: {e}");
+                (None, false, 1023.0, camera::BGGR, 1600, 1200, 0)
+            }
+        };
 
         // Determine profile based on camera capabilities
         let mut profile = if has_raw {
@@ -360,6 +377,24 @@ impl Preview {
                 profile.post_ccm_downscale.1
             );
         }
+
+        // Apply sensor orientation to the pipeline so the output is upright.
+        // Sensor orientation is clockwise from device natural orientation.
+        // The ISP's rotate_mode: 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip.
+        // Sensor orientation is degrees clockwise from device natural orientation.
+        // We need to counter-rotate by the sensor orientation.
+        let rotate_mode = match sensor_orientation {
+            90 => 3,  // sensor is rotated 90° CW -> rotate 270° CW (or 90° CCW)
+            180 => 2, // sensor is rotated 180° CW -> rotate 180° CW
+            270 => 1, // sensor is rotated 270° CW -> rotate 90° CW
+            _ => 0,
+        };
+        profile.rotate_mode = rotate_mode;
+        log::info!(
+            "sensor_orientation={}, pipeline rotate_mode={}",
+            sensor_orientation,
+            rotate_mode
+        );
 
         // The *graph* must be built for the same output format the engine is
         // told to expect. `profile.output_format` decides whether DisplayBlock
