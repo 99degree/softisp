@@ -21,6 +21,12 @@
   `perf_4k_dual`); `perf_4k` remains the FUSED-only breakage check and
   `perf_4k_all` is the explicit full matrix. See
   `docs/isp/20261125-perf-phase-instrumentation.md`.
+- **Stats readback no longer paid twice** (this session): both app workers now
+  share one `Arc<Mutex<IspController>>` via `MnnEngine::share_controller()`,
+  engine A keeps stats on, and engine B calls `set_stats_enabled(false)` before
+  workers start. `DualGpuEngine` delegates `controller()` to engine A instead of
+  carrying a second unused instance. Unit tests cover shared handles and the
+  stats switch; two unrelated `cam-isp --lib` failures remain unchanged.
 - **HEAVY MNN test repaired** (this session): `test_mnn_engine` now fills the
   new zero-copy `ProcessParams` fields via `ProcessParams::new()`, passes the
   profile's real head block for pre-converted models, uses the real sensor
@@ -234,6 +240,25 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   `self.frame_input_name`), and the FFI return codes are discarded. The
   Vulkan `onAcquire` limitation is unchanged. In-repo correctness bugs were fixed;
   the APK is deliberately left on the working copy-in/copy-out path.
+
+### P2c — Staged prep / infer / post frame phases (TODO)
+
+- **User idea recorded 2026-11-25.** Present the output frame as soon as
+  inference finishes, then perform 3A stats readback on the worker; also do the
+  next frame's controller/metadata tensor preparation while the camera is
+  still filling its buffer. The previous controller values are already the ones
+  the arriving frame consumes, so this is semantically the same input as today.
+- **Plan:** add opt-in staged APIs on `MnnEngine` (`prepare`, `run_prepared`,
+  `finish`) with opaque session tokens, keep the camera mutex limited to
+  `next_frame()`, and fall back to today's inline `process()` on first frame or
+  geometry change. Existing `IspAuxOutput::calibration_stats` callers must keep
+  the current behaviour by default.
+- **Estimate:** can hide roughly 58 ms of pre-inference tensor work and 79 ms
+  of GPU→CPU stats readback from the visible frame path; inference (~112 ms)
+  remains the floor. It is a latency win, not an inference-speed change.
+- **Status:** not implemented. This is a larger API-surface follow-up than the
+  A-on/B-off stats split and is documented in
+  `docs/isp/20261125-perf-phase-instrumentation.md`.
 
 ### P3 — Hardening / CI ✅ (workspace clean)
 - **`cargo clippy --workspace --all-targets --features mnn -D warnings` passes** on all

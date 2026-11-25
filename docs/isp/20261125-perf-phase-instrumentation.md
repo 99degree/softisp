@@ -2,7 +2,7 @@
 title: "Perf study: pre-inference / inference / post-inference phases"
 created_at: 2026-11-25T00:00:00+00:00
 question: "Which code path dominates preview frame time after dedup and dual-engine pipelining?"
-status: in-progress
+status: done (follow-up TODO recorded below)
 ---
 
 # Perf study: pre-inference / inference / post-inference phases
@@ -32,10 +32,10 @@ show `pipeline stage=infer_done ... infer=~65 ms` and `prep=~215 ms` at
 2. **Done:** extend the existing ignored perf probe to report aggregated prep /
    infer / post / total, so a single run can quantify phase costs without parsing
    logs.
-3. **Pending:** run on device with a fresh APK and parse the new `pipeline timer`
-   debug lines at production preview size. The old log predates those timers.
-4. Update this brief with measured numbers, identify the dominant code piece,
-   and propose an optimization with a concrete patch.
+3. **Done:** ran on device with a fresh APK and parsed the new `pipeline timer`
+   debug lines at production preview size.
+4. **Done:** recorded the measured numbers, identified the dominant code piece,
+   applied the concrete patch, and verified it.
 
 ## Findings
 
@@ -67,13 +67,111 @@ show `pipeline stage=infer_done ... infer=~65 ms` and `prep=~215 ms` at
   `output_meta 17.2`, `output_copy 0.8`, `stats 79.3` ms. Inference is the
   largest single phase, but GPU->CPU statistics readback (`stats`) is a close
   second and happens on **every** frame because `stats_interval` defaults to 1
-  and both engine workers leave it enabled. The next optimization should phase
-  the two engines (`interval=2`, opposite starting countdowns) so each frame
-  still feeds 3A once while each engine pays the stall only every other frame.
-  The ~95 ms spent in `setup` + `input` contains no allocation on the zero-copy
-  path; it is almost certainly scheduler/log-write latency from the per-frame
-  debug records, which needs a finer timer around the logging calls before it
-  is changed.
+  and both engine workers leave it enabled.
+
+## Next optimization: stop paying the stats stall twice per frame pair
+
+**Symptom.** The dual-worker app creates two `MnnEngine`s with independent
+controllers and leaves both with `stats_enabled = true`. Workers alternate
+frames, so both pay the ~79 ms host readback stall on every frame they process;
+the stall is serialized against inference and shows up directly in preview
+latency.
+
+**Root cause.** The dual-engine probe (`probe_4k_perf::run_dual`) already uses the
+right configuration — engine A reads stats, engine B skips them — but the
+production app wiring in `android-app/src/lib.rs` was never updated to match.
+Independent controllers also mean engine B would never see AWB/CCM/tone updates
+made by engine A, which is harmless only while both engines read stats
+themselves. Once B skips stats it must share A's controller.
+
+**Correction to the earlier plan.** Phasing both engines with `interval=2` and
+opposite countdowns does **not** preserve one measurement per captured frame:
+the workers already see alternate frames, so each engine measuring every other
+one of its own frames would measure only half of all frames in total, with gaps.
+The existing A-on/B-off split is the correct shape. It measures one of every two
+captured frames, and the 3A controller already smooths those numbers.
+
+**Fix applied.** `MnnEngine::controller` is now `Arc<Mutex<IspController>>`;
+`share_controller(&Arc<_>)` and `controller_handle()` let two engines hold the
+same 3A state while `IspEngine::controller()` still returns `&Mutex<_>`.
+`android-app/src/lib.rs` creates one controller, gives it to both engines,
+leaves engine A stats **on**, and calls `set_stats_enabled(false)` on engine B
+before the workers start. `DualGpuEngine` no longer carries a second unused
+controller: its trait method delegates to engine A. Unit tests cover shared
+handles and the stats toggle; `mnn_buffer`'s test no longer uses a no-op
+`drop(&mut slice)` that warned under the test build.
+
+**Verification.** `cargo fmt --all -- --check`, `cargo clippy -p cam-isp --lib
+--features "rectifier mnn" -- -D warnings`, `cargo clippy -p cam-camera-app
+--all-features -- -D warnings` and `cargo test -p cam-camera-app --lib
+--all-features` (46 passed) are clean. The new MNN unit tests pass (11 passed).
+A 160x120 `perf_4k_dual` smoke run passes with engine A stats on / B off.
+The full `cam-isp --lib` result is unchanged: 848 passed, 2 pre-existing
+failures (`test_unified_force_input16`, `test_manager_build_and_process`), 2
+ignored.
+
+The ~95 ms in `setup` + `input` contains no allocation on the zero-copy path;
+it is likely scheduler/log-write latency from per-frame debug records. It needs
+a finer timer around those calls before it is changed.
+
+## TODO (user idea): split the frame into prep → infer → post phases
+
+Two related reorderings were suggested while reviewing the phase timings:
+
+1. **Present before stats readback.** `MnnEngine::process()` currently returns
+   only after the 3A tensor readback and controller update, so `PipelineRunner`
+   cannot put finished pixels on the `ANativeWindow` until that GPU stall has
+   completed. Send the output frame immediately after inference, then do the
+   metadata/stats readback on the worker.
+2. **Prepare before the frame arrives.** The camera layer is what blocks while
+   the sensor buffer fills. The controller/manager already hold the previous
+   frame's tuned CCM/AWB/tone/exposure values, which are exactly the values the
+   next frame would consume. Write those runtime tensors and acquire/resize a
+   session *before* calling `CameraSession::next_frame()`; once the frame is
+   returned, only the input buffer pointer is newly known, so the worker can
+   feed it and enter `runSession` immediately.
+
+Both are directly related to this perf work. Together they turn the current
+single `process()` call into three explicit phases:
+
+1. `prepare()` — acquire/reserve a session, apply geometry, write controller
+   metadata from the previous frame; runs while the camera is busy.
+2. `run_prepared()` — consume the arrived input buffer, run inference, extract
+   output bytes, return the frame immediately.
+3. `finish()` — read stats tensors and update the controller after the frame
+   has been handed to the presenting thread; runs while display/next-worker
+   inference proceeds.
+
+**Plan estimate (not implemented here).** This needs a staged-engine API, not
+a tweak to the stats interval:
+
+- Add opt-in "deferred stats" and "pre-arrival prep" switches on `MnnEngine`
+  (default off, so existing probes that read `IspAuxOutput::calibration_stats`
+  and callers that expect a single `process()` keep their semantics).
+- Carry an opaque session/token between phases. The worker must consume it in
+  the same thread before the next `process()`, so a session is never reused
+  while a prep or readback is in flight. `PipelineRunner` already pins one
+  engine per worker, so this fits without a new pool design.
+- Borrowed MNN wrapper handles are required so `finish()` does not destroy the
+  engine-owned interpreter/session; this is the main safety detail to review.
+- First-frame and geometry-change cases fall back to the current inline path:
+  no prior controller state or no known target geometry means no safe prep.
+- The `camera` mutex should be held only for `next_frame()`, not across prep;
+  worker B can prep while worker A waits for its sensor buffer.
+
+**Estimated payoff.** Device means were `setup 47.6 ms`, `tensor_assign 10.3
+ms`, `input 46.9 ms`, `infer 112.2 ms`, `stats 79.3 ms`, total `314.0 ms`.
+Overlapping prep with camera wait and stats with presentation can hide roughly
+`58 ms` of pre-inference tensor work and `79 ms` of readback from the visible
+frame path; inference remains the hard floor. Throughput is still bounded by
+MNN inference and camera cadence, so this is a latency/responsiveness win, not
+a way to make the GPU faster.
+
+**Impact on the current plan:** none for this commit. The A-on/B-off split is
+still the correct first fix and removes one of the two readbacks per frame
+pair. The staged prep/infer/post refactor is a separate P2 follow-up with a
+larger API surface, so it is recorded here rather than folded into the
+controller-sharing change.
 - **Fresh APK log hygiene:** 0 `default for ... has no tensor`, 0
   `output channel mismatch`, 0 `present failed`, 0 `black frame`. The preview
   was non-black 100% of sampled frames at 800x600 with mean RGB around
