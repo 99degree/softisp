@@ -340,16 +340,18 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("lsc")));
         }
 
-        // White balance is a per-plane scalar, and `isp.demosaic_ccm` already
-        // multiplies the CFA quad by a 3x4 matrix — so WB is a scale on that
-        // matrix's columns, not a stage of its own. The engine folds it in when
-        // the block is absent, which is why this is a build-time decision and not
-        // a second coefficient path.
-        if self
+        // The fused demosaic+CCM op already multiplies the CFA quad by a 3x4
+        // matrix, so per-plane WB is a scale on that matrix's columns. Whenever
+        // that op is present, do not emit a separate BayerWbBlock: the engine
+        // folds the controller gains into `DemosaicCcmBlock/w` instead.
+        // `wb_into_demosaic` is kept for compatibility but is not what decides
+        // block presence — a fused chain without the allow bit must still be
+        // able to apply WB.
+        let demosaic_ccm_enabled = self
             .fuse_stages
-            .allows(self.opset_mode, self.fuse_stages.wb_into_demosaic)
-        {
-            info!("  white balance: fused into isp.demosaic_ccm weights");
+            .allows(self.opset_mode, self.fuse_stages.demosaic_ccm);
+        if demosaic_ccm_enabled {
+            info!("  white balance: folded into isp.demosaic_ccm weights");
         } else {
             blocks.push(Box::new(BayerWbBlock::new()));
         }
@@ -357,10 +359,7 @@ impl PipelineProfile {
         // Demosaic and CCM are one fused op or two primitive ones — never a mix.
         // `isp.demosaic_ccm` applies `CCM x demosaic` weights, so leaving a
         // separate CcmBlock behind would apply the colour matrix twice.
-        if self
-            .fuse_stages
-            .allows(self.opset_mode, self.fuse_stages.demosaic_ccm)
-        {
+        if demosaic_ccm_enabled {
             info!("  demosaic+ccm: DemosaicCcmBlock (fused isp.demosaic_ccm)");
             // UnpackCfaBlock halves both edges, so its output is H/2 × W/2.
             // DemosaicCcmBlock does 4→3 channels at the SAME spatial resolution.

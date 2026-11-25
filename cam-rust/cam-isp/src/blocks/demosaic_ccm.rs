@@ -1,19 +1,6 @@
 use crate::onnx::proto::Proto;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
 
-/// Logical white-balance input name, stable across primitive and fused graphs.
-///
-/// Primitive chains expose it on `BayerWbBlock`. The fused demosaic+CCM chain
-/// has no separate WB tensor; the engine writes WB into `FUSED_WEIGHT_INPUT`
-/// and keeps this name as the linkable 3A contract.
-pub const WB_LOGICAL_INPUT: &str = "BayerWbBlock/gains";
-
-/// Fused coefficient tensor that actually consumes the WB contribution.
-///
-/// This is `CCM × demosaic × WB`, not a WB gain vector; naming it `wb_gain`
-/// would describe only one factor of the matrix.
-pub const FUSED_WEIGHT_INPUT: &str = "DemosaicCcmBlock/w";
-
 /// Fused Demosaic + CCM block — single Conv1×1 with runtime‑fused weights.
 ///
 /// Input:  F32`[1, 4, H, W]`   (CFA 4‑channel from UnpackCfaBlock)

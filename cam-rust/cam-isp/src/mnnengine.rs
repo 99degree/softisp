@@ -39,7 +39,6 @@ static CHANNEL_MISMATCH_REPORTED: AtomicBool = AtomicBool::new(false);
 /// Zone data: (rows, cols, zone_rgb`[r]``[c]` = `[f32; 3]`)
 type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 
-use crate::blocks::{FUSED_WEIGHT_INPUT, WB_LOGICAL_INPUT};
 use crate::controller::IspController;
 use crate::engine::{IspEngine, OutputFormat, ProcessParams};
 use crate::pipeline::{ExternalBuffer, IspAuxOutput, IspBlock, IspFrame};
@@ -933,21 +932,8 @@ impl MnnEngine {
         //   DemosaicBlock/w present     -> fold gains into its 3x4 columns.
         //   CcmBlock_ccm/matrix only    -> fold a per-colour gain into CCM.
         let wb_gains: [f32; 4] = bayer.copied().unwrap_or([1.0; 4]);
-        let wb_folded = find(pool, WB_LOGICAL_INPUT).is_none();
-        let fused_ccm_sink = find(pool, FUSED_WEIGHT_INPUT).is_some();
-        if wb_folded
-            && fused_ccm_sink
-            && self
-                .missing_inputs_reported
-                .lock()
-                .unwrap()
-                .insert("WB_SINK".to_owned())
-        {
-            debug!(
-                "white balance: {WB_LOGICAL_INPUT} is not a session input; \
-                 folded into {FUSED_WEIGHT_INPUT} as CCM x demosaic x wb columns"
-            );
-        }
+        let wb_folded = find(pool, "BayerWbBlock/gains").is_none();
+        let fused_ccm_sink = find(pool, "DemosaicCcmBlock/w").is_some();
         let primitive_demosaic_sink = find(pool, "DemosaicBlock/w").is_some();
         let ccm_base: [f32; 9] = ccm
             .copied()
@@ -987,7 +973,7 @@ impl MnnEngine {
                     };
                 }
             }
-            write_f32_array(&mut pending, FUSED_WEIGHT_INPUT, &fused);
+            write_f32_array(&mut pending, "DemosaicCcmBlock/w", &fused);
             // DemosaicCcmBlock/b [3] — CCM bias, plus tone brightness when the
             // tone stage is not there to add it itself.
             let demosaic_bias = if tone_stage_present {

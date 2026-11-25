@@ -21,16 +21,14 @@ fn render(wb_fused: bool) -> Option<(Vec<f32>, f64)> {
     profile.output_format = OutputFormat::FloatRgb;
     profile.opset_mode = 2;
     profile.fuse_stages = if wb_fused {
-        FuseStages {
-            wb_into_demosaic: true,
-            ..FuseStages::ALL
-        }
+        FuseStages { ..FuseStages::ALL }
     } else {
-        // Keep demosaic+CCM fused, but restore the *separate* BayerWbBlock.
-        // Using `FuseStages::ALL` here would set `wb_into_demosaic: true` too,
-        // so both arms rendered the same graph and the probe compared a frame
-        // with itself.
+        // The separate-WB arm must disable the fused demosaic+CCM op too:
+        // block presence is driven by `demosaic_ccm`, not `wb_into_demosaic`,
+        // so only clearing the latter would leave both arms without a WB block
+        // and make the probe compare a frame with itself.
         FuseStages {
+            demosaic_ccm: false,
             wb_into_demosaic: false,
             ..FuseStages::ALL
         }

@@ -993,6 +993,24 @@ impl PipelineProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::IspBlock;
+
+    #[test]
+    fn test_fused_demosaic_ccm_omits_bayer_wb_block() {
+        let mut p = PipelineProfile::FUSED;
+        let fused = p.build_blocks(64, 64, 2);
+        assert!(
+            !fused.iter().any(|b| b.id() == "bayer_wb"),
+            "fused demosaic+CCM must absorb WB instead of emitting BayerWbBlock"
+        );
+
+        p.fuse_stages.demosaic_ccm = false;
+        let primitive = p.build_blocks(64, 64, 2);
+        assert!(
+            primitive.iter().any(|b| b.id() == "bayer_wb"),
+            "primitive demosaic needs the separate WB block"
+        );
+    }
 
     #[test]
     fn test_fused_heads_are_compiled_together() {
