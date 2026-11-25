@@ -1,7 +1,7 @@
 //! Event emitter for thread-safe callback invocation
 
 use crate::{ControlList, IpaCallbacks};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::mpsc;
 use std::thread;
 
 /// Internal event types

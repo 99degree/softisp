@@ -134,16 +134,38 @@ impl AhwBuffer {
         let ahb_ptr = ahb as *const _;
         let mut desc: AHardwareBuffer_Desc = unsafe { std::mem::zeroed() };
         unsafe { AHardwareBuffer_describe(ahb_ptr, &mut desc) };
+        if desc.width != width || desc.height != height || desc.format != format {
+            return Err(IpaError::Buffer(format!(
+                "AHB descriptor mismatch: requested {width}x{height} format {format}, got {}x{} format {}",
+                desc.width, desc.height, desc.format
+            )));
+        }
 
         Ok(Self {
             ahb,
             size: (desc.width as usize) * (desc.height as usize) * 4, // estimate RGBA
-            format: desc.format,
-            width: desc.width,
-            height: desc.height,
+            format,
+            width,
+            height,
             strides: [desc.stride; 4],
             fences: AhbFenceState::default(),
         })
+    }
+
+    pub fn format(&self) -> u32 {
+        self.format
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn strides(&self) -> [u32; 4] {
+        self.strides
     }
 
     /// Adopt a camera acquire fence for a new generation.

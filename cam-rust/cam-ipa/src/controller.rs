@@ -24,8 +24,8 @@ impl IpaController {
     }
 
     /// Analyze frame and update parameters (3A)
-    pub fn analyze_and_update(&self, frame: &cam_isp::pipeline::IspFrame) -> IspParams {
-        let mut ctrl = self.inner.lock().unwrap();
+    pub fn analyze_and_update(&self, _frame: &cam_isp::pipeline::IspFrame) -> IspParams {
+        let ctrl = self.inner.lock().unwrap();
         // IspController doesn't have analyze_and_update directly; use default params
         // The engine's controller field is used for 3A state
         IspParams {

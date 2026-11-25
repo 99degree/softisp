@@ -156,6 +156,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn switches_are_stable_after_init() {
+        let first = (trace_enabled(), cache_enabled());
+        let second = (trace_enabled(), cache_enabled());
+        assert_eq!(first, second);
+    }
+
+    #[test]
     fn scalar_compares_bit_patterns() {
         let mut cache = UploadCache::default();
         assert!(cache.needs_scalar("ToneBlock/exposure", 1.0));

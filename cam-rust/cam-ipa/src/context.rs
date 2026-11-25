@@ -1,9 +1,9 @@
 //! Main IPA context managing the full pipeline
 
 use crate::{
-    Buffer, BufferManager, ControlInfoMap, ControlList, EngineManager, EventEmitter, IpaCallbacks,
-    IpaConfig, IpaConfigureInfo, IpaController, IpaError, IpaFormat, IpaInitResult, IpaResult,
-    IpaSensorInfo, IpaSettings,
+    Buffer, ControlInfoMap, ControlList, EngineManager, EventEmitter, IpaCallbacks, IpaConfig,
+    IpaConfigureInfo, IpaController, IpaError, IpaFormat, IpaInitResult, IpaResult, IpaSensorInfo,
+    IpaSettings,
 };
 use cam_isp::{
     engine::{OutputFormat, ProcessParams},
@@ -26,7 +26,6 @@ pub struct IpaContext {
     /// Last ISP params computed by the neural controller (or rule-based fallback).
     /// Stored during compute_params() so process_frame() can reuse them.
     last_isp_params: IspParams,
-    buffers: BufferManager,
     events: EventEmitter,
     initialized: bool,
     started: bool,
@@ -48,7 +47,6 @@ impl IpaContext {
         } else {
             None
         };
-        let buffers = BufferManager::new();
         let events = EventEmitter::new();
 
         Ok(Self {
@@ -61,7 +59,6 @@ impl IpaContext {
             controller,
             neural_controller,
             last_isp_params: IspParams::default(),
-            buffers,
             events,
             initialized: false,
             started: false,
@@ -247,8 +244,8 @@ impl IpaContext {
         buffer_id: u32,
         input: &mut dyn Buffer,
         output: &mut dyn Buffer,
-        plane_in: i32,
-        plane_out: i32,
+        _plane_in: i32,
+        _plane_out: i32,
         width: u32,
         height: u32,
         results: &ControlList,

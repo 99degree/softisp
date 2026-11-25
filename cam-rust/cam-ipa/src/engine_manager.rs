@@ -1,10 +1,9 @@
 //! Engine manager wrapping MnnEngine/DualGpuEngine
 
-use crate::{EngineBackend, IpaConfig, IpaError, IpaFormat, IpaResult};
+use crate::{EngineBackend, IpaConfig, IpaError, IpaResult};
 use cam_isp::{
-    blocks::*,
     controller::IspController,
-    engine::{BackendCapabilities, IspEngine, OutputFormat, ProcessParams},
+    engine::{BackendCapabilities, IspEngine, ProcessParams},
     mnnengine::{MnnBackend, MnnEngine},
     pipeline::IspBlock,
     profile::PipelineProfile,
@@ -102,21 +101,6 @@ impl EngineManager {
     /// Get backend name
     pub fn backend_name(&self) -> &'static str {
         self.engine.backend_name()
-    }
-
-    /// Convert IpaFormat to OutputFormat
-    fn ipa_format_to_output_format(&self, format: IpaFormat) -> OutputFormat {
-        match format {
-            IpaFormat::RGB => OutputFormat::Rgb,
-            IpaFormat::RGBA => OutputFormat::Rgba,
-            IpaFormat::BGRA => OutputFormat::Bgra,
-            IpaFormat::ARGB => OutputFormat::Argb,
-            IpaFormat::ABGR => OutputFormat::Abgr,
-            IpaFormat::YUV | IpaFormat::NV12 | IpaFormat::P010 => {
-                // YUV formats not directly supported, fall back to BGRA
-                OutputFormat::Bgra
-            }
-        }
     }
 
     /// Get capabilities
