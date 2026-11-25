@@ -50,6 +50,12 @@ comment in `isp_display_uint32_argb.comp`. `DisplayBlock`'s own doc comment
 patched by `VulkanFuse.cpp`; an unfed binding-0 leaves it 0 and the shaders
 guard it to 1.0 (assume already-normalized input). Tracked as a TODO below.
 
+Rotation was therefore never applied on the fused production path even though
+`DisplayBlock` declared a swapped output shape. The fused emitter now writes the
+shader into an intermediate tensor and applies `Transpose` / `Slice` nodes to
+reach `DisplayBlock/frame`; see
+`docs/isp/20261126-default-on-ahb-rotation-report.md`.
+
 ## Finding 3 — softisp applies gamma twice when a standalone `GammaBlock` is present
 
 `profile_builder.rs` inserts `GammaBlock::new(2.2)` whenever `use_gamma` is true

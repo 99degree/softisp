@@ -2,17 +2,34 @@
 
 > Last updated: 2026-11-26. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
 
-## Status (2026-11-25) — packed-preview perf work
+## Status (2026-11-26) — packed-preview perf work
 
-- **Output AHB zero-copy path landed, off by default** (2026-11-26). Each ISP
+- **Output AHB zero-copy path landed, on by default** (2026-11-26). Each ISP
   worker owns one large, permanently mapped `AHardwareBuffer` bound to the
   session output tensor before resize; `mnn_run_ahb_output()` waits for the GPU
   write and returns with no `copyToHostTensor`. `IspFrame::new_external()`
-  removes the per-frame `width * height * 4` host allocation. Enable with
-  `SOFTISP_OUTPUT_AHB` / `/sdcard/download/softisp-output-ahb`;
+  removes the per-frame `width * height * 4` host allocation. Disable without a
+  rebuild with `SOFTISP_OUTPUT_AHB=0` (also `off`, `false`, `no`),
+  `SOFTISP_OUTPUT_AHB_OFF`, or `/sdcard/download/softisp-output-ahb-off`;
   `SOFTISP_VERBOSE` / `/sdcard/download/softisp-verbose` adds per-frame slot
   traces. No cross-engine wait: a worker only waits for its own presenter
-  handoff. On-device validation is still pending.
+  handoff. The output slot is now sized for the fused graph's `H*W*16` worst
+  case, the C wrapper verifies a real AHardwareBuffer and rejects any in-run
+  resize that would re-acquire the output tensor, and `-10` logs the tensor
+  flags/device, AHB capacity and host-pool status before falling back. Signed
+  default-on APK rebuilt with the rotation and binding fixes; on-device
+  relaunch/log evidence is still pending. Ownership analysis:
+  `docs/mnn/20261126-mnn-output-tensor-buffer-ownership-ahb-feasibility.md`.
+- **Output rotation fixed in the fused graph** (2026-11-26): the fused display
+  shader now writes an intermediate tensor and the graph's `Transpose` / `Slice`
+  nodes terminate at `DisplayBlock/frame`, so host-copy and AHB paths see the
+  same upright pixels. No standalone SPIR-V shader was added. Regression tests
+  cover the no-op and every rotate mode.
+  `docs/isp/20261126-default-on-ahb-rotation-report.md`.
+- **Hermetic test warnings cleaned** (2026-11-26): stale `cam-ipa` scaffolding
+  and `upload_cache` switch helpers were fixed at the root instead of
+  suppressed; `AhwBuffer::new()` now rejects geometry/format mismatches.
+  `docs/isp/20261126-cargo-test-warning-cleanup.md`.
 - **Runtime tensor uploads de-duplicated** (`d378a372`). `set_extra_inputs()`
   queued ~60 writes/frame through `copyFromHostTensor`; ~18 of them were
   defaults immediately overwritten by explicit values. Writes are now buffered
@@ -97,10 +114,10 @@
   and `VulkanBufferFromAHB`, so two workers can bind different buffers without
   serialization. Rebuilt via `scripts/build_mnn_libs.sh arm64-v8a`. The older
   claim that Vulkan ignores the flag applied to the vendored headers-only tree,
-  not the linked fork. The APK is now wired to an **opt-in** output AHB slot
-  (`SOFTISP_OUTPUT_AHB` / `/sdcard/download/softisp-output-ahb`, off by
-  default); the host-copy path remains the default until on-device fence and
-  display handoff are validated. See
+  not the linked fork. The APK is now wired to an **on-by-default** output AHB
+  slot; opt out with `SOFTISP_OUTPUT_AHB=0` / `SOFTISP_OUTPUT_AHB_OFF` /
+  `/sdcard/download/softisp-output-ahb-off`. The host-copy fallback remains for
+  API < 26, failed import, and non-AHB callers. See
   `docs/isp/20261126-output-copy-zero-copy-audit.md`.
 - **P2h overlap / allocation fast path recorded** (2026-11-26): extend the
   staged phases so camera DMA fills a pre-bound input AHB while the next frame's
@@ -154,7 +171,7 @@ at 4K:
 
 | # | Change | Phase attacked | Status |
 |---|--------|----------------|--------|
-| 1 | Hand the finished frame to the compositor through `ProcessParams::output_buffer` / AHB import instead of `buf_bytes.to_vec()` | ~33 MB host copy plus present blit on the visible path | TODO — largest non-inference phase; see P2h below (needs Vulkan AHB import) |
+| 1 | Hand the finished frame to the compositor through `ProcessParams::output_buffer` / AHB import instead of `buf_bytes.to_vec()` | ~33 MB host copy plus present blit on the visible path | PARTIAL — engine-side copy removed by default and output AHB binding hardened; compositor-level handoff and blit removal still TODO (P2h) |
 | 2 | Extend stats gating from "engine A only" to a 2nd/4th-frame cadence | deferred GPU `_finish()` sync | TODO — 3A does not need fresh stats every frame |
 | 3 | Bake unchanged `default_inputs` into the graph as ONNX/MNN initializers | the single upload per slot on first use | TODO — needs fused-Vulkan conversion validation; never make the warp grid/LUT constant (see the 2026-07-21 DCE regression) |
 | 4 | Cache `get_output()` shape/type/channel derivation and `CString` names in `PreparedMeta` | per-frame metadata reconstruction | DONE — `docs/isp/20261126-output-meta-cache.md` |
@@ -186,7 +203,7 @@ compare the prefill, inference and output columns. Hermetic gate at this point:
 fmt, canonical clippy, 854 passed / 2 ignored
 `cam-isp --lib --features rectifier` tests, 892 passed / 2 ignored with real
 MNN, `cargo check --features "rectifier mnn"`, and
-`./build-apk.sh` (signed APK with the opt-in AHB output path).
+`./build-apk.sh` (signed APK with the default-on AHB output path).
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
@@ -520,9 +537,9 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   `run_prepared()` / `finish()`, and the workers prep before capture and call
   `finish()` after presentation. However capture still goes through
   `AImageReader_acquireLatestImage` plus a CPU copy, presentation still uses
-  `ANativeWindow_lock` and a CPU blit, and the `ProcessParams::{input_ahb,
-  output_ahb}` fields are inert for the APK because Vulkan AHB import is not
-  implemented (P2b). The two overlap opportunities are therefore not yet live.
+  `ANativeWindow_lock` and a CPU blit. The output AHB field is live by default
+  (the fork imports it in `onAcquire`), but the input AHB field is not wired for
+  the APK. The two overlap opportunities are therefore not yet live.
 - **Proposed input path:** allocate/bind the input AHB before capture and hand
   it to camera2 as the capture target. While the sensor writes that buffer,
   `prepare()` snapshots the already-current controller state and uploads the
@@ -568,10 +585,10 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   stay non-AHB; dual-engine ordering and P2d cancellation must drain both the
   AHB slots and `PreparedFrame`/`PendingStats` guards. No APK install or launch
   by the assistant — device checks are user-side log evidence.
-- **Dependencies:** P2b for Vulkan external-memory/AHB import and camera buffer
-  ownership; P2c for the staged API; on-device fence/gralloc validation for
-  the output surface. Do not bypass P2b with a host-pointer bind the Vulkan
-  backend ignores.
+- **Dependencies:** P2b for input AHB ownership and camera-buffer handoff; P2c
+  for the staged API; on-device fence/coherency validation for the default-on
+  output surface. Do not bypass P2b with a host-pointer bind the Vulkan backend
+  ignores.
 - **Verification:** hermetic tests now cover metadata/frame generation matching
   in `PrepareParams`, fence ownership/close-on-consumer, no reuse before the
   release fence is taken, the zeroing policy and full-overwrite host allocation.

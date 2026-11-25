@@ -53,8 +53,9 @@ downcast `Backend::MemObj`.
 Conclusion: the **caller must allocate, lock, bind and read the AHB**. The
 wrapper binds it with `Tensor::setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER)`
 before `resizeSession`, so the fork's `VulkanBackend::onAcquire()` imports it;
-`Tensor::wait(MAP_TENSOR_READ, true)` makes the GPU write visible to the CPU
-mapping. No new MNN-side API is required.
+`Tensor::wait(MAP_TENSOR_READ, true)` waits MNN's internal Vulkan fence. It is
+not an AHB acquire/release fence or cache invalidation, so CPU coherency still
+needs device validation. No new MNN-side API is required.
 
 ## Repo-wide AHB audit
 
@@ -80,25 +81,50 @@ Therefore no existing helper replaces the producer-side slot. Keep
 pieces: `cam_types::{AhbBinding, AhbFenceTokens}`, the `mnn_sys` import/run FFI,
 and `IspFrame::new_external()`.
 
+## Device evidence: binding loss, not allocation failure
+
+The default-on app log records `output AHB=on verbose=off`, the fused pipeline
+at `1600x1200`, raw `800x600`, and a repeated warning naming
+`DisplayBlock/frame`. It contains no `AHardwareBuffer_allocate` or
+`AHardwareBuffer_lock` failure, no input AHB import failure, and no
+`AHB output import ... failed`. The recurring error is therefore loss of the
+output tensor's AHB-backed binding, not a shortage of AHB slots or a bad input
+buffer.
+
+MNN fits each Vulkan `VkBuffer` to the tensor's aligned element count and
+re-acquires buffers on resize; an AHB cannot be converted from an already
+allocated tensor. A memfd/host pointer can be adopted after allocation, but an
+AHB must exist before `Tensor::setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)` and
+before session resize. The binding check now reports the tensor flags, device
+pointer, expected AHB pointer and byte capacity, real input/output element
+counts, and the host `OutputBufferPool` snapshot in the `-10` fallback warning.
+The host pool is fixed at three buffers and can grow per-buffer capacity; the
+AHB path has one slot per worker, so a `-10` does not mean a pool exhaustion.
+
 ## Fix
 
 1. `IspFrame::new_external()` builds an allocation-free frame whose pixels are
    the caller-owned AHB mapping; `run_prepared()` uses it whenever
    `meta.zero_copy` is set and validates both the pointer and byte capacity
    captured by `prepare()`.
-2. `anw` gains a reversible switch (`SOFTISP_OUTPUT_AHB` env var or
-   `/sdcard/download/softisp-output-ahb` marker, **off by default**, and
-   ignored below API 26). Each worker owns one large `AHardwareBuffer`, mapped
-   once and registered with MNN as `MNN_MEMORY_AHARDWAREBUFFER` before
-   `runSession`. The slot is never swapped: MNN imports it in `onAcquire`, so
-   rebinding would leave the imported `VkBuffer` pointing at the old buffer.
-   Capacity is `2 × width × height × 4`, rounded up to a power of two, which
-   covers the Vulkan tensor's padded element size without a resize.
+2. `anw` enables the output AHB path by default and keeps a reversible opt-out
+   (`SOFTISP_OUTPUT_AHB=0` / `off` / `false` / `no`, `SOFTISP_OUTPUT_AHB_OFF`, or
+   `/sdcard/download/softisp-output-ahb-off`; ignored below API 26). Each worker
+   owns one large `AHardwareBuffer`, mapped once and registered with MNN as
+   `MNN_MEMORY_AHARDWAREBUFFER` before `runSession`. The slot is never swapped:
+   MNN imports it in `onAcquire`, so rebinding would leave the imported
+   `VkBuffer` pointing at the old buffer. Capacity is
+   `16 × width × height × 4`, rounded up to a power of two, which covers the
+   fused graph's worst-case output without a resize.
 3. A new FFI entry point, `mnn_run_ahb_output()`, runs the session, waits on the
    output tensor with `Tensor::wait(MAP_TENSOR_READ, true)`, validates the
    output element count against the slot, and returns **without**
-   `copyToHostTensor`. The existing `mnn_run_true_zero_copy()` remains for
-   non-AHB callers and as a fallback if the AHB binding is lost.
+   `copyToHostTensor`. It verifies that the pointer passed back from Rust is a
+   real `AHardwareBuffer` and large enough for the tensor before running,
+   refuses an in-run resize that would re-acquire the output binding, and only
+   restores a lost binding when MNN cleared the flags but left the caller's AHB
+   pointer in place. The existing `mnn_run_true_zero_copy()` remains for
+   non-AHB callers and as a fallback for any `-10` result.
 4. The slot travels with `Done` as a cloneable view. The worker waits only for
    its **own** presenter handoff before reusing the slot — never for the other
    engine — so the two engines stay asynchronous. The presenter releases the
@@ -114,8 +140,8 @@ and `IspFrame::new_external()`.
 - `cargo fmt --all -- --check`: clean.
 - Canonical per-crate clippy loop with `-D warnings`: clean.
 - `cargo clippy -p softisp-anw --all-features --no-deps -- -D warnings`: clean.
-- `cargo test --lib`: 854 passed / 2 ignored (`rectifier`), 892 passed /
-  2 ignored (`rectifier mnn`).
+- `cargo test --lib`: 857 passed / 2 ignored (`rectifier`), 895 passed /
+  2 ignored (`rectifier mnn`). `softisp-anw`: 51 passed / 1 ignored.
 - `./build-apk.sh`: APK built and signed with `libsoftisp.so` containing the
   AHB output path.
 
@@ -127,5 +153,5 @@ Keep the two engines asynchronous: no new cross-engine wait or shared lock on
 the inference path. The output AHB is a caller-owned, large, reusable slot; the
 session output is bound to it once for the session, and presentation reads the
 mapped bytes only after MNN's tensor wait has synchronised the GPU write.
-On-device validation of the switch is still required; until then the host-copy
-fallback stays in place.
+On-device validation of the default-on path is still required; until then the
+host-copy fallback stays in place for failed imports and opt-out runs.

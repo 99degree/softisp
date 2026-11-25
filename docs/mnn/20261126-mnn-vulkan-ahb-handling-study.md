@@ -8,10 +8,10 @@
 
 1. The fork has a working **per-tensor** Vulkan AHB import, but it is **lazy**: the actual `VkImportAndroidHardwareBufferInfoANDROID` happens in `VulkanBackend::onAcquire()` during **resize**, not in `Tensor::setDevicePtr` and not in softisp's FFI (`MNN/source/backend/vulkan/buffer/backend/VulkanBackend.cpp:351-383`; `MNN/source/core/Tensor.cpp:498-503`; `cam-rust/cam-isp/mnn_sys/mnn_wrapper.cpp:811-854`).
 2. `setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER)` only writes `buffer().flags`/`device`. Calling it **after** resize does not bind the AHB; swapping the AHB on an already-bound tensor is ignored until another `onAcquire` (re-)runs (`MNN/source/core/Tensor.cpp:498-503`; `VulkanBackend.cpp:319-323,365-382`; `mnn_wrapper.cpp:718-731`).
-3. The AHB must be sized for `VulkanBackend::getTensorSize` = `UP_DIV(elementSize,4)*4 * (float && FP16 ? 2 : 4)` bytes. For softisp's packed BGRA display tensor (one 4-byte word per pixel) that is `H*W*4`: 7.68 MB @1600×1200, 8.29 MB @1920×1080, 33.18 MB @3840×2160. softisp's `2×` power-of-two slot comfortably covers it (`VulkanBackend.cpp:344-349`; `anw/src/ahb_output.rs:179-190`).
+3. The AHB must be sized for `VulkanBackend::getTensorSize` = `UP_DIV(elementSize,4)*4 * (float && FP16 ? 2 : 4)` bytes. For softisp's packed BGRA display tensor (one 4-byte word per pixel) that is `H*W*4`: 7.68 MB @1600×1200, 8.29 MB @1920×1080, 33.18 MB @3840×2160. softisp's `16×` power-of-two slot covers the fused graph's worst case without a resize (`MNN/source/backend/vulkan/buffer/backend/VulkanBackend.cpp`; `anw/src/ahb_output.rs`).
 4. Synchronization is an **internal Vulkan fence wait only**: `Tensor::wait → onSync → _finish → mFence->wait()`. There is **no AHB acquire/release fence import, no cache invalidation, and no cross-API (camera/surface) fence handoff**. softisp keeps the AHB CPU-mapped for its lifetime and uses CPU atomics for the worker↔presenter handoff; that is a software protocol, not a memory-fence contract (`Tensor.cpp:489-496`; `VulkanBackend.cpp:829-832,553-573`; `VulkanFence.cpp:25-35`; `anw/src/ahb_output.rs:211-224,269-301`; `mnnengine.rs:2389-2395`).
 5. **No public API** exists to retrieve the AHB or its fd from a tensor. `getDeviceInfo` returns `VkBuffer`, `TensorUtils::getSharedMem/setSharedMem` are in `source/core`, and `VulkanAhbMemObj` is file-local. A wrapper compiled with only `include/MNN` can **set** the binding but cannot **read it back** (`MNN/include/MNN/Tensor.hpp:282,299-310`; `MNN/source/core/Tensor.cpp:510-519`; `MNN/source/core/TensorUtils.hpp:138-140,216-218`; `VulkanBackend.cpp:295-313`).
-6. softisp's output-AHB path is **opt-in and off by default** (`SOFTISP_OUTPUT_AHB` / marker, disabled below API 26). The host-copy fallback remains because the binding can be lost on resize, because extensions/coherency are unvalidated on device, and because the non-AHB path must still work (`anw/src/ahb_output.rs:36-97`; `mnnengine.rs:2622-2671`; `mnn_wrapper.cpp:659,666-671`).
+6. softisp's output-AHB path is **on by default** (opt out with `SOFTISP_OUTPUT_AHB=0` / `SOFTISP_OUTPUT_AHB_OFF` / `/sdcard/download/softisp-output-ahb-off`, disabled below API 26). The host-copy fallback remains because the binding can be lost on resize, because extensions/coherency are unvalidated on device, and because the non-AHB path must still work (`anw/src/ahb_output.rs`, `cam-rust/cam-isp/src/mnnengine.rs`, `cam-rust/cam-isp/mnn_sys/mnn_wrapper.cpp`).
 
 ## Where the Vulkan AHB path lives (call chain)
 
@@ -48,11 +48,11 @@ size             = alignElementSize * bytes
 - Only float tensors under FP16 precision shrink to 2 bytes; `halide_type_int` (the packed BGRA word path, `mnnengine.rs:410-417`) is always 4 bytes.
 - Element count is padded **up to a multiple of four elements**, not to a byte/cache-line boundary. softisp's fused display tensor has `graph_channels == 1` and `shape [1,1,H,W]` (`mnnengine.rs:394-417`), so `elementSize = H*W` and the padding is a no-op for all three target sizes (`H*W` divisible by 4).
 
-| Display | Pixels `H*W` | AHB tensor bytes (1 word/pixel, 4 B) | FP16-float variant | softisp slot capacity (`2×` → next pow2, `ahb_output.rs:184-190`) |
+| Display | Pixels `H*W` | AHB tensor bytes (1 word/pixel, 4 B) | FP16-float variant | softisp slot capacity (`16×` → next pow2, `anw/src/ahb_output.rs`) |
 |---|---:|---:|---:|---:|
-| 1600×1200 | 1,920,000 | 7,680,000 (≈7.32 MiB) | 3,840,000 | 16,777,216 (16 MiB) |
-| 1920×1080 | 2,073,600 | 8,294,400 (≈7.91 MiB) | 4,147,200 | 33,554,432 (32 MiB) |
-| 3840×2160 | 8,294,400 | 33,177,600 (≈33 MB / 31.64 MiB) | 16,588,800 | 67,108,864 (64 MiB) |
+| 1600×1200 | 1,920,000 | 7,680,000 (≈7.32 MiB) | 3,840,000 | 134,217,728 (128 MiB) |
+| 1920×1080 | 2,073,600 | 8,294,400 (≈7.91 MiB) | 4,147,200 | 268,435,456 (256 MiB) |
+| 3840×2160 | 8,294,400 | 33,177,600 (≈33 MB / 31.64 MiB) | 16,588,800 | 536,870,912 (512 MiB) |
 
 Caveats:
 
@@ -92,7 +92,7 @@ Call chain: `mnn_wrapper.cpp:776` → `Tensor::wait` (`Tensor.cpp:489-496`) → 
 
 ## softisp call flow and switches
 
-**Gates:** `mnn` feature (`cam-rust/cam-isp/Cargo.toml:78`), enabled by default in `anw` (`anw/Cargo.toml:26,31`); `ahb_output.rs` is a normal module (`anw/src/lib.rs:18`) whose marker checks are Android-only (`ahb_output.rs:38-41,55-73`). AHardwareBuffer entered the NDK in **API 26**; the opt-in is forced off below 26 (`ahb_output.rs:63-72`). Both switches default to **off** and can be enabled by env var or `/sdcard/download/softisp-*` marker (`ahb_output.rs:36-45,47-97`).
+**Gates:** `mnn` feature (`cam-rust/cam-isp/Cargo.toml`), enabled by default in `anw` (`anw/Cargo.toml`); `ahb_output.rs` is a normal module (`anw/src/lib.rs`) whose marker checks are Android-only (`anw/src/ahb_output.rs`). AHardwareBuffer entered the NDK in **API 26**; the default-on path is forced off below 26 (`anw/src/ahb_output.rs`). Output AHB defaults to **on**; opt out with `SOFTISP_OUTPUT_AHB=0|off|false|no`, `SOFTISP_OUTPUT_AHB_OFF`, or `/sdcard/download/softisp-output-ahb-off`. Verbose defaults to **off** and is enabled by `SOFTISP_VERBOSE` / `/sdcard/download/softisp-verbose` (`anw/src/ahb_output.rs`).
 
 **Required call order for the zero-copy output path:**
 
@@ -107,7 +107,7 @@ Call chain: `mnn_wrapper.cpp:776` → `Tensor::wait` (`Tensor.cpp:489-496`) → 
 
 - If the AHB binding did not survive a resize, `mnn_run_ahb_output` returns `-10` (`mnn_wrapper.cpp:749-755`); softisp logs the loss and calls `mnn_run_true_zero_copy` **into the same AHB CPU mapping**, which still ends in `copyToHostTensor` (`mnnengine.rs:2636-2656`; `mnn_wrapper.cpp:659`). This keeps the frame visible rather than presenting black pixels.
 - Non-AHB callers and the CPU backend still use `mnn_run_true_zero_copy` (`mnnengine.rs:2657-2671`), whose name is aspirational on Vulkan: `copyFromHostTensor`/`copyToHostTensor` are the real transfers (`mnn_wrapper.cpp:625-631,659,666-671`).
-- Until device validation of fences, cache coherency and display handoff, the default path stays host-copy (`docs/isp/20261126-output-copy-zero-copy-audit.md:122-131`; `docs/overview/ROADMAP.md:7-15,95-104`).
+- Until device validation of fences, cache coherency and display handoff, the host-copy fallback stays available, but the app default is now the AHB path (`docs/isp/20261126-output-copy-zero-copy-audit.md`, `docs/overview/ROADMAP.md`).
 
 ## Risks / open questions / on-device validation checklist
 
@@ -116,14 +116,14 @@ Call chain: `mnn_wrapper.cpp:776` → `Tensor::wait` (`Tensor.cpp:489-496`) → 
 3. **Coherency / cross-API fences.** The imported buffer has no producer/consumer fence chain; CPU mapping stays live; cache behaviour of GPU writes into a permanently mapped AHB is unverified. The 5 s internal `VkFence` (`VulkanFence.cpp:25-31`) is not a display sync token.
 4. **Stale device state after release.** The AHB branch of `onAcquire` does not set `tensor->deviceId()` (`VulkanBackend.cpp:357-383`), unlike the normal branches (`:391,402`). Clearing the binding with `setDevicePtr(nullptr,0)` (`mnn_wrapper.cpp:877`) leaves a stale/zero `deviceId`; `getBuffer` will use the dummy buffer or `getTensorBuffer` can assert (`VulkanBackend.cpp:328-342`).
 5. **Shape assumptions.** Slot sizing assumes the packed `graph_channels == 1` display layout (`mnnengine.rs:394-425`); a 4-channel float output would exceed capacity by 4×.
-6. **On-device checklist:** capture the `[AHB-PROBE]` trace (`VulkanDevice.cpp:131-147`) and `[ZERO-COPY] AHB imported ok` line (`VulkanBuffer.cpp:223`, gated by `MNN_ISP_TRACE` at `:25-38`); confirm `mnn_last_error()` is empty and no `-10` fallback in the log; run with `SOFTISP_OUTPUT_AHB` + `SOFTISP_VERBOSE` at 1600×1200, 1920×1080 and 3840×2160 and check for non-black frames, Vulkan validation errors, tearing (slot busy warnings, `ahb_output.rs:295-300`), and geometry-change slot recreation (`pipeline_runner.rs:245-255`); verify API-26 guard on an older device (`ahb_output.rs:63-72`).
+6. **On-device checklist:** capture the `[AHB-PROBE]` trace (`MNN/source/backend/vulkan/component/VulkanDevice.cpp`) and `[ZERO-COPY] AHB imported ok` line (`MNN/source/backend/vulkan/component/VulkanBuffer.cpp`, gated by `MNN_ISP_TRACE`); confirm `mnn_last_error()` is empty and no `-10` fallback in the log; run the default-on path with `SOFTISP_VERBOSE` at 1600×1200, 1920×1080 and 3840×2160 and check for non-black frames, Vulkan validation errors, tearing (slot busy warnings, `anw/src/ahb_output.rs`), and geometry-change slot recreation (`anw/src/pipeline_runner.rs`); verify API-26 guard on an older device (`anw/src/ahb_output.rs`).
 
 ## Doc contradictions to reconcile
 
 | Doc | Claim | Status vs source |
 |---|---|---|
 | `docs/isp/20261125-ahb-buffer-pool-and-zero-copy-analysis.md:441-471` | "AHB surface is a stub that cannot move pixels on Vulkan"; `onAcquire` "ignores the flag and allocates from its own pool"; "Only the OpenCL backend consumes `setDevicePtr`"; "do not wire the APK" | Stale. The **same doc** retracts it at `:473-494` (fork now imports per-tensor in `onAcquire`), and `docs/overview/ROADMAP.md:95-104` confirms. Do not use `:441-471` as the current design description. |
-| `docs/mnn/ARCH_ISP_OUTPUT_ZERO_COPY.md:5,19,43,45,115,118,144-145,168-172` | External-memory import is "the remaining step", "partial"/"done (partial)", "the missing piece is binding imported `VkDeviceMemory`" | Stale: the binding exists in `VulkanBackend.cpp:351-383` / `VulkanBuffer.cpp:197-222`. Line `:115` also says the wrapper exports a dma-buf fd for binding; in fact the fd is diagnostic-only and closed (`mnn_wrapper.cpp:834-841`). Line `:170`'s "no `copyToHostTensor`" is true only for the opt-in AHB branch with an intact binding. |
-| `docs/isp/20261126-output-copy-zero-copy-audit.md:53-57` | "`Tensor::wait(MAP_TENSOR_READ, true)` makes the GPU write visible to the CPU mapping" | Overstates the guarantee: only an internal fence wait, no AHB fence or cache invalidation (see above). Its `:89-101` (off-by-default, 1 slot/worker, 2× capacity, no swap, fallback) matches the code. |
-| `docs/overview/ROADMAP.md:7-15,95-104` | Path landed, off by default, no cross-engine wait, on-device validation pending | Consistent with code, but `:111-115` "explicit AHB fence tokens" should be read as bookkeeping only — `mnnengine.rs:2389-2395` still warns the acquire fd is not waited by MNN's Vulkan path. |
-| `cam-rust/cam-isp/mnn_sys/mnn_wrapper.h:338-352` | Header says step 2 is `vkGetMemoryAndroidHardwareBufferANDROID` / fd import into `VkDeviceMemory` and step 3 binds to tensors | Inaccurate as a description of the wrapper: it only calls `setDevicePtr` (`mnn_wrapper.cpp:847`); fd is diagnostic and closed (`:834-841`). The real import is in the MNN fork's `onAcquire`. |
+| `docs/mnn/ARCH_ISP_OUTPUT_ZERO_COPY.md` | External-memory import is "the remaining step", "partial"/"done (partial)", "the missing piece is binding imported `VkDeviceMemory`" | Stale: the binding exists in the fork's `VulkanBackend.cpp` / `VulkanBuffer.cpp`. The doc also says the wrapper exports a dma-buf fd for binding; in fact the fd is diagnostic-only and closed (`cam-rust/cam-isp/mnn_sys/mnn_wrapper.cpp`). Its "no `copyToHostTensor`" claim is true only for the AHB branch with an intact binding. |
+| `docs/isp/20261126-output-copy-zero-copy-audit.md` | "`Tensor::wait(MAP_TENSOR_READ, true)` makes the GPU write visible to the CPU mapping" | Overstates the guarantee: only an internal fence wait, no AHB fence or cache invalidation (see above). Its slot and fallback description (1 slot/worker, no swap) still matches the code; capacity is now 16× the display bytes and the opt-out switches are default-on. |
+| `docs/overview/ROADMAP.md` | Path landed, on by default, no cross-engine wait, on-device validation pending | Consistent with code, but "explicit AHB fence tokens" should be read as bookkeeping only — `cam-rust/cam-isp/src/mnnengine.rs` still warns the acquire fd is not waited by MNN's Vulkan path. |
+| `cam-rust/cam-isp/mnn_sys/mnn_wrapper.h` | Historically claimed the wrapper imports a dma-buf fd into `VkDeviceMemory` | Reconciled: the header now states that it only calls `setDevicePtr`, the fd is diagnostic and closed, and the real import is in the MNN fork's `onAcquire` (`cam-rust/cam-isp/mnn_sys/mnn_wrapper.cpp`). |
