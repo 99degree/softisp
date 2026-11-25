@@ -45,12 +45,32 @@ so the per-frame prefill no longer pays for constant graph weights. No pixels
 or graph semantics change: the device tensors keep the same bytes they were
 already being given.
 
+## Follow-up: host scratch pool for the coefficient arrays
+
+The dedup above removes the *transfer*, but `set_extra_inputs()` still builds
+each array/raw value in a fresh `Vec` every frame. `WarpGrid/grid` and
+`WarpGrid/shading_lut` are the worst case: a full displacement map copied from
+the caller into a new allocation on every frame even when the dedup cache later
+skips the upload.
+
+Design: the scratch buffers live on the same per-slot `UploadCache`, keyed by
+tensor name. `take_f32`/`take_raw` remove the slot's buffer, clear it and
+reserve the needed length; the write helpers fill it; the flush loop returns it
+with `put_f32`/`put_raw` (including on a cache hit or an upload failure), so a
+steady-state frame performs no host allocation for fixed-shape coefficients.
+Keeping the scratch on the slot (rather than thread-local) matches the device
+tensor residency and avoids a fresh `String` key per frame — the `pending`
+HashMap key is moved back into the scratch map. Scratch buffers are plain host
+memory and survive `clear()`; they are resized on next use, so a session
+resize does not force a reallocation.
+
 ## Verification
 
 Hermetic tests in `upload_cache.rs` cover unchanged/changed scalars, signed
 zero and NaN bit patterns, array length/value changes, raw bytes, kind changes
-under one name, and `clear()`. The canonical gate (fmt, per-crate clippy,
-lib tests, `cargo check --features "rectifier mnn"`) must pass. On-device
+under one name, `clear()`, and pointer-level reuse of f32/raw scratch buffers.
+The canonical gate (fmt, per-crate clippy, lib tests,
+`cargo check --features "rectifier mnn"`) must pass. On-device
 `perf_critical_path` is needed to quantify the millisecond saving; it is
 `#[ignore]` because it requires the MNN Vulkan libraries and a device.
 

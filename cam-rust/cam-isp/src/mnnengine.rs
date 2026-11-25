@@ -956,12 +956,21 @@ impl MnnEngine {
             pending.insert(name.to_owned(), PendingWrite::Scalar(val));
         }
 
-        fn write_f32_array(pending: &mut Pending, name: &str, vals: &[f32]) {
-            pending.insert(name.to_owned(), PendingWrite::Array(vals.to_vec()));
+        fn write_f32_array(
+            pending: &mut Pending,
+            cache: &mut UploadCache,
+            name: &str,
+            vals: &[f32],
+        ) {
+            let mut buf = cache.take_f32(name, vals.len());
+            buf.extend_from_slice(vals);
+            pending.insert(name.to_owned(), PendingWrite::Array(buf));
         }
 
-        fn write_raw(pending: &mut Pending, name: &str, data: &[u8]) {
-            pending.insert(name.to_owned(), PendingWrite::Raw(data.to_vec()));
+        fn write_raw(pending: &mut Pending, cache: &mut UploadCache, name: &str, data: &[u8]) {
+            let mut buf = cache.take_raw(name, data.len());
+            buf.extend_from_slice(data);
+            pending.insert(name.to_owned(), PendingWrite::Raw(buf));
         }
 
         let mut pending: Pending = HashMap::new();
@@ -987,10 +996,10 @@ impl MnnEngine {
                             .to_vec()
                     })
                     .collect();
-                write_raw(&mut pending, name, &scaled);
+                write_raw(&mut pending, cache, name, &scaled);
                 continue;
             }
-            write_raw(&mut pending, name, data);
+            write_raw(&mut pending, cache, name, data);
         }
         drop(defaults);
 
@@ -1077,7 +1086,7 @@ impl MnnEngine {
                     };
                 }
             }
-            write_f32_array(&mut pending, "DemosaicCcmBlock/w", &fused);
+            write_f32_array(&mut pending, cache, "DemosaicCcmBlock/w", &fused);
             // DemosaicCcmBlock/b [3] — CCM bias, plus tone brightness when the
             // tone stage is not there to add it itself.
             let demosaic_bias = if tone_stage_present {
@@ -1085,7 +1094,7 @@ impl MnnEngine {
             } else {
                 [tone.brightness; 3]
             };
-            write_f32_array(&mut pending, "DemosaicCcmBlock/b", &demosaic_bias);
+            write_f32_array(&mut pending, cache, "DemosaicCcmBlock/b", &demosaic_bias);
         }
 
         // ── Coefficient buffers for the fused isp.* ops ──
@@ -1111,8 +1120,8 @@ impl MnnEngine {
         .collect::<Vec<f32>>()
         .try_into()
         .unwrap_or([0.0; 27]);
-        write_f32_array(&mut pending, "EeBlock/kernel_ee", &ee_kernel);
-        write_f32_array(&mut pending, "EeBlock/bias_ee", &[0.0f32; 3]);
+        write_f32_array(&mut pending, cache, "EeBlock/kernel_ee", &ee_kernel);
+        write_f32_array(&mut pending, cache, "EeBlock/bias_ee", &[0.0f32; 3]);
 
         // The fused RAW heads — `isp.unpack_blc_normal_cfa` (packed INT32),
         // `isp.unpack16_blc_normal_cfa` (INT16), `isp.unpack32_blc_normal_cfa`
@@ -1136,6 +1145,7 @@ impl MnnEngine {
             // through to the BGGR `else`, rotating every plane.
             write_raw(
                 &mut pending,
+                cache,
                 &format!("{ns}/bayer_pattern"),
                 &bayer_pattern.to_le_bytes(),
             );
@@ -1161,7 +1171,7 @@ impl MnnEngine {
         // not have. When the block is absent the gains are folded into whichever
         // demosaic/CCM tensor exists instead, so 3A feedback still reaches the
         // picture.
-        write_f32_array(&mut pending, "BayerWbBlock/gains", &wb_gains);
+        write_f32_array(&mut pending, cache, "BayerWbBlock/gains", &wb_gains);
         // DemosaicBlock/w + b [3,4,1,1]/[3] — production demosaic conv weights
         // (depend on the sensor Bayer pattern). When WB has no block of its own
         // and no fused demosaic+CCM exists, its per-plane scale belongs in these
@@ -1175,8 +1185,8 @@ impl MnnEngine {
                 }
             }
         }
-        write_f32_array(&mut pending, "DemosaicBlock/w", &demo_wb);
-        write_f32_array(&mut pending, "DemosaicBlock/b", &[0.0f32; 3]);
+        write_f32_array(&mut pending, cache, "DemosaicBlock/w", &demo_wb);
+        write_f32_array(&mut pending, cache, "DemosaicBlock/b", &[0.0f32; 3]);
         // CcmBlock_ccm/matrix [3,3]. Last-resort fold: only when neither
         // demosaic sink exists. Each output colour's rows from the demosaic
         // table touch same-colour sites, so their weighted WB gain is the right
@@ -1198,7 +1208,7 @@ impl MnnEngine {
                 }
             }
         }
-        write_f32_array(&mut pending, "CcmBlock_ccm/matrix", &ccm_mat);
+        write_f32_array(&mut pending, cache, "CcmBlock_ccm/matrix", &ccm_mat);
         // ToneBlock/contrast [1]
         write_f32(&mut pending, "ToneBlock/contrast", tone.contrast);
         // ToneBlock/brightness [1]
@@ -1235,7 +1245,7 @@ impl MnnEngine {
         // stage always ran at 1.0 and the controller's tuning never reached the
         // picture.
         let sat = tone.saturation.clamp(0.0, 2.0);
-        write_f32_array(&mut pending, "saturation/scale", &[sat; 3]);
+        write_f32_array(&mut pending, cache, "saturation/scale", &[sat; 3]);
         // ToneBlock/exposure [1] — AE gain, applied before contrast/brightness.
         write_f32(&mut pending, "ToneBlock/exposure", exposure_gain.max(0.05));
         // Sharpen/strength [1] — sharpening strength
@@ -1243,9 +1253,9 @@ impl MnnEngine {
         // LdciBlock/strength [1] — local contrast strength
         write_f32(&mut pending, "LdciBlock/strength", 1.0);
         // FcsBlock/gain [3] — per-channel gain (default: identity)
-        write_f32_array(&mut pending, "FcsBlock/gain", &[1.0f32; 3]);
+        write_f32_array(&mut pending, cache, "FcsBlock/gain", &[1.0f32; 3]);
         // FcsBlock/bias [3] — per-channel bias (default: zero)
-        write_f32_array(&mut pending, "FcsBlock/bias", &[0.0f32; 3]);
+        write_f32_array(&mut pending, cache, "FcsBlock/bias", &[0.0f32; 3]);
         // NormalizeBlock/max_val [1] — the divisor that maps sensor counts to
         // [0,1].
         //
@@ -1301,10 +1311,10 @@ impl MnnEngine {
             write_f32(&mut pending, "isp_pipeline/white", white_level.max(1.0));
             // Bayer gains per plane, in the plane order the phase table uses.
             if let Some(g) = bayer {
-                write_f32_array(&mut pending, "isp_pipeline/wb", g);
+                write_f32_array(&mut pending, cache, "isp_pipeline/wb", g);
             }
             if let Some(m) = ccm {
-                write_f32_array(&mut pending, "isp_pipeline/ccm", m);
+                write_f32_array(&mut pending, cache, "isp_pipeline/ccm", m);
             }
             // The shader calls binding 9 `TONE_CURVE/GAMMA_RECIP` and uses it
             // directly as the pow exponent (`pow(v, gamma_recip)`). Despite the
@@ -1328,6 +1338,7 @@ impl MnnEngine {
             );
             write_f32_array(
                 &mut pending,
+                cache,
                 "isp_pipeline/sat",
                 &[tone.saturation.clamp(0.0, 2.0)],
             );
@@ -1383,6 +1394,7 @@ impl MnnEngine {
             // SaturationBlock/scale [3] — from saturation.factor
             write_f32_array(
                 &mut pending,
+                cache,
                 "saturation/scale",
                 &[isp.saturation.factor; 3],
             );
@@ -1400,9 +1412,14 @@ impl MnnEngine {
             } else {
                 [1.0f32; 3]
             };
-            write_f32_array(&mut pending, "FcsBlock/gain", &fcs_gain);
+            write_f32_array(&mut pending, cache, "FcsBlock/gain", &fcs_gain);
             // FcsBlock/bias [3] — per-channel bias
-            write_f32_array(&mut pending, "FcsBlock/bias", &[isp.tone.brightness; 3]);
+            write_f32_array(
+                &mut pending,
+                cache,
+                "FcsBlock/bias",
+                &[isp.tone.brightness; 3],
+            );
             // NormalizeBlock/max_val [1] — the sensor's white level, same
             // value as the default path above. Deriving it from `blc.r` was
             // wrong: black level and white level are unrelated quantities.
@@ -1419,10 +1436,10 @@ impl MnnEngine {
         // MNN from DCE-ing the ISP graph. The engine writes the actual
         // per-frame data here.
         if let Some(grid) = warp_grid {
-            write_f32_array(&mut pending, "WarpGrid/grid", grid);
+            write_f32_array(&mut pending, cache, "WarpGrid/grid", grid);
         }
         if let Some(lut) = warp_shading {
-            write_f32_array(&mut pending, "WarpGrid/shading_lut", lut);
+            write_f32_array(&mut pending, cache, "WarpGrid/shading_lut", lut);
         }
 
         // One upload per tensor, using the value that won. A fused/converted
@@ -1433,7 +1450,12 @@ impl MnnEngine {
         let mut missing = Vec::new();
         for (name, value) in pending {
             let Some(t) = find(pool, &name) else {
-                missing.push(name);
+                missing.push(name.clone());
+                match value {
+                    PendingWrite::Array(vals) => cache.put_f32(name, vals),
+                    PendingWrite::Raw(data) => cache.put_raw(name, data),
+                    PendingWrite::Scalar(_) => {}
+                }
                 continue;
             };
             match value {
@@ -1444,6 +1466,7 @@ impl MnnEngine {
                 }
                 PendingWrite::Array(vals) => {
                     if !cache.needs_f32(&name, &vals) {
+                        cache.put_f32(name, vals);
                         continue;
                     }
                     // A failed upload leaves the tensor at whatever it was
@@ -1457,9 +1480,11 @@ impl MnnEngine {
                             vals.len()
                         );
                     }
+                    cache.put_f32(name, vals);
                 }
                 PendingWrite::Raw(data) => {
                     if !cache.needs_bytes(&name, &data) {
+                        cache.put_raw(name, data);
                         continue;
                     }
                     if t.upload_bytes(&data, 2, 32) {
@@ -1467,6 +1492,7 @@ impl MnnEngine {
                     } else {
                         warn!("default for {name} ({} B) failed to upload", data.len());
                     }
+                    cache.put_raw(name, data);
                 }
             }
         }
