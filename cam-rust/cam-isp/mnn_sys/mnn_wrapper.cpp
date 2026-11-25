@@ -560,6 +560,8 @@ extern "C" int mnn_set_input_float(
 extern "C" int mnn_run_true_zero_copy(
     MnnInterpreter interpreter,
     MnnSession session,
+    const char* input_name,
+    const char* output_name,
     const void* buffer,
     int buffer_type_code,
     int buffer_type_bits,
@@ -571,35 +573,92 @@ extern "C" int mnn_run_true_zero_copy(
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!net || !sess || !buffer || !out_data) return -1;
-
-    // Zero-copy INPUT: bind the caller's `buffer` as the session input tensor's
-    // host memory. MNN reads from here directly instead of copying.
-    auto* in_tensor = net->getSessionInput(sess, nullptr);
-    if (!in_tensor) return -1;
-
-    // Type sanity check: if the caller declares the buffer's type, it must match
-    // the model's input type, otherwise we would silently corrupt data.
-    if (buffer_type_bits > 0 && in_tensor->getType().bits != buffer_type_bits) return -1;
-    if (buffer_type_code > 0 && in_tensor->getType().code != buffer_type_code) return -1;
-
-    // Optional dynamic input shape. Must happen before binding hosts, because
-    // resizeTensor may reallocate the tensors.
-    if (in_shape && in_ndim > 0) {
-        std::vector<int> dims(in_shape, in_shape + in_ndim);
-        net->resizeTensor(in_tensor, dims);
+    {
+        std::lock_guard<std::mutex> lock(g_last_error_mutex);
+        g_last_error.clear();
     }
-    in_tensor->buffer().host = const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer));
 
-    // Zero-copy OUTPUT: bind the caller's `out_data` as the session output
-    // tensor's host. MNN writes the result here directly (no memcpy).
-    auto* output = net->getSessionOutput(sess, nullptr);
-    if (!output) return -1;
-    if (max_out > 0 && (int)output->elementSize() > max_out) return -1; // would overrun out_data
-    output->buffer().host = reinterpret_cast<uint8_t*>(out_data);
+    // `getSessionInput(nullptr)` returns the alphabetically first input, which
+    // is not necessarily the frame. Always use the explicit name when given.
+    auto* in_tensor = (input_name != nullptr)
+        ? net->getSessionInput(sess, input_name)
+        : net->getSessionInput(sess, nullptr);
+    if (!in_tensor) {
+        set_last_error("frame input '%s' not found in session",
+                       input_name ? input_name : "(first)");
+        return -1;
+    }
 
-    // Run in place: input read from `buffer`, output written to `out_data`.
-    net->runSession(sess);
-    return 0;
+    halide_type_t buffer_type = { (halide_type_code_t)buffer_type_code,
+                                  (uint8_t)buffer_type_bits, 1 };
+    auto model_type = in_tensor->getType();
+    if (model_type.code != buffer_type.code || model_type.bits != buffer_type.bits) {
+        set_last_error("input type mismatch: model code=%d bits=%d, buffer code=%d bits=%d",
+                       (int)model_type.code, (int)model_type.bits,
+                       (int)buffer_type.code, (int)buffer_type.bits);
+        return -2;
+    }
+
+    std::vector<int> shape(in_shape, in_shape + in_ndim);
+    int total = 1;
+    for (int i = 0; i < in_ndim; ++i) total *= in_shape[i];
+    if (total <= 0) {
+        set_last_error("invalid input shape: %d elements", total);
+        return -5;
+    }
+
+    if ((int)in_tensor->elementSize() != total) {
+        net->resizeTensor(in_tensor, shape);
+        MNN::ErrorCode rc = net->tryResizeSession(sess);
+        if (rc != MNN::NO_ERROR) {
+            set_last_error("tryResizeSession failed: code=%d", (int)rc);
+            return -6;
+        }
+        in_tensor = (input_name != nullptr) ? net->getSessionInput(sess, input_name)
+                                            : net->getSessionInput(sess, nullptr);
+        if (!in_tensor || (int)in_tensor->elementSize() != total) {
+            set_last_error("resize did not take for frame input");
+            return -7;
+        }
+    }
+
+    // Assigning `buffer().host` is ignored by the Vulkan backend: it allocates
+    // its own device buffer. Use the supported upload so the frame actually
+    // reaches the GPU. For a CPU session this is still a no-copy host alias.
+    auto* host_in = MNN::Tensor::create(shape, buffer_type,
+        const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer)), MNN::Tensor::CAFFE);
+    if (!host_in) return -3;
+    in_tensor->copyFromHostTensor(host_in);
+    delete host_in;
+
+    auto* output = (output_name != nullptr)
+        ? net->getSessionOutput(sess, output_name)
+        : net->getSessionOutput(sess, nullptr);
+    if (!output) {
+        set_last_error("output '%s' not found in session",
+                       output_name ? output_name : "(first)");
+        return -8;
+    }
+
+    auto run_ok = net->runSession(sess);
+    if (run_ok != 0) {
+        set_last_error("runSession failed: MNN error code=%d", run_ok);
+        return -std::abs(static_cast<int>(run_ok));
+    }
+
+    auto out_shape = output->shape();
+    int out_total = 1;
+    for (auto d : out_shape) out_total *= d;
+    if (out_total <= 0 || out_total > max_out) {
+        set_last_error("output has %d elements, caller buffer holds %d", out_total, max_out);
+        return -9;
+    }
+    auto* host_out = MNN::Tensor::create(out_shape, output->getType(), out_data,
+                                         MNN::Tensor::CAFFE);
+    if (!host_out) return -3;
+    output->copyToHostTensor(host_out);
+    delete host_out;
+    return out_total;
 }
 
 // ── Vulkan external-memory AHB import ──────────────────────────────────────
@@ -651,13 +710,15 @@ extern "C" int mnn_import_ahb_as_device_memory(
         return -1;
     }
 
-    // Export AHB to dma-buf fd (for logging only).
+    (void)read_only; // Vulkan import usage covers both read and write.
+    // dma-buf fd is diagnostic only; the real import is setDevicePtr below.
     int fd = -1;
-    if (g_ahb_get_fd && g_ahb_get_fd(static_cast<AHardwareBuffer*>(ahb), &fd) != 0 || fd < 0) {
-        set_last_error("AHardwareBuffer_getFd failed");
-        return -1;
+    if (g_ahb_get_fd == nullptr ||
+        g_ahb_get_fd(static_cast<AHardwareBuffer*>(ahb), &fd) != 0 || fd < 0) {
+        set_last_error("AHardwareBuffer_getFd unavailable (diagnostic only)");
+    } else {
+        close(fd);
     }
-    close(fd);
 
     // Mark the tensor as AHB-backed so MNN's VulkanBackend::onAcquire()
     // imports it via VulkanBufferFromAHB (VkImportAndroidHardwareBufferInfoANDROID).

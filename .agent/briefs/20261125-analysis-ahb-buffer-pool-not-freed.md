@@ -468,3 +468,44 @@ camera `newWithUsage` + AHB lifetime changes, and an output-surface design —
 all outside the repo and not device-testable here. Implementing it now would
 reintroduce black frames. Action taken: fix the in-repo correctness bugs and
 document the blocker; do not wire the APK.
+
+### Follow-up: MNN global-AHB serialization removed (2026-11-25)
+
+The user flagged that the MNN display-AHB patch used a process-wide global
+(`g_publishedDisplayAhb` + `mnnSetDisplayAhb`) substituted by `getBuffer()` for
+every `deviceId()==0` tensor. With two ISP workers this would serialize on and
+race over one buffer. Replaced in `~/MNN` (not the softisp repo) with the
+per-tensor API the user prefers:
+
+- Deleted the global, `mnnSetDisplayAhb`, `VulkanBackend::setSharedAhb` and
+  `mSharedAhb` from `VulkanBackend.{cpp,hpp}`.
+- `VulkanBackend::onAcquire()` now imports the AHB carried by
+  `Tensor::setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER)` into a
+  `VulkanBufferFromAHB` owned by a `VulkanAhbMemObj` stored in the tensor's
+  `TensorUtils::sharedMem`. Each tensor/engine owns its own imported VkBuffer;
+  no global and no serialization. Small tensors never take this path — only
+  tensors explicitly flagged by the caller (the large display output).
+- `getBuffer()` and all three `onCopyBuffer()` directions now resolve the
+  VkBuffer through `getBuffer()` so AHB-backed tensors never get
+  `deviceId()` mis-cast to `VulkanBuffer*`.
+- Rebuilt with `./scripts/build_mnn_libs.sh arm64-v8a` (per project rule:
+  always `build_isp`, never `build_vk`). The external `VulkanFuse.cpp` gamma
+  patch is still present and was preserved by the rebuild.
+
+In-repo correctness fixes applied alongside:
+- `mnnengine.rs` input AHB import now uses `self.frame_input_name`
+  (`frame_name_ptr`), not the output name; all import/release FFI return codes
+  are checked and logged.
+- `mnn_wrapper.cpp` `mnn_run_true_zero_copy()` now takes explicit input/output
+  names, uses `tryResizeSession`, and uploads/reads via
+  `copyFromHostTensor`/`copyToHostTensor` (host-pointer binding is ignored by
+  Vulkan). `AHardwareBuffer_getFd` precedence bug fixed; fd query is now
+  diagnostic-only.
+
+Verification: `cargo fmt --all -- --check` OK; `cargo clippy -p cam-isp --lib
+--features "rectifier mnn" -- -D warnings` OK; `cargo clippy -p cam-camera-app
+--all-features -- -D warnings` OK; `cargo test -p cam-isp --lib --features
+"rectifier mnn" --no-fail-fast` → 845 passed, the same 2 pre-existing failures,
+2 ignored; `cargo test -p cam-camera-app --lib --all-features` → 46 passed.
+Device end-to-end AHB is still blocked (camera AImage lifetime, no output AHB
+from ANativeWindow); the APK remains on the packed BGRA readback path.

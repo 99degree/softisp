@@ -2193,7 +2193,7 @@ impl IspEngine for MnnEngine {
             let path: &str = path_str;
             let t_prep_end: std::time::Instant = Instant::now();
             let t_infer_start: std::time::Instant = Instant::now();
-            let mut n: i32;
+            let n: i32;
             // Frame input tensor name for the FFI call (None → nullptr for
             // single-input models; MNN then picks its first input).
             let frame_name_c = self
@@ -2212,33 +2212,49 @@ impl IspEngine for MnnEngine {
                 if zero_copy {
                     // Import AHardwareBuffers as Vulkan device memory before
                     // inference, so MNN's Vulkan backend reads/writes GPU
-                    // memory directly instead of host<->GPU copies.
+                    // memory directly instead of host<->GPU copies. The input
+                    // name MUST be the frame input — the old code used the
+                    // output name here and silently bound the wrong tensor.
+                    let mut imported_input = false;
                     if let Some(&(ahb_ptr, _)) = p.input_ahb.as_ref() {
-                        let input_name_c = std::ffi::CString::new(output_name.clone())
-                            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
-                        crate::mnn_sys::mnn_import_ahb_as_device_memory(
-                            interp.as_ptr(),
-                            sess.as_ptr(),
-                            ahb_ptr as *const c_void,
-                            input_name_c.as_ptr(),
-                            1, // read_only: input tensor
-                        );
+                        if !frame_name_ptr.is_null() {
+                            let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                                interp.as_ptr(),
+                                sess.as_ptr(),
+                                ahb_ptr as *const c_void,
+                                frame_name_ptr,
+                                1, // read_only: input tensor
+                            );
+                            if rc != 0 {
+                                warn!("AHB import for frame input failed: rc={rc}");
+                            } else {
+                                imported_input = true;
+                            }
+                        } else {
+                            warn!("AHB input import skipped: frame input name is unknown");
+                        }
                     }
+                    let mut imported_output = false;
                     if let Some(&(ahb_ptr, _)) = p.output_ahb.as_ref() {
-                        let output_name_c = std::ffi::CString::new(output_name.clone())
-                            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
-                        crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                        let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
                             interp.as_ptr(),
                             sess.as_ptr(),
                             ahb_ptr as *const c_void,
-                            output_name_c.as_ptr(),
+                            output_name_ptr.as_ptr(),
                             0, // read_only: output tensor
                         );
+                        if rc != 0 {
+                            warn!("AHB import for output '{output_name}' failed: rc={rc}");
+                        } else {
+                            imported_output = true;
+                        }
                     }
 
                     n = crate::mnn_sys::mnn_run_true_zero_copy(
                         interp.as_ptr(),
                         sess.as_ptr(),
+                        frame_name_ptr,
+                        output_name_ptr.as_ptr(),
                         buffer_ptr,
                         buffer_type_code,
                         buffer_type_bits,
@@ -2247,37 +2263,27 @@ impl IspEngine for MnnEngine {
                         out_ptr,
                         max_out,
                     );
-                    // Release the AHB device-memory bindings after inference.
-                    if p.input_ahb.is_some() {
-                        let input_name_c = std::ffi::CString::new(output_name.clone())
-                            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
-                        crate::mnn_sys::mnn_release_ahb_device_memory(
-                            interp.as_ptr(),
-                            sess.as_ptr(),
-                            input_name_c.as_ptr(),
-                        );
-                    }
-                    if p.output_ahb.is_some() {
-                        let output_name_c = std::ffi::CString::new(output_name.clone())
-                            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
-                        crate::mnn_sys::mnn_release_ahb_device_memory(
-                            interp.as_ptr(),
-                            sess.as_ptr(),
-                            output_name_c.as_ptr(),
-                        );
-                    }
 
-                    // true_zero_copy returns 0 on success; convert to an
-                    // element count for the shared logic below.
-                    if n == 0 {
-                        // Determine the element count from the output tensor.
-                        if let Some(t) = interp.get_output(sess, &output_name) {
-                            n = t.shape().iter().map(|&d| d as i64).product::<i64>() as i32;
-                        } else {
-                            n = max_out;
+                    // Release the AHB device-memory bindings after inference.
+                    if imported_input {
+                        let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
+                            interp.as_ptr(),
+                            sess.as_ptr(),
+                            frame_name_ptr,
+                        );
+                        if rc != 0 {
+                            warn!("AHB release for frame input failed: rc={rc}");
                         }
-                    } else if n < 0 {
-                        n = -1; // failure
+                    }
+                    if imported_output {
+                        let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
+                            interp.as_ptr(),
+                            sess.as_ptr(),
+                            output_name_ptr.as_ptr(),
+                        );
+                        if rc != 0 {
+                            warn!("AHB release for output '{output_name}' failed: rc={rc}");
+                        }
                     }
                 } else {
                     n = crate::mnn_sys::mnn_run_with_output(

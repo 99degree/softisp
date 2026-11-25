@@ -17,7 +17,11 @@
   `mnn_run_true_zero_copy` binds host pointers Vulkan also ignores. The
   in-repo correctness bugs (input tensor name, discarded FFI returns) are
   fixed; the APK is deliberately **not** wired to it. Full end-to-end remains
-  blocked on MNN backend import + an output-surface AHB design (see P2b).
+  blocked on camera AHB lifetime + an output-surface AHB design (see P2b).
+  The MNN Vulkan backend no longer uses a process-wide published AHB: AHB
+  import is per-tensor via `setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)` and
+  `TensorUtils::sharedMem`, so two workers can bind different buffers without
+  serialization. Rebuilt via `scripts/build_mnn_libs.sh arm64-v8a`.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 

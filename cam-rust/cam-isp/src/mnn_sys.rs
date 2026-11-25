@@ -134,6 +134,8 @@ extern "C" {
     pub fn mnn_run_true_zero_copy(
         interpreter: *mut c_void,
         session: *mut c_void,
+        input_name: *const c_char,
+        output_name: *const c_char,
         buffer: *const c_void,
         buffer_type_code: c_int,
         buffer_type_bits: c_int,
