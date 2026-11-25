@@ -49,6 +49,20 @@
   forced-input16, packed-output, and workspace/build fixes. The rebase restored
   those patches and the two graduated build/ISP analysis docs, so the staged
   work sits on top of a verified baseline rather than a regressed one.
+- **Repo resynced and ANW repaired** (this session): all pushed commits were
+  rebased onto the current `origin/master`, the missing
+  `anw/src/presentation.rs` FFI wiring was repaired, and workspace rustfmt
+  defaults were applied in a formatting-only commit. `cargo fmt --all -- --check`,
+  the cam-isp/app/anw lint and unit suites, and the real-MNN staged test are
+  clean. See `docs/build/20261125-anw-presentation-module.md`.
+- **APK rebuilt** (this session): `./build-apk.sh` produced a signed
+  `target/debug/apk/softisp-camera.apk`. A packaging audit found that step 3
+  still ships the previous app library; see P2e and
+  `docs/build/20261125-apk-step3-stale-lib-audit.md`.
+- **Branch audit** (this session): all 62 local branches were inspected with a
+  strict three-day window. Only five recent patches on `local-fixes` lack an
+  upstream equivalent; see P2f and
+  `docs/overview/20261125-local-branch-audit.md`.
 - **HEAVY MNN test repaired** (this session): `test_mnn_engine` now fills the
   new zero-copy `ProcessParams` fields via `ProcessParams::new()`, passes the
   profile's real head block for pre-converted models, uses the real sensor
@@ -313,6 +327,33 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
 - **Verification:** hermetic tests for idempotent cancel, worker exit, and no
   leaked session/buffer reservations; on-device check that a cancel followed
   by restart leaves no stale camera device or Vulkan buffers.
+
+### P2e — APK step 3 ships the previous app library (TODO)
+
+- **Status:** reproduced on the 2026-11-25 build. `build-apk.sh` patches and
+  copies `libcam_camera_app.so` into `cam-rust/lib` before `cargo apk2 build`,
+  and `cargo-apk2` packages that stale copy. The APK entry SHA-256 matched the
+  25,763,641-byte pre-build library, not the freshly linked 113,719,008-byte
+  one. Details and hashes: `docs/build/20261125-apk-step3-stale-lib-audit.md`.
+- **Fix:** build the cdylib first, copy it into both ABI runtime dirs, run
+  `patchelf` on the fresh copies, then `cargo apk2 build`; verify that the
+  target, runtime copy, and APK entry hashes all match.
+- **Impact:** current Rust/app changes may be absent from the shipped APK even
+  though the build reports success. The second consecutive build would pick up
+  the previous build's library.
+
+### P2f — Recent local branch patches without upstream equivalents (TODO)
+
+- **Status:** five commits on `local-fixes` dated 2026-11-23/24 have no
+  equivalent patch on `origin/master`; every other branch with commits in the
+  strict three-day window is patch-equivalent upstream or is the current
+  `master`. Details: `docs/overview/20261125-local-branch-audit.md`.
+- **Patches:** `04e87a9e` (MNNConvert CLI build), `ea139531` (mnn-gated
+  cleanups), `a796111e` (runtime_libs path), `72ad0292` (cam-app → cam-disp /
+  android-app docs), `2b796345` (AppCompat theme / adaptive icons).
+- **Action:** review each against the current renamed workspace before any
+  cherry-pick; older-than-three-day changesets and all agent worktrees were
+  explicitly excluded from triage.
 
 ### P4 — Multi-Frontend IPA Plugin Architecture ✅ (implemented 2026-11-25)
 
