@@ -117,7 +117,7 @@ impl IspController {
         cam_types::ToneParams {
             contrast: self.tone_contrast,
             brightness: self.tone_brightness,
-            gamma_recip: 1.0 / self.tone_gamma,
+            gamma: self.tone_gamma,
             shadow_lift: self.tone_shadow_lift,
             highlight_roll: self.tone_highlight_roll,
             sharpness: 1.0,

@@ -113,3 +113,12 @@ cache directory here). Those are pre-existing platform constraints outside this
 fix; the CI gate runs on Linux with network access. All doc-testable crates
 that do not pull those native dependencies were otherwise checked by the lib
 and workspace test runs above.
+
+## Follow-up (2026-11-26)
+
+The "derive segment slopes inside the ONNX graph" decision above was reversed:
+the `Sub`/`Div` slope nodes are scalar (non-parallel) work. They now run on the
+CPU in `MnnEngine::set_extra_inputs()` and arrive as `ToneLutBlock/s0..s5`.
+See [`20261126-tonelut-parallel-only.md`](20261126-tonelut-parallel-only.md).
+`cam_types::ToneParams::gamma_recip` was also renamed to `gamma` (see
+[`20261126-gamma-reciprocal-audit.md`](20261126-gamma-reciprocal-audit.md)).

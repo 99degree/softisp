@@ -134,7 +134,7 @@ fn validate_input(input: &[f32; 267]) -> Result<(), InputError> {
 |------|-------|-------|------------|-------------------------|--------------|
 | **WB gains** | [3] | [0.2, 5.0] | `exp(TanhClamp)` | `bayer_wb.gains` [1,4,1,1] (RGGB) | BayerWbBlock |
 | **CCM** | [9] | [-3.0, 3.0] | `TanhClamp` | `demosaic_ccm.w` [3,4,1,1] + `b` [3] | DemosaicCcmBlock |
-| **Tone curve** | [7] | [0.0, 1.0] | `Sigmoid` | `tone.contrast/brightness/gamma_recip`, `fcs.gain/bias`, `gamma.inv_gamma/min/max` | ToneBlock, FcsBlock, GammaBlock |
+| **Tone curve** | [7] | [0.0, 1.0] | `Sigmoid` | `tone.contrast/brightness/gamma`, `fcs.gain/bias`, `gamma.inv_gamma/min/max` | ToneBlock, FcsBlock, GammaBlock |
 | **Zoom** | [1] | [1.0, 4.0] | `ReLU+1` | `scale` → AdaptiveDownscaleBlock.scale_factor | ScaleBlocks |
 
 > **Note**: Current model outputs 20 parameters (3+9+7+1). The runtime API exposes finer-grained controls (see `docs/api/RUNTIME_PARAMS.md`). The 7-point tone curve is internally mapped to multiple tone-related blocks (`tone`, `fcs`, `gamma`, `auto_contrast`). Future model versions (v1.3+) may expand output dimension to directly control all runtime params.
@@ -149,7 +149,7 @@ The 20 model outputs map to the fine-grained runtime params (RUNTIME_PARAMS.md) 
 | `ccm[0:9]` | `demosaic_ccm.w` [3,4,1,1] + `b` [3] | DemosaicCcmBlock | 3×3 → 3×4: pad 4th column with 0; bias = 0 |
 | `tone[0]` | `tone.contrast` | ToneBlock | `contrast = tone[0]*2 - 1` → [-1,1] |
 | `tone[1]` | `tone.brightness` | ToneBlock | `brightness = tone[1]*2 - 1` → [-1,1] |
-| `tone[2]` | `tone.gamma_recip` | ToneBlock | `gamma_recip = tone[2]*0.5 + 0.5` → [0.5,1.0] |
+| `tone[2]` | `tone.gamma` | ToneBlock | `gamma = tone[2]*0.5 + 0.5` → [0.5,1.0] (spec mapping; runtime currently pins γ to 1.0 on the neural path) |
 | `tone[3]` | `auto_contrast.contrast_w` | AutoContrastBlock | `contrast_w = tone[3]*1.5 + 0.5` → [0.5,2.0] |
 | `tone[4]` | `gamma.inv_gamma` | GammaBlock | `inv_gamma = tone[4]*0.5 + 0.25` → [0.25,0.75] |
 | `tone[5]` | `fcs.gain` [3] | SaturationBlock | `gain = [tone[5], tone[5], tone[5]]*2` → [0,2] |

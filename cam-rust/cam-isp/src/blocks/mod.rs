@@ -147,7 +147,7 @@ pub use stereo_depth::StereoDepthBlock;
 pub use super_res::SuperResBlock;
 pub use temporal_denoise::TemporalDenoiseBlock;
 pub use tone::ToneBlock;
-pub use tone_lut::ToneLutBlock;
+pub use tone_lut::{tone_curve_slopes, ToneLutBlock, TONE_LUT_SEGMENT_WIDTH};
 pub use unpack::UnpackBlock;
 pub use unpack_bayer_fp16::UnpackBayerToFp16Block;
 pub use unpack_blc16::UnpackBlc16Block;

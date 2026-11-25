@@ -149,7 +149,7 @@ fn main() {
     let _tone_params = cam_types::ToneParams {
         contrast: 1.2,
         brightness: 0.05,
-        gamma_recip: 2.2,
+        gamma: 2.2,
         saturation: 1.3,
         ..Default::default()
     };

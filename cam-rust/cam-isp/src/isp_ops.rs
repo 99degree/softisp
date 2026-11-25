@@ -46,11 +46,13 @@ pub(crate) fn generate_simulated_raw(width: u32, height: u32, rgba: &[u8]) -> Ve
 }
 
 /// Build gamma lookup table (4096 entries covering `[0, 1]`).
-pub(crate) fn build_gamma_lut(gamma: f32) -> [f32; 4096] {
+///
+/// `inv_gamma` is the exponent `1/γ`, derived from the display gamma on the CPU.
+pub(crate) fn build_gamma_lut(inv_gamma: f32) -> [f32; 4096] {
     let mut lut = [0.0f32; 4096];
     for i in 0..4096 {
         let x = i as f32 / 4095.0;
-        lut[i] = x.powf(gamma);
+        lut[i] = x.powf(inv_gamma);
     }
     lut
 }
@@ -191,9 +193,8 @@ pub(crate) fn apply_ccm(rgb: &[f32], matrix: &[f32; 9]) -> Vec<f32> {
 
 /// Apply tone curve: gamma (via 4096-entry LUT), contrast, brightness, saturation, unsharp mask.
 pub(crate) fn apply_tone(rgb: &[f32], params: &ToneParams, w: usize, h: usize) -> Vec<f32> {
-    let gamma_recip = params.gamma_recip;
-    let gamma = if gamma_recip > 0.0 {
-        1.0 / gamma_recip
+    let inv_gamma = if params.gamma > 0.0 {
+        1.0 / params.gamma
     } else {
         1.0
     };
@@ -206,7 +207,7 @@ pub(crate) fn apply_tone(rgb: &[f32], params: &ToneParams, w: usize, h: usize) -
     let mut toned = Vec::with_capacity(rgb.len());
 
     // Build gamma lookup table (4096 entries, ~16KB)
-    let gamma_lut = build_gamma_lut(gamma);
+    let gamma_lut = build_gamma_lut(inv_gamma);
 
     for i in 0..count {
         let idx = i * 3;
@@ -518,6 +519,26 @@ mod tests {
         for i in 1..4096 {
             assert!(lut[i] >= lut[i - 1]);
         }
+    }
+
+    #[test]
+    fn test_apply_tone_gamma_is_display_gamma() {
+        let params = ToneParams {
+            contrast: 1.0,
+            brightness: 0.0,
+            gamma: 2.2,
+            saturation: 1.0,
+            sharpness: 0.0,
+            ..Default::default()
+        };
+        let out = apply_tone(&[0.25, 0.25, 0.25], &params, 1, 1);
+        let expected = 0.25f32.powf(1.0 / 2.2);
+        assert!(
+            (out[0] - expected).abs() < 0.01,
+            "gamma must be encoded as pow(x, 1/gamma): {} vs {}",
+            out[0],
+            expected
+        );
     }
 
     #[test]

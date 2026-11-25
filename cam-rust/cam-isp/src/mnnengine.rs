@@ -1194,17 +1194,19 @@ impl MnnEngine {
         write_f32(&mut pending, "ToneBlock/contrast", tone.contrast);
         // ToneBlock/brightness [1]
         write_f32(&mut pending, "ToneBlock/brightness", tone.brightness);
-        // ToneBlock/gamma_recip [1]
-        write_f32(&mut pending, "ToneBlock/gamma_recip", tone.gamma_recip);
         // ToneLutBlock runs after ToneBlock with identity parametric defaults;
-        // only the neural 7-point curve needs a per-frame override. Segment
-        // positions, width and clip bounds stay at the block's defaults, and
-        // slopes are derived from the curve inside the ONNX graph.
+        // only the neural 7-point curve needs a per-frame override. Slopes are
+        // scalar derivations, so compute them here on the CPU before inference
+        // and feed them as tensor inputs — the graph stays strictly per-pixel.
         if let Some(neural) = isp_params {
             let curve = &neural.tone.curve_lut;
             if curve.len() == 7 {
-                for (i, value) in curve.iter().enumerate() {
-                    write_f32(&mut pending, &format!("ToneLutBlock/y{}", i), *value);
+                let points: [f32; 7] = [
+                    curve[0], curve[1], curve[2], curve[3], curve[4], curve[5], curve[6],
+                ];
+                write_f32(&mut pending, "ToneLutBlock/y0", points[0]);
+                for (i, slope) in crate::blocks::tone_curve_slopes(&points).iter().enumerate() {
+                    write_f32(&mut pending, &format!("ToneLutBlock/s{}", i), *slope);
                 }
             }
         }
@@ -1284,13 +1286,8 @@ impl MnnEngine {
             if let Some(m) = ccm {
                 write_f32_array(&mut pending, "isp_pipeline/ccm", m);
             }
-            // TONE_CURVE/GAMMA_RECIP, the same value `isp.display` consumes: the
-            // shader takes its reciprocal, so this is the display gamma.
-            write_f32(
-                &mut pending,
-                "isp_pipeline/gamma",
-                tone.gamma_recip.max(1e-4),
-            );
+            // Display gamma γ; the shader derives 1/γ for its pow exponent.
+            write_f32(&mut pending, "isp_pipeline/gamma", tone.gamma.max(1e-4));
             write_f32(
                 &mut pending,
                 "isp_pipeline/lift",
@@ -1899,7 +1896,7 @@ impl MnnEngine {
             let tone = cam_types::ToneParams {
                 contrast: params.tone.contrast,
                 brightness: params.tone.brightness,
-                gamma_recip: params.tone.gamma,
+                gamma: params.tone.gamma,
                 ..Default::default()
             };
             (Some(&params.ccm.matrix), Some(tone))
@@ -1914,7 +1911,7 @@ impl MnnEngine {
             scaled_tone = cam_types::ToneParams {
                 contrast: base.contrast,
                 brightness: base.brightness * input_scale,
-                gamma_recip: base.gamma_recip,
+                gamma: base.gamma,
                 ..*base
             };
             &scaled_tone

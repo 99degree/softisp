@@ -279,7 +279,7 @@ impl IpaContext {
         params.tone_params = ToneParams {
             contrast: ctrl_tone.contrast,
             brightness: ctrl_tone.brightness,
-            gamma_recip: 1.0 / ctrl_tone.gamma.max(0.1),
+            gamma: ctrl_tone.gamma.max(0.1),
             ..ToneParams::default()
         };
 

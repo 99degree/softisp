@@ -153,7 +153,7 @@ RawInput → Normalize → CFA → BLC → BayerWB
 | BayerWbBlock | `BayerWbBlock/gains` | [1,4,1,1] | wb gains |
 | ToneBlock | `ToneBlock/contrast` | [1] | tone.contrast |
 | ToneBlock | `ToneBlock/brightness` | [1] | tone.brightness |
-| ToneBlock | `ToneBlock/gamma_recip` | [1] | 1/tone.gamma |
+| ToneBlock | `ToneBlock/exposure` | [1] | AE gain |
 
 ---
 

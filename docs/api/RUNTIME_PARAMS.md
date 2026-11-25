@@ -189,7 +189,11 @@ see [BAYER_WB_DESIGN.md](../isp/BAYER_WB_DESIGN.md).
 |---|---|---|---|---|---|
 | `contrast` | default | [1] | FLOAT | 1.0 | Contrast factor (1.0 = identity) |
 | `brightness` | default | [1] | FLOAT | 0.0 | Brightness offset (-1..1) |
-| `gamma_recip` | default | [1] | FLOAT | 1.0 | Gamma reciprocal (1/γ) |
+| `exposure` | AE loop | [1] | FLOAT | 1.0 | AE gain applied before contrast/brightness |
+
+Display gamma lives in `cam_types::ToneParams::gamma` (γ, e.g. 2.2); its
+reciprocal `1/γ` is derived on the CPU where a tensor needs an exponent
+(`Gamma/inv_gamma`, `ToneLutBlock/inv_gamma`).
 
 ### Input / Output Tensors
 

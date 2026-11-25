@@ -126,7 +126,9 @@ pub enum MatrixType {
 pub struct ToneParams {
     pub contrast: f32,
     pub brightness: f32,
-    pub gamma_recip: f32,
+    /// Display gamma (γ, e.g. 2.2). The reciprocal `1/γ` is derived on the CPU
+    /// where a tensor needs it as an exponent.
+    pub gamma: f32,
     pub shadow_lift: f32,
     pub highlight_roll: f32,
     pub sharpness: f32,
@@ -138,7 +140,7 @@ impl Default for ToneParams {
         Self {
             contrast: 1.0,
             brightness: 0.0,
-            gamma_recip: 1.0,
+            gamma: 1.0,
             shadow_lift: 0.0,
             highlight_roll: 0.0,
             sharpness: 1.0,

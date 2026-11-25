@@ -144,7 +144,7 @@ pub fn default_tone_params() -> ToneParams {
     ToneParams {
         contrast: 1.2,
         brightness: 0.05,
-        gamma_recip: 2.2,
+        gamma: 2.2,
         saturation: 1.3,
         ..Default::default()
     }
