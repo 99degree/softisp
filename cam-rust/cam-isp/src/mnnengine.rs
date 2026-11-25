@@ -11,6 +11,7 @@
 //!   3. Run session
 //!   4. Read output float32 → BGRA U8
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use log::{debug, error, info, warn};
@@ -824,60 +825,39 @@ impl MnnEngine {
             pool.iter().find(|(n, _)| n == name).map(|(_, t)| t)
         }
 
-        /// Write a single f32 value into a named tensor (4 bytes).
-        /// No-op if the tensor is missing.
-        ///
-        /// Scalars are uploaded with an explicit `[1]` shape: MNN reports a
-        /// rank-0 tensor's shape as empty, and an empty-shape upload carries
-        /// no elements, so these values would otherwise never be written.
-        fn write_f32(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, val: f32) {
-            if let Some(t) = find(pool, name) {
-                t.upload_f32_shaped(&[1], &[val]);
-            }
+        // Defaults and per-frame overrides frequently target the same tensor.
+        // Queue writes by name and upload each tensor once with its FINAL
+        // value: on Vulkan every copyFromHostTensor is a separate host→device
+        // transfer with its own barrier, and that per-call latency dominated
+        // the frame budget (~60 uploads, ~174 ms/frame at 800x600).
+        enum PendingWrite {
+            /// Uploaded with an explicit `[1]` shape — MNN reports a rank-0
+            /// tensor's shape as empty, so an empty-shape upload carries no
+            /// elements.
+            Scalar(f32),
+            Array(Vec<f32>),
+            /// `extra_input_defaults` are serialized f32 values.
+            Raw(Vec<u8>),
+        }
+        type Pending = HashMap<String, PendingWrite>;
+
+        fn write_f32(pending: &mut Pending, name: &str, val: f32) {
+            pending.insert(name.to_owned(), PendingWrite::Scalar(val));
         }
 
-        /// Write a fixed-size f32 slice into a named tensor.
-        /// No-op if the tensor is missing or too small.
-        fn write_f32_array(
-            pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
-            name: &str,
-            vals: &[f32],
-        ) {
-            // A failed upload leaves the tensor at whatever it was allocated
-            // with — usually zeros. That turns into a silently black or
-            // unmodified stage, so say so instead of swallowing the bool.
-            match find(pool, name) {
-                Some(t) => {
-                    if !t.upload_f32(vals) {
-                        warn!(
-                            "{name}: upload of {} f32 rejected (tensor wants a different size)",
-                            vals.len()
-                        );
-                    }
-                }
-                None => warn!("{name}: no such tensor in the session"),
-            }
+        fn write_f32_array(pending: &mut Pending, name: &str, vals: &[f32]) {
+            pending.insert(name.to_owned(), PendingWrite::Array(vals.to_vec()));
         }
 
-        /// Write raw bytes into a named tensor (for int64 / int32 / float
-        /// tensors that were formerly baked as initializers).  No-op if the
-        /// tensor is missing or too small.
-        fn write_raw(pool: &[(String, crate::mnn_sys::MnnTensorSafe)], name: &str, data: &[u8]) {
-            match find(pool, name) {
-                Some(t) => {
-                    // `extra_input_defaults` are serialized f32 values.
-                    if !t.upload_bytes(data, 2, 32) {
-                        warn!("default for {name} ({} B) failed to upload", data.len());
-                    }
-                }
-                None => warn!("default for {name} has no tensor in the session"),
-            }
+        fn write_raw(pending: &mut Pending, name: &str, data: &[u8]) {
+            pending.insert(name.to_owned(), PendingWrite::Raw(data.to_vec()));
         }
+
+        let mut pending: Pending = HashMap::new();
 
         // ── Block-provided defaults (formerly baked Const initializers) ──
-        // Write raw tensor bytes from each block's `extra_input_defaults()`.
-        // These are written FIRST so that per-frame isp_params overrides
-        // below take precedence.
+        // Queue raw tensor bytes from each block's `extra_input_defaults()`.
+        // These are queued FIRST so the per-frame writes below take precedence.
         //
         // `input_scale` is 1.0 unless the pipeline deferred the divide: then
         // the frame is still in raw counts, so the display Conv — whose weights
@@ -896,10 +876,10 @@ impl MnnEngine {
                             .to_vec()
                     })
                     .collect();
-                write_raw(pool, name, &scaled);
+                write_raw(&mut pending, name, &scaled);
                 continue;
             }
-            write_raw(pool, name, data);
+            write_raw(&mut pending, name, data);
         }
         drop(defaults);
 
@@ -984,9 +964,7 @@ impl MnnEngine {
                     };
                 }
             }
-            if let Some(t) = find(pool, "DemosaicCcmBlock/w") {
-                t.upload_f32(&fused);
-            }
+            write_f32_array(&mut pending, "DemosaicCcmBlock/w", &fused);
         }
         // DemosaicCcmBlock/b [3] — CCM bias, plus tone brightness when the tone
         // stage is not there to add it itself.
@@ -995,7 +973,7 @@ impl MnnEngine {
         } else {
             [tone.brightness; 3]
         };
-        write_f32_array(pool, "DemosaicCcmBlock/b", &demosaic_bias);
+        write_f32_array(&mut pending, "DemosaicCcmBlock/b", &demosaic_bias);
 
         // ── Coefficient buffers for the fused isp.* ops ──
         //
@@ -1020,12 +998,8 @@ impl MnnEngine {
         .collect::<Vec<f32>>()
         .try_into()
         .unwrap_or([0.0; 27]);
-        if let Some(t) = find(pool, "EeBlock/kernel_ee") {
-            if !t.upload_f32(&ee_kernel) {
-                warn!("EeBlock/kernel_ee: upload failed");
-            }
-        }
-        write_f32_array(pool, "EeBlock/bias_ee", &[0.0f32; 3]);
+        write_f32_array(&mut pending, "EeBlock/kernel_ee", &ee_kernel);
+        write_f32_array(&mut pending, "EeBlock/bias_ee", &[0.0f32; 3]);
 
         // The fused RAW heads — `isp.unpack_blc_normal_cfa` (packed INT32),
         // `isp.unpack16_blc_normal_cfa` (INT16), `isp.unpack32_blc_normal_cfa`
@@ -1048,12 +1022,12 @@ impl MnnEngine {
             // in the buffer, which matches none of the four phases and fell
             // through to the BGGR `else`, rotating every plane.
             write_raw(
-                pool,
+                &mut pending,
                 &format!("{ns}/bayer_pattern"),
                 &bayer_pattern.to_le_bytes(),
             );
             write_f32(
-                pool,
+                &mut pending,
                 &format!("{ns}/max_val"),
                 if input_scale > 1.0 {
                     input_scale
@@ -1068,7 +1042,7 @@ impl MnnEngine {
         // gamma from binding 0. Left at zero the shader's `pow(x, 0)` yields 1.0
         // everywhere, i.e. a white frame. The primitive path uses 1/2.4 as an
         // exponent, so the shader wants its reciprocal.
-        write_f32(pool, "DisplayBlock/gamma", 2.4);
+        write_f32(&mut pending, "DisplayBlock/gamma", 2.4);
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains.
         //
         // This must ALWAYS be written. `BayerWbBlock::extra_input_defaults`
@@ -1078,7 +1052,7 @@ impl MnnEngine {
         // stage then reports success on a black image.
         let identity_gains = [1.0f32; 4];
         write_f32_array(
-            pool,
+            &mut pending,
             "BayerWbBlock/gains",
             bayer.map_or(&identity_gains[..], |g| g),
         );
@@ -1086,35 +1060,35 @@ impl MnnEngine {
         // (depend on the sensor Bayer pattern). CcmBlock_ccm/matrix [3,3] —
         // color matrix (identity when not provided). All three are true
         // runtime inputs on the production pipeline (no initializer defaults).
-        write_f32_array(pool, "DemosaicBlock/w", demo);
-        write_f32_array(pool, "DemosaicBlock/b", &[0.0f32; 3]);
+        write_f32_array(&mut pending, "DemosaicBlock/w", demo);
+        write_f32_array(&mut pending, "DemosaicBlock/b", &[0.0f32; 3]);
         let ccm_mat: [f32; 9] = match ccm {
             Some(m) => *m,
             None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
         };
-        write_f32_array(pool, "CcmBlock_ccm/matrix", &ccm_mat);
+        write_f32_array(&mut pending, "CcmBlock_ccm/matrix", &ccm_mat);
         // ToneBlock/contrast [1]
-        write_f32(pool, "ToneBlock/contrast", tone.contrast);
+        write_f32(&mut pending, "ToneBlock/contrast", tone.contrast);
         // ToneBlock/brightness [1]
-        write_f32(pool, "ToneBlock/brightness", tone.brightness);
+        write_f32(&mut pending, "ToneBlock/brightness", tone.brightness);
         // ToneBlock/gamma_recip [1]
-        write_f32(pool, "ToneBlock/gamma_recip", tone.gamma_recip);
+        write_f32(&mut pending, "ToneBlock/gamma_recip", tone.gamma_recip);
         // SaturationBlock/scale [3] — per-channel saturation, from the tone
         // controller. Its `tone_saturation` was previously ignored here, so the
         // stage always ran at 1.0 and the controller's tuning never reached the
         // picture.
         let sat = tone.saturation.clamp(0.0, 2.0);
-        write_f32_array(pool, "saturation/scale", &[sat; 3]);
+        write_f32_array(&mut pending, "saturation/scale", &[sat; 3]);
         // ToneBlock/exposure [1] — AE gain, applied before contrast/brightness.
-        write_f32(pool, "ToneBlock/exposure", exposure_gain.max(0.05));
+        write_f32(&mut pending, "ToneBlock/exposure", exposure_gain.max(0.05));
         // Sharpen/strength [1] — sharpening strength
-        write_f32(pool, "Sharpen/strength", 1.0);
+        write_f32(&mut pending, "Sharpen/strength", 1.0);
         // LdciBlock/strength [1] — local contrast strength
-        write_f32(pool, "LdciBlock/strength", 1.0);
+        write_f32(&mut pending, "LdciBlock/strength", 1.0);
         // FcsBlock/gain [3] — per-channel gain (default: identity)
-        write_f32_array(pool, "FcsBlock/gain", &[1.0f32; 3]);
+        write_f32_array(&mut pending, "FcsBlock/gain", &[1.0f32; 3]);
         // FcsBlock/bias [3] — per-channel bias (default: zero)
-        write_f32_array(pool, "FcsBlock/bias", &[0.0f32; 3]);
+        write_f32_array(&mut pending, "FcsBlock/bias", &[0.0f32; 3]);
         // NormalizeBlock/max_val [1] — the divisor that maps sensor counts to
         // [0,1].
         //
@@ -1131,24 +1105,24 @@ impl MnnEngine {
         } else {
             white_level
         };
-        write_f32(pool, "NormalizeBlock/max_val", divisor.max(1.0));
+        write_f32(&mut pending, "NormalizeBlock/max_val", divisor.max(1.0));
         // GammaBlock / AutoContrastBlock / DisplayBlock — always write
         // defaults so pure-input tensors are never left uninitialized when
         // no isp_params are supplied; the isp_params branch below overrides.
-        write_f32(pool, "Gamma/inv_gamma", 1.0 / 2.2);
-        write_f32(pool, "Gamma/min", 0.0);
-        write_f32(pool, "Gamma/max", 1.0);
-        write_f32(pool, "Gamma/lift", 0.0);
-        write_f32(pool, "Gamma/norm", 1.0);
-        write_f32(pool, "AutoContrast/lift", 0.0);
-        write_f32(pool, "AutoContrast/half", 0.5);
-        write_f32(pool, "AutoContrast/contrast_w", 1.0);
-        write_f32(pool, "AutoContrast/zero", 0.0);
-        write_f32(pool, "AutoContrast/one", 1.0);
-        write_f32(pool, "DisplayBlock/scale", 1.0);
-        write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
-        write_f32(pool, "DisplayBlock/zero", 0.0);
-        write_f32(pool, "DisplayBlock/one", input_scale);
+        write_f32(&mut pending, "Gamma/inv_gamma", 1.0 / 2.2);
+        write_f32(&mut pending, "Gamma/min", 0.0);
+        write_f32(&mut pending, "Gamma/max", 1.0);
+        write_f32(&mut pending, "Gamma/lift", 0.0);
+        write_f32(&mut pending, "Gamma/norm", 1.0);
+        write_f32(&mut pending, "AutoContrast/lift", 0.0);
+        write_f32(&mut pending, "AutoContrast/half", 0.5);
+        write_f32(&mut pending, "AutoContrast/contrast_w", 1.0);
+        write_f32(&mut pending, "AutoContrast/zero", 0.0);
+        write_f32(&mut pending, "AutoContrast/one", 1.0);
+        write_f32(&mut pending, "DisplayBlock/scale", 1.0);
+        write_f32(&mut pending, "DisplayBlock/gamma_exp", 1.0 / 2.4);
+        write_f32(&mut pending, "DisplayBlock/zero", 0.0);
+        write_f32(&mut pending, "DisplayBlock/one", input_scale);
         // ── The whole-pipeline op's own coefficients ──
         //
         // `isp.pipeline` has no ONNX attributes to carry these: VulkanFuse is
@@ -1167,28 +1141,44 @@ impl MnnEngine {
             //
             // White level: the shader divides by it, and it is also the scale a
             // black level or a bad-pixel threshold means something against.
-            write_f32(pool, "isp_pipeline/white", white_level.max(1.0));
+            write_f32(&mut pending, "isp_pipeline/white", white_level.max(1.0));
             // Bayer gains per plane, in the plane order the phase table uses.
             if let Some(g) = bayer {
-                write_f32_array(pool, "isp_pipeline/wb", g);
+                write_f32_array(&mut pending, "isp_pipeline/wb", g);
             }
             if let Some(m) = ccm {
-                write_f32_array(pool, "isp_pipeline/ccm", m);
+                write_f32_array(&mut pending, "isp_pipeline/ccm", m);
             }
             // TONE_CURVE/GAMMA_RECIP, the same value `isp.display` consumes: the
             // shader takes its reciprocal, so this is the display gamma.
-            write_f32(pool, "isp_pipeline/gamma", tone.gamma_recip.max(1e-4));
-            write_f32(pool, "isp_pipeline/lift", tone.shadow_lift.clamp(0.0, 1.0));
             write_f32(
-                pool,
+                &mut pending,
+                "isp_pipeline/gamma",
+                tone.gamma_recip.max(1e-4),
+            );
+            write_f32(
+                &mut pending,
+                "isp_pipeline/lift",
+                tone.shadow_lift.clamp(0.0, 1.0),
+            );
+            write_f32(
+                &mut pending,
                 "isp_pipeline/pattern",
                 bayer_pattern.clamp(0, 3) as f32,
             );
-            write_f32_array(pool, "isp_pipeline/sat", &[tone.saturation.clamp(0.0, 2.0)]);
+            write_f32_array(
+                &mut pending,
+                "isp_pipeline/sat",
+                &[tone.saturation.clamp(0.0, 2.0)],
+            );
             // A bad pixel is one further from its 3x3 median than this, in raw
             // counts — scaled off the white level so a 10-bit and a 12-bit sensor
             // get the same *relative* threshold.
-            write_f32(pool, "isp_pipeline/dpc", white_level.max(1.0) * 0.02);
+            write_f32(
+                &mut pending,
+                "isp_pipeline/dpc",
+                white_level.max(1.0) * 0.02,
+            );
         }
 
         // Every `Clip(x, <ns>/zero, <ns>/one)` in the chain assumes a [0,1]
@@ -1203,8 +1193,8 @@ impl MnnEngine {
                 "ToneBlock",
                 "SaturationBlock",
             ] {
-                write_f32(pool, &format!("{ns}/one"), input_scale);
-                write_f32(pool, &format!("{ns}/zero"), 0.0);
+                write_f32(&mut pending, &format!("{ns}/one"), input_scale);
+                write_f32(&mut pending, &format!("{ns}/zero"), 0.0);
             }
         }
         // GammaBlock — inv_gamma, min, max, lift, norm
@@ -1214,37 +1204,45 @@ impl MnnEngine {
             } else {
                 1.0
             };
-            write_f32(pool, "Gamma/inv_gamma", inv_gamma);
-            write_f32(pool, "Gamma/min", isp.tone.black_crush);
-            write_f32(pool, "Gamma/max", isp.tone.white_clip);
-            write_f32(pool, "Gamma/lift", isp.tone.black_crush);
-            write_f32(pool, "Gamma/norm", 1.0);
+            write_f32(&mut pending, "Gamma/inv_gamma", inv_gamma);
+            write_f32(&mut pending, "Gamma/min", isp.tone.black_crush);
+            write_f32(&mut pending, "Gamma/max", isp.tone.white_clip);
+            write_f32(&mut pending, "Gamma/lift", isp.tone.black_crush);
+            write_f32(&mut pending, "Gamma/norm", 1.0);
             // AutoContrastBlock — lift, half, contrast_w, zero, one
-            write_f32(pool, "AutoContrast/lift", isp.tone.black_crush);
-            write_f32(pool, "AutoContrast/half", 0.5);
-            write_f32(pool, "AutoContrast/contrast_w", isp.tone.contrast);
-            write_f32(pool, "AutoContrast/zero", 0.0);
-            write_f32(pool, "AutoContrast/one", 1.0);
+            write_f32(&mut pending, "AutoContrast/lift", isp.tone.black_crush);
+            write_f32(&mut pending, "AutoContrast/half", 0.5);
+            write_f32(&mut pending, "AutoContrast/contrast_w", isp.tone.contrast);
+            write_f32(&mut pending, "AutoContrast/zero", 0.0);
+            write_f32(&mut pending, "AutoContrast/one", 1.0);
             // DisplayBlock — scale, gamma_exp, zero, one (FloatRgb path)
-            write_f32(pool, "DisplayBlock/scale", 1.0);
-            write_f32(pool, "DisplayBlock/gamma_exp", 1.0 / 2.4);
-            write_f32(pool, "DisplayBlock/zero", 0.0);
-            write_f32(pool, "DisplayBlock/one", input_scale);
+            write_f32(&mut pending, "DisplayBlock/scale", 1.0);
+            write_f32(&mut pending, "DisplayBlock/gamma_exp", 1.0 / 2.4);
+            write_f32(&mut pending, "DisplayBlock/zero", 0.0);
+            write_f32(&mut pending, "DisplayBlock/one", input_scale);
             // SaturationBlock/scale [3] — from saturation.factor
-            write_f32_array(pool, "saturation/scale", &[isp.saturation.factor; 3]);
+            write_f32_array(
+                &mut pending,
+                "saturation/scale",
+                &[isp.saturation.factor; 3],
+            );
             // Sharpen/strength [1] — from sharpen.amount
-            write_f32(pool, "Sharpen/strength", isp.sharpen.amount);
+            write_f32(&mut pending, "Sharpen/strength", isp.sharpen.amount);
             // LdciBlock/strength [1] — from denoise params (use sharpen radius as proxy)
-            write_f32(pool, "LdciBlock/strength", isp.sharpen.radius.max(0.1));
+            write_f32(
+                &mut pending,
+                "LdciBlock/strength",
+                isp.sharpen.radius.max(0.1),
+            );
             // FcsBlock/gain [3] — per-channel gain from CCM diagonal
             let fcs_gain = if let Some(ccm) = ccm {
                 [ccm[0], ccm[4], ccm[8]]
             } else {
                 [1.0f32; 3]
             };
-            write_f32_array(pool, "FcsBlock/gain", &fcs_gain);
+            write_f32_array(&mut pending, "FcsBlock/gain", &fcs_gain);
             // FcsBlock/bias [3] — per-channel bias
-            write_f32_array(pool, "FcsBlock/bias", &[isp.tone.brightness; 3]);
+            write_f32_array(&mut pending, "FcsBlock/bias", &[isp.tone.brightness; 3]);
             // NormalizeBlock/max_val [1] — the sensor's white level, same
             // value as the default path above. Deriving it from `blc.r` was
             // wrong: black level and white level are unrelated quantities.
@@ -1253,7 +1251,7 @@ impl MnnEngine {
             } else {
                 white_level
             };
-            write_f32(pool, "NormalizeBlock/max_val", divisor.max(1.0));
+            write_f32(&mut pending, "NormalizeBlock/max_val", divisor.max(1.0));
         }
 
         // ── Warp grid + shading LUT (runtime extra_inputs) ────────
@@ -1261,10 +1259,43 @@ impl MnnEngine {
         // MNN from DCE-ing the ISP graph. The engine writes the actual
         // per-frame data here.
         if let Some(grid) = warp_grid {
-            write_f32_array(pool, "WarpGrid/grid", grid);
+            write_f32_array(&mut pending, "WarpGrid/grid", grid);
         }
         if let Some(lut) = warp_shading {
-            write_f32_array(pool, "WarpGrid/shading_lut", lut);
+            write_f32_array(&mut pending, "WarpGrid/shading_lut", lut);
+        }
+
+        // One upload per tensor, using the value that won.
+        for (name, value) in pending {
+            match value {
+                PendingWrite::Scalar(val) => {
+                    if let Some(t) = find(pool, &name) {
+                        t.upload_f32_shaped(&[1], &[val]);
+                    }
+                }
+                PendingWrite::Array(vals) => match find(pool, &name) {
+                    Some(t) => {
+                        // A failed upload leaves the tensor at whatever it was
+                        // allocated with — usually zeros. Say so instead of
+                        // swallowing the bool into a silently black frame.
+                        if !t.upload_f32(&vals) {
+                            warn!(
+                                "{name}: upload of {} f32 rejected (tensor wants a different size)",
+                                vals.len()
+                            );
+                        }
+                    }
+                    None => warn!("{name}: no such tensor in the session"),
+                },
+                PendingWrite::Raw(data) => match find(pool, &name) {
+                    Some(t) => {
+                        if !t.upload_bytes(&data, 2, 32) {
+                            warn!("default for {name} ({} B) failed to upload", data.len());
+                        }
+                    }
+                    None => warn!("default for {name} has no tensor in the session"),
+                },
+            }
         }
     }
 
