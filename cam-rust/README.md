@@ -49,7 +49,7 @@ RawInput(INT16 [1,1,H,W])
 | `cam-onnx` | ONNX Runtime bindings (ort v2.0.0-rc.12) |
 | `cam-motion` | MotionCompensator (placeholder) |
 | `cam-binder` | Android AIDL-style binder HAL + ISP integration |
-| `cam-app` | Binary entry, ONNX model generator |
+| `cam-disp` | DRM display output (V4L2 → pipeline → DRM) |
 
 ## Key Features
 

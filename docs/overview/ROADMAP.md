@@ -1,6 +1,6 @@
 # Project Roadmap & Outstanding Work
 
-> Last updated: 2026-11-25. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
+> Last updated: 2026-11-26. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
 
 ## Status (2026-11-25) — packed-preview perf work
 
@@ -63,6 +63,10 @@
   strict three-day window. Only five recent patches on `local-fixes` lack an
   upstream equivalent; see P2f and
   `docs/overview/20261125-local-branch-audit.md`.
+- **P2f patches reviewed** (2026-11-26): three patches were already applied or
+  superseded, one stale docs patch was adapted to the `anw/` layout, and one
+  Android resource patch was skipped as unrelated churn. See P2f and
+  `docs/overview/20261126-p2f-patch-review.md`.
 - **Application code moved to `anw/`** (P2g, 2026-11-25): `android-app/` now holds
   only the manifest and `Sources/res`; `anw/` owns `android_main`, camera
   capture, pipeline, presentation, storage, crash logging, and the raw-frame C
@@ -348,18 +352,25 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
 - **Scope:** this was an interim diagnosis. The shipped application now loads
   `libsoftisp.so` from `anw/`.
 
-### P2f — Recent local branch patches without upstream equivalents (TODO)
+### P2f — Recent local branch patches without upstream equivalents ✅
 
-- **Status:** five commits on `local-fixes` dated 2026-11-23/24 have no
-  equivalent patch on `origin/master`; every other branch with commits in the
+- **Status:** all five commits on `local-fixes` dated 2026-11-23/24 were
+  compatibility-reviewed against the current `anw/` workspace on 2026-11-26.
+  No blind cherry-pick was performed; every other branch with commits in the
   strict three-day window is patch-equivalent upstream or is the current
-  `master`. Details: `docs/overview/20261125-local-branch-audit.md`.
-- **Patches:** `04e87a9e` (MNNConvert CLI build), `ea139531` (mnn-gated
-  cleanups), `a796111e` (runtime_libs path), `72ad0292` (cam-app → cam-disp /
-  android-app docs), `2b796345` (AppCompat theme / adaptive icons).
-- **Action:** review each against the current renamed workspace before any
-  cherry-pick; older-than-three-day changesets and all agent worktrees were
-  explicitly excluded from triage.
+  `master`. Details: `docs/overview/20261125-local-branch-audit.md` and
+  `docs/overview/20261126-p2f-patch-review.md`.
+- **Patches:** `04e87a9e` (MNNConvert CLI build) skipped — runtime conversion
+  uses the in-process `libMNNConvertDeps.so` API and the added CLI path is not
+  in the fallback search list. `ea139531` (mnn-gated cleanups) superseded by
+  `SessionPool` and explicit zero-copy metadata. `a796111e` (runtime_libs path)
+  already applied in `anw/Cargo.toml`. `72ad0292` (cam-app → cam-disp /
+  android-app docs) applied where still stale in `cam-rust/README.md` and
+  `docs/isp/PROFILE_BLOCK_COMPARISON.md`. `2b796345` (AppCompat theme /
+  adaptive icons) skipped — the current platform theme and working icon set
+  are already part of the verified APK.
+- **Action:** closed; older-than-three-day changesets and all agent worktrees
+  were explicitly excluded from triage.
 
 ### P2g — Move all app code into `anw/`; make `android-app/` resource-only ✅
 

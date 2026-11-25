@@ -1,10 +1,14 @@
 # Profile ↔ Block Comparison
 
-How `softisp-anw` arranges ISP blocks per profile.
+How `anw` (package `softisp-anw`, loaded as `libsoftisp.so`) arranges ISP blocks
+per profile.
+
+> The `cam-app` invocation near the end of this document is historical. The
+> current APK builds its profile pipeline in `anw/src/app.rs`.
 
 ## How it works
 
-`softisp-anw` calls `profile.build_blocks(width, bayer_pattern)` (`cam-rust/cam-isp/src/profile_builder.rs`).
+`anw` calls `profile.build_blocks(width, bayer_pattern)` (`cam-rust/cam-isp/src/profile_builder.rs`).
 That method walks the profile flags and appends either a **real block** or an **IdentityBlock** (passthrough placeholder) for each slot.
 
 **Every profile produces exactly 24 main-chain blocks.** The difference is which slots are real vs identity.
@@ -185,15 +189,18 @@ HDR merge happens **after** per-frame ISP (not inside `build_blocks`).
 [17] vignetting     ← VignettingBlock
 ```
 
-## cam-app invocation
+## cam-app invocation (historical)
+
+The `cam-app` crate no longer exists. The old standalone command was:
 
 ```bash
 cam-app --profile heavy --width 1920 --convert-to-mnn
 ```
 
-`build_pipeline()` in `main.rs`:
-1. Picks `PipelineProfile::HEAVY`
-2. Calls `profile.build_blocks(1920, 2)` → 24 blocks
-3. Calls `GraphComposer::wire_blocks()` to connect block inputs/outputs
-4. Calls `GraphComposer::compose_from_vec()` → ONNX model bytes
-5. Optionally converts ONNX → MNN via `convert_onnx_to_mnn()`
+The current APK builds the same profile chain in-process through `anw/src/app.rs`:
+1. Picks the configured `PipelineProfile`.
+2. Calls `profile.build_blocks(width, height, bayer_pattern)` for engine A and
+   again for engine B (dual-GPU pipeline).
+3. Adds `profile.build_aux_blocks(...)` stats blocks.
+4. Calls `IspEngine::build(head, blocks, None, 21)` on each engine; the engine
+   owns graph composition/conversion internally.
