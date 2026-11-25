@@ -1,34 +1,32 @@
 //! ToneLutBlock — 7-point tone curve LUT + parametric tone via per-pixel interpolation.
 //!
 //! Applies a piecewise-linear tone mapping curve defined by 7 control points
-//! at fixed x-positions [0, 1/6, 2/6, 3/6, 4/6, 5/6, 1]. For each pixel
-//! value `x`, the output is the linearly interpolated tone curve value.
+//! at fixed x-positions [0, 1/6, 2/6, 3/6, 4/6, 5/6, 1], followed by parametric
+//! contrast/brightness/gamma.
 //!
-//! This block is a superset of [`ToneBlock`]: in addition to the 7-point LUT it
-//! also applies parametric contrast/brightness/gamma, so a single ToneLutBlock
-//! can replace both `ToneBlock` and a separate LUT block. In the hybrid
-//! controller mode, the rule-based `IspController` sets contrast/brightness/
-//! gamma while the neural controller sets the 7-point LUT.
+//! This block is a superset of [`ToneBlock`]: it applies both the 7-point LUT
+//! from the neural controller AND the parametric contrast/brightness/gamma.
+//! In the hybrid controller mode, the rule-based `IspController` sets
+//! contrast/brightness/gamma while the neural controller sets the 7-point LUT.
 //!
 //! ONNX subgraph:
 //!   1. Piecewise-linear LUT from 7 control points at x = [0, 1/6, ..., 1]:
 //!      For segment i (0..5):
 //!        seg_in   = clip(x - t_i, 0, 1/6)
-//!        seg_out  = seg_in * slope_i   where slope_i = (t_{i+1} - t_i) * 6
-//!      result     = t_0 + sum(seg_out_i for i in 0..5)
-//!   2. Apply parametric: result = result * contrast + brightness
-//!   3. Apply gamma: result = result ^ (1/gamma)
+//!        seg_out  = seg_in * slope_i   where slope_i = (y_{i+1} - y_i) * 6
+//!      lut_out   = y_0 + sum(seg_out_i for i in 0..5)
+//!   2. Apply parametric: lut_out * contrast + brightness
+//!   3. Apply gamma: result ^ (1/gamma)
 //!
-//! At x = k/6: LUT result = t_0 + sum_{j<k} (t_{j+1} - t_j) = t_k  ✓
+//! At x = k/6: LUT result = y_0 + sum_{j<k} (y_{j+1} - y_j) = y_k  ✓
+//!
+//! The neural controller is responsible for computing the 7 LUT values and the
+//! contrast/brightness/gamma. This block simply applies them per-pixel.
 
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// 7-point tone curve LUT block with parametric contrast/brightness/gamma.
-///
-/// Applies piecewise-linear tone mapping using 7 control points at fixed
-/// x-positions [0, 1/6, 2/6, 3/6, 4/6, 5/6, 1], followed by parametric
-/// contrast/brightness/gamma adjustment.
 #[derive(Debug)]
 pub struct ToneLutBlock {
     pub id: String,
@@ -192,10 +190,10 @@ impl IspBlock for ToneLutBlock {
         // Segment slopes: slope_i = (y_{i+1} - y_i) * 6
 
         // Accumulator starts at y_0 (tone_curve_lut[0])
-        let mut acc = format!("{}/lut_t0", ns);
+        let mut acc = format!("{}/lut_y0", ns);
         nodes.push(Proto::node(
             "Identity",
-            &[&format!("{}/t0", ns)],
+            &[&format!("{}/y0", ns)],
             &[&acc],
             &[],
         ));
@@ -295,12 +293,12 @@ impl IspBlock for ToneLutBlock {
         let ns = self.tensor_ns();
         let mut inputs = Vec::new();
 
-        // 7 tone curve point values: t0..t6
+        // 7 tone curve point values: y_0..y_6
         for i in 0..7 {
-            inputs.push((format!("{}/t{}", ns, i), 1, vec![1]));
+            inputs.push((format!("{}/y{}", ns, i), 1, vec![1]));
         }
 
-        // 6 segment start positions: t_0..t_5 (for Sub x - t_i)
+        // 6 segment start positions: t_i = i/6 (for Sub x - t_i)
         for i in 0..6 {
             inputs.push((format!("{}/t{}", ns, i), 1, vec![1]));
         }
@@ -318,6 +316,9 @@ impl IspBlock for ToneLutBlock {
         // zero constant for Clip lower bound
         inputs.push((format!("{}/zero", ns), 1, vec![1]));
 
+        // one constant for Clip upper bound
+        inputs.push((format!("{}/one", ns), 1, vec![1]));
+
         // Contrast, brightness, inv_gamma (parametric tone)
         inputs.push((format!("{}/contrast", ns), 1, vec![1]));
         inputs.push((format!("{}/brightness", ns), 1, vec![1]));
@@ -333,7 +334,7 @@ impl IspBlock for ToneLutBlock {
         // 7 tone curve point values (default: identity LUT)
         for i in 0..7 {
             inits.push((
-                format!("{}/t{}", ns, i),
+                format!("{}/y{}", ns, i),
                 self.tone_curve_lut[i].to_ne_bytes().to_vec(),
             ));
         }
@@ -358,7 +359,8 @@ impl IspBlock for ToneLutBlock {
 
         // 6 segment slopes: slope_i = (y_{i+1} - y_i) * 6
         for i in 0..6 {
-            let slope: f32 = (self.tone_curve_lut[i + 1] - self.tone_curve_lut[i]) * 6.0;
+            let slope: f32 =
+                (self.tone_curve_lut[i + 1] - self.tone_curve_lut[i]) * 6.0;
             inits.push((
                 format!("{}/slope{}", ns, i),
                 slope.to_ne_bytes().to_vec(),
@@ -369,6 +371,12 @@ impl IspBlock for ToneLutBlock {
         inits.push((
             format!("{}/zero", ns),
             0.0f32.to_ne_bytes().to_vec(),
+        ));
+
+        // one constant
+        inits.push((
+            format!("{}/one", ns),
+            1.0f32.to_ne_bytes().to_vec(),
         ));
 
         // Contrast, brightness, inv_gamma defaults
@@ -427,7 +435,7 @@ mod tests {
         b.set_input_source("in/frame");
         let nodes = b.nodes();
         // 6 segments × (Sub + Clip + Mul + Add) = 24 nodes
-        // + initial Identity (t0) = 1
+        // + initial Identity (y0) = 1
         // + contrast Mul + brightness Add + Clip + Pow + final Identity = 5
         // Total = 30 nodes
         assert!(nodes.len() >= 25, "Expected >= 25 nodes, got {}", nodes.len());
@@ -438,15 +446,15 @@ mod tests {
         let b = ToneLutBlock::new();
         let inputs = b.extra_inputs();
         // 7 tone points + 6 segment starts + 6 segment widths + 6 slopes
-        // + 1 zero + contrast + brightness + inv_gamma = 29
-        assert_eq!(inputs.len(), 29, "Expected 29 extra inputs, got {}", inputs.len());
+        // + 1 zero + 1 one + contrast + brightness + inv_gamma = 29
+        assert_eq!(inputs.len(), 30, "Expected 30 extra inputs, got {}", inputs.len());
     }
 
     #[test]
     fn test_tone_lut_extra_input_defaults_count() {
         let b = ToneLutBlock::new();
         let inits = b.extra_input_defaults();
-        assert_eq!(inits.len(), 29, "Expected 29 initializers, got {}", inits.len());
+        assert_eq!(inits.len(), 30, "Expected 30 initializers, got {}", inits.len());
     }
 
     #[test]
