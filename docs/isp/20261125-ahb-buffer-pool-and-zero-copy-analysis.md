@@ -17,8 +17,8 @@ status: resolved — hypothesis refuted; real defects identified below
   back to the buffer pool** afterwards, so the pool runs dry and
   **no valid frame can be output** (preview stays blank after the first
   frame, or no frames at all).
-- Related prior brief:
-  `.agent/briefs/20261124-141347-analysis-first-frame-normal-subsequent-frames-blank.md`
+- Related prior analysis:
+  [`20261124-first-frame-normal-subsequent-blank-analysis.md`](20261124-first-frame-normal-subsequent-blank-analysis.md)
   (first frame normal, subsequent blank — probe/perf context).
 
 ## Evidence — logs grabbed
