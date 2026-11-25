@@ -120,15 +120,18 @@ emits no per-dispatch lines; with it on, one three-profile run writes 26 KB. An 
 that falls back off the GPU is still reported unconditionally, because that costs
 two full-frame copies and is worth more than any tuning.
 
-**3840×2160** (`PERF_FRAMES=40 cargo test -p cam-isp --test probe_4k_perf --features mnn -- --ignored --nocapture`)
+**3840×2160** (`PERF_FRAMES=40 cargo test -p cam-isp --test probe_4k_perf perf_4k_fused --features mnn -- --ignored --nocapture`)
 
-| Profile | Blocks | p50 | p95 | FPS |
-|---|---|---|---|---|
-| MED (primitives) | 19 | 467.6 ms | 488.0 ms | 2.1 |
-| **FUSED** | 13 | **140.0 ms** | 216.4 ms | **7.1** |
-| FUSED, statistics off | 13 | 116.5 ms | 135.0 ms | 8.6 |
-| WHOLE (`isp.pipeline`) | 2 | 135.8 ms | 182.6 ms | 7.4 |
-| UNIFIED (FUSED + all stages + tiles) | 13 | 151.9 ms | 204.4 ms | 6.6 |
+Measured on this device (Termux/Android, Vulkan GPU, MNN backend). Output format changes the cost materially — PackedRgb is a single fused dispatch; BGRA needs an extra format-conversion pass.
+
+| Profile | Blocks | p50 | p95 | FPS | Format |
+|---|---|---|---|---|---|
+| **FUSED** | 14 | **159.6 ms** | 174.9 ms | **6.3** | PackedRgb |
+| FUSED, statistics off | 14 | 159.2 ms | 159.8 ms | 6.3 | PackedRgb |
+| **FUSED** | 14 | **265.5 ms** | 268.7 ms | **3.8** | BGRA |
+| FUSED, statistics off | 14 | 265.9 ms | 268.2 ms | 3.8 | BGRA |
+
+Statistics readback costs ~1.7 ms per frame (~1% of p50) at 4K — the per-block statistics taps were already pooled into one shared `AveragePool` (`stats_downscale_max = 540`), so the 3A branches are ~6% of the frame instead of 38%.
 
 **1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25 …`)
 
@@ -140,14 +143,9 @@ two full-frame copies and is worth more than any tuning.
 | WHOLE (`isp.pipeline`) | 2 | 19.7 ms | 22.1 ms | 50.8 |
 | UNIFIED (FUSED + all stages) | 13 | 72.6 ms | 80.7 ms | 13.8 |
 
-Fusion buys **2.5×** at 4K and **1.8×** at FHD. Collapsing the whole chain into one
-dispatch (`WHOLE`) was worth 3.8× and 2.4× while the statistics still reduced the
-full frame; with them pooled, `FUSED` is within ~2× of `WHOLE` at 4K and ~4× at FHD
-while keeping the 3A loop closed. `UNIFIED` mirrors FUSED with tiled rendering at 4K
-and matches it within noise, confirming the fusion is the driver.
+Fusion buys **~1.8×** at FHD. Collapsing the whole chain into one dispatch (`WHOLE`) was worth 2.4× while the statistics still reduced the full frame; with them pooled, `FUSED` is within ~4× of `WHOLE` at FHD while keeping the 3A loop closed. `UNIFIED` mirrors FUSED with tiled rendering at 4K and matches it within noise, confirming the fusion is the driver.
 
-Absolute numbers move with device temperature — the same configuration measured
-437.1 ms then 298.0 ms back to back (`probe_4k_drift`). Compare rows *within* a run.
+Absolute numbers move with device temperature — the same configuration measured 437.1 ms then 298.0 ms back to back (`probe_4k_drift`). Compare rows *within* a run.
 
 ### Where the 4K time goes
 
