@@ -121,8 +121,10 @@
   coefficients (warp grid/LUT) are not reallocated each frame. The dedup is now
   **off by default** after a blue-frame report: `SOFTISP_CACHE_ON` /
   `/sdcard/download/softisp-cache-on` brings it back without a rebuild. Host
-  scratch reuse stays active either way. See the critical-duration backlog
-  below.
+  scratch reuse stays active either way. A follow-up capture with the
+  always-upload build stayed normal for 170 sampled frames while 3A and a
+  recoverable camera error still occurred, so the default stays off. See the
+  critical-duration backlog below.
 - **Output metadata cached on the visible path** (2026-11-26): `prepare()` now
   stores the output shape/type-derived layout and the tensor-name `CString`s in
   `PreparedMeta`, so `run_prepared()` no longer repeats those FFI reads and
@@ -173,8 +175,8 @@ Analysis lives in `docs/isp/20261126-upload-dedup-critical-path.md`,
 the ignored `perf_critical_path` probe (`PERF_FRAMES=40`, `--features mnn`) and
 compare the prefill, inference and output columns. Hermetic gate at this point:
 fmt, canonical clippy, 853 passed / 2 ignored
-`cam-isp --lib --features rectifier` tests, 3 layout tests with real MNN, and
-`cargo check --features "rectifier mnn"`.
+`cam-isp --lib --features rectifier` tests, 891 passed / 2 ignored with real
+MNN, and `cargo check --features "rectifier mnn"`.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 

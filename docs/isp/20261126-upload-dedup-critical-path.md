@@ -104,10 +104,11 @@ Evidence from the log:
   further frames. This correlates with the user's "after a few seconds" better
   than any tensor event.
 
-Conclusion: the log confirms the cache is skipping uploads and shows no failed
-or rejected write, but it does not record skipped tensor names/values, so it
-cannot by itself prove or disprove a stale-upload colour cast. A targeted A/B
-run is required; do not revert the cache on log evidence alone.
+Conclusion at the time: the log confirms the cache is skipping uploads and
+shows no failed or rejected write, but it does not record skipped tensor
+names/values, so it cannot by itself prove or disprove a stale-upload colour
+cast. A targeted A/B run was required. The follow-up normal-run capture below
+supplies the comparison; the cache is now off by default.
 
 ### Prior incident report (2026-11-25, closest match)
 
@@ -166,13 +167,45 @@ tracks the colour fault means the whole device-residency premise is unsafe
 again — remove the dedup marker until a fence-backed proof replaces it. Remove
 all markers afterwards.
 
+### Normal-run confirmation (2026-11-26 04:01 HKT)
+
+After the default-off source edit was built into the APK (APK mtime 03:59:53
+HKT; source edits 03:52 HKT; `git HEAD` was still `3a0d24ad` at capture time
+because the commit landed afterwards — exact binary provenance is not provable
+from the log), the user reported the picture was normal. Logs were copied to
+`.tmp/log-grab-20261126-normal/` (app log, rotated log, `logcat -d`).
+
+- 35 sampled frames from frame 1 through frame 170 all report `non-black
+  100.0%`; `rgb mean` stays around R 205–218 / G 202–225 / B 199–220. The
+  blue signature of the earlier run (`[0.0, 0.0, 255.0]` from frame 10 onward,
+  with `[0,0,118]` / `[0,0,234]` in between) is absent. Final sample at frame
+  170: `[205.7, 202.7, 204.6]`.
+- Controller state still drifts normally (CCT 5200 → 4952, R_gain 5.28 → 4.87,
+  B_gain 2.35 → 2.28), so the comparison is not explained by frozen 3A.
+- A recoverable `ACameraDevice error 4` followed by
+  `fatal camera callback: closing session and reopening` also happened in this
+  normal run, pausing frames for ~27 s; colour resumed normally afterwards.
+  The camera error is therefore not sufficient to explain the blue frames.
+- No `name(hit)` or `tensor cache frame` lines: the trace marker was absent,
+  so skipped writes would not have been printed. No A/B marker existed at all,
+  and the running source defaulted dedup off. This is consistent with the
+  always-upload path, not positive proof of which binary flag was active.
+
+Conclusion: the blue cast tracks the dedup-enabled build and disappears on a
+dedup-disabled build while 3A and the camera error still occur. That is the
+strongest available evidence that reusing cached tensor values on pooled
+sessions is unsafe again. Keep dedup off by default; the opt-in marker remains
+for diagnosis only, and re-enabling it permanently needs a fence-backed proof
+of device tensor residency.
+
 ## Remaining work
 
 - App-level timestamps for camera fill and display handoff (P2h, depends on
   P2b for an output AHB).
 - Confirm on device that upload phase shrinks while inference stays the floor,
   and that the first frame after a geometry change re-uploads everything.
-- Run the marker-file A/B above, sampling reused slots with
-  `needs_resize=false` as in the 2026-11-25 incident. If one tensor is proven
-  stale, invalidate only that name; if reused-slot hits track the colour fault,
-  leave the dedup marker off until device residency is proven with fences.
+- Only if dedup must be recovered: run the marker-file A/B above, sampling
+  reused slots with `needs_resize=false` as in the 2026-11-25 incident. If one
+  tensor is proven stale, invalidate only that name; if reused-slot hits track
+  the colour fault, leave the dedup marker off until device residency is proven
+  with fences. The normal-run capture above already favours leaving it off.
