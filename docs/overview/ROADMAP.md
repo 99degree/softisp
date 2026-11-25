@@ -499,12 +499,14 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   in `PrepareParams`, fence ownership/close-on-consumer, no reuse before the
   release fence is taken, the zeroing policy and full-overwrite host allocation.
   Idempotent cancel/drain with both token shapes is now covered by hermetic
-  `cam-types` and `cam-ipa` tests. Still TODO: extending the
-  per-phase perf probe
-  to separate capture-fill,
-  prefill, inference, display handoff and readback. Add an ignored on-device
-  test that checks warm-up allocation time and confirms no stale/blank frames
-  after cancel + restart.
+  `cam-types` and `cam-ipa` tests. The engine-side probe split is done
+  (`FramePhaseTimings`, `StagedFinish::readback_ns`, `perf_critical_path`; see
+  `docs/isp/20261126-critical-path-instrumentation.md`): prefill, inference,
+  output and deferred readback are reported separately. An ignored on-device
+  test now reports warm-up allocation time and checks that the first frame after
+  cancel + restart is non-blank with sequence 0 (`softisp-anw`, `--ignored`);
+  user-side log confirmation is still required. Still TODO: app-level
+  timestamps for capture-fill and display handoff.
 
 ### P4 — Multi-Frontend IPA Plugin Architecture ✅ (implemented 2026-11-25)
 

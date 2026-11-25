@@ -394,16 +394,19 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cam_ipa::{BufferManager, ZeroPolicy};
     use cam_isp::controller::IspController;
     use cam_isp::engine::{IspEngine, ProcessParams};
     use cam_isp::error::{IspError, IspResult};
     use cam_isp::pipeline::{IspBlock, IspFrame};
+    use cam_types::FrameFormat;
     use std::any::Any;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     struct TrackedEngine {
         drops: Arc<AtomicUsize>,
         controller: Mutex<IspController>,
+        output: Option<IspFrame>,
     }
 
     impl Drop for TrackedEngine {
@@ -448,7 +451,10 @@ mod tests {
         }
 
         fn process(&self, _params: &ProcessParams<'_>) -> IspResult<IspFrame> {
-            Err(IspError::Unsupported("tracked test engine".into()))
+            match &self.output {
+                Some(frame) => Ok(frame.clone()),
+                None => Err(IspError::Unsupported("tracked test engine".into())),
+            }
         }
     }
 
@@ -472,6 +478,7 @@ mod tests {
             Box::new(TrackedEngine {
                 drops: Arc::clone(&drops),
                 controller: Mutex::new(IspController::new()),
+                output: None,
             })
         };
         let mut runner = PipelineRunner::new(
@@ -495,6 +502,87 @@ mod tests {
         assert!(runner.poll().is_none());
         assert!(!runner.has_camera());
         assert_eq!(drops.load(AtomicOrdering::SeqCst), 2);
+    }
+
+    #[test]
+    #[ignore = "on-device warm-up and cancel/restart check"]
+    fn device_warmup_and_cancel_restart_no_stale_frame() {
+        let mut manager = BufferManager::new();
+        let warmup_t0 = Instant::now();
+        let warm = manager.allocate_mem_with_policy(1600 * 1200 * 4, ZeroPolicy::FullOverwrite);
+        let warmup = warmup_t0.elapsed();
+        assert_eq!(warm.len(), 1600 * 1200 * 4);
+        eprintln!("warm-up allocation {} bytes in {warmup:?}", warm.len());
+
+        let drops = Arc::new(AtomicUsize::new(0));
+        let config = PipelineConfig {
+            sensor_max: 1023.0,
+            bayer_pattern: 0,
+        };
+        let show_raw = Arc::new(AtomicBool::new(false));
+        let make_engine = || -> Box<dyn IspEngine> {
+            Box::new(TrackedEngine {
+                drops: Arc::clone(&drops),
+                controller: Mutex::new(IspController::new()),
+                output: None,
+            })
+        };
+
+        let mut first = PipelineRunner::new(
+            None,
+            [make_engine(), make_engine()],
+            config,
+            Arc::clone(&show_raw),
+        );
+        let handle = first.handle();
+        handle.cancel();
+        handle.cancel();
+        first.cancel();
+        assert!(first.poll().is_none());
+        assert_eq!(drops.load(AtomicOrdering::SeqCst), 2);
+
+        let mut frame = IspFrame::new(4, 4, FrameFormat::Rgba8888);
+        frame.data.fill(0x7f);
+        let params = ProcessParams::new(4, 4, &[0u8; 32]);
+        let probe = TrackedEngine {
+            drops: Arc::clone(&drops),
+            controller: Mutex::new(IspController::new()),
+            output: Some(frame),
+        };
+        let produced = probe.process(&params).expect("non-blank probe frame");
+        assert!(produced.data.iter().any(|byte| *byte != 0));
+        drop(probe);
+
+        let mut restarted =
+            PipelineRunner::new(None, [make_engine(), make_engine()], config, show_raw);
+        assert!(!restarted.handle().is_cancelled());
+        assert!(restarted.poll().is_none());
+        restarted.pending.insert(
+            0,
+            Done {
+                seq: 0,
+                worker: 0,
+                raw: RawStats {
+                    min: 0,
+                    max: 255,
+                    mean: 127.0,
+                },
+                capture: Duration::ZERO,
+                stage: Duration::ZERO,
+                isp: Duration::ZERO,
+                error: None,
+                data: produced.data.clone(),
+                width: produced.width,
+                height: produced.height,
+                kind: FrameKind::Bgra,
+            },
+        );
+        let presented = restarted.poll().expect("fresh frame after restart");
+        assert_eq!(presented.seq, 0);
+        assert!(presented.data.iter().any(|byte| *byte != 0));
+        restarted.cancel();
+        assert!(restarted.poll().is_none());
+        assert!(drops.load(AtomicOrdering::SeqCst) >= 5);
     }
 
     #[test]

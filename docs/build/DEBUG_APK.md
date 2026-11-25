@@ -230,3 +230,22 @@ upstream.
 | "All files access" granted | Settings → Apps → SoftISP Camera → All files access |
 | Log file chosen path | First lines of whichever `softisp-app.log` you find |
 | Logcat tag | `logcat -d -s cam_hal_rust` |
+
+---
+
+## 8. Ignored P2h device check
+
+The P2h warm-up/cancel-restart check is intentionally ignored in the default
+test run. Run it on the device after installing a fresh APK:
+
+```bash
+cargo test -p softisp-anw --all-features \
+  device_warmup_and_cancel_restart_no_stale_frame -- --ignored --nocapture
+```
+
+It reports `warm-up allocation <bytes> bytes in <duration>`, cancels and
+restarts the two-worker runner, and asserts that the first frame after restart
+is non-blank and carries sequence number 0. The camera and surface stay
+user-side: this test does not install, launch, or drive the APK. Use the normal
+launch flow, then confirm in `softisp-app.log` that the first frame after a
+stop/restart has non-black pixels and no stale sequence gap.
