@@ -13,12 +13,16 @@ use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex};
 
 use crate::mnn_sys::{MnnBackendType, MnnInterpreterSafe, MnnSessionSafe, MnnTensorSafe};
+use crate::upload_cache::UploadCache;
 
 /// One session together with its cached extra-input tensor handles.
 #[cfg(feature = "mnn")]
 pub(crate) struct SessionSlot {
     pub(crate) sess: MnnSessionSafe,
     pub(crate) tensor_pool: Vec<(String, MnnTensorSafe)>,
+    /// Last value successfully uploaded to each tensor in this session.
+    /// Cleared whenever `resizeSession` replaces the backend buffers.
+    pub(crate) upload_cache: UploadCache,
     /// Input geometry this session's graph is currently sized for, if any.
     ///
     /// MNN invalidates a whole session whenever an input tensor's extent
@@ -96,6 +100,7 @@ impl SessionPool {
                 slots.push_back(SessionSlot {
                     sess,
                     tensor_pool,
+                    upload_cache: UploadCache::default(),
                     resized_for: None,
                 });
             }
@@ -192,6 +197,12 @@ impl<'a> SessionGuard<'a> {
         &self.pool.interp
     }
 
+    /// Tensor handles and their per-session upload cache, borrowed together.
+    pub(crate) fn extra_inputs(&mut self) -> (&[(String, MnnTensorSafe)], &mut UploadCache) {
+        let slot = self.slot.as_mut().unwrap();
+        (&slot.tensor_pool, &mut slot.upload_cache)
+    }
+
     /// Re-resolve the cached extra-input tensor handles from the session.
     ///
     /// `resizeSession` re-allocates the session's tensors, so every handle
@@ -207,6 +218,7 @@ impl<'a> SessionGuard<'a> {
             .filter_map(|n| interp.get_input(&slot.sess, &n).map(|t| (n, t)))
             .collect();
         slot.tensor_pool = refreshed;
+        slot.upload_cache.clear();
     }
 }
 

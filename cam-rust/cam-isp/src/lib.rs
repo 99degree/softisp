@@ -33,6 +33,8 @@ pub mod profile;
 pub mod profile_builder;
 pub mod rectifier_model;
 pub mod unified_pipeline;
+#[cfg(any(feature = "mnn", test))]
+pub(crate) mod upload_cache;
 pub mod warp;
 #[cfg(feature = "mnn")]
 pub mod mnn {

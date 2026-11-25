@@ -96,6 +96,8 @@ struct PhaseSamples {
     prep_sum: f64,
     infer: Vec<f64>,
     infer_sum: f64,
+    fine_infer: Vec<f64>,
+    fine_infer_sum: f64,
     post: Vec<f64>,
     post_sum: f64,
     setup: Vec<f64>,
@@ -123,6 +125,7 @@ impl PhaseSamples {
             total: Vec::with_capacity(capacity),
             prep: Vec::with_capacity(capacity),
             infer: Vec::with_capacity(capacity),
+            fine_infer: Vec::with_capacity(capacity),
             post: Vec::with_capacity(capacity),
             setup: Vec::with_capacity(capacity),
             upload: Vec::with_capacity(capacity),
@@ -154,8 +157,8 @@ impl PhaseSamples {
                 ms(t.tensor_upload_ns),
             );
             sample(
-                &mut self.inference,
-                &mut self.inference_sum,
+                &mut self.fine_infer,
+                &mut self.fine_infer_sum,
                 ms(t.inference_ns),
             );
             sample(
@@ -181,7 +184,7 @@ impl PhaseSamples {
         let phases = Phases {
             setup: phase_stats(self.setup, self.setup_sum),
             upload: phase_stats(self.upload, self.upload_sum),
-            inference: phase_stats(self.infer, self.infer_sum),
+            inference: phase_stats(self.fine_infer, self.fine_infer_sum),
             output_meta: phase_stats(self.output_meta, self.output_meta_sum),
             output_copy: phase_stats(self.output_copy, self.output_copy_sum),
             readback: phase_stats(self.readback, self.readback_sum),

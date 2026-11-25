@@ -121,6 +121,7 @@ type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 use crate::controller::IspController;
 use crate::engine::{IspEngine, OutputFormat, ProcessParams};
 use crate::pipeline::{ExternalBuffer, FramePhaseTimings, IspAuxOutput, IspBlock, IspFrame};
+use crate::upload_cache::UploadCache;
 use cam_types::{FrameFormat, ToneParams};
 
 #[cfg(feature = "mnn")]
@@ -914,6 +915,7 @@ impl MnnEngine {
     fn set_extra_inputs(
         &self,
         pool: &[(String, crate::mnn_sys::MnnTensorSafe)],
+        cache: &mut UploadCache,
         ccm: Option<&[f32; 9]>,
         tone: &ToneParams,
         bayer: Option<&[f32; 4]>,
@@ -1426,6 +1428,8 @@ impl MnnEngine {
         // One upload per tensor, using the value that won. A fused/converted
         // graph legitimately lacks many primitive-sink names: warn once per
         // build (with the reason) instead of paying a file write per frame.
+        // Most queued values are build-time defaults and never change, so skip
+        // any whose exact bytes are already resident in this session.
         let mut missing = Vec::new();
         for (name, value) in pending {
             let Some(t) = find(pool, &name) else {
@@ -1434,13 +1438,20 @@ impl MnnEngine {
             };
             match value {
                 PendingWrite::Scalar(val) => {
-                    t.upload_f32_shaped(&[1], &[val]);
+                    if cache.needs_scalar(&name, val) && t.upload_f32_shaped(&[1], &[val]) {
+                        cache.record_scalar(&name, val);
+                    }
                 }
                 PendingWrite::Array(vals) => {
+                    if !cache.needs_f32(&name, &vals) {
+                        continue;
+                    }
                     // A failed upload leaves the tensor at whatever it was
                     // allocated with — usually zeros. Say so instead of
                     // swallowing the bool into a silently black frame.
-                    if !t.upload_f32(&vals) {
+                    if t.upload_f32(&vals) {
+                        cache.record_f32(&name, &vals);
+                    } else {
                         warn!(
                             "{name}: upload of {} f32 rejected (tensor wants a different size)",
                             vals.len()
@@ -1448,7 +1459,12 @@ impl MnnEngine {
                     }
                 }
                 PendingWrite::Raw(data) => {
-                    if !t.upload_bytes(&data, 2, 32) {
+                    if !cache.needs_bytes(&name, &data) {
+                        continue;
+                    }
+                    if t.upload_bytes(&data, 2, 32) {
+                        cache.record_bytes(&name, &data);
+                    } else {
                         warn!("default for {name} ({} B) failed to upload", data.len());
                     }
                 }
@@ -2030,8 +2046,10 @@ impl MnnEngine {
             slot.refresh_tensors(interp);
         }
 
+        let (tensors, cache) = slot.extra_inputs();
         self.set_extra_inputs(
-            &slot.tensor_pool,
+            tensors,
+            cache,
             ccm,
             tone,
             bayer,
