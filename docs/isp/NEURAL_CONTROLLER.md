@@ -107,8 +107,23 @@ let pipeline = UnifiedPipeline::new(config)?
     .with_controller(Box::new(NeuralController::with_default_model()));
 ```
 
-When the `rectifier` feature is enabled, `UnifiedPipeline::new()` already
-wires `NeuralController::with_default_model()` as the default controller.
+## Model selection order
+
+`with_default_model()` tries, in order:
+
+1. Filesystem candidates (dev/CI from repo root):
+   - `isp-rectifier/models/fusedispcontroller_light_int8.onnx`
+   - `isp-rectifier/models/fusedispcontroller_light.onnx`
+   - `isp-rectifier/models/fusedispcontroller_light_fp16.onnx`
+   - `isp-rectifier/fusedispcontroller_light_int8.onnx`
+   - `isp-rectifier/fusedispcontroller_light.onnx`
+   - `isp-rectifier/fusedispcontroller_light_fp16.onnx`
+2. Embedded bytes compiled into the binary (Android APK):
+   - `fusedispcontroller_light_int8.onnx` (INT8)
+   - `fusedispcontroller_light.onnx` (FP32)
+3. Fallback to rule-based `IspController` if nothing loads.
+
+All variants share the same interface: `hist[256] + meta[52] → wb[3] / ccm[9] / tone[7] / zoom[1]`.
 
 ## Fallback behavior
 
@@ -121,7 +136,7 @@ AE/AWB/tone/denoise). This guarantees the pipeline never stalls on a bad model.
 ```
 cargo test -p cam-isp --features rectifier --lib        # 818 tests pass
 cargo test -p cam-isp --test test_neural_controller_onnx --features rectifier  # 6 pass
-cargo test -p cam-isp --test test_rectifier_integration --features rectifier   # 6 pass
+cargo test -p cam-isp --test test_rectifier_integration --features rectifier   # 9 pass (mock + real ONNX)
 cargo test -p isp-rectifier --features onnx-runtime --lib  # 6 pass
 cargo clippy -p cam-isp --lib --features rectifier -- -D warnings  # clean
 cargo clippy -p isp-rectifier --lib --features onnx-runtime -- -D warnings  # clean

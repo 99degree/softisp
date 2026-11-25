@@ -131,12 +131,32 @@ impl NeuralController {
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light_fp16.onnx"),
     ];
 
+    /// Embedded INT8 model bytes (compiled into the APK at build time).
+    /// This is the fallback used on Android where the `isp-rectifier/models/`
+    /// directory is not present on the device filesystem.
+    #[cfg(feature = "rectifier")]
+    const EMBEDDED_MODEL_INT8: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../isp-rectifier/models/fusedispcontroller_light_int8.onnx"
+    ));
+
+    /// Embedded FP32 model bytes (compiled into the APK at build time).
+    #[cfg(feature = "rectifier")]
+    const EMBEDDED_MODEL_FP32: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../isp-rectifier/models/fusedispcontroller_light.onnx"
+    ));
+
     /// Create controller with the default pre-trained ONNX model.
     ///
     /// Tries each candidate path in order; the first one that loads successfully
-    /// is used. If none load, falls back to the rule-based controller.
+    /// is used. If none exist on disk (e.g. on Android where the
+    /// `isp-rectifier/models/` directory is not part of the APK), falls back to
+    /// the embedded model bytes compiled into the binary. If that also fails,
+    /// falls back to the rule-based controller.
     #[cfg(feature = "rectifier")]
     pub fn with_default_model() -> Self {
+        // 1. Try filesystem paths (dev/CI runs from repo root)
         for &path in Self::DEFAULT_MODEL_CANDIDATES {
             if std::path::Path::new(path).exists() {
                 let ctrl = Self::with_model(path);
@@ -146,7 +166,31 @@ impl NeuralController {
             }
         }
 
-        // None of the pre-trained models exist/load; fall back to rule-based.
+        // 2. Try embedded model bytes (APK / installed builds)
+        for embedded in [
+            Self::EMBEDDED_MODEL_INT8,
+            Self::EMBEDDED_MODEL_FP32,
+        ] {
+            if !embedded.is_empty() {
+                match Self::load_from_bytes(embedded) {
+                    Ok(ctrl) => {
+                        info!(
+                            "NeuralController: loaded embedded model ({} bytes)",
+                            embedded.len()
+                        );
+                        return ctrl;
+                    }
+                    Err(e) => {
+                        warn!(
+                            "NeuralController: failed to load embedded model: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // None of the models exist/load; fall back to rule-based.
         warn!(
             "NeuralController: no pre-trained ONNX model found, using fallback"
         );

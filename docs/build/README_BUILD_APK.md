@@ -115,6 +115,24 @@ The APK bundles these native libraries (from `cam-rust/lib/aarch64-v8a/`) into `
 
 These are copied by cargo-apk2 via `runtime_libs = "../lib"` in `cam-camera-app/Cargo.toml`.
 
+## Neural ISP Rectifier ONNX Models (bundled in APK)
+
+The pre-trained rectifier ONNX models are compiled into the APK binary via
+`include_bytes!` (in `cam-rust/cam-isp/src/neural_controller.rs`):
+
+- `isp-rectifier/models/fusedispcontroller_light_int8.onnx` (default, INT8, fastest)
+- `isp-rectifier/models/fusedispcontroller_light.onnx` (FP32 fallback)
+
+The neural controller (`NeuralController::with_default_model()`) tries these
+embedded bytes at runtime. If none load (e.g. model file missing or corrupt),
+it falls back to the rule-based `IspController` so the preview stays alive.
+No separate `.onnx` file needs to ship in `lib/` — the models are part of
+`libcam_camera_app.so`.
+
+The rectifier feature is enabled for the APK via
+`cam-isp = { ..., features = ["rectifier"] }` in
+`android-app/Cargo.toml`.
+
 ## CI Gates (must pass locally before push)
 
 ```bash
