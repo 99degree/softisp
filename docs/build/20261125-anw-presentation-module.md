@@ -55,5 +55,10 @@ channel order stay identical to the existing camera app preview.
 
 ## Verification
 
-Pending: `cargo check -p softisp-anw`, `cargo clippy -p softisp-anw --all-targets
--- -D warnings`, and `cargo fmt --all -- --check` must all pass.
+- `cargo check -p softisp-anw`: clean (only the pre-existing manifest warning for
+  the unused android-target `android_logger` dependency).
+- `cargo clippy -p softisp-anw --lib --no-deps -- -D warnings`: clean. The
+  `-D warnings` run without `--no-deps` still reports pre-existing `cam-ipa`
+  lints from the upstream force-update; those are outside this fix.
+- `cargo test -p softisp-anw --lib`: 7 passed, 0 failed.
+- `cargo fmt --all -- --check`: clean after the separate formatting-only commit.
