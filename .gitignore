@@ -151,9 +151,9 @@ META-INF/
 *.aar.zip
 MNN-Android-3.5.1.aar*
 R.txt
+classes.txt
 classes.jar
-jni/
-proguard.txt
+# jni/ is now tracked — part of the IPA plugin architecture
 .arch_patch.txt
 docs/architecture/PIPELINE_BLOCKS.md.bak
 .lancedb_agent_index/

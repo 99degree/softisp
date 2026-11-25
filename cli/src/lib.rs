@@ -44,7 +44,7 @@ use cam_hal_linux::{list_v4l2_devices, capture_single_v4l2_frame};
 #[command(author, version, about = "cam-ipa Swiss Army Knife — softisp IPA toolkit")]
 struct Args {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 /// Profile argument enum
@@ -532,7 +532,7 @@ fn run_cli() -> i32 {
     env_logger::init();
 
     match args.command {
-        Commands::Generate { count, output, profile, width, height, format, backend, neural, model_dir, profile_json } => {
+        Some(Commands::Generate { count, output, profile, width, height, format, backend, neural, model_dir, profile_json }) => {
             println!("=== cam-ipa Swiss Army Knife ===");
             println!("Command: generate");
             let config = if let Some(pj_path) = &profile_json {
@@ -557,7 +557,7 @@ fn run_cli() -> i32 {
                 config.profile, width, height, format, backend, neural);
             cmd_generate(&config, count, output)
         }
-        Commands::Capture { device, count, output, profile, width, height, format, backend, neural, model_dir, profile_json } => {
+        Some(Commands::Capture { device, count, output, profile, width, height, format, backend, neural, model_dir, profile_json }) => {
             println!("=== cam-ipa Swiss Army Knife ===");
             println!("Command: capture");
             let config = if let Some(pj_path) = &profile_json {
@@ -582,7 +582,7 @@ fn run_cli() -> i32 {
                 config.profile, width, height, format, backend, neural);
             cmd_capture(&config, device, count, output)
         }
-        Commands::Bench { count, warmup, profile, width, height, format, backend, neural, model_dir, profile_json } => {
+        Some(Commands::Bench { count, warmup, profile, width, height, format, backend, neural, model_dir, profile_json }) => {
             println!("=== cam-ipa Swiss Army Knife ===");
             println!("Command: bench");
             let config = if let Some(pj_path) = &profile_json {
@@ -607,7 +607,7 @@ fn run_cli() -> i32 {
                 config.profile, width, height, format, backend, neural);
             cmd_bench(&config, count, warmup)
         }
-        Commands::Stats { count, output, profile, width, height, format, backend, neural, model_dir, profile_json } => {
+        Some(Commands::Stats { count, output, profile, width, height, format, backend, neural, model_dir, profile_json }) => {
             println!("=== cam-ipa Swiss Army Knife ===");
             println!("Command: stats");
             let config = if let Some(pj_path) = &profile_json {
@@ -632,19 +632,23 @@ fn run_cli() -> i32 {
                 config.profile, width, height, format, backend, neural);
             cmd_stats(&config, count, output)
         }
-        Commands::Zerocopy { size, iterations } => {
+        Some(Commands::Zerocopy { size, iterations }) => {
             cmd_zerocopy(size, iterations)
         }
-        Commands::Probe { json } => {
+        Some(Commands::Probe { json }) => {
             cmd_probe(json)
         }
-        Commands::ProfileJson { name, width, height, output, input } => {
+        Some(Commands::ProfileJson { name, width, height, output, input }) => {
             let input_path = input.map(|p| p.to_string_lossy().to_string());
             cmd_profile_json(name, width, height, output, input_path.as_deref())
         }
-        Commands::CmosDump { device, output } => {
+        Some(Commands::CmosDump { device, output }) => {
             let dev = device.as_deref();
             cmd_cmos_dump(dev, output.as_ref())
+        }
+        None => {
+            println!("No subcommand given. Run 'ipa_sk --help' for usage.");
+            cmd_probe(false)
         }
     }
 }

@@ -1,0 +1,18 @@
+[package]
+name = "softisp_jni"
+version = "0.1.0"
+edition = "2021"
+description = "JNI bridge for softisp IPA on Android"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+cam-ipa = { path = "../cam-rust/cam-ipa" }
+jni = "0.21"
+ndk-sys = { version = "0.6", features = ["media"] }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[lib]
+name = "softisp_jni"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]

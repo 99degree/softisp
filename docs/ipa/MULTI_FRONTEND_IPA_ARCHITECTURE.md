@@ -263,24 +263,36 @@ Flow: dequeue buffer → wrap in `AnwBuffer` → `ipa.process_frame()` → queue
 | **Neural processor** | `isp-rectifier` distilled ONNX model with rule-based fallback |
 | **Zero-copy** | Linux `memfd_create` + mmap (`DmaBufBuffer`); Android `SharedFD` + `AhwBuffer` |
 | **Training data prep** | V4L2 per-frame stats → CMOS sensor characteristics → training datasets |
+| **Profile JSON dump/load** | `profile-json --name fused --output p.json`; `generate --profile-json p.json` |
+| **CMOS character dump** | `cmos-dump --device /dev/video0 --output cmos.json` (libcamera-compatible JSON) |
 
 ### Build
 
 ```bash
 # Synthetic frames only (default)
-cargo build -p cam-ipa-test-cli
+cargo build -p cam-ipa-sk
 
 # With V4L2 capture (Linux only)
-cargo build -p cam-ipa-test-cli --features v4l2
+cargo build -p cam-ipa-sk --features v4l2
 ```
 
 ### Run
 
 ```bash
 # Direct execution (polyglot ELF)
-./target/debug/libcam_ipa_test_cli.so
+./target/debug/libcam_ipa_sk.so
 
-# Or dlopen and call ipa_test_main()
+# Binary wrapper
+./target/debug/ipa_sk --help
+
+# Examples
+./target/debug/ipa_sk probe
+./target/debug/ipa_sk probe --json
+./target/debug/ipa_sk profile-json --name fused --output /tmp/fused.json
+./target/debug/ipa_sk generate --count 1 --profile fused --width 3840 --height 2160
+./target/debug/ipa_sk generate --profile-json /tmp/fused.json --count 1
+./target/debug/ipa_sk bench --count 10 --warmup 3 --profile fused --width 1920 --height 1080
+./target/debug/ipa_sk cmos-dump --device /dev/video0 --output cmos.json
 ```
 
 ### Frame Acquisition Priority
@@ -293,6 +305,7 @@ cargo build -p cam-ipa-test-cli --features v4l2
 - Processed BGRA frame written to `output_frame.bgra` for inspection
 - Per-frame metadata via `metadata_ready` callback (AWB gains, exposure, gain)
 - Frame done via `frame_done` callback
+- Stats written as JSON for CMOS sensor characterization
 
 ---
 

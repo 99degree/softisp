@@ -327,6 +327,9 @@ New crates added to the workspace:
 - Full ISP pipeline processing via `MnnEngine` Vulkan backend
 - 3A (AWB/AE/CCM/tone) via `IspController`; neural via `NeuralController`
 - Zero-copy: Linux `memfd_create` + mmap (`DmaBufBuffer`); Android `SharedFD` / `AhwBuffer`
+- Pipeline profile selection: `--profile {lite,med,fused,heavy,pro,test,unified,hdr,yuv}` per subcommand
+- Profile JSON dump/load: `profile-json --name fused --output p.json`, `generate --profile-json p.json`
+- CMOS character dump: `cmos-dump --device /dev/video0 --output cmos.json` (libcamera-compatible JSON)
 - Output BGRA frame to `output_frame.bgra`; per-frame metadata via callbacks
 - Polyglot ELF: runs directly (`./libcam_ipa_test_cli.so`) and dlopen-able (exports `ipa_test_main`, `my_entry`)
 
@@ -341,16 +344,16 @@ New crates added to the workspace:
 **Verification status:**
 - `cargo build -p cam-ipa` — compiles (rlib)
 - `cargo build -p libcamera-ipa` — compiles (rlib+cdylib)
-- `cargo build -p cam-ipa-test-cli` — compiles (rlib+cdylib+bin)
+- `cargo build -p cam-ipa-sk` — compiles (rlib+cdylib+bin)
 - `cargo build -p softisp-jni` / `softisp-anw` — compile-stubbed (Android target only)
 - Not yet runtime-tested against libcamera pipeline handler (requires libcamera-99degree fork build)
 
 **Next steps:**
 - Runtime test: load `libipa_softisp.so` in libcamera-99degree pipeline handler
 - End-to-end frame processing: stats → params → frame output
+- CLI end-to-end: V4L2 capture → ISP process → output frame + stats for training
 - JNI frontend wired to android-app crate
 - ANativeWindow frontend wired to display surface
-- CLI end-to-end: V4L2 capture → ISP process → output frame + stats for training
 
 ### P3 — Follow-up: unified runtime tensor naming
 
