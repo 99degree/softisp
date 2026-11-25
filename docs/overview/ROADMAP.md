@@ -1,6 +1,23 @@
 # Project Roadmap & Outstanding Work
 
-> Last updated: 2026-07-21. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
+> Last updated: 2026-11-25. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
+
+## Status (2026-11-25) — packed-preview perf work
+
+- **Runtime tensor uploads de-duplicated** (`d378a372`). `set_extra_inputs()`
+  queued ~60 writes/frame through `copyFromHostTensor`; ~18 of them were
+  defaults immediately overwritten by explicit values. Writes are now buffered
+  by name and flushed once with the final value. Device measurement before the
+  change: 173 ms of 311 ms/frame was tensor upload latency.
+- **Pipelined dual engine** (this session): the app loop runs two ISP workers,
+  one pinned per Vulkan engine, with sequence-numbered results reordered on the
+  presenting thread, so camera capture/staging overlaps inference.
+- **P2b re-verified against the current MNN tree:** the AHB `setDevicePtr`
+  surface in cam-isp is a stub — Vulkan `onAcquire` ignores the flag and
+  `mnn_run_true_zero_copy` binds host pointers Vulkan also ignores. The
+  in-repo correctness bugs (input tensor name, discarded FFI returns) are
+  fixed; the APK is deliberately **not** wired to it. Full end-to-end remains
+  blocked on MNN backend import + an output-surface AHB design (see P2b).
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
@@ -189,6 +206,14 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   than kept as a stub that cannot work; the MNN Vulkan backend import has to be written
   (item 1–4 above), the custom `.so` built and copied into `cam-rust/lib/aarch64-v8a/`,
   and the Rust surface reintroduced only once the backend honours the flag.
+- **Correction (2026-11-25):** `ProcessParams::{input_ahb,output_ahb}` and
+  `mnn_import_ahb_as_device_memory()` are still present in the tree (the 2026-11-15
+  removal above applied to a different FFI surface, `mnn_run_external_zero_copy`).
+  They are inert for the APK — no caller sets the fields, `zero_copy` is gated on
+  `output_buffer`, the two imports both bind `output_name` (the input should use
+  `self.frame_input_name`), and the FFI return codes are discarded. The
+  Vulkan `onAcquire` limitation is unchanged. In-repo correctness bugs were fixed;
+  the APK is deliberately left on the working copy-in/copy-out path.
 
 ### P3 — Hardening / CI ✅ (workspace clean)
 - **`cargo clippy --workspace --all-targets --features mnn -D warnings` passes** on all

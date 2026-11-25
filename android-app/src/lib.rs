@@ -9,23 +9,26 @@
 pub mod camera;
 pub mod crashlog;
 pub mod pipeline;
+pub mod pipeline_runner;
 pub mod preview;
 pub mod storage;
 
 use std::ffi::c_void;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use android_activity::ndk::native_window::NativeWindow;
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
-use cam_isp::dual_engine::DualGpuEngine;
 use cam_isp::engine::{select_engine_by_name, IspEngine};
 use cam_isp::mnnengine::MnnEngine;
 use cam_isp::profile::PipelineProfile;
 use cam_isp::{release_native_window, set_native_window};
-use camera::CameraSession;
+use camera::{CameraSession, RawFrame};
 use crashlog::write_line;
-use pipeline::{FrameStager, PipelineConfig};
+use pipeline::PipelineConfig;
+use pipeline_runner::PipelineRunner;
 use preview::WindowTarget;
 use storage::Access;
 
@@ -130,7 +133,7 @@ fn gcd(a: u32, b: u32) -> u32 {
 
 /// Summary of a BGRA frame's brightness, for the periodic status line.
 #[derive(Default)]
-struct FrameStats {
+pub(crate) struct FrameStats {
     mean_r: f64,
     mean_g: f64,
     mean_b: f64,
@@ -168,13 +171,13 @@ fn frame_stats(bgra: &[u8]) -> FrameStats {
 }
 
 /// Range and mean of the raw Bayer samples.
-struct RawStats {
-    min: u16,
-    max: u16,
-    mean: f64,
+pub(crate) struct RawStats {
+    pub(crate) min: u16,
+    pub(crate) max: u16,
+    pub(crate) mean: f64,
 }
 
-fn raw_stats(samples: &[u16]) -> RawStats {
+pub(crate) fn raw_stats(samples: &[u16]) -> RawStats {
     if samples.is_empty() {
         return RawStats {
             min: 0,
@@ -199,7 +202,7 @@ fn raw_stats(samples: &[u16]) -> RawStats {
 
 /// How the bytes in a [`LastFrame`] are laid out.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum FrameKind {
+pub(crate) enum FrameKind {
     /// Interleaved BGRA bytes, one pixel per 4 bytes.
     Bgra,
     /// Planar RGB f32 (`[1,3,H,W]` in `[0,1]`), only for non-production
@@ -264,17 +267,18 @@ fn planar_rgb_stats(floats: &[f32]) -> FrameStats {
 
 /// All per-window state, dropped and rebuilt when the window changes.
 struct Preview {
-    engine: Box<dyn IspEngine>,
-    session: Option<CameraSession>,
-    stager: FrameStager,
+    /// Two pinned ISP workers. The runner owns the camera and both engines;
+    /// this struct only consumes ordered results and presents them.
+    runner: PipelineRunner,
     config: PipelineConfig,
     last_frame: Option<LastFrame>,
     /// Most recent present() error, so a persistent surface failure is logged
     /// once (and again only when the message changes) instead of per frame.
     last_present_error: Option<String>,
     frames: u64,
-    /// When true, display raw camera frame (grayscale) instead of ISP output
-    show_raw: bool,
+    /// Shared with the workers so the debug raw-grayscale view can be toggled
+    /// without restarting the pipeline.
+    show_raw: Arc<AtomicBool>,
 }
 
 impl Preview {
@@ -450,11 +454,20 @@ impl Preview {
             .build(head_b, blocks_b, None, 21)
             .map_err(|e| format!("engine.build failed: {e}"))?;
 
-        let dual_engine = DualGpuEngine::new(engine_a, engine_b);
-        let engine: Box<dyn IspEngine> = Box::new(dual_engine);
+        // One worker per engine: the two interpreters can enter `runSession`
+        // concurrently, so camera capture and staging for frame N+1 overlap
+        // inference on frame N. `PipelineRunner` owns both engines and the
+        // camera; this struct only presents ordered results.
+        let show_raw = Arc::new(AtomicBool::new(false));
+        let config = PipelineConfig {
+            sensor_max,
+            bayer_pattern,
+        };
+        let runner =
+            PipelineRunner::new(session, [engine_a, engine_b], config, Arc::clone(&show_raw));
 
         log::info!(
-            "pipeline built: profile {} at {}x{}px{} (dual GPU engine)",
+            "pipeline built: profile {} at {}x{}px{} (two ISP workers)",
             profile.label,
             pipeline_width,
             pipeline_height,
@@ -465,18 +478,19 @@ impl Preview {
         );
 
         Ok(Self {
-            engine,
-            session,
-            stager: FrameStager::new(),
-            config: PipelineConfig {
-                sensor_max,
-                bayer_pattern,
-            },
+            runner,
+            config,
             last_frame: None,
             last_present_error: None,
             frames: 0,
-            show_raw: false,
+            show_raw,
         })
+    }
+
+    /// Switch between the debug raw-grayscale view and the ISP output.
+    fn set_show_raw(&self, value: bool) {
+        self.show_raw.store(value, Ordering::Relaxed);
+        self.runner.set_show_raw(value);
     }
 
     /// Open the camera on first use, and remember what the sensor reported.
@@ -485,7 +499,7 @@ impl Preview {
     /// open failure (e.g. sensor still initializing) doesn't leave the
     /// preview blank forever.
     fn ensure_camera(&mut self) {
-        if self.session.is_some() {
+        if self.runner.has_camera() {
             return;
         }
         match CameraSession::open_default() {
@@ -502,7 +516,7 @@ impl Preview {
                     "camera open (raw={raw}, sensor_max={})",
                     self.config.sensor_max
                 );
-                self.session = Some(s);
+                self.runner.set_camera(s);
             }
             Err(e) => {
                 // Don't spam the log — only log once every ~1 second.
@@ -532,162 +546,84 @@ impl Preview {
     ///
     /// Never breaks the loop on transient errors — if ISP fails we still
     /// repaint the last good frame so the UI never goes blank.
+    /// Present the next ordered ISP result, or repaint the last good frame.
+    ///
+    /// Capture and inference run on the two workers owned by `runner`. This
+    /// method never blocks on the camera and never touches the surface from a
+    /// worker thread.
     fn render_once(&mut self, target: &WindowTarget<'_>) {
         self.ensure_camera();
-        let Some(cam) = self.session.as_ref() else {
+        let Some(done) = self.runner.poll() else {
+            self.repaint_last(target);
             return;
         };
 
-        let started = Instant::now();
-        // Per-stage marks. "frame took 650ms" says nothing actionable on its
-        // own — the cost could be the capture copy, the ISP, or the blit, and
-        // they have completely different fixes. These carry the split into the
-        // warning line so the log answers "which stage" without a profiler.
-        let mut t_capture = Duration::ZERO;
-        let mut t_stage = Duration::ZERO;
-        let mut t_isp = Duration::ZERO;
-        let mut t_present = Duration::ZERO;
-        match cam.next_frame() {
-            Ok(Some(frame)) => {
-                t_capture = started.elapsed();
-
-                // What did the sensor actually deliver?
-                //
-                // The ISP report further down says what came *out* of the
-                // pipeline; without the input's range the two are
-                // indistinguishable. All-minimum samples mean the capture is
-                // dark (exposure), not that the ISP crushed it.
-                if self.frames == 0 || self.frames.is_multiple_of(STATS_INTERVAL_FRAMES) {
-                    let raw = raw_stats(&frame.data);
-                    write_line(
-                        "INFO",
-                        "capture",
-                        &format!(
-                            "raw {}x{} min {} max {} mean {:.1} (sensor_max {})",
-                            frame.width,
-                            frame.height,
-                            raw.min,
-                            raw.max,
-                            raw.mean,
-                            self.config.sensor_max
-                        ),
-                    );
-                }
-
-                let stage_t0 = Instant::now();
-                let staged = self.stager.stage(&frame);
-                t_stage = stage_t0.elapsed();
-
-                if self.show_raw {
-                    // Display raw camera frame as grayscale
-                    let raw_bgra = self.raw_to_grayscale_bgra(&frame);
-                    let present_t0 = Instant::now();
-                    if let Err(e) = present_frame(
-                        target,
-                        &raw_bgra,
-                        frame.width,
-                        frame.height,
-                        FrameKind::Bgra,
-                    ) {
-                        log::trace!("present raw: {e}");
-                    }
-                    t_present = present_t0.elapsed();
-                    self.last_frame = Some((raw_bgra, frame.width, frame.height, FrameKind::Bgra));
-                } else {
-                    let params =
-                        self.config
-                            .params(frame.width, frame.height, staged, frame.timestamp_ns);
-                    let isp_t0 = Instant::now();
-                    let result = self.engine.process(&params);
-                    t_isp = isp_t0.elapsed();
-                    match result {
-                        Ok(out) => {
-                            self.frames += 1;
-                            // Packed RGB comes back as BGRA bytes; only a
-                            // non-production float chain needs replanning.
-                            let kind = if self.config.float_output() {
-                                FrameKind::PlanarRgbF32
-                            } else {
-                                FrameKind::Bgra
-                            };
-                            // A frame that processes but cannot be shown is
-                            // indistinguishable from a failed one unless the
-                            // present error is recorded: this is the only step
-                            // between "ISP returned pixels" and "the screen
-                            // changed". It used to be a `trace!`, which the
-                            // Info-level logger dropped, so a black preview
-                            // logged nothing at all.
-                            //
-                            // Rate-limited to a change of message, so a
-                            // per-frame surface error stays one line.
-                            let present_t0 = Instant::now();
-                            let presented =
-                                present_frame(target, &out.data, out.width, out.height, kind);
-                            t_present = present_t0.elapsed();
-                            match presented {
-                                Ok(_) => self.last_present_error = None,
-                                Err(e) => {
-                                    if self.last_present_error.as_deref() != Some(e.as_str()) {
-                                        write_line(
-                                            "ERROR",
-                                            "display",
-                                            &format!("present failed: {e}"),
-                                        );
-                                        self.last_present_error = Some(e);
-                                    }
-                                }
-                            }
-                            self.last_frame = Some((out.data, out.width, out.height, kind));
-                        }
-                        Err(e) => {
-                            write_line("ERROR", "isp", &format!("process failed: {e}"));
-                            // ISP failed — repaint the last good frame so the UI
-                            // never goes blank.
-                            if let Some((data, w, h, kind)) = self.last_frame.as_ref() {
-                                let _ = present_frame(target, data, *w, *h, *kind);
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(None) => {
-                // Nothing queued: repaint the last good frame so the surface
-                // survives instead of showing a stale/blank buffer.
-                if let Some((data, w, h, kind)) = self.last_frame.as_ref() {
-                    let _ = present_frame(target, data, *w, *h, *kind);
-                }
-            }
-            Err(e) => write_line("ERROR", "camera", &e),
+        if let Some(e) = done.error {
+            write_line("ERROR", "isp", &format!("process failed: {e}"));
+            self.repaint_last(target);
+            return;
         }
 
-        let elapsed = started.elapsed();
-        if elapsed > FRAME_BUDGET {
+        if self.frames == 0 || self.frames.is_multiple_of(STATS_INTERVAL_FRAMES) {
+            write_line(
+                "INFO",
+                "capture",
+                &format!(
+                    "worker {} raw {}x{} min {} max {} mean {:.1} (sensor_max {})",
+                    done.worker,
+                    done.width,
+                    done.height,
+                    done.raw.min,
+                    done.raw.max,
+                    done.raw.mean,
+                    self.config.sensor_max
+                ),
+            );
+        }
+
+        // ISP succeeded but the surface can still reject the frame: record
+        // that instead of leaving a black preview with no diagnostic.
+        let present_t0 = Instant::now();
+        let presented = present_frame(target, &done.data, done.width, done.height, done.kind);
+        let t_present = present_t0.elapsed();
+        match presented {
+            Ok(_) => self.last_present_error = None,
+            Err(e) => {
+                if self.last_present_error.as_deref() != Some(e.as_str()) {
+                    write_line("ERROR", "display", &format!("present failed: {e}"));
+                    self.last_present_error = Some(e);
+                }
+            }
+        }
+
+        self.frames += 1;
+        self.last_frame = Some((done.data, done.width, done.height, done.kind));
+
+        // Workers report their own stage timings; combine them with the
+        // present time to keep the end-to-end budget diagnostic alive.
+        let pipeline = done.capture + done.stage + done.isp + t_present;
+        if pipeline > FRAME_BUDGET {
             write_line(
                 "WARN",
                 "loop",
                 &format!(
                     "frame took {}ms (capture {} / stage {} / isp {} / present {} ms)",
-                    elapsed.as_millis(),
-                    t_capture.as_millis(),
-                    t_stage.as_millis(),
-                    t_isp.as_millis(),
+                    pipeline.as_millis(),
+                    done.capture.as_millis(),
+                    done.stage.as_millis(),
+                    done.isp.as_millis(),
                     t_present.as_millis()
                 ),
             );
         }
-        // The first frame always reports: it is the one that answers "is the
-        // picture visible at all", and a session may not survive to frame 5.
+
+        // The first frame always reports: a session may end before frame 5,
+        // and a black preview is indistinguishable from a healthy one by
+        // frame count and size alone.
         if self.frames == 1
             || (self.frames > 0 && self.frames.is_multiple_of(STATS_INTERVAL_FRAMES))
         {
             let (w, h) = self.last_frame.as_ref().map_or((0, 0), |f| (f.1, f.2));
-            // Report what the frame actually contains, not just its size.
-            //
-            // "N frames processed, last WxH" is satisfied by a completely black
-            // buffer: the ISP can return the right length of zeros and every
-            // stage above will report success. These numbers are the only way
-            // to tell "the pixel work ran" from "the pixel work produced
-            // nothing" without pulling the image off the device.
             let content = self
                 .last_frame
                 .as_ref()
@@ -720,30 +656,36 @@ impl Preview {
         }
     }
 
-    /// Convert raw u16 Bayer frame to grayscale BGRA for display
-    fn raw_to_grayscale_bgra(&self, frame: &crate::camera::RawFrame) -> Vec<u8> {
-        let w = frame.width as usize;
-        let h = frame.height as usize;
-        let mut bgra = vec![0u8; w * h * 4];
-        // Find min/max for auto-contrast
-        let mut min_val = u16::MAX;
-        let mut max_val = u16::MIN;
-        for &sample in &frame.data {
-            min_val = min_val.min(sample);
-            max_val = max_val.max(sample);
+    /// Repaint the last good frame when no new result is ready.
+    fn repaint_last(&self, target: &WindowTarget<'_>) {
+        if let Some((data, w, h, kind)) = self.last_frame.as_ref() {
+            let _ = present_frame(target, data, *w, *h, *kind);
         }
-        let range = (max_val.saturating_sub(min_val)).max(1) as u32;
-        for (i, &sample) in frame.data.iter().enumerate() {
-            let normalized = ((sample.saturating_sub(min_val)) as u32 * 255) / range;
-            let gray = normalized as u8;
-            let idx = i * 4;
-            bgra[idx] = gray; // B
-            bgra[idx + 1] = gray; // G
-            bgra[idx + 2] = gray; // R
-            bgra[idx + 3] = 255; // A
-        }
-        bgra
     }
+}
+
+/// Convert a raw u16 Bayer frame to grayscale BGRA for the debug preview.
+pub(crate) fn raw_to_grayscale_bgra(frame: &RawFrame) -> Vec<u8> {
+    let w = frame.width as usize;
+    let h = frame.height as usize;
+    let mut bgra = vec![0u8; w * h * 4];
+    let mut min_val = u16::MAX;
+    let mut max_val = u16::MIN;
+    for &sample in &frame.data {
+        min_val = min_val.min(sample);
+        max_val = max_val.max(sample);
+    }
+    let range = (max_val.saturating_sub(min_val)).max(1) as u32;
+    for (i, &sample) in frame.data.iter().enumerate() {
+        let normalized = ((sample.saturating_sub(min_val)) as u32 * 255) / range;
+        let gray = normalized as u8;
+        let idx = i * 4;
+        bgra[idx] = gray; // B
+        bgra[idx + 1] = gray; // G
+        bgra[idx + 2] = gray; // R
+        bgra[idx + 3] = 255; // A
+    }
+    bgra
 }
 
 /// ISP backend requested at build time.
@@ -865,11 +807,10 @@ fn android_main(app: AndroidApp) {
         }
         if preview.is_none() {
             match Preview::new(ENGINE_NAME, w, h) {
-                Ok(mut p) => {
-                    // Show ISP pipeline output by default. Set show_raw = true
-                    // to bypass the ISP and display grayscale raw Bayer frames
-                    // instead (useful for verifying camera capture is working).
-                    p.show_raw = false;
+                Ok(p) => {
+                    // ISP output by default. `set_show_raw(true)` switches the
+                    // workers to grayscale raw Bayer for capture debugging.
+                    p.set_show_raw(false);
                     preview = Some(p);
                 }
                 Err(e) => {
