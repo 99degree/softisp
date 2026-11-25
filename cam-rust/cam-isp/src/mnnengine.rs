@@ -140,6 +140,19 @@ pub struct PendingStats<'a> {
 /// The condition holds for every frame, so it is reported exactly once.
 static CHANNEL_MISMATCH_REPORTED: AtomicBool = AtomicBool::new(false);
 
+/// Read MNN's last C++ error string into an owned value for diagnostics.
+#[cfg(feature = "mnn")]
+fn mnn_last_error_string() -> String {
+    unsafe {
+        let p = crate::mnn_sys::mnn_last_error();
+        if p.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(p).to_string_lossy().into_owned()
+        }
+    }
+}
+
 /// Zone data: (rows, cols, zone_rgb`[r]``[c]` = `[f32; 3]`)
 type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 
@@ -2182,7 +2195,22 @@ impl MnnEngine {
         // it later leaves a normal device buffer in place and the CPU mapping
         // stays black. The same binding is reused for every frame on this
         // worker, so the two engines never contend for an output slot.
-        let output_ahb = zero_copy && p.output_ahb.is_some();
+        let output_ahb = zero_copy
+            && p.output_ahb.is_some_and(|binding| {
+                let required = (tw as usize)
+                    .saturating_mul(h as usize)
+                    .saturating_mul(16)
+                    .saturating_mul(4);
+                if binding.len < required {
+                    warn!(
+                        "AHB output {}B is smaller than fused worst case {}B; using host copy",
+                        binding.len, required
+                    );
+                    false
+                } else {
+                    true
+                }
+            });
         let (out_ptr, max_out, buf_id) = if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref()
         {
             let max_out = (buf_len / 4) as i32;
@@ -2621,6 +2649,7 @@ impl MnnEngine {
                 }
                 if meta.output_ahb {
                     // No copyToHostTensor: the GPU wrote into the caller's AHB.
+                    let output_ahb_ptr = p.output_ahb.map_or(std::ptr::null(), |b| b.ptr);
                     n = crate::mnn_sys::mnn_run_ahb_output(
                         interp.as_ptr(),
                         sess.as_ptr(),
@@ -2632,13 +2661,23 @@ impl MnnEngine {
                         input_shape.as_ptr(),
                         input_shape.len() as i32,
                         max_out,
+                        output_ahb_ptr,
                     );
                     if n == -10 {
                         // Import did not survive resize: fall back to a copy
                         // into the same AHB mapping rather than drop the frame.
+                        // Report the MNN-side cause and the host pool snapshot
+                        // so a lost binding cannot be confused with an
+                        // exhausted or undersized pool.
+                        let detail = mnn_last_error_string();
                         warn!(
-                            "AHB output binding lost on '{}'; falling back to host copy",
-                            meta.output_name
+                            "AHB output binding lost on '{}'; falling back to host copy. \
+                             MNN: {} | host pool: {} | AHB slot: {}B, generation {}",
+                            meta.output_name,
+                            detail,
+                            buf_guard.status(),
+                            max_out.saturating_mul(4),
+                            meta.output_generation
                         );
                         n = crate::mnn_sys::mnn_run_true_zero_copy(
                             interp.as_ptr(),
@@ -2716,14 +2755,7 @@ impl MnnEngine {
         }
 
         if n <= 0 {
-            let detail = unsafe {
-                let p = crate::mnn_sys::mnn_last_error();
-                if p.is_null() {
-                    String::new()
-                } else {
-                    CStr::from_ptr(p).to_string_lossy().into_owned()
-                }
-            };
+            let detail = mnn_last_error_string();
             error!(
                 "MNN inference failed: n={} (input={}x{}, output_name='{}', path={})",
                 n, w, h, meta.output_name, path_str

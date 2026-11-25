@@ -191,6 +191,18 @@ impl OutputBufferPool {
     pub fn buffer_capacity(&self) -> usize {
         self.buffers.first().map(|b| b.len()).unwrap_or(0)
     }
+
+    /// One-line diagnostic snapshot for error logs.
+    pub fn status(&self) -> String {
+        let capacity = self.buffer_capacity();
+        format!(
+            "buffers={} capacity={} f32 ({:.1} MB total), next_idx={}",
+            self.pool_size,
+            capacity,
+            (self.pool_size * capacity * 4) as f64 / 1_048_576.0,
+            self.next_idx
+        )
+    }
 }
 
 /// MNN inference context

@@ -24,6 +24,42 @@
 #include <dlfcn.h>
 #include <mutex>
 #include <unistd.h>
+#include <android/hardware_buffer.h>
+
+typedef int (*pfnAHardwareBuffer_getFd)(AHardwareBuffer* buffer, int* fd);
+typedef int (*pfnAHardwareBuffer_describe)(const AHardwareBuffer* buffer, AHardwareBuffer_Desc* outDesc);
+
+static std::once_flag g_ahb_import_load_flag;
+static pfnAHardwareBuffer_getFd g_ahb_get_fd = nullptr;
+static pfnAHardwareBuffer_describe g_ahb_describe = nullptr;
+
+static void ensure_ahb_import_loaded() {
+    std::call_once(g_ahb_import_load_flag, []() {
+        void* h = dlopen("libnativewindow.so", RTLD_NOW | RTLD_LOCAL);
+        if (h) {
+            g_ahb_get_fd = (pfnAHardwareBuffer_getFd)dlsym(h, "AHardwareBuffer_getFd");
+            g_ahb_describe = (pfnAHardwareBuffer_describe)dlsym(h, "AHardwareBuffer_describe");
+        }
+    });
+}
+
+static bool ahb_capacity_bytes(void* ahb, size_t* out_bytes) {
+    ensure_ahb_import_loaded();
+    if (ahb == nullptr || g_ahb_describe == nullptr || out_bytes == nullptr) {
+        return false;
+    }
+    AHardwareBuffer_Desc desc{};
+    if (g_ahb_describe(static_cast<AHardwareBuffer*>(ahb), &desc) != 0) {
+        return false;
+    }
+    // BLOB buffers encode byte capacity in `width`; RGBA buffers are 4 B/px.
+    if (desc.format == AHARDWAREBUFFER_FORMAT_BLOB) {
+        *out_bytes = (size_t)desc.width * desc.height * desc.layers;
+    } else {
+        *out_bytes = (size_t)desc.width * desc.height * desc.layers * 4;
+    }
+    return *out_bytes > 0;
+}
 
 // ── Last inference error ───────────────────────────────────────────────
 // `mnn_run_with_output` can fail for several distinct reasons that all
@@ -679,7 +715,8 @@ extern "C" int mnn_run_ahb_output(
     int buffer_type_bits,
     const int* in_shape,
     int in_ndim,
-    int max_out
+    int max_out,
+    void* output_ahb
 ) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);
@@ -715,19 +752,15 @@ extern "C" int mnn_run_ahb_output(
         set_last_error("invalid input shape: %d elements", total);
         return -5;
     }
-    if ((int)in_tensor->elementSize() != total) {
-        net->resizeTensor(in_tensor, shape);
-        MNN::ErrorCode rc = net->tryResizeSession(sess);
-        if (rc != MNN::NO_ERROR) {
-            set_last_error("tryResizeSession failed: code=%d", (int)rc);
-            return -6;
-        }
-        in_tensor = (input_name != nullptr) ? net->getSessionInput(sess, input_name)
-                                            : net->getSessionInput(sess, nullptr);
-        if (!in_tensor || (int)in_tensor->elementSize() != total) {
-            set_last_error("resize did not take for frame input");
-            return -7;
-        }
+    const int in_elems = (int)in_tensor->elementSize();
+    if (in_elems != total) {
+        // Resizing re-acquires every session tensor and can replace the AHB
+        // output binding installed in prepare(). Let the host-copy fallback
+        // resize the session instead of writing into a detached AHB.
+        set_last_error("input shape changed (%d -> %d elements); AHB output binding cannot "
+                       "survive resize, using host-copy fallback",
+                       in_elems, total);
+        return -10;
     }
 
     auto* host_in = MNN::Tensor::create(
@@ -748,9 +781,41 @@ extern "C" int mnn_run_ahb_output(
 
     // The output must be the AHB we imported; a normal backend-owned tensor
     // would leave the caller's mapping untouched and look like a black frame.
-    if (output->buffer().flags != MNN_MEMORY_AHARDWAREBUFFER ||
-        output->buffer().device == 0) {
-        set_last_error("output tensor '%s' is not AHB-backed", output_name);
+    // A memfd can be adopted after MNN allocates it; an AHB cannot, so the
+    // caller's buffer must be a real AHardwareBuffer and large enough before
+    // it is bound. Never rebind over a normal MNN device buffer — only restore
+    // the binding when MNN cleared the flags but left our pointer in place.
+    size_t ahb_bytes = 0;
+    bool ahb_ok = ahb_capacity_bytes(output_ahb, &ahb_bytes);
+    const int out_elems = (int)output->elementSize();
+    const size_t needed_bytes = (size_t)std::max(out_elems, 0) * 4;
+    const bool fits = ahb_ok && out_elems > 0 && out_elems <= max_out &&
+                      needed_bytes <= ahb_bytes;
+    const uint64_t ahb_id = (uint64_t)(std::uintptr_t)output_ahb;
+    const bool bound = output->buffer().flags == MNN_MEMORY_AHARDWAREBUFFER &&
+                       output->buffer().device == ahb_id;
+    bool rebound = false;
+    if (!bound && fits &&
+        (output->buffer().device == 0 || output->buffer().device == ahb_id)) {
+        output->setDevicePtr(output_ahb, MNN_MEMORY_AHARDWAREBUFFER);
+        rebound = output->buffer().flags == MNN_MEMORY_AHARDWAREBUFFER &&
+                  output->buffer().device == ahb_id;
+    }
+    if (!bound && !rebound) {
+        set_last_error("output tensor '%s' not AHB-backed: flags=%d (want %d), "
+                       "device=%llu want=%llu, ahb=%p bytes=%llu, "
+                       "out_elems=%d max_out=%d need=%llu, rebound=%d",
+                       output_name, (int)output->buffer().flags,
+                       (int)MNN_MEMORY_AHARDWAREBUFFER,
+                       (unsigned long long)output->buffer().device,
+                       (unsigned long long)ahb_id, output_ahb,
+                       (unsigned long long)ahb_bytes, out_elems, max_out,
+                       (unsigned long long)needed_bytes, (int)rebound);
+        return -10;
+    }
+    if (out_elems <= 0 || out_elems > max_out) {
+        set_last_error("output tensor '%s' has %d elements, AHB holds %d",
+                       output_name, out_elems, max_out);
         return -10;
     }
 
@@ -769,7 +834,7 @@ extern "C" int mnn_run_ahb_output(
     }
     if (out_total > max_out) {
         set_last_error("output has %d elements, AHB holds %d", out_total, max_out);
-        return -9;
+        return -10;
     }
 
     // GPU writes must be complete before the caller reads its CPU mapping.
@@ -790,23 +855,6 @@ extern "C" int mnn_run_ahb_output(
 // Requires `VK_ANDROID_external_memory_android_hardware_buffer` device
 // extension and `libMNN_Vulkan.so` already dlopen'd (ensured by
 // ensure_vulkan_loaded() at session create time).
-
-#include <dlfcn.h>
-#include <android/hardware_buffer.h>
-
-typedef int (*pfnAHardwareBuffer_getFd)(AHardwareBuffer* buffer, int* fd);
-
-static std::once_flag g_ahb_import_load_flag;
-static pfnAHardwareBuffer_getFd g_ahb_get_fd = nullptr;
-
-static void ensure_ahb_import_loaded() {
-    std::call_once(g_ahb_import_load_flag, []() {
-        void* h = dlopen("libnativewindow.so", RTLD_NOW | RTLD_LOCAL);
-        if (h) {
-            g_ahb_get_fd = (pfnAHardwareBuffer_getFd)dlsym(h, "AHardwareBuffer_getFd");
-        }
-    });
-}
 
 extern "C" int mnn_import_ahb_as_device_memory(
     MnnInterpreter interpreter,
@@ -831,6 +879,27 @@ extern "C" int mnn_import_ahb_as_device_memory(
     }
 
     (void)read_only; // Vulkan import usage covers both read and write.
+
+    // A memfd or host pointer can be adopted after allocation; an AHB cannot.
+    // The caller must allocate with AHardwareBuffer_allocate up front. Reject
+    // anything that is not a real AHardwareBuffer before marking the tensor,
+    // otherwise MNN treats a foreign pointer as device memory and crashes in
+    // VulkanBufferFromAHB::create.
+    size_t ahb_bytes = 0;
+    if (!ahb_capacity_bytes(ahb, &ahb_bytes)) {
+        set_last_error("pointer %p is not a usable AHardwareBuffer", ahb);
+        return -2;
+    }
+
+    // Once MNN has allocated normal device memory for a tensor it cannot be
+    // converted in place. The binding must be installed before resizeSession.
+    if (tensor->buffer().flags != 0 &&
+        tensor->buffer().flags != MNN_MEMORY_AHARDWAREBUFFER) {
+        set_last_error("tensor '%s' already has memoryType=%d; AHB must be bound before resize",
+                       tensor_name, (int)tensor->buffer().flags);
+        return -3;
+    }
+
     // dma-buf fd is diagnostic only; the real import is setDevicePtr below.
     int fd = -1;
     if (g_ahb_get_fd == nullptr ||
@@ -848,7 +917,8 @@ extern "C" int mnn_import_ahb_as_device_memory(
         set_last_error("Tensor::setDevicePtr(AHB) failed for '%s'", tensor_name);
         return -1;
     }
-    set_last_error("AHB '%s' imported as device memory (memoryType=%d)", tensor_name,
+    set_last_error("AHB '%s' imported: ptr=%p bytes=%llu (memoryType=%d)",
+                   tensor_name, ahb, (unsigned long long)ahb_bytes,
                    MNN_MEMORY_AHARDWAREBUFFER);
     return 0;
 }

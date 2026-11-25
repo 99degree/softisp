@@ -13,10 +13,10 @@
 //! therefore owns allocation/locking and passes the buffer in via
 //! `Tensor::setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)`.
 //!
-//! The optimization is **off by default**. Enable it without rebuilding via
-//! the `SOFTISP_OUTPUT_AHB` env var or the
-//! `/sdcard/download/softisp-output-ahb` marker. Per-frame slot diagnostics
-//! need a second switch (`SOFTISP_VERBOSE` / `/sdcard/download/softisp-verbose`);
+//! The optimization is **on by default**. Disable it without rebuilding via
+//! `SOFTISP_OUTPUT_AHB=0` (also `off`, `false` or `no`), `SOFTISP_OUTPUT_AHB_OFF`,
+//! or `/sdcard/download/softisp-output-ahb-off`. Per-frame slot diagnostics
+//! still need a second switch (`SOFTISP_VERBOSE` / `/sdcard/download/softisp-verbose`);
 //! the switch state itself is always written once at INFO.
 //!
 //! One slot is bound per worker and reused for every frame. Swapping AHBs
@@ -26,6 +26,8 @@
 //! the other worker has its own, so the two engines never contend.
 
 use std::ffi::c_void;
+#[cfg(target_os = "android")]
+use std::ffi::{c_char, c_int, CStr};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -34,41 +36,72 @@ use cam_types::{AhbBinding, AhbFenceTokens};
 use ndk_sys as sys;
 
 const ENABLE_ENV: &str = "SOFTISP_OUTPUT_AHB";
+const DISABLE_ENV: &str = "SOFTISP_OUTPUT_AHB_OFF";
 const VERBOSE_ENV: &str = "SOFTISP_VERBOSE";
 #[cfg(target_os = "android")]
-const ENABLE_MARKER: &str = "/sdcard/download/softisp-output-ahb";
+const DISABLE_MARKER: &str = "/sdcard/download/softisp-output-ahb-off";
 #[cfg(target_os = "android")]
 const VERBOSE_MARKER: &str = "/sdcard/download/softisp-verbose";
 
-static ENABLED: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "android")]
+unsafe extern "C" {
+    fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
+}
+
+#[cfg(target_os = "android")]
+fn device_api_level() -> i32 {
+    let mut value = [0u8; 8];
+    let len = unsafe {
+        __system_property_get(
+            c"ro.build.version.sdk".as_ptr(),
+            value.as_mut_ptr() as *mut c_char,
+        )
+    };
+    if len <= 0 {
+        return 0;
+    }
+    let value = unsafe { CStr::from_ptr(value.as_ptr() as *const c_char) };
+    value
+        .to_str()
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+static ENABLED: AtomicBool = AtomicBool::new(true);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 static SWITCHES: OnceLock<()> = OnceLock::new();
 
+fn env_disables_output_ahb(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "off" | "false" | "no"
+    )
+}
+
 fn init_switches() {
     SWITCHES.get_or_init(|| {
-        if std::env::var_os(ENABLE_ENV).is_some() {
-            ENABLED.store(true, Ordering::Relaxed);
-        }
+        let disabled = std::env::var(ENABLE_ENV).is_ok_and(|value| env_disables_output_ahb(&value))
+            || std::env::var_os(DISABLE_ENV).is_some();
+        ENABLED.store(!disabled, Ordering::Relaxed);
         if std::env::var_os(VERBOSE_ENV).is_some() {
             VERBOSE.store(true, Ordering::Relaxed);
         }
         #[cfg(target_os = "android")]
         {
-            if std::path::Path::new(ENABLE_MARKER).exists() {
-                ENABLED.store(true, Ordering::Relaxed);
+            if std::path::Path::new(DISABLE_MARKER).exists() {
+                ENABLED.store(false, Ordering::Relaxed);
             }
             if std::path::Path::new(VERBOSE_MARKER).exists() {
                 VERBOSE.store(true, Ordering::Relaxed);
             }
             // AHardwareBuffer entered the NDK in API 26. The APK still
-            // declares minSdk 24, so an opt-in on an older device must fail
-            // closed instead of resolving a missing symbol at first frame.
-            let api = unsafe { sys::android_get_device_api_level() };
+            // declares minSdk 24, so the default-on path must fail closed
+            // instead of resolving a missing symbol at first frame.
+            let api = device_api_level();
             if api < 26 && ENABLED.load(Ordering::Relaxed) {
                 ENABLED.store(false, Ordering::Relaxed);
-                log::warn!(
-                    "AHB output requested but device API {api} < 26; using host-copy output"
-                );
+                log::warn!("AHB output enabled but device API {api} < 26; using host-copy output");
             }
         }
     });
@@ -88,10 +121,11 @@ pub(crate) fn verbose_enabled() -> bool {
 pub(crate) fn log_switch_state() {
     init_switches();
     log::info!(
-        "output AHB={} verbose={} ({} / {})",
+        "output AHB={} verbose={} ({} / {} / {})",
         if output_ahb_enabled() { "on" } else { "off" },
         if verbose_enabled() { "on" } else { "off" },
         ENABLE_ENV,
+        DISABLE_ENV,
         VERBOSE_ENV
     );
 }
@@ -176,18 +210,22 @@ impl std::fmt::Debug for AhbOutputSlot {
     }
 }
 
+fn slot_capacity_bytes(width: u32, height: u32) -> usize {
+    (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4)
+        .saturating_mul(16)
+        .next_power_of_two()
+        .max(4096)
+}
+
 impl AhbOutputSlot {
-    /// Allocate and map a slot with 2× the display bytes, rounded up to a
-    /// power of two. The Vulkan tensor pads its element size to a multiple of
-    /// four words; the headroom covers that without ever resizing the binding.
+    /// Allocate and map one slot large enough for the fused graph's worst-case
+    /// `H*W*16` output, rounded up to a power of two. MNN fits VkBuffers to the
+    /// tensor and re-acquires them on resize; an AHB cannot be reallocated in
+    /// place, so the binding is deliberately oversized and never swapped.
     pub(crate) fn new(width: u32, height: u32, generation: u64) -> Result<Self, String> {
-        let display_bytes = (width as usize)
-            .saturating_mul(height as usize)
-            .saturating_mul(4);
-        let capacity = display_bytes
-            .saturating_mul(2)
-            .next_power_of_two()
-            .max(4096);
+        let capacity = slot_capacity_bytes(width, height);
         if capacity == 0 || capacity > u32::MAX as usize {
             return Err(format!("invalid AHB output capacity {capacity}"));
         }
@@ -326,10 +364,20 @@ mod tests {
     fn display_bytes_fit_capacity() {
         let width = 1920usize;
         let height = 1080usize;
-        let capacity = (width * height * 4)
-            .saturating_mul(2)
-            .next_power_of_two()
-            .max(4096);
-        assert!(capacity >= width * height * 4);
+        let capacity = slot_capacity_bytes(width as u32, height as u32);
+        assert!(capacity >= width * height * 16);
+    }
+
+    #[test]
+    fn output_ahb_disable_values() {
+        for value in ["0", "off", "OFF", " false ", "no"] {
+            assert!(env_disables_output_ahb(value), "{value} should disable AHB");
+        }
+        for value in ["1", "on", "true", ""] {
+            assert!(
+                !env_disables_output_ahb(value),
+                "{value} should keep AHB on"
+            );
+        }
     }
 }

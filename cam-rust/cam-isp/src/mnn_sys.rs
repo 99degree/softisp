@@ -169,7 +169,9 @@ extern "C" {
     /// Run inference on an AHB-backed output tensor without `copyToHostTensor`.
     ///
     /// The output AHB must already be bound to the output tensor via
-    /// `mnn_import_ahb_as_device_memory` *before* `resizeSession`. The function
+    /// `mnn_import_ahb_as_device_memory` *before* `resizeSession`. `output_ahb`
+    /// is the same buffer, passed again so a lost binding can be restored only
+    /// when it is a real, sufficiently sized AHardwareBuffer. The function
     /// waits for the GPU write and returns the output element count; the caller
     /// reads the pixels from its own CPU mapping of the AHB.
     pub fn mnn_run_ahb_output(
@@ -183,6 +185,7 @@ extern "C" {
         in_shape: *const c_int,
         in_ndim: c_int,
         max_out: c_int,
+        output_ahb: *const c_void,
     ) -> c_int;
 
     pub fn mnn_run_with_output(

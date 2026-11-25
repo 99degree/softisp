@@ -340,16 +340,15 @@ extern "C" int mnn_run_zero_copy(
  * backend can read/write it directly instead of allocating its own device
  * buffers and doing host<->GPU copies.
  *
- * This is the final zero-copy step: camera DMA buffer -> GPU tensor -> GPU
- * shader -> display DMA buffer, with no host memory traffic at all.
+ * This wrapper only records the caller's AHardwareBuffer on the tensor with
+ * `Tensor::setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)`. The modified MNN
+ * Vulkan fork imports it later in `onAcquire` during session resize. The fd
+ * obtained here is diagnostic only and is closed immediately.
  *
- * Steps performed:
- *   1. Export the `AHardwareBuffer` to a dma-buf fd (AHardwareBuffer_getFd).
- *   2. `vkGetMemoryAndroidHardwareBufferANDROID` / import fd as VkDeviceMemory.
- *   3. Bind that memory to the session's input/output tensor buffers.
- *
- * The caller (Rust) keeps the AHardwareBuffer locked for the duration of the
- * inference and unlocks it after `mnn_run_with_output` returns.
+ * The buffer must be allocated and bound before the first resize. MNN fits its
+ * device buffer to the tensor, so a buffer adopted after allocation cannot be
+ * converted to an AHB in place. The caller owns and keeps the AHB mapped; MNN
+ * does not acquire or release it.
  *
  * @param interpreter   MNN interpreter handle.
  * @param session       MNN session handle (Vulkan backend).
@@ -381,10 +380,11 @@ int mnn_release_ahb_device_memory(
  * writes straight into that buffer's device memory, so the caller reads the
  * result from its own CPU mapping after this call.
  *
- * `Tensor::wait(MAP_TENSOR_READ, true)` makes the GPU write visible to that
- * mapping before returning. `max_out` is the AHB capacity in output elements
- * and is checked against the tensor's real element count; overflow is an
- * error, never a silent truncation.
+ * `Tensor::wait(MAP_TENSOR_READ, true)` waits MNN's internal Vulkan fence; it is
+ * not an AHB acquire/release fence. `output_ahb` is the same AHardwareBuffer bound in
+ * prepare; it is verified as a real AHB and checked for enough capacity before
+ * the session runs. A shape change that would make MNN re-acquire the output
+ * returns -10 so the caller can use the host-copy fallback instead.
  *
  * @return output element count on success, negative on failure.
  */
@@ -398,7 +398,8 @@ int mnn_run_ahb_output(
     int buffer_type_bits,
     const int* in_shape,
     int in_ndim,
-    int max_out);
+    int max_out,
+    void* output_ahb);
 
 // ── Get model input type ──────────────────────────────────────────────────
 extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession session,
