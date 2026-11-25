@@ -21,8 +21,9 @@ The 7 control points arrive per-frame from the neural controller:
 
 - `NeuralController::params_from_optimized()` writes
   `isp_params.tone.curve_lut = optimized.tone_curve_lut`.
-- `MnnEngine::set_extra_inputs()` (`mnnengine.rs`) writes them into
-  `ToneLutBlock/y0..y6` immediately before inference.
+- `MnnEngine::set_extra_inputs()` (`mnnengine.rs`) writes the seed into
+  `ToneLutBlock/y0` and the CPU-derived slopes into `ToneLutBlock/s0..s5`
+  immediately before inference.
 
 `set_extra_inputs()` is the CPU-side callback that prepares tensor inputs for
 inference — the correct home for small scalar derivations.
@@ -46,6 +47,15 @@ inference — the correct home for small scalar derivations.
 At `x = k/6` the piecewise sum still equals `y_k`, because
 `sum_{j<k} slope_j * seg_width = sum_{j<k} (y_{j+1} - y_j) = y_k - y_0` and the
 accumulator starts at `y_0`. Identity LUT slopes are all `1.0`.
+
+## No fused shader to change
+
+The MNN fork has no `isp.tonelut` op: it is absent from `kIspOpsetNames` and
+`g_ispSpvMap`, and `isp_spv/` contains only `isp_tone.comp` and
+`isp_tone_stats.comp`. `ToneLutBlock` therefore runs as primitive ONNX/MNN
+elementwise ops, and its coefficients must be graph inputs — there is no fused
+Vulkan shader carrying slope uniforms. See
+[`20261126-gamma-reciprocal-audit.md`](20261126-gamma-reciprocal-audit.md).
 
 ## Verification
 

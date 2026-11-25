@@ -1286,8 +1286,16 @@ impl MnnEngine {
             if let Some(m) = ccm {
                 write_f32_array(&mut pending, "isp_pipeline/ccm", m);
             }
-            // Display gamma γ; the shader derives 1/γ for its pow exponent.
-            write_f32(&mut pending, "isp_pipeline/gamma", tone.gamma.max(1e-4));
+            // The shader calls binding 9 `TONE_CURVE/GAMMA_RECIP` and uses it
+            // directly as the pow exponent (`pow(v, gamma_recip)`). Despite the
+            // tensor being named `/gamma`, it must carry 1/γ — the same
+            // reciprocal `Gamma/inv_gamma` carries. Passing γ here inverts the
+            // display curve and darkens every frame.
+            write_f32(
+                &mut pending,
+                "isp_pipeline/gamma",
+                1.0 / tone.gamma.max(1e-4),
+            );
             write_f32(
                 &mut pending,
                 "isp_pipeline/lift",

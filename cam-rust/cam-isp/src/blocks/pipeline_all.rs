@@ -365,6 +365,21 @@ mod tests {
     }
 
     #[test]
+    fn gamma_binding_is_the_reciprocal() {
+        // isp.pipeline reads binding 9 as `TONE_CURVE/GAMMA_RECIP` and uses it
+        // directly as the display exponent, so the value must be 1/γ, not γ.
+        let b = PipelineAllBlock::new(2592, 1940, 648, 485);
+        let d = b
+            .extra_input_defaults()
+            .into_iter()
+            .find(|(n, _)| n.ends_with("/gamma"))
+            .expect("gamma default");
+        let recip = f32::from_ne_bytes(d.1.as_chunks::<4>().0[0]);
+        assert!((recip - 1.0 / 2.2).abs() < 1e-5, "got {recip}");
+        assert!(recip < 1.0, "display gamma reciprocal must be below one");
+    }
+
+    #[test]
     fn defaults_are_not_silently_zero() {
         let b = PipelineAllBlock::new(2592, 1940, 648, 485);
         let d = b
