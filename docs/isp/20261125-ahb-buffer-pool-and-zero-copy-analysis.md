@@ -488,8 +488,8 @@ per-tensor API the user prefers:
 - `getBuffer()` and all three `onCopyBuffer()` directions now resolve the
   VkBuffer through `getBuffer()` so AHB-backed tensors never get
   `deviceId()` mis-cast to `VulkanBuffer*`.
-- Rebuilt with `./scripts/build_mnn_libs.sh arm64-v8a` (per project rule:
-  always `build_isp`, never `build_vk`). The external `VulkanFuse.cpp` gamma
+- Rebuilt with `./scripts/build_mnn_libs.sh arm64-v8a` (the script's `build_isp`
+  path is the only supported MNN build). The external `VulkanFuse.cpp` gamma
   patch is still present and was preserved by the rebuild.
 
 In-repo correctness fixes applied alongside:
