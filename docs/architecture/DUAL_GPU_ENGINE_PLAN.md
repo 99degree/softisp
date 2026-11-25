@@ -85,7 +85,7 @@ impl DualGpuEngine {
 }
 ```
 
-Usage in the camera loop (`cam-rust/cam-isp/src/integration.rs` `CameraIspService::process_raw_frame` or in `cam-rust/cam-camera-app/src/lib.rs` `Preview::process`):
+Usage in the camera loop (`cam-rust/cam-isp/src/integration.rs` `CameraIspService::process_raw_frame` or in `anw/src/app.rs` `Preview::process`):
 
 ```rust
 let engine = dual.next();
@@ -153,7 +153,7 @@ If the engine pool ever grows >1 per engine (parallel sessions), an output seque
 
 ### 9. Configuration
 
-`ProcessParams` gains no new fields for dual-engine mode — the wrapper is transparent to callers. The camera app (`cam-rust/cam-camera-app/src/lib.rs`) decides whether to build a `DualGpuEngine` or a single `MnnEngine`, e.g. based on sensor size (≥4K → dual) or a debug env var `SOFTISP_DUAL_GPU=1`.
+`ProcessParams` gains no new fields for dual-engine mode — the wrapper is transparent to callers. The camera app (`anw/src/app.rs`) decides whether to build a `DualGpuEngine` or a single `MnnEngine`, e.g. based on sensor size (≥4K → dual) or a debug env var `SOFTISP_DUAL_GPU=1`.
 
 ### 10. Implementation checklist
 

@@ -1,6 +1,6 @@
 # Building the SoftISP Camera APK
 
-This document describes how to cross-compile the `cam-camera-app` crate (source in `android-app/`) into an Android APK.
+This document describes how to cross-compile the `softisp-anw` crate (source in `anw/`) into an Android APK. `android-app/` holds only the manifest and resources.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ ls -l cam-rust/lib/aarch64-v8a/libMNN.so \
      cam-rust/lib/aarch64-v8a/libMNN_Vulkan.so \
      cam-rust/lib/aarch64-v8a/libMNN_Express.so \
      cam-rust/lib/aarch64-v8a/libMNNConvertDeps.so \
-     cam-rust/lib/aarch64-v8a/libc++_shared.so
+     cam-rust/lib/aarch64-v8a/libsoftisp_cpp_shared.so
 ```
 
 `scripts/build_mnn_libs.sh` runs `build_vulkan_android.sh` inside `~/MNN`, then
@@ -53,11 +53,14 @@ export ANDROID_HOME=/data/data/com.termux/files/home/android-sdk
 ## Build Steps
 
 ```bash
-cd /data/data/com.termux/files/home/softisp/cam-rust
-
-# Build the APK with cargo-apk2 (default debug profile).
-cargo apk2 build -p cam-camera-app
+cd /data/data/com.termux/files/home/softisp
+./build-apk.sh
 ```
+
+`build-apk.sh` builds MNN libs, packages `softisp-anw` with cargo-apk2, and
+verifies that `lib/arm64-v8a/libsoftisp.so` is identical to the fresh cdylib in
+`target/`. NativeActivity loads that library; the retired
+`libcam_camera_app.so` is never bundled.
 
 ### Low-RAM build (Termux / memory-constrained hosts)
 
@@ -65,12 +68,12 @@ On devices with limited RAM, the default `debug = true` profile produces
 large DWARF debug info and `overflow-checks = true` inflates codegen,
 both of which can push peak RSS past available memory and OOM the linker.
 
-Build with the `release` profile instead (added in `cam-rust/Cargo.toml`):
+Build with the `release` profile (defined in the workspace `Cargo.toml`):
 ```bash
-cd /data/data/com.termux/files/home/softisp/cam-rust
+cd /data/data/com.termux/files/home/softisp
 
 # Release profile: debug = 1, no overflow checks, codegen-units = 1.
-cargo apk2 build -p cam-camera-app --release
+cargo apk2 build -p softisp-anw --release
 ```
 
 The `release` profile uses `opt-level = 2`, `debug = 1` (line tables only,
@@ -113,7 +116,7 @@ The APK bundles these native libraries (from `cam-rust/lib/aarch64-v8a/`) into `
 - `libvulkan.so` — Android Vulkan ICD loader (Termux doesn't search `/system/lib64/`)
 - `libc++_shared.so` — C++ runtime
 
-These are copied by cargo-apk2 via `runtime_libs = "../lib"` in `cam-camera-app/Cargo.toml`.
+These are copied by cargo-apk2 via `runtime_libs = "../cam-rust/lib"` in `anw/Cargo.toml`. `libsoftisp.so` is not part of `runtime_libs`: cargo-apk2 builds and packages the `softisp-anw` cdylib directly from `target/`.
 
 ## Neural ISP Rectifier ONNX Models (bundled in APK)
 
@@ -127,11 +130,11 @@ The neural controller (`NeuralController::with_default_model()`) tries these
 embedded bytes at runtime. If none load (e.g. model file missing or corrupt),
 it falls back to the rule-based `IspController` so the preview stays alive.
 No separate `.onnx` file needs to ship in `lib/` — the models are part of
-`libcam_camera_app.so`.
+`libsoftisp.so`.
 
 The rectifier feature is enabled for the APK via
 `cam-isp = { ..., features = ["rectifier"] }` in
-`android-app/Cargo.toml`.
+`anw/Cargo.toml`.
 
 ## CI Gates (must pass locally before push)
 
@@ -145,8 +148,7 @@ for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core ca
   [ "$crate" = "cam-isp" ] && feat="--features rectifier"
   cargo clippy -p "$crate" --lib $feat -- -D warnings
 done
-cargo clippy -p cam-app --all-features -- -D warnings
-cargo clippy -p cam-camera-app --all-features -- -D warnings
+cargo clippy -p softisp-anw --all-features --no-deps -- -D warnings
 
 # Tests
 cargo test -p cam-isp --lib --features "rectifier mnn"
@@ -155,7 +157,7 @@ cargo test -p cam-isp --lib --features "rectifier mnn"
 ## Key Implementation Notes
 
 ### MED Profile Output Format
-The `PipelineProfile::MED` in `cam-isp/src/profile.rs` now uses `OutputFormat::Bgra` (was `PackedRgb`). This matches the app's `ProcessParams::output_format = OutputFormat::Bgra` in `cam-camera-app/src/pipeline.rs`, so the MNN graph emits 4-byte BGRA pixels that `WindowTarget::present()` can directly blit.
+`PipelineProfile::MED` in `cam-isp/src/profile.rs` uses `OutputFormat::PackedRgb`, matching `ProcessParams::OUTPUT_FORMAT` in `anw/src/pipeline.rs`. The final op is `isp.display_uint32_bgra`; `WindowTarget::present()` blits the packed BGRA words directly.
 
 ### Non-Stop Preview Loop
 - `POLL_TIMEOUT = 10 ms` (was 100 ms) for responsive rendering
@@ -206,15 +208,15 @@ Check with `grep -n '^#!' $ANDROID_HOME/build-tools/34.0.0/apksigner`.
 **2. A wrong `signing.release.path` in `Cargo.toml` (release builds only).**
 
 cargo-apk2 resolves that path as `crate_path.join(path)` — relative to the
-`cam-camera-app/` crate directory, **not** the workspace root. So
-`../android-app/...` means `cam-rust/android-app/...`, and one more `../`
-overshoots to the repo root. Debug builds never consult this table (they use
-`~/.android/debug.keystore`), so a wrong path only shows up under `--release`.
+`anw/` crate directory, **not** the workspace root. So
+`../android-app/...` means `<repo>/android-app/...`. Debug builds never consult
+this table (they use `~/.android/debug.keystore`), so a wrong path only shows up
+under `--release`.
 
 ### Black Screen / No Camera Frames
 - Check logcat for `cam_isp::mnnengine: MNN inference failed` — indicates graph output dimension mismatch
-- Verify `PipelineProfile::MED.output_format == OutputFormat::Bgra`
-- Ensure `ProcessParams.output_format == OutputFormat::Bgra` in the app
+- Verify `PipelineProfile::MED.output_format == OutputFormat::PackedRgb`
+- Ensure `ProcessParams::OUTPUT_FORMAT == OutputFormat::PackedRgb` in the app
 
 ### Storage Permission Denied in Logs
 Expected on API 30+ until user grants "All files access". The app falls back to its private external directory automatically.

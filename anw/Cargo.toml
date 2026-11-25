@@ -2,13 +2,14 @@
 name = "softisp-anw"
 version = "0.1.0"
 edition = "2021"
-description = "ANativeWindow consumer for softisp IPA on Android"
+description = "ANativeWindow application owner for softisp on Android"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
 cam-ipa = { path = "../cam-rust/cam-ipa" }
-cam-isp = { path = "../cam-rust/cam-isp" }
-ndk-sys = { version = "0.6", features = ["media"] }
+cam-isp = { path = "../cam-rust/cam-isp", features = ["rectifier"] }
+cam-types = { path = "../cam-rust/cam-types" }
+ndk-sys = { workspace = true }
 android-activity = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
@@ -21,13 +22,27 @@ name = "softisp"
 path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
+[features]
+default = ["mnn"]
+# Vulkan MNN inference. This is what the camera app wants on a phone: the
+# libMNN_Vulkan.so backend runs the ISP blocks on the GPU. The runtime libs are
+# copied into the APK via `runtime_libs`, so no network or device lookup is
+# needed at launch.
+mnn = ["cam-isp/mnn"]
+
 # ── APK packaging (cargo-apk2) ───────────────────────────────────────────
 
 [package.metadata.android]
-apk_name = "softisp-anw"
-package = "com.softisp.anw"
-manifest_override = "AndroidManifest.xml"
-resources = "Sources/res"
+apk_name = "softisp-camera"
+# Application ID, kept in sync with the `<manifest package>` in the override.
+# ndk-build2 renames the unaligned APK to `manifest.package` during aapt2
+# optimize, so this field must remain present and usable as a filename.
+package = "com.softisp.camera"
+# Paths are relative to this crate (`anw/`). The APK shell lives in
+# `android-app/`; all Rust/native application code lives here.
+manifest_override = "../android-app/AndroidManifest.xml"
+resources = "../android-app/Sources/res"
+runtime_libs = "../cam-rust/lib"
 
 [package.metadata.android.sdk]
 min_sdk_version = 24
@@ -37,20 +52,50 @@ target_sdk_version = 34
 name = "android.hardware.camera"
 required = true
 
+# Required for `ACameraManager_openCamera`.
 [[package.metadata.android.uses_permission]]
 name = "android.permission.CAMERA"
 
-[[package.metadata.android.application]]
-label = "SoftISP ANW"
-has_code = true
+# The crash log lives in the public Download directory. API 29 and below use
+# WRITE_EXTERNAL_STORAGE; API 30+ needs the "all files access" special grant,
+# which a NativeActivity cannot request for itself. storage::probe re-tests the
+# path at startup and logs exactly which grant is missing.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.WRITE_EXTERNAL_STORAGE"
+max_sdk_version = 29
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.READ_EXTERNAL_STORAGE"
+max_sdk_version = 29
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.MANAGE_EXTERNAL_STORAGE"
+
+[package.metadata.android.signing.release]
+# A throwaway key for local installs. Override both of these before shipping.
+# cargo-apk2 resolves this relative to the crate directory (`anw/`).
+path = "../android-app/my-release-key.keystore"
+keystore_password = "password"
+
+[package.metadata.android.application]
+label = "SoftISP Camera"
+has_code = false
 debuggable = true
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+icon = "@mipmap/icon"
 
 [[package.metadata.android.application.activity]]
 name = "android.app.NativeActivity"
 exported = true
+# Rotation, density and UI-mode changes are absorbed here so the activity is
+# not recreated mid-preview: app.rs re-takes the window and reallocates the
+# presentation buffers on the resulting resize events.
 config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection"
-
+#
+# `android.app.lib_name` is what NativeActivity dlopen()s; it must match the
+# `softisp` library name in Cargo.toml (`libsoftisp.so`). It belongs to the
+# activity: NativeActivity.onCreate reads the activity's meta-data, so a value
+# on <application> is invisible and libname falls back to "main".
 [[package.metadata.android.application.activity.meta_data]]
 name = "android.app.lib_name"
 value = "softisp"

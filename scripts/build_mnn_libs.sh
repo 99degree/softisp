@@ -130,16 +130,6 @@ build_and_copy() {
                         echo "  patchelf: $target libc++_shared.so -> libsoftisp_cpp_shared.so"
                     fi
                 done
-
-                # The Rust app library (libcam_camera_app.so) is linked by
-                # cargo-apk2 after this script runs. It also needs libc++ symbols
-                # and would otherwise pick up the stale system libc++_shared.so.
-                # Patch it here too so it resolves to our bundled copy.
-                rust_lib="$dest/libcam_camera_app.so"
-                if [ -f "$rust_lib" ]; then
-                    patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so "$rust_lib"
-                    echo "  patchelf: $rust_lib libc++_shared.so -> libsoftisp_cpp_shared.so"
-                fi
             else
                 echo "  WARN: Termux libc++_shared.so not found at $termux_libcpp; APK may fail to load libMNN.so"
             fi

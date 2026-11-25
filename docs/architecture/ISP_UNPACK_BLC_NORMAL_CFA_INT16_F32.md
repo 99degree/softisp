@@ -204,14 +204,14 @@ The INT16 fused head halves frame-buffer memory versus the packed INT32 path **a
 - `cargo test -p cam-isp --lib --features rectifier`: 813 passed, 0 failed (includes 4 new `fused_head_*` tests)
 - MNN shaders compile with `glslangValidator`; SPIR-V headers regenerated; binding scan confirms `InBuf@3/OutBuf@4` for both new shaders
 - `ShapeIspExtra.cpp` updated; MNN C++ side not yet recompiled on device (no NDK toolchain in this environment)
-- APK built via `cargo apk2 build -p cam-camera-app`; device install/test pending
+- APK built via `./build-apk.sh` (`cargo apk2 build -p softisp-anw`); device install/test pending
 
 ---
 
 ## 8. Remaining work for device validation
 
 1. Rebuild `libMNN_Vulkan.so` from the updated MNN source (new shaders + shape rule + opset registration) and re-copy to `cam-rust/lib/aarch64-v8a/`.
-2. Rebuild APK (`cargo apk2 build -p cam-camera-app`), install, run.
+2. Rebuild APK (`./build-apk.sh`), install, run.
 3. Confirm engine log shows `head: isp.unpack16_blc_normal_cfa` (or `...32...`) and `runSession` no longer returns `COMPUTE_SIZE_ERROR`.
 4. Compare frame time against the MED primitive baseline (expect ~2.5× speedup at 4K from head fusion alone, per earlier probe data).
 

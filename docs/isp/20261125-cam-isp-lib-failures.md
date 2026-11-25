@@ -75,7 +75,7 @@ copied as four bytes, producing 16 bytes per pixel instead of four.
 cargo fmt --all -- --check                                      clean
 cargo clippy -p cam-isp --lib --features rectifier              clean
 cargo clippy -p cam-isp --lib --features "rectifier mnn"        clean
-cargo clippy -p cam-camera-app --all-features                   clean
+cargo clippy -p softisp-anw --all-features --no-deps            clean
 cargo test -p cam-isp --lib --features "rectifier mnn" \
   --no-fail-fast                                851 passed; 0 failed; 2 ignored
 ```

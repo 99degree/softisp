@@ -63,11 +63,11 @@
   strict three-day window. Only five recent patches on `local-fixes` lack an
   upstream equivalent; see P2f and
   `docs/overview/20261125-local-branch-audit.md`.
-- **Application code target changed** (user direction, 2026-11-25):
-  `android-app/` will hold only non-code resources and packaging metadata; all
-  Rust/native application code moves to `anw/`, and NativeActivity loads
-  `softisp` (`libsoftisp.so`). Tracked as P2g; P2e remains only the interim
-  diagnosis of the current `libcam_camera_app.so` packaging bug. See
+- **Application code moved to `anw/`** (P2g, 2026-11-25): `android-app/` now holds
+  only the manifest and `Sources/res`; `anw/` owns `android_main`, camera
+  capture, pipeline, presentation, storage, crash logging, and the raw-frame C
+  ABI. NativeActivity loads `softisp` (`libsoftisp.so`). The stale
+  `libcam_camera_app.so` packaging path is retired. See
   `docs/ipa/ANW_SPLIT_PLAN.md`.
 - **HEAVY MNN test repaired** (this session): `test_mnn_engine` now fills the
   new zero-copy `ProcessParams` fields via `ProcessParams::new()`, passes the
@@ -334,22 +334,19 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   leaked session/buffer reservations; on-device check that a cancel followed
   by restart leaves no stale camera device or Vulkan buffers.
 
-### P2e — APK step 3 ships the previous app library (TODO)
+### P2e — APK step 3 shipped the previous app library (resolved by P2g)
 
-- **Status:** reproduced on the 2026-11-25 build. `build-apk.sh` patches and
-  copies `libcam_camera_app.so` into `cam-rust/lib` before `cargo apk2 build`,
-  and `cargo-apk2` packages that stale copy. The APK entry SHA-256 matched the
-  25,763,641-byte pre-build library, not the freshly linked 113,719,008-byte
-  one. Details and hashes: `docs/build/20261125-apk-step3-stale-lib-audit.md`.
-- **Fix:** build the cdylib first, copy it into both ABI runtime dirs, run
-  `patchelf` on the fresh copies, then `cargo apk2 build`; verify that the
-  target, runtime copy, and APK entry hashes all match.
-- **Impact:** current Rust/app changes may be absent from the shipped APK even
-  though the build reports success. The second consecutive build would pick up
-  the previous build's library.
-- **Scope:** this is an interim fix for the current tree only. The intended
-  architecture is P2g, where `libcam_camera_app.so` is retired and the APK loads
-  a freshly built `libsoftisp.so`.
+- **Status:** reproduced on the 2026-11-25 build. `build-apk.sh` patched and
+  copied `libcam_camera_app.so` into `cam-rust/lib` before `cargo apk2 build`,
+  and cargo-apk2 packaged that stale copy. Details and hashes:
+  `docs/build/20261125-apk-step3-stale-lib-audit.md`.
+- **Resolution:** P2g removes the copy/patch-to-`cam-rust/lib` path entirely.
+  cargo-apk2 builds `softisp-anw` and packages the cdylib it finds in `target/`;
+  a `RUSTC_WRAPPER` applies the libc++ `patchelf` rewrite before packaging. The
+  APK entry hash is verified against the target cdylib, and
+  `libcam_camera_app.so` is rejected explicitly.
+- **Scope:** this was an interim diagnosis. The shipped application now loads
+  `libsoftisp.so` from `anw/`.
 
 ### P2f — Recent local branch patches without upstream equivalents (TODO)
 
@@ -364,42 +361,36 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   cherry-pick; older-than-three-day changesets and all agent worktrees were
   explicitly excluded from triage.
 
-### P2g — Move all app code into `anw/`; make `android-app/` resource-only (TODO)
+### P2g — Move all app code into `anw/`; make `android-app/` resource-only ✅
 
-- **User direction recorded 2026-11-25.** `android-app/` holds non-code APK
-  resources and packaging metadata only. All Rust/native application code lives
-  in `anw/`, whose `softisp` cdylib (`libsoftisp.so`) is loaded by
-  NativeActivity.
-- **Library name:** `libsoftisp.so` is the preferred filename. Existing
-  `softisp_anw_*` C ABI symbol names remain unchanged for compatibility.
+- **User direction recorded 2026-11-25.** `android-app/` now holds non-code APK
+  resources only. All Rust/native application code lives in `anw/`, whose
+  `softisp` cdylib (`libsoftisp.so`) is loaded by NativeActivity.
+- **Library name:** `libsoftisp.so`; the existing `softisp_anw_*` C ABI symbols
+  remain unchanged for compatibility.
 - **Target split:**
-  - `android-app/`: `AndroidManifest.xml`, `Sources/res/**`, cargo-apk2 metadata
-    pointing at those resources; no camera/ISP/pipeline/storage/crash-log code.
-  - `anw/`: `android_main`, `camera.rs`, `crashlog.rs`, `pipeline.rs`,
-    `pipeline_runner.rs`, `storage.rs`, `presentation.rs`, the existing raw-frame
-    C ABI, and the Android linker build script.
-- **Implementation steps:**
-  1. Move the `android-app/src/**` modules into `anw/src/**` and adapt imports,
-     crate paths, and feature gates from `cam-camera-app` to `softisp-anw`.
-  2. Move `android-app/build.rs` linker setup to `anw/build.rs`; remove the Rust
-     library target and `src/**` from `android-app`.
-  3. Repoint `anw/Cargo.toml` packaging at `../android-app/AndroidManifest.xml`
-     and `../android-app/Sources/res`, keep package identity
-     `com.softisp.camera`, set `android.app.lib_name` to `softisp`, and keep
-     `runtime_libs = "../cam-rust/lib"`.
-  4. Change `build-apk.sh` to build/package `softisp-anw`; delete the stale
-     `libcam_camera_app.so` copy/patch step and apply the libc++ `patchelf`
-     rewrite to a freshly built `libsoftisp.so`.
-  5. Retire `libcam_camera_app.so` references in docs, CI, and runtime dirs, and
-     update the P4 crate table accordingly.
-- **Behaviour constraints:** preserve `OutputFormat::PackedRgb`, final
+  - `android-app/`: `AndroidManifest.xml`, `Sources/res/**`; no `Cargo.toml`,
+    `src/**`, or camera/ISP/pipeline/storage/crash-log code.
+  - `anw/`: `android_main` in `app.rs`, `camera.rs`, `crashlog.rs`, `pipeline.rs`,
+    `pipeline_runner.rs`, `storage.rs`, `presentation.rs`, the raw-frame C ABI,
+    and the Android linker build script.
+- **Packaging:** `anw/Cargo.toml` uses package `com.softisp.camera`, APK name
+  `softisp-camera`, `manifest_override = "../android-app/AndroidManifest.xml"`,
+  `resources = "../android-app/Sources/res"`, and
+  `runtime_libs = "../cam-rust/lib"`. `android.app.lib_name` is `softisp`.
+- **Build:** `build-apk.sh` runs `scripts/build_mnn_libs.sh arm64-v8a`, then
+  `cargo apk2 build -p softisp-anw`. A `RUSTC_WRAPPER` applies the libc++
+  `patchelf` rewrite to the freshly linked cdylib in `target/` before
+  cargo-apk2 copies it into the APK; no app library is copied into
+  `cam-rust/lib`.
+- **Behaviour constraints preserved:** `OutputFormat::PackedRgb`, final
   `isp.display_uint32_bgra`, dual-engine execution, staged frame phases, no
   float fallback, AHB only for large tensors, and the existing crash-log path.
-- **Verification:** workspace format/clippy/tests for `anw`; successful
+- **Verification:** workspace format/check/clippy/tests for `anw`; successful
   `./build-apk.sh`; APK contains `lib/arm64-v8a/libsoftisp.so` and no
-  `libcam_camera_app.so`; target/runtime/APK hashes match; device logs show
-  camera startup, dual-engine ISP, and preview from `anw`. Assistant must not
-  install or share the APK. Full plan: `docs/ipa/ANW_SPLIT_PLAN.md`.
+  `libcam_camera_app.so`; target and APK entry hashes match. Device logs remain
+  a user-side check (the assistant does not install or share the APK). Full
+  plan: `docs/ipa/ANW_SPLIT_PLAN.md`.
 
 ### P4 — Multi-Frontend IPA Plugin Architecture ✅ (implemented 2026-11-25)
 
@@ -410,7 +401,7 @@ New crates added to the workspace:
 | `cam-ipa` | rlib | `cam-rust/cam-ipa/` | Stable Rust IPA API — `IpaContext`, `EngineManager`, `IpaController`, `IpaPipeline`, `BufferManager`, `EventEmitter` |
 | `libcamera-ipa` | rlib+cdylib | `libcamera-ipa/` | libcamera C FFI plugin — exports `ipaCreate()` / `IPAModuleInfo`, implements `IPASoftIspInterface` vtable |
 | `jni` | rlib+cdylib | `jni/` | Android JNI bridge — `JNI_OnLoad`, `IpaSession` native peer, `HardwareBuffer` → `AhwBuffer` |
-| `anw` | rlib+cdylib | `anw/` | ANativeWindow / application code owner after P2g (currently presentation + cam-ipa consumer) |
+| `anw` | rlib+cdylib | `anw/` | ANativeWindow / application code owner (`libsoftisp.so`, NativeActivity + cam-IPA consumer) |
 | `cli` | rlib+cdylib+bin | `cli/` | 4K frame generator, 3A + neural processor, V4L2 capture, training-data prep |
 
 **Architecture** (`docs/ipa/MULTI_FRONTEND_IPA_ARCHITECTURE.md`):

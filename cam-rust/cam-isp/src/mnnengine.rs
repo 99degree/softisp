@@ -1004,7 +1004,7 @@ impl MnnEngine {
         // Select demosaic weights by pattern.
         //
         // The encoding is Android's `SENSOR_INFO_COLOR_FILTER_ARRANGEMENT`:
-        // 0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR (`cam_camera_app::camera::cfa_to_bayer`).
+        // 0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR (`softisp_anw::camera::cfa_to_bayer`).
         // This match previously answered 1->BGGR, 2->GRBG, 3->GBRG, which
         // rotates the three non-RGGB patterns by one — so a GRBG sensor got
         // BGGR weights and swapped red and blue outright. The pair chosen must

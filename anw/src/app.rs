@@ -1,17 +1,13 @@
-//! `com.softisp.camera` — a native camera preview driven by the Rust ISP.
+//! `com.softisp.camera` — the NativeActivity loop owned by the `softisp` cdylib.
 //!
 //! The app has no Java or C layer: `android-activity` provides the
 //! `NativeActivity` lifecycle, the NDK camera2 API is called directly through
 //! `ndk-sys`, and the resulting Bayer frames go through `cam-isp` before being
 //! blitted to the `ANativeWindow`. Diagnostics land in
-//! `/sdcard/download/softisp-app.log`; see [`crashlog`].
-
-pub mod camera;
-pub mod crashlog;
-pub mod pipeline;
-pub mod pipeline_runner;
-pub mod preview;
-pub mod storage;
+//! `/sdcard/download/softisp-app.log`; see [`crate::crashlog`].
+//!
+//! The supporting modules are declared at the crate root; this module owns the
+//! activity entry point and the frame presentation loop.
 
 use std::ffi::c_void;
 use std::path::Path;
@@ -19,6 +15,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::camera::{take_fatal_camera_error, CameraSession, RawFrame};
+use crate::crashlog::{self, write_line};
+use crate::pipeline::PipelineConfig;
+use crate::pipeline_runner::PipelineRunner;
+use crate::presentation::WindowTarget;
+use crate::storage::{probe, Access};
 use android_activity::ndk::native_window::NativeWindow;
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use cam_isp::controller::IspController;
@@ -26,12 +28,6 @@ use cam_isp::engine::{select_engine_by_name, IspEngine};
 use cam_isp::mnnengine::MnnEngine;
 use cam_isp::profile::PipelineProfile;
 use cam_isp::{release_native_window, set_native_window};
-use camera::{CameraSession, RawFrame};
-use crashlog::write_line;
-use pipeline::PipelineConfig;
-use pipeline_runner::PipelineRunner;
-use preview::WindowTarget;
-use storage::Access;
 
 /// Frames processed between two stat lines.
 ///
@@ -63,7 +59,7 @@ const FRAME_BUDGET: Duration = Duration::from_millis(500);
 /// records to logcat, which needs the READ_LOGS grant to read and whose 256 KiB
 /// ring buffers drain quickly. Everything that distinguishes "the ISP failed"
 /// from "the ISP succeeded but nothing was drawn" lives in those records, and
-/// losing them makes the two look identical. See [`crashlog::install_logger`].
+/// losing them makes the two look identical. See [`crate::crashlog::install_logger`].
 fn init_logger() {
     crashlog::install_logger();
 }
@@ -337,7 +333,7 @@ impl Preview {
             }
             Err(e) => {
                 log::warn!("Could not open camera for capability check: {e}");
-                (None, false, 1023.0, camera::BGGR, 1600, 1200, 0)
+                (None, false, 1023.0, crate::camera::BGGR, 1600, 1200, 0)
             }
         };
 
@@ -409,7 +405,7 @@ impl Preview {
         // Letting the two disagree is silent: the graph emits `[1,4,H,W]`
         // B,G,R,A planes in 0..255, the engine decodes them as `[1,3,H,W]` f32
         // in 0..1, and every pixel lands 8x too large in the wrong channel.
-        profile.output_format = pipeline::OUTPUT_FORMAT;
+        profile.output_format = crate::pipeline::OUTPUT_FORMAT;
 
         // Build the pipeline blocks once, then build two engines with identical chains
         // for dual-GPU ping-pong (engine A / engine B).
@@ -565,7 +561,7 @@ impl Preview {
         // `ERROR_CAMERA_DEVICE` and disconnects arrive on a binder thread. They
         // cannot close the session there; dropping it here makes `ensure_camera`
         // open a fresh device on the next call instead of polling a dead one.
-        if camera::take_fatal_camera_error() {
+        if take_fatal_camera_error() {
             write_line(
                 "ERROR",
                 "camera",
@@ -897,7 +893,7 @@ fn android_main(app: AndroidApp) {
 /// guess, and names the concrete grant the user needs.
 fn storage_note(sdk: i32, fallback: Option<&Path>) -> String {
     let spec = Path::new(crashlog::LOG_PATH);
-    let (access, reason) = storage::probe(spec, false);
+    let (access, reason) = probe(spec, false);
     let mut note = match access {
         Access::Writable => format!("{} became writable after startup", spec.display()),
         Access::Denied => {

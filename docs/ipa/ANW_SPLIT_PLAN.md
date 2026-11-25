@@ -1,7 +1,6 @@
 # Plan: make `anw/` the application code owner
 
-> Status: planned, not implemented. Tracked as P2g in
-> `docs/overview/ROADMAP.md`.
+> Status: implemented. Tracked as P2g in `docs/overview/ROADMAP.md`.
 
 ## Goal
 
@@ -55,12 +54,16 @@ change, not a new app.
 ## Build changes
 
 - `build-apk.sh` builds the APK from `anw`, not `cam-camera-app`.
-- The stale `libcam_camera_app.so` copy/patch step is removed.
-- `libsoftisp.so` is built first, copied into both ABI runtime dirs, patched with
-  `patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so`, then
-  packaged.
-- Verify that the target, runtime copy, and APK entry hashes match and that the
-  APK contains `lib/arm64-v8a/libsoftisp.so` and no `libcam_camera_app.so`.
+- The stale `libcam_camera_app.so` copy/patch step is removed. cargo-apk2 builds
+  the cdylib itself and packages the artifact from `target/`, so copying a
+  separate library into `cam-rust/lib` would never affect the APK.
+- `scripts/libsoftisp-rustc-wrapper.sh` runs `patchelf --replace-needed
+  libc++_shared.so libsoftisp_cpp_shared.so` on the freshly linked `softisp`
+  cdylib before cargo-apk2 copies it into the APK. `runtime_libs` remains only
+  for MNN's prebuilt libraries.
+- Verify that the target cdylib and APK entry hashes match, that the APK
+  contains `lib/arm64-v8a/libsoftisp.so` and no `libcam_camera_app.so`, and that
+  no app library is installed into `cam-rust/lib`.
 
 ## Verification
 

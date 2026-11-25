@@ -16,7 +16,6 @@ members = [
     "libcamera-ipa",
     "anw",
     "cli",
-    "android-app",
 ]
 
 [workspace.dependencies]
@@ -25,9 +24,9 @@ log = "0.4"
 thiserror = "2"
 env_logger = "0.10"
 android_logger = "0.14"
-# NativeActivity lifecycle + ANativeWindow (android-app/cam-camera-app).
+# NativeActivity lifecycle + ANativeWindow (anw/softisp-anw, libsoftisp.so).
 android-activity = { version = "0.6.1", features = ["native-activity"] }
-# Raw ACamera* / AImageReader* NDK bindings (android-app/cam-camera-app).
+# Raw ACamera* / AImageReader* NDK bindings (anw/softisp-anw).
 ndk-sys = { version = "0.6", features = ["media"] }
 
 # ── Profiles ────────────────────────────────────────────────────────────────

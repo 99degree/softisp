@@ -102,8 +102,8 @@ handles and the stats toggle; `mnn_buffer`'s test no longer uses a no-op
 `drop(&mut slice)` that warned under the test build.
 
 **Verification.** `cargo fmt --all -- --check`, `cargo clippy -p cam-isp --lib
---features "rectifier mnn" -- -D warnings`, `cargo clippy -p cam-camera-app
---all-features -- -D warnings` and `cargo test -p cam-camera-app --lib
+--features "rectifier mnn" -- -D warnings`, `cargo clippy -p softisp-anw
+--all-features --no-deps -- -D warnings` and `cargo test -p softisp-anw --lib
 --all-features` (46 passed) are clean. The new MNN unit tests pass (11 passed).
 A 160x120 `perf_4k_dual` smoke run passes with engine A stats on / B off.
 The full `cam-isp --lib` result is unchanged: 848 passed, 2 pre-existing

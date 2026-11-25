@@ -822,7 +822,7 @@ impl PipelineProfile {
 
     /// YUV-source profile — for cameras that only deliver `YUV_420_888`.
     ///
-    /// The capture layer (`cam-camera-app::camera::copy_pixels`) expands the
+    /// The capture layer (`softisp_anw::camera::copy_pixels`) expands the
     /// 8-bit luma plane into a `GG` mosaic and scales it to full `u16` range,
     /// so by the time a frame reaches the engine it is Bayer-shaped `u16` — the
     /// same tensor the RAW profiles consume. The head must therefore be the

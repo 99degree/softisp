@@ -286,18 +286,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cam-camera-app"
-version = "0.1.0"
-dependencies = [
- "android-activity",
- "android_logger",
- "cam-isp",
- "cam-types",
- "log",
- "ndk-sys",
-]
-
-[[package]]
 name = "cam-core"
 version = "0.1.0"
 dependencies = [
@@ -2171,6 +2159,7 @@ dependencies = [
  "android_logger",
  "cam-ipa",
  "cam-isp",
+ "cam-types",
  "log",
  "ndk-sys",
  "thiserror 2.0.21",

@@ -15,7 +15,15 @@ use cam_isp::profile::PipelineProfile;
 use ndk_sys::ANativeWindow;
 use std::sync::Mutex;
 
+pub mod camera;
+pub mod crashlog;
+pub mod pipeline;
+pub mod pipeline_runner;
 pub mod presentation;
+pub mod storage;
+
+pub(crate) mod app;
+
 use presentation::WindowTarget;
 
 // Thread-safe storage for IPA contexts.

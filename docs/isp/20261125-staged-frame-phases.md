@@ -67,14 +67,14 @@ GPU→CPU stats stall before presentation.
 
 ## Verification
 
-- `cargo fmt -p cam-isp -p cam-camera-app -- --check`: clean.
+- `cargo fmt -p cam-isp -p softisp-anw -- --check`: clean.
 - `cargo clippy -p cam-isp --lib --features "rectifier mnn" -- -D warnings`:
   clean.
-- `cargo clippy -p cam-camera-app --all-features -- -D warnings`: clean.
+- `cargo clippy -p softisp-anw --all-features --no-deps -- -D warnings`: clean.
 - `cargo test -p cam-isp --lib --features "rectifier mnn" --no-fail-fast`:
   856 passed, 0 failed, 2 ignored (includes the neural-controller tests added
   on the rebased `master`).
-- `cargo test -p cam-camera-app --lib --all-features`: 46 passed.
+- `cargo test -p softisp-anw --lib --all-features`: 46 passed.
 - `cargo test -p cam-isp --test test_mnn_engine test_mnn_engine_staged_streaming
   --features mnn -- --ignored --nocapture`: 3 staged frames passed on the
   real MNN/Vulkan backend.

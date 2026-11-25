@@ -19,9 +19,9 @@ use std::time::{Duration, Instant};
 use cam_isp::engine::{IspEngine, PrepareParams};
 use cam_isp::mnnengine::{MnnEngine, PreparedFrame};
 
+use crate::app::{raw_stats, raw_to_grayscale_bgra, FrameKind, RawStats};
 use crate::camera::{CameraSession, RawFrame};
 use crate::pipeline::{FrameStager, PipelineConfig};
-use crate::{raw_stats, raw_to_grayscale_bgra, FrameKind, RawStats};
 
 /// One finished frame, handed back to the presenting thread.
 pub(crate) struct Done {

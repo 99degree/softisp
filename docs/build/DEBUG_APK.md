@@ -22,11 +22,7 @@ cd /data/data/com.termux/files/home/softisp
 ./scripts/build_mnn_libs.sh arm64-v8a
 
 # 2. Build the APK
-export JAVA_HOME=/data/data/com.termux/files/usr/lib/jvm/java-11-openjdk
-export ANDROID_NDK_ROOT=$HOME/android-sdk/ndk/29.0.14206865
-export ANDROID_HOME=$HOME/android-sdk
-cargo build -p cam-camera-app --target aarch64-linux-android
-cargo apk2 build -p cam-camera-app
+./build-apk.sh
 
 APK=target/debug/apk/softisp-camera.apk
 ls -lh "$APK"
@@ -62,7 +58,7 @@ the new APK.
 
 Because it is a `NativeActivity` with a launcher intent, open it from the app
 drawer ("SoftISP Camera"). There is no `am start` return value to inspect — the
-process simply starts `android_main` in `cam-camera-app/src/lib.rs`.
+process simply starts `android_main` in `anw/src/app.rs` inside `libsoftisp.so`.
 
 `am start` is optional (you can try it from the device shell, but prefer the
 launcher); it returns immediately with no output on success. The real signal is
@@ -206,8 +202,8 @@ testing.
 The correct order is:
 
 ```
-1. ./scripts/build_mnn_libs.sh        # builds MNN Vulkan libs, copies .so to cam-rust/lib/aarch64-v8a/
-2. cargo apk2 build -p cam-camera-app # APK picks up the fresh .so via runtime_libs
+1. ./scripts/build_mnn_libs.sh arm64-v8a  # called by build-apk.sh
+2. ./build-apk.sh                         # packages softisp-anw and verifies libsoftisp.so
 ```
 
 `scripts/build_mnn_libs.sh` runs `build_vulkan_android.sh` inside `~/MNN`,

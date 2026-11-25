@@ -105,8 +105,9 @@ status: resolved — hypothesis refuted; real defects identified below
 
 ## Working-tree state at time of analysis (user WIP, untouched)
 
-- `build-apk.sh`: `cargo build -p cam-camera-app` line commented out
-  (line 31) — makes step 3 patch a possibly stale `libcam_camera_app.so`.
+- `build-apk.sh` (historical): a `cargo build -p cam-camera-app` line was
+  commented out, which made step 3 patch a possibly stale `libcam_camera_app.so`.
+  P2g removed that path; the APK now packages `libsoftisp.so` from `target/`.
 - `cam-rust/cam-isp/src/profile_builder.rs`: WIP geometry fix —
   `UnpackCfaBlock::with_downscale(2)` + demosaic concrete dims halved
   to `cfa_h/cfa_w`.
@@ -223,10 +224,10 @@ Applied changes:
   `branch=packed_u32` diagnostic. Primitive PackedRgb packing stays W/2.
 - Verification after both changes: `cargo fmt --all -- --check` OK;
   `cargo clippy -p cam-isp --lib --features "rectifier mnn" -- -D warnings`
-  and `cargo clippy -p cam-camera-app --all-features -- -D warnings` OK;
+  and `cargo clippy -p softisp-anw --all-features --no-deps -- -D warnings` OK;
   `cargo test -p cam-isp --lib --features "rectifier mnn"` → 845 passed
   (one new test for the fused packed output width), the same 2 pre-existing
-  failures; `cargo test -p cam-camera-app --lib --all-features` → 46 passed.
+  failures; `cargo test -p softisp-anw --lib --all-features` → 46 passed.
   Device verification (single-engine APK) PASSED: last run reported 65 frames
   at 800x600, `rgb mean ≈ [160,158,159]`, `max 255`, `non-black 100.0%` at
   every checkpoint, no `present failed`. Rate: 64 frames in 30.64 s ≈ **2.09
@@ -503,9 +504,9 @@ In-repo correctness fixes applied alongside:
   diagnostic-only.
 
 Verification: `cargo fmt --all -- --check` OK; `cargo clippy -p cam-isp --lib
---features "rectifier mnn" -- -D warnings` OK; `cargo clippy -p cam-camera-app
---all-features -- -D warnings` OK; `cargo test -p cam-isp --lib --features
+--features "rectifier mnn" -- -D warnings` OK; `cargo clippy -p softisp-anw
+--all-features --no-deps -- -D warnings` OK; `cargo test -p cam-isp --lib --features
 "rectifier mnn" --no-fail-fast` → 845 passed, the same 2 pre-existing failures,
-2 ignored; `cargo test -p cam-camera-app --lib --all-features` → 46 passed.
+2 ignored; `cargo test -p softisp-anw --lib --all-features` → 46 passed.
 Device end-to-end AHB is still blocked (camera AImage lifetime, no output AHB
 from ANativeWindow); the APK remains on the packed BGRA readback path.

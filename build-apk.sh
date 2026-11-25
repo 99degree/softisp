@@ -13,51 +13,87 @@
 # fails to load with "cannot locate symbol".
 #
 # Fix: give our Termux libc++ a unique SONAME (libsoftisp_cpp_shared.so) and
-# retune every MNN lib + the Rust app lib to depend on it, so the dynamic
+# retune every MNN lib + the app's libsoftisp.so to depend on it, so the dynamic
 # linker loads our copy instead of the stale system one.
 set -euo pipefail
 
 export JAVA_HOME=/data/data/com.termux/files/usr/lib/jvm/java-11-openjdk
 export ANDROID_NDK_ROOT="$HOME/android-sdk/ndk/29.0.14206865"
 export ANDROID_HOME="$HOME/android-sdk"
-
 cd "$(dirname "$0")"
+export RUSTC_WRAPPER="$PWD/scripts/libsoftisp-rustc-wrapper.sh"
 
-# 1. Build MNN Vulkan libs and copy all .so into cam-rust/lib/aarch64-v8a/
+RUST_LIB="target/aarch64-linux-android/debug/libsoftisp.so"
+APK="target/debug/apk/softisp-camera.apk"
+
+# 1. Build MNN Vulkan libs and copy all .so into cam-rust/lib/aarch64-v8a/.
 ./scripts/build_mnn_libs.sh arm64-v8a
 
-# 2. No separate cargo build here: `cargo apk2 build` in step 4 compiles the
-#    Rust app library itself. The patchelf step below retunes the .so from the
-#    previous build, which cam-isp's build.rs links against as it rebuilds.
+# 2. Drop the retired app library from the runtime lib dirs. cargo-apk2 takes
+#    the app cdylib from target/ (it builds softisp-anw itself); runtime_libs is
+#    only for MNN's prebuilt .so files.
+for DIST in cam-rust/lib/arm64-v8a cam-rust/lib/aarch64-v8a; do
+    rm -f "$DIST/libcam_camera_app.so" "$DIST/libsoftisp.so"
+done
 
-# 3. Patch every bundled .so's libc++_shared.so dependency to point at our
-#    uniquely-named libsoftisp_cpp_shared.so instead of the stale system one.
-if command -v patchelf >/dev/null 2>&1; then
-    RUST_LIB="target/aarch64-linux-android/debug/libcam_camera_app.so"
+# 3. Build the APK with cargo-apk2 (default debug profile). It compiles
+#    softisp-anw, packages its cdylib from target/, and reads the manifest and
+#    resources from android-app/. RUSTC_WRAPPER retunes the cdylib's libc++
+#    dependency before cargo-apk2 copies it into the APK.
+cargo apk2 build -p softisp-anw
+sync
 
-    # Patch and copy into both ABI dirs cargo-apk2 may read from:
-    #   arm64-v8a — runtime_libs/<android_abi> for APK bundling
-    #   aarch64-v8a — cam-isp build.rs abi_dir() for rustc -L/rpath
-    for DIST in cam-rust/lib/arm64-v8a cam-rust/lib/aarch64-v8a; do
-        mkdir -p "$DIST"
-        cp -f "$RUST_LIB" "$DIST/libcam_camera_app.so"
-        patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so "$DIST/libcam_camera_app.so"
-        echo "  patchelf: $DIST/libcam_camera_app.so libc++_shared.so -> libsoftisp_cpp_shared.so"
-    done
-
-    # Patch all MNN libs already in the runtime dir (copied there by
-    # build_mnn_libs.sh).
-    for DIST in cam-rust/lib/arm64-v8a cam-rust/lib/aarch64-v8a; do
-        for target in "$DIST"/libMNN.so "$DIST"/libMNN_Vulkan.so \
-                      "$DIST"/libMNN_Express.so "$DIST"/libMNNConvertDeps.so; do
-            if [ -f "$target" ]; then
-                patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so "$target"
-                echo "  patchelf: $target libc++_shared.so -> libsoftisp_cpp_shared.so"
-            fi
-        done
-    done
+# 4. The cdylib must depend on our renamed libc++ to avoid the device's stale
+#    system libc++_shared.so. RUSTC_WRAPPER should patch it during link; if it
+#    didn't (e.g. wrapper not propagated), patch now and rebuild the APK so the
+#    packaged artifact is correct.
+if command -v patchelf >/dev/null 2>&1 && [ -f "$RUST_LIB" ]; then
+    if readelf -d "$RUST_LIB" | grep -q '\[libc++_shared\.so\]'; then
+        echo "  WARN: RUSTC_WRAPPER did not retune $RUST_LIB; patching and rebuilding APK"
+        patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so "$RUST_LIB"
+        cargo apk2 build -p softisp-anw
+        sync
+    fi
 fi
 
-# 4. Build the APK with cargo-apk2 (default debug profile), which also builds
-#    the Rust app library against the retuned .so above.
-cargo apk2 build -p cam-camera-app
+# 5. Fail loudly if the APK still ships the retired library, the wrong libc++, or
+#    a byte-different copy of the just-built cdylib.
+if command -v unzip >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; then
+    APK_LIB="lib/arm64-v8a/libsoftisp.so"
+    found=0
+    for attempt in 1 2 3; do
+        if unzip -Z1 "$APK" 2>/dev/null | grep -Fxq "$APK_LIB"; then
+            found=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$found" -ne 1 ]; then
+        echo "ERROR: $APK is missing $APK_LIB" >&2
+        exit 1
+    fi
+    if unzip -Z1 "$APK" | grep -Fxq "lib/arm64-v8a/libcam_camera_app.so"; then
+        echo "ERROR: $APK still contains the retired libcam_camera_app.so" >&2
+        exit 1
+    fi
+    if [ ! -f "$RUST_LIB" ]; then
+        echo "ERROR: expected cdylib $RUST_LIB was not produced" >&2
+        exit 1
+    fi
+
+    target_sha=$(sha256sum "$RUST_LIB" | awk '{print $1}')
+    apk_sha=$(unzip -p "$APK" "$APK_LIB" | sha256sum | awk '{print $1}')
+    if [ "$target_sha" != "$apk_sha" ]; then
+        echo "ERROR: libsoftisp.so hash mismatch (target $target_sha, APK $apk_sha)" >&2
+        exit 1
+    fi
+    tmp_apk_lib=$(mktemp /data/data/com.termux/files/usr/tmp/opencode/libsoftisp.XXXXXX.so)
+    unzip -p "$APK" "$APK_LIB" > "$tmp_apk_lib"
+    if readelf -d "$tmp_apk_lib" | grep -q '\[libc++_shared\.so\]'; then
+        rm -f "$tmp_apk_lib"
+        echo "ERROR: $APK_LIB still depends on libc++_shared.so" >&2
+        exit 1
+    fi
+    rm -f "$tmp_apk_lib"
+    echo "  verified: $APK_LIB sha256 $apk_sha"
+fi

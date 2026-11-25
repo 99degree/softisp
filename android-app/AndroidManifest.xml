@@ -92,15 +92,16 @@
         android:icon="@mipmap/icon">
 
         <!-- Rotation, density and UI-mode changes are absorbed here so the
-             activity is not recreated mid-preview: lib.rs re-takes the window
-             and reallocates the presentation buffers on the resize events. -->
+             activity is not recreated mid-preview: anw/src/app.rs re-takes the
+             window and reallocates the presentation buffers on the resize
+             events. -->
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
             android:label="SoftISP Camera"
             android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection">
             <!-- android.app.lib_name is what NativeActivity dlopen()s, and it
-                 must match the cam_camera_app library name in Cargo.toml.
+                 must match the `softisp` library name in anw/Cargo.toml.
 
                  It has to hang off <activity>, not <application>:
                  NativeActivity.onCreate calls
@@ -111,7 +112,7 @@
                  "Unable to find native library main". -->
             <meta-data
                 android:name="android.app.lib_name"
-                android:value="cam_camera_app"/>
+                android:value="softisp"/>
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

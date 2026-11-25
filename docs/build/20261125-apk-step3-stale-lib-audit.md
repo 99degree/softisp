@@ -1,7 +1,7 @@
 ---
 title: "APK build step 3 ships the previous app library"
 created_at: 2026-11-25T00:00:00+00:00
-status: reproduced; fix TODO
+status: resolved by P2g
 ---
 
 # APK build step 3 ships the previous app library
@@ -40,43 +40,37 @@ The packaging source (`cam-rust/lib`) is populated before the Rust cdylib is
 rebuilt. There is no post-build copy/patch step, so a rebuild that changes the
 app library never reaches the APK until a *second* `./build-apk.sh` run.
 
-## TODO fix
+## Resolution (P2g)
 
-1. Build the cdylib explicitly first:
-   `cargo build -p cam-camera-app --target aarch64-linux-android`.
-2. Copy that fresh library into both `cam-rust/lib/arm64-v8a/` and
-   `cam-rust/lib/aarch64-v8a/`.
-3. Run the existing `patchelf --replace-needed libc++_shared.so
-   libsoftisp_cpp_shared.so` step on the fresh copies (and on the MNN libs).
-4. Run `cargo apk2 build -p cam-camera-app`, which will reuse the up-to-date
-   Rust build and package the patched fresh library.
-5. Verify with:
+The interim copy-into-`cam-rust/lib` fix was superseded. cargo-apk2 builds the
+application cdylib itself and takes it from `target/`; changing a separate copy
+in `cam-rust/lib` cannot affect that artifact. The shipped fix therefore:
+
+1. Moves application code to `anw/` and produces `libsoftisp.so`.
+2. Uses `scripts/libsoftisp-rustc-wrapper.sh` to apply
+   `patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so` to the
+   freshly linked cdylib before cargo-apk2 packages it.
+3. Keeps `runtime_libs` in `anw/Cargo.toml` for MNN libraries only and removes
+   all app-library copies from `cam-rust/lib`.
+4. Verifies with:
 
 ```bash
-sha256sum target/aarch64-linux-android/debug/libcam_camera_app.so \
-         cam-rust/lib/arm64-v8a/libcam_camera_app.so
+sha256sum target/aarch64-linux-android/debug/libsoftisp.so
 unzip -p target/debug/apk/softisp-camera.apk \
-       lib/arm64-v8a/libcam_camera_app.so | sha256sum
+       lib/arm64-v8a/libsoftisp.so | sha256sum
 ```
 
-All three hashes must match. This remains unimplemented; it is recorded as
-TODO P2e in `docs/overview/ROADMAP.md`.
+Both hashes must match, and the APK must contain no `libcam_camera_app.so`.
+P2e is closed by P2g; see `docs/overview/ROADMAP.md`.
 
 ## Target architecture: `anw/` replaces `libcam_camera_app.so`
 
-Yes — per user direction, `anw/` is the intended owner of all application
-code. `android-app/` is to become a non-code APK shell holding the manifest and
-`Sources/res`, while `anw/` owns `android_main`, camera capture, pipeline,
+Per user direction, `anw/` is now the owner of all application code.
+`android-app/` is a non-code APK shell holding only the manifest and
+`Sources/res`; `anw/` owns `android_main`, camera capture, pipeline,
 presentation, storage, crash logging, and the `softisp` cdylib
-(`libsoftisp.so`). See
-`docs/ipa/ANW_SPLIT_PLAN.md` and P2g in `docs/overview/ROADMAP.md`.
+(`libsoftisp.so`). See `docs/ipa/ANW_SPLIT_PLAN.md` and P2g in
+`docs/overview/ROADMAP.md`.
 
-The current tree has not landed that migration yet: `anw/` has presentation and
-the raw-frame `softisp_anw_process_and_present` ABI, but no `android_main` or
-`ACameraManager` capture path; `./build-apk.sh` still builds `-p cam-camera-app`;
-and `anw/Cargo.toml` still points at local `AndroidManifest.xml` and
-`Sources/res` that should instead come from `android-app/`.
-
-P2e is therefore only the interim diagnosis of the current packaging bug. Once
-P2g lands, `libcam_camera_app.so` is retired and the APK must package a freshly
-built `libsoftisp.so` instead.
+P2e remains the historical diagnosis of the stale-library packaging bug; it is
+closed by P2g. `libcam_camera_app.so` is no longer built or bundled.

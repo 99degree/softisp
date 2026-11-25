@@ -152,7 +152,7 @@ softisp/
     cam-onnx/                   # ONNX protobuf serialization (proto.rs) + graph builders.
     cam-motion/                 # Motion estimation / deshake (block matching, trajectory smooth).
     cam-binder/                 # AOSP binder HAL ↔ ISP bridge (V4l2IspBridge, etc.).
-  android-app/                  # Android Camera APK crate (package `cam-camera-app`, built by `./build-apk.sh`).
+  android-app/                  # APK shell only: AndroidManifest.xml, Sources/res. No Rust app code.
   cam-hal/                      # C++ HAL implementation (AOSP).
   cpp/                          # C++ support: MNN FFI, convert API (mnn_convert_api.cpp), shaders.
   vulkan_isp/                   # Vulkan compute shaders / GLSL ("Extra" GPU ops).
@@ -185,7 +185,7 @@ for crate in cam-types cam-hal cam-hal-android cam-hal-linux cam-isp cam-core ca
   [ "$crate" = "cam-isp" ] && feat="--features rectifier"
   cargo clippy -p "$crate" --lib $feat -- -D warnings 2>&1
 done
-cargo clippy -p cam-camera-app --all-features -- -D warnings 2>&1
+cargo clippy -p softisp-anw --all-features --no-deps -- -D warnings 2>&1
 
 # Unit / lib tests (hermetic — no network, no API keys)
 for crate in cam-types cam-hal cam-core cam-onnx cam-motion; do
@@ -217,7 +217,7 @@ cargo test -p cam-isp --test test_mnn_engine --features "mnn" -- --ignored --noc
 
 * The `mnn` feature requires external shared libs (`libmnncore.so`, `libMNN_Vulkan.so`, `libMNNConvertDeps.so`). CI builds them from source; locally they must be on `LD_LIBRARY_PATH`.
 * For fast iteration, depend on the `rectifier` feature (pure-Rust mock ONNX model, no external libs) for most unit tests. Only enable `mnn` when you actually touch the GPU/inference path.
-* The `cam-camera-app` crate (in `android-app/`) is built only by `./build-apk.sh`, which pins JDK 11 + NDK r29; it is not part of the default CI cargo loops.
+* The `softisp-anw` crate (in `anw/`) is the NativeActivity app owner and produces `libsoftisp.so`. `build-apk.sh` packages it via cargo-apk2, which pins JDK 11 + NDK r29; it is not part of the default CI cargo loops.
 
 ### Format and lint config
 
