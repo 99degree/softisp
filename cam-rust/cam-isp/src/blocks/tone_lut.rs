@@ -4,24 +4,23 @@
 //! at fixed x-positions [0, 1/6, 2/6, 3/6, 4/6, 5/6, 1], followed by parametric
 //! contrast/brightness/gamma.
 //!
-//! This block is a superset of [`ToneBlock`]: it applies both the 7-point LUT
-//! from the neural controller AND the parametric contrast/brightness/gamma.
-//! In the hybrid controller mode, the rule-based `IspController` sets
-//! contrast/brightness/gamma while the neural controller sets the 7-point LUT.
+//! The block can also apply parametric contrast/brightness/gamma, but in the
+//! hybrid pipeline it runs directly after [`ToneBlock`] with identity defaults
+//! for those three: the rule-based controller sets them there once, and the
+//! neural controller supplies only the 7-point LUT.
 //!
 //! ONNX subgraph:
-//!   1. Piecewise-linear LUT from 7 control points at x = [0, 1/6, ..., 1]:
-//!      For segment i (0..5):
-//!        seg_in   = clip(x - t_i, 0, 1/6)
-//!        seg_out  = seg_in * slope_i   where slope_i = (y_{i+1} - y_i) * 6
-//!      lut_out   = y_0 + sum(seg_out_i for i in 0..5)
-//!   2. Apply parametric: lut_out * contrast + brightness
-//!   3. Apply gamma: result ^ (1/gamma)
+//! 1. Piecewise-linear LUT from 7 control points at x = [0, 1/6, ..., 1].
+//!    For segment i (0..5), `seg_out = clip(x - t_i, 0, seg_width) * slope_i`
+//!    where `slope_i = (y_{i+1} - y_i) / seg_width`; `lut_out` sums those
+//!    segments onto `y_0`.
+//! 2. Apply parametric: `lut_out * contrast + brightness`.
+//! 3. Apply gamma: `result ^ (1/gamma)`.
 //!
 //! At x = k/6: LUT result = y_0 + sum_{j<k} (y_{j+1} - y_j) = y_k  ✓
 //!
-//! The neural controller is responsible for computing the 7 LUT values and the
-//! contrast/brightness/gamma. This block simply applies them per-pixel.
+//! The neural controller computes the 7 LUT values; in the hybrid pipeline this
+//! block applies them per-pixel after the parametric tone stage.
 
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
@@ -59,7 +58,15 @@ impl ToneLutBlock {
             next: None,
             frame_tensor: "ToneLutBlock/frame".into(),
             input_source: String::new(),
-            tone_curve_lut: [0.0, 1.0 / 6.0, 2.0 / 6.0, 3.0 / 6.0, 4.0 / 6.0, 5.0 / 6.0, 1.0],
+            tone_curve_lut: [
+                0.0,
+                1.0 / 6.0,
+                2.0 / 6.0,
+                3.0 / 6.0,
+                4.0 / 6.0,
+                5.0 / 6.0,
+                1.0,
+            ],
             contrast: 1.0,
             brightness: 0.0,
             gamma: 1.0,
@@ -183,11 +190,8 @@ impl IspBlock for ToneLutBlock {
         let x = &self.input_source;
         let mut nodes = Vec::new();
 
-        // 7 tone curve point values at x = [0, 1/6, 2/6, 3/6, 4/6, 5/6, 1]
-        let y: [f32; 7] = self.tone_curve_lut;
-
         // Segment start positions: t_i = i/6 for i=0..5
-        // Segment slopes: slope_i = (y_{i+1} - y_i) * 6
+        // Slopes are derived in the graph from y_i and the shared seg_width.
 
         // Accumulator starts at y_0 (tone_curve_lut[0])
         let mut acc = format!("{}/lut_y0", ns);
@@ -204,6 +208,22 @@ impl IspBlock for ToneLutBlock {
             let seg_clamped = format!("{}/seg{}_clamped", ns, i);
             let seg_scaled = format!("{}/seg{}_scaled", ns, i);
             let acc_out = format!("{}/lut_acc{}", ns, i + 1);
+
+            // slope_i = (y_{i+1} - y_i) / seg_width
+            let diff = format!("{}/seg{}_diff", ns, i);
+            let slope = format!("{}/seg{}_slope", ns, i);
+            nodes.push(Proto::node(
+                "Sub",
+                &[&format!("{}/y{}", ns, i + 1), &format!("{}/y{}", ns, i)],
+                &[&diff],
+                &[],
+            ));
+            nodes.push(Proto::node(
+                "Div",
+                &[&diff, &format!("{}/seg_width", ns)],
+                &[&slope],
+                &[],
+            ));
 
             // seg_in = x - t_i
             nodes.push(Proto::node(
@@ -228,7 +248,7 @@ impl IspBlock for ToneLutBlock {
             // seg_scaled = seg_clamped * slope_i
             nodes.push(Proto::node(
                 "Mul",
-                &[&seg_clamped, &format!("{}/slope{}", ns, i)],
+                &[&seg_clamped, &slope],
                 &[&seg_scaled],
                 &[],
             ));
@@ -303,15 +323,8 @@ impl IspBlock for ToneLutBlock {
             inputs.push((format!("{}/t{}", ns, i), 1, vec![1]));
         }
 
-        // 6 segment widths (constant 1/6)
-        for _ in 0..6 {
-            inputs.push((format!("{}/seg_width", ns), 1, vec![1]));
-        }
-
-        // 6 segment slopes: slope_i = (y_{i+1} - y_i) * 6
-        for i in 0..6 {
-            inputs.push((format!("{}/slope{}", ns, i), 1, vec![1]));
-        }
+        // Shared segment width (1/6); slopes are derived from y_i in the graph.
+        inputs.push((format!("{}/seg_width", ns), 1, vec![1]));
 
         // zero constant for Clip lower bound
         inputs.push((format!("{}/zero", ns), 1, vec![1]));
@@ -342,42 +355,20 @@ impl IspBlock for ToneLutBlock {
         // 6 segment start positions: t_i = i/6
         for i in 0..6 {
             let ti: f32 = i as f32 / 6.0;
-            inits.push((
-                format!("{}/t{}", ns, i),
-                ti.to_ne_bytes().to_vec(),
-            ));
+            inits.push((format!("{}/t{}", ns, i), ti.to_ne_bytes().to_vec()));
         }
 
-        // 6 segment widths (constant 1/6)
-        for _ in 0..6 {
-            let sw: f32 = 1.0 / 6.0;
-            inits.push((
-                format!("{}/seg_width", ns),
-                sw.to_ne_bytes().to_vec(),
-            ));
-        }
-
-        // 6 segment slopes: slope_i = (y_{i+1} - y_i) * 6
-        for i in 0..6 {
-            let slope: f32 =
-                (self.tone_curve_lut[i + 1] - self.tone_curve_lut[i]) * 6.0;
-            inits.push((
-                format!("{}/slope{}", ns, i),
-                slope.to_ne_bytes().to_vec(),
-            ));
-        }
+        // Shared segment width (1/6)
+        inits.push((
+            format!("{}/seg_width", ns),
+            (1.0f32 / 6.0).to_ne_bytes().to_vec(),
+        ));
 
         // zero constant
-        inits.push((
-            format!("{}/zero", ns),
-            0.0f32.to_ne_bytes().to_vec(),
-        ));
+        inits.push((format!("{}/zero", ns), 0.0f32.to_ne_bytes().to_vec()));
 
         // one constant
-        inits.push((
-            format!("{}/one", ns),
-            1.0f32.to_ne_bytes().to_vec(),
-        ));
+        inits.push((format!("{}/one", ns), 1.0f32.to_ne_bytes().to_vec()));
 
         // Contrast, brightness, inv_gamma defaults
         inits.push((
@@ -434,27 +425,50 @@ mod tests {
         let mut b = ToneLutBlock::new();
         b.set_input_source("in/frame");
         let nodes = b.nodes();
-        // 6 segments × (Sub + Clip + Mul + Add) = 24 nodes
-        // + initial Identity (y0) = 1
-        // + contrast Mul + brightness Add + Clip + Pow + final Identity = 5
-        // Total = 30 nodes
-        assert!(nodes.len() >= 25, "Expected >= 25 nodes, got {}", nodes.len());
+        // initial Identity (y0) = 1
+        // 6 segments × (diff Sub + slope Div + Sub + Clip + Mul + Add) = 36
+        // contrast Mul + brightness Add + Clip + Pow + final Identity = 5
+        assert_eq!(nodes.len(), 42, "Expected 42 nodes, got {}", nodes.len());
     }
 
     #[test]
     fn test_tone_lut_extra_inputs_count() {
         let b = ToneLutBlock::new();
         let inputs = b.extra_inputs();
-        // 7 tone points + 6 segment starts + 6 segment widths + 6 slopes
-        // + 1 zero + 1 one + contrast + brightness + inv_gamma = 29
-        assert_eq!(inputs.len(), 30, "Expected 30 extra inputs, got {}", inputs.len());
+        // 7 tone points + 6 segment starts + 1 segment width
+        // + zero + one + contrast + brightness + inv_gamma = 19
+        assert_eq!(
+            inputs.len(),
+            19,
+            "Expected 19 extra inputs, got {}",
+            inputs.len()
+        );
+        let names: std::collections::HashSet<_> =
+            inputs.iter().map(|(name, _, _)| name.as_str()).collect();
+        assert_eq!(names.len(), inputs.len(), "duplicate ToneLutBlock input");
+        for i in 0..7 {
+            assert!(names.contains(format!("ToneLutBlock/y{}", i).as_str()));
+        }
+        assert!(!names.iter().any(|n| n.contains("/slope")));
     }
 
     #[test]
     fn test_tone_lut_extra_input_defaults_count() {
         let b = ToneLutBlock::new();
         let inits = b.extra_input_defaults();
-        assert_eq!(inits.len(), 30, "Expected 30 initializers, got {}", inits.len());
+        assert_eq!(
+            inits.len(),
+            19,
+            "Expected 19 initializers, got {}",
+            inits.len()
+        );
+        let names: std::collections::HashSet<_> =
+            inits.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(
+            names.len(),
+            inits.len(),
+            "duplicate ToneLutBlock initializer"
+        );
     }
 
     #[test]

@@ -58,18 +58,22 @@ fn test_cast(to_type: i64, elem_type: i32, label: &str) {
     let mnn = std::fs::read(mnn_path).unwrap();
     let interp = MnnInterpreterSafe::from_buffer(&mnn).expect("interp");
     let sess = interp
-        .create_session(MnnBackendType::Cpu, 1)
+        .create_session(MnnBackendType::Vulkan, 1, false)
         .expect("session");
-    println!("Session OK, backend=CPU");
+    println!("Session OK, backend=Vulkan");
 
     // Input [1.0, 2.0, ..., 48.0]
     let inp: Vec<f32> = (1..=48).map(|i| i as f32).collect();
     let inp_shape = [1i32, 3, 4, 4];
+    let input_name = std::ffi::CString::new("input").unwrap();
+    let output_name = std::ffi::CString::new("output").unwrap();
     let mut out_f32 = vec![0.0f32; 48 + 16];
     let n = unsafe {
         mnn_run_true_zero_copy(
             interp.as_ptr(),
             sess.as_ptr(),
+            input_name.as_ptr(),
+            output_name.as_ptr(),
             inp.as_ptr() as *const std::ffi::c_void,
             2,  // halide_type_float = 2
             32, // bits = 32

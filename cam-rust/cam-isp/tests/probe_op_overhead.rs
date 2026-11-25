@@ -81,6 +81,10 @@ fn time_chain(w: u32, h: u32, extras: usize) -> Option<f64> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
     engine.process(&params).ok()?;
 

@@ -60,11 +60,15 @@ fn main() {
     }
     let inp_shape = [1, 3];
 
+    let input_name = std::ffi::CString::new("input").unwrap();
+    let output_name = std::ffi::CString::new("output").unwrap();
     let mut out_buf = vec![0u8; 4];
     let n = unsafe {
         cam_isp::mnn_sys::mnn_run_true_zero_copy(
             interp.as_ptr(),
             sess.as_ptr(),
+            input_name.as_ptr(),
+            output_name.as_ptr(),
             inp_bytes.as_ptr() as *const std::ffi::c_void,
             2,
             32,

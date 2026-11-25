@@ -392,7 +392,11 @@ impl NeuralController {
     }
 
     #[cfg(feature = "rectifier")]
-    fn params_from_optimized(&mut self, frame: &IspFrame, optimized: &isp_rectifier::ISPOptimizedParams) -> IspParams {
+    fn params_from_optimized(
+        &mut self,
+        frame: &IspFrame,
+        optimized: &isp_rectifier::ISPOptimizedParams,
+    ) -> IspParams {
         // Neural model predicts WB gains, CCM matrix, tone curve LUT, and zoom.
         // Ask the rule-based controller to compute the remaining fields
         // (BLC, denoise, sharpen, saturation, parametric tone contrast/brightness/
@@ -400,7 +404,10 @@ impl NeuralController {
         // recomputed by IspController only to be immediately overwritten by the
         // neural values below. This avoids wasted compute on coefficients that get
         // dropped.
-        let mut params = self.fallback.analyze_and_update_partial(frame, true, true).clone();
+        let mut params = self
+            .fallback
+            .analyze_and_update_partial(frame, true, true)
+            .clone();
 
         // Neural model outputs override the rule-based defaults:
         params.wb.r = optimized.wb_r_gain;

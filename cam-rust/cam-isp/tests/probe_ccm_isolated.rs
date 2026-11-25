@@ -99,6 +99,10 @@ fn run_matrix(tag: &str, ccm_mode: BlockOpsetMode, ccm_matrix: Option<[f32; 9]>)
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     match engine.process(&params) {

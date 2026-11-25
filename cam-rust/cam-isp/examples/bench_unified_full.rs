@@ -6,7 +6,6 @@
 use cam_isp::blocks::*;
 use cam_isp::engine::OutputFormat;
 use cam_isp::pipeline::IspBlock;
-use cam_isp::unified_pipeline::{GpuWarpParams, UnifiedConfig};
 use std::time::Instant;
 
 fn bench_raw_pipeline(name: &str, w: u32, h: u32, fmt: OutputFormat, iters: u32) {
@@ -18,6 +17,7 @@ fn bench_raw_pipeline(name: &str, w: u32, h: u32, fmt: OutputFormat, iters: u32)
     ];
     let block_refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let onnx = cam_isp::pipeline::GraphComposer::compose_from_vec(&block_refs, &[], 21).unwrap();
+    assert!(!onnx.is_empty(), "empty ONNX graph");
 
     // Register engines
     cam_isp::cpu::register_cpu_engine();

@@ -22,7 +22,6 @@ use std::time::Instant;
 fn build_chain(w: u32, h: u32) -> (Box<dyn IspBlock>, Vec<Box<dyn IspBlock>>) {
     let full_w = w as i64;
     let full_h = h as i64;
-    let pipe_w = 1920u32;
     let pipe_h = 1080u32;
     let post_w = 960u32;
     let post_h = 540u32;
@@ -59,12 +58,11 @@ fn build_chain(w: u32, h: u32) -> (Box<dyn IspBlock>, Vec<Box<dyn IspBlock>>) {
     (head, blocks)
 }
 
-fn build_engine(
-    head: Box<dyn IspBlock>,
-    aux: Vec<Box<dyn IspBlock>>,
-) -> Box<dyn IspEngine> {
+fn build_engine(head: Box<dyn IspBlock>, aux: Vec<Box<dyn IspBlock>>) -> Box<dyn IspEngine> {
     let mut engine = cam_isp::mnnengine::MnnEngine::new(MnnBackend::Vulkan);
-    engine.build(head, aux, None, 21).expect("engine.build failed");
+    engine
+        .build(head, aux, None, 21)
+        .expect("engine.build failed");
     Box::new(engine)
 }
 
@@ -128,7 +126,10 @@ fn main() {
     let mut neural_sum_ms = 0.0f64;
     let mut errors = 0u32;
 
-    println!("\nRunning {} frames end-to-end (neural controller + MNN/Vulkan pipeline)...\n", n_frames);
+    println!(
+        "\nRunning {} frames end-to-end (neural controller + MNN/Vulkan pipeline)...\n",
+        n_frames
+    );
 
     let t0 = Instant::now();
     for i in 0..n_frames {
@@ -141,7 +142,6 @@ fn main() {
 
         // Step 2: ISP pipeline inference (MNN/Vulkan GPU)
         // Inject neural controller outputs into ProcessParams
-        let mut frame_params = params.clone();
         params.ccm_matrix = Some(isp_params.ccm.matrix);
         params.awb_gains = Some([isp_params.wb.r, isp_params.wb.g, isp_params.wb.b]);
         params.isp_params = Some(isp_params);
@@ -171,10 +171,7 @@ fn main() {
             }
             Err(e) => {
                 errors += 1;
-                println!(
-                    "  [{:2}] ERROR: {}  ({:.1}ms neural)",
-                    i, e, neural_ms
-                );
+                println!("  [{:2}] ERROR: {}  ({:.1}ms neural)", i, e, neural_ms);
             }
         }
     }
@@ -184,9 +181,22 @@ fn main() {
     println!("=== End-to-End Neural Controller + ISP Pipeline Results ===");
     println!("  Frames:       {}", n_frames);
     println!("  Errors:       {}", errors);
-    println!("  Neural model: {}", if neural_model_loaded { "loaded" } else { "fallback (rule-based)" });
-    println!("  Neural avg:   {:.2} ms/frame", neural_sum_ms / n_frames as f64);
-    println!("  ISP avg:      {:.2} ms/frame", (sum_ms - neural_sum_ms) / n_frames as f64);
+    println!(
+        "  Neural model: {}",
+        if neural_model_loaded {
+            "loaded"
+        } else {
+            "fallback (rule-based)"
+        }
+    );
+    println!(
+        "  Neural avg:   {:.2} ms/frame",
+        neural_sum_ms / n_frames as f64
+    );
+    println!(
+        "  ISP avg:      {:.2} ms/frame",
+        (sum_ms - neural_sum_ms) / n_frames as f64
+    );
     println!("  Total avg:    {:.2} ms/frame", sum_ms / n_frames as f64);
     println!("  Min total:    {:.2} ms", min_ms);
     println!("  Max total:    {:.2} ms", max_ms);

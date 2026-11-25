@@ -77,9 +77,7 @@ fn bench_fused(h: u32, w_full: u32) -> (f64, String) {
     // Build blocks: raw → UnpackCfaBlock
     let mut blocks: Vec<Box<dyn IspBlock>> = Vec::new();
     blocks.push(Box::new(
-        RawInputBlock::new()
-            .with_elem_type(6)
-            .with_concrete_dims(h_i64, pw_i64),
+        RawInputBlock::new().with_concrete_dims(h_i64, pw_i64),
     ));
     blocks.push(Box::new(
         UnpackCfaBlock::new().with_concrete_dims(h_i64, w_i64),

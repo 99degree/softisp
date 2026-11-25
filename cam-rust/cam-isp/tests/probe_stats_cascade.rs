@@ -78,6 +78,10 @@ fn render(stats_max: u32) -> Option<([f32; 3], f64)> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
     for _ in 0..5 {
         engine.process(&params).ok()?;

@@ -10,7 +10,7 @@
 
 #![cfg(feature = "mnn")]
 
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::profile::{FuseStages, PipelineProfile};
 
 const W: u32 = 1296;
@@ -68,6 +68,10 @@ fn render(profile: PipelineProfile) -> Result<Outcome, String> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     engine.process(&params).map_err(|e| format!("first: {e}"))?;

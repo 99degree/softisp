@@ -67,6 +67,10 @@ fn run(
         output_format: OutputFormat::Bgra,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     for frame in 0..frames {

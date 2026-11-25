@@ -58,27 +58,9 @@ fn run(level: u16, frames: usize) -> Option<(f64, f64, f32, f32)> {
         c[1] = (level >> 8) as u8;
     }
     let params = ProcessParams {
-        width: w,
-        height: h,
-        stride_width: w,
-        buf: &buf,
-        sensor_max: 1023.0,
-        target_width: w,
-        target_height: h,
-        ccm_matrix: None,
-        tone_params: cam_isp::engine::default_tone_params(),
-        bayer_gains: None,
-        awb_gains: None,
         bayer_pattern: 2,
-        analog_gain: 1.0,
-        scene_change: 0.0,
-        lsc_gains: None,
-        blc_values: None,
-        warp_grid: None,
-        warp_shading: None,
         output_format: OutputFormat::FloatRgb,
-        timestamp_ns: 0,
-        isp_params: None,
+        ..ProcessParams::new(w, h, &buf)
     };
 
     let mut first = 0.0;

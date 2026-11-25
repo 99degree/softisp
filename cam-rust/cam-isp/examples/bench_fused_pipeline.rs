@@ -69,7 +69,7 @@ fn main() {
             continue;
         }
 
-        let session = unsafe { mnn_session_create(interp, MnnBackendType::Vulkan, 1) };
+        let session = unsafe { mnn_session_create(interp, MnnBackendType::Vulkan, 1, 1) };
         if session.is_null() {
             eprintln!("  Failed to create session");
             continue;

@@ -85,6 +85,10 @@ fn where_the_time_goes() {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     // First call builds/resizes the per-slot tensors; time only steady state.

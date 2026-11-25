@@ -69,11 +69,7 @@ fn main() {
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
         // 1. Packed INT32 input
-        Box::new(
-            RawInputBlock::new()
-                .with_elem_type(6)
-                .with_concrete_dims(full_h, full_w / 2),
-        ),
+        Box::new(RawInputBlock::new().with_concrete_dims(full_h, full_w / 2)),
         // 2. Fused unpack+normalize+CFA+BLC
         Box::new(
             UnpackCfaBlock::new()

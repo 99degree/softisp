@@ -54,6 +54,10 @@ fn try_build(label: &str, mut p: PipelineProfile, stats_max: u32) -> bool {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
     match engine.process(&params) {
         Ok(f) => {

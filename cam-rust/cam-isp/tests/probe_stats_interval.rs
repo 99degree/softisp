@@ -58,6 +58,10 @@ fn render(interval: u32, stats_max: u32) -> Option<(f64, usize, usize, f64)> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     // Warm up, then sample. `measured` and `skipped` count what the frames said.

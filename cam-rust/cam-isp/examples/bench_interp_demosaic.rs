@@ -30,11 +30,7 @@ fn main() {
 
     // Build pipeline
     let mut blocks: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = vec![
-        Box::new(
-            cam_isp::blocks::RawInputBlock::new()
-                .with_elem_type(6)
-                .with_concrete_dims(h, w),
-        ),
+        Box::new(cam_isp::blocks::RawInputBlock::new().with_concrete_dims(h, w)),
         Box::new(
             BayerDemosaicBlock::new()
                 .with_algorithm(algo)

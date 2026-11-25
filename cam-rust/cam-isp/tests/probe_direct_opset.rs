@@ -17,7 +17,7 @@
 
 use std::time::Instant;
 
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::profile::PipelineProfile;
 
 struct Outcome {
@@ -62,27 +62,9 @@ fn run(opset_mode: i32) -> Result<Outcome, String> {
         c[1] = (sample >> 8) as u8;
     }
     let params = ProcessParams {
-        width: w,
-        height: h,
-        stride_width: w,
-        buf: &buf,
-        sensor_max: 1023.0,
-        target_width: w,
-        target_height: h,
-        ccm_matrix: None,
-        tone_params: cam_isp::engine::default_tone_params(),
-        bayer_gains: None,
-        awb_gains: None,
         bayer_pattern: 2,
-        analog_gain: 1.0,
-        scene_change: 0.0,
-        lsc_gains: None,
-        blc_values: None,
-        warp_grid: None,
-        warp_shading: None,
         output_format: OutputFormat::FloatRgb,
-        timestamp_ns: 0,
-        isp_params: None,
+        ..ProcessParams::new(w, h, &buf)
     };
 
     // One warm-up so the timing below is steady state.

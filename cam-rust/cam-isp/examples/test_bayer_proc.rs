@@ -1,15 +1,11 @@
-use cam_isp::blocks::{BayerMode, BayerPattern, BayerProcBlock, RawInputBlock};
+use cam_isp::blocks::{BayerMode, BayerPattern, BayerProcBlock, RawInput16Block};
 use cam_isp::pipeline::GraphComposer;
 use std::fs;
 
 fn main() {
     let mut blocks: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = Vec::new();
 
-    blocks.push(Box::new(
-        RawInputBlock::new()
-            .with_elem_type(5) // INT16
-            .with_concrete_dims(48, 64),
-    ));
+    blocks.push(Box::new(RawInput16Block::new().with_concrete_dims(48, 64)));
 
     // Test FullProc mode - generates SpaceToDepthEx
     blocks.push(Box::new(

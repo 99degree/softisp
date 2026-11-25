@@ -31,11 +31,7 @@ fn main() {
 
     // 9 blocks — only 1 Identity (aux_hook_src) instead of 4
     let mut blocks: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = vec![
-        Box::new(
-            cam_isp::blocks::RawInputBlock::new()
-                .with_elem_type(6)
-                .with_concrete_dims(full_h, packed_w),
-        ),
+        Box::new(cam_isp::blocks::RawInputBlock::new().with_concrete_dims(full_h, packed_w)),
         Box::new(
             cam_isp::blocks::UnpackCfaBlock::new()
                 .with_concrete_width(full_w)

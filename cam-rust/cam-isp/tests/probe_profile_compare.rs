@@ -185,6 +185,10 @@ fn render(profile: PipelineProfile, raw: &[u8], pattern: i32) -> Option<Frame> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: Some(fixed_params()),
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     for _ in 0..5 {

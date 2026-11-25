@@ -60,27 +60,9 @@ fn prep_vs_infer_4k() {
         v
     };
     let params = ProcessParams {
-        width: w,
-        height: h,
-        stride_width: w,
-        buf: &raw,
-        sensor_max: 1023.0,
-        target_width: w,
-        target_height: h,
-        ccm_matrix: None,
-        tone_params: cam_isp::engine::default_tone_params(),
-        bayer_gains: None,
-        awb_gains: None,
         bayer_pattern: 2,
-        analog_gain: 1.0,
-        scene_change: 0.0,
-        lsc_gains: None,
-        blc_values: None,
-        warp_grid: None,
-        warp_shading: None,
         output_format: OutputFormat::FloatRgb,
-        timestamp_ns: 0,
-        isp_params: None,
+        ..ProcessParams::new(w, h, &raw)
     };
     for _ in 0..6 {
         engine.process(&params).expect("warmup");

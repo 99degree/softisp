@@ -57,27 +57,10 @@ fn floats(data: &[u8]) -> Vec<f32> {
 
 fn params(buf: &[u8]) -> ProcessParams<'_> {
     ProcessParams {
-        width: W,
-        height: H,
-        stride_width: W,
-        buf,
         sensor_max: SENSOR_MAX,
-        target_width: W,
-        target_height: H,
-        ccm_matrix: None,
-        tone_params: cam_isp::engine::default_tone_params(),
-        bayer_gains: None,
-        awb_gains: None,
         bayer_pattern: BAYER,
-        analog_gain: 1.0,
-        scene_change: 0.0,
-        lsc_gains: None,
-        blc_values: None,
-        warp_grid: None,
-        warp_shading: None,
         output_format: OutputFormat::FloatRgb,
-        timestamp_ns: 0,
-        isp_params: None,
+        ..ProcessParams::new(W, H, buf)
     }
 }
 

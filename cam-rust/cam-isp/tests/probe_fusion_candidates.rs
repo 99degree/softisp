@@ -185,6 +185,10 @@ fn render(opset_mode: i32) -> Result<(f64, f64, f64), String> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
     // Two frames: stats from N feed frame N+1.
     engine.process(&params).map_err(|e| e.to_string())?;

@@ -56,14 +56,16 @@ fn main() {
     };
 
     let pw = if use_native { full_w } else { packed_w };
-    let elem_type = if use_native { 5 } else { 6 };
 
     let mut blocks: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = vec![
-        Box::new(
-            cam_isp::blocks::RawInputBlock::new()
-                .with_elem_type(elem_type)
-                .with_concrete_dims(full_h, pw),
-        ),
+        {
+            if use_native {
+                Box::new(cam_isp::blocks::RawInput16Block::new().with_concrete_dims(full_h, pw))
+                    as Box<dyn cam_isp::pipeline::IspBlock>
+            } else {
+                Box::new(cam_isp::blocks::RawInputBlock::new().with_concrete_dims(full_h, pw))
+            }
+        },
         Box::new(
             cam_isp::blocks::UnpackCfaBlock::new()
                 .with_concrete_width(full_w)

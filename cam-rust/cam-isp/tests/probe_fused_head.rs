@@ -82,6 +82,10 @@ fn params(buf: &[u8]) -> ProcessParams<'_> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     }
 }
 

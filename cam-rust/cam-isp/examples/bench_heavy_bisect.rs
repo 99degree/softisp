@@ -54,11 +54,10 @@ fn main() {
             .map(|b| {
                 // Rebuild each block by its id
                 match b.id() {
-                    "raw_input" => Box::new(
-                        cam_isp::blocks::RawInputBlock::new()
-                            .with_elem_type(6)
-                            .with_concrete_width(960),
-                    ) as Box<dyn IspBlock>,
+                    "raw_input" => {
+                        Box::new(cam_isp::blocks::RawInputBlock::new().with_concrete_width(960))
+                            as Box<dyn IspBlock>
+                    }
                     "unpack_cfa" => Box::new(
                         cam_isp::blocks::UnpackCfaBlock::new()
                             .with_concrete_width(1920)

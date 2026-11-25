@@ -78,6 +78,10 @@ fn med_profile_output() {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     let f = engine.process(&params).expect("process");

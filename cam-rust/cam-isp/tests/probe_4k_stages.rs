@@ -72,6 +72,10 @@ fn measure(label: &str, mut p: PipelineProfile, w: u32, h: u32, frames: usize) -
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
     for _ in 0..6 {
         engine.process(&params).ok()?;

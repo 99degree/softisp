@@ -60,6 +60,10 @@ fn try_pool(pool: usize, w: u32, h: u32) -> Result<String, String> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
     let f = engine
         .process(&params)

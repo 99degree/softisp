@@ -39,11 +39,7 @@ fn main() {
     try_blocks(
         "unfused heavy",
         vec![
-            Box::new(
-                cam_isp::blocks::RawInputBlock::new()
-                    .with_elem_type(6)
-                    .with_concrete_width(960),
-            ),
+            Box::new(cam_isp::blocks::RawInputBlock::new().with_concrete_width(960)),
             Box::new(cam_isp::blocks::UnpackBlock::new().with_concrete_dims(1080, 1920)),
             Box::new(cam_isp::blocks::NormalizeBlock::new()),
             Box::new(cam_isp::blocks::BlcBlock::new()),
@@ -64,11 +60,7 @@ fn main() {
     try_blocks(
         "fused heavy",
         vec![
-            Box::new(
-                cam_isp::blocks::RawInputBlock::new()
-                    .with_elem_type(6)
-                    .with_concrete_width(960),
-            ),
+            Box::new(cam_isp::blocks::RawInputBlock::new().with_concrete_width(960)),
             Box::new(
                 cam_isp::blocks::UnpackCfaBlock::new()
                     .with_concrete_width(1920)
@@ -91,11 +83,7 @@ fn main() {
     try_blocks(
         "no identities",
         vec![
-            Box::new(
-                cam_isp::blocks::RawInputBlock::new()
-                    .with_elem_type(6)
-                    .with_concrete_width(960),
-            ),
+            Box::new(cam_isp::blocks::RawInputBlock::new().with_concrete_width(960)),
             Box::new(
                 cam_isp::blocks::UnpackCfaBlock::new()
                     .with_concrete_width(1920)

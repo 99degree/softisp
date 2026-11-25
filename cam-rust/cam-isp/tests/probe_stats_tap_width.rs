@@ -94,6 +94,10 @@ fn tap(tag: &str, after_cfa: bool) -> Option<(f32, f32, f32)> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     // The stats written by frame N are consumed on N+1.

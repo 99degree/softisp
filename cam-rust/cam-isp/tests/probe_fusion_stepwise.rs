@@ -27,7 +27,7 @@
 use std::time::Instant;
 
 use cam_isp::blocks::*;
-use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
+use cam_isp::engine::{OutputFormat, ProcessParams};
 use cam_isp::pipeline::{BlockOpsetMode, GraphComposer, IspBlock};
 
 fn mode(on: bool) -> BlockOpsetMode {
@@ -122,6 +122,10 @@ fn render_with(mut blocks: Vec<Box<dyn IspBlock>>) -> Option<Frame> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     engine.process(&params).ok()?;

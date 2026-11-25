@@ -67,7 +67,7 @@ fn convert_onnx_to_mnn_via_ffi(onnx_path: &str, mnn_path: &str) -> Result<(), St
 
 /// Run inference using mnn_run_host_tensors FFI.
 /// For multi-input models, also sets extra inputs (fcs_gain, ldci_strength, ee_gain).
-fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), String> {
+fn run_inference(mnn_path: &str) -> Result<(f32, f32, f32), String> {
     use cam_isp::mnn_sys::*;
     use std::ffi::CString;
 
@@ -77,12 +77,8 @@ fn run_inference(mnn_path: &str, use_vulkan: bool) -> Result<(f32, f32, f32), St
         return Err("Failed to open model".to_string());
     }
 
-    let backend = if use_vulkan {
-        MnnBackendType::Vulkan
-    } else {
-        MnnBackendType::Cpu
-    };
-    let session = unsafe { mnn_session_create(interp, backend, 1) };
+    let backend = MnnBackendType::Vulkan;
+    let session = unsafe { mnn_session_create(interp, backend, 1, 1) };
     if session.is_null() {
         unsafe {
             mnn_interpreter_destroy(interp);
@@ -234,7 +230,7 @@ fn run_e2e_test(label: &str, prefix: &str, bayer_w: u32, bayer_h: u32) {
     convert_onnx_to_mnn_via_ffi(&onnx_path, &mnn_path).expect("MNN conversion failed");
 
     // 3. Run on Vulkan
-    let (r, g, b) = run_inference(&mnn_path, true).expect("Vulkan inference failed");
+    let (r, g, b) = run_inference(&mnn_path).expect("Vulkan inference failed");
 
     // 4. Verify
     let ok = (r - EXPECTED_R).abs() < 0.01

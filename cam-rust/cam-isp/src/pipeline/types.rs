@@ -1518,8 +1518,9 @@ mod tests {
         tone_lut.set_input_source(tone.frame_tensor().unwrap_or(""));
         disp.set_input_source(tone_lut.frame_tensor().unwrap_or(""));
 
-        let pipeline: Vec<&dyn IspBlock> =
-            vec![&raw, &norm, &cfa, &blc, &wb, &dem, &ccm, &tone, &tone_lut, &disp];
+        let pipeline: Vec<&dyn IspBlock> = vec![
+            &raw, &norm, &cfa, &blc, &wb, &dem, &ccm, &tone, &tone_lut, &disp,
+        ];
         let model = GraphComposer::compose_from_vec(&pipeline, &[], 16).expect("Compose failed");
         assert!(!model.is_empty());
         assert!(model.len() > 2000); // Expected ~2719 bytes

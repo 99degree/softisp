@@ -54,7 +54,7 @@ fn count_ops(graph: &[u8]) -> BTreeMap<String, usize> {
 fn op_inventory() {
     cam_isp::init();
 
-    for (label, mut p) in [
+    for (label, p) in [
         ("FUSED (stats full)", PipelineProfile::FUSED),
         ("MED", PipelineProfile::MED),
     ] {
@@ -66,7 +66,6 @@ fn op_inventory() {
             .chain(aux.iter().map(|b| b.as_ref()))
             .collect();
 
-        p.opset_mode = 2;
         let graph = match GraphComposer::compose_from_vec(&refs, &[], 21) {
             Ok(g) => g,
             Err(e) => {

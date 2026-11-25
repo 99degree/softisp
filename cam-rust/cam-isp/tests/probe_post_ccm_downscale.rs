@@ -62,6 +62,10 @@ fn run_case(ds: (u32, u32)) -> Result<(u32, u32, usize), String> {
         output_format: OutputFormat::Bgra,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     let mut last = (0u32, 0u32, 0usize);

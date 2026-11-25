@@ -51,15 +51,17 @@ fn main() {
         .unwrap_or(true);
     let packed_w = (sensor_w / 2) as i64;
     let pw = if use_native { full_w } else { packed_w };
-    let elem_type = if use_native { 5 } else { 6 };
 
     // ── Build pipeline blocks ───────────────────────────────────────
     let mut blocks: Vec<Box<dyn cam_isp::pipeline::IspBlock>> = vec![
-        Box::new(
-            cam_isp::blocks::RawInputBlock::new()
-                .with_elem_type(elem_type)
-                .with_concrete_dims(full_h, pw),
-        ),
+        {
+            if use_native {
+                Box::new(cam_isp::blocks::RawInput16Block::new().with_concrete_dims(full_h, pw))
+                    as Box<dyn cam_isp::pipeline::IspBlock>
+            } else {
+                Box::new(cam_isp::blocks::RawInputBlock::new().with_concrete_dims(full_h, pw))
+            }
+        },
         Box::new(
             cam_isp::blocks::UnpackCfaBlock::new()
                 .with_concrete_width(full_w)
@@ -134,13 +136,18 @@ fn main() {
     let n_parallel: usize = 4;
     let t0 = Instant::now();
 
-    // Borrow engine and params for the scope
-    let engine_ref = &engine;
-    let params_ref = &params;
+    // ProcessParams carries raw buffer handles and is intentionally !Sync; build
+    // one per worker instead of sharing a single value across the scope.
+    let raw_ref = &raw_buf;
     std::thread::scope(|scope| {
         for _ in 0..n_parallel {
+            let engine_ref = &engine;
             scope.spawn(move || {
-                let _ = engine_ref.process(params_ref);
+                let mut params = cam_isp::engine::ProcessParams::new(sensor_w, sensor_h, raw_ref);
+                params.target_width = post_w;
+                params.target_height = post_h;
+                params.sensor_max = 1023.0;
+                let _ = engine_ref.process(&params);
             });
         }
     });

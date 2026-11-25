@@ -58,7 +58,7 @@ fn main() {
         }
         println!("Loaded: {}", model_path);
 
-        let session = mnn_sys::mnn_session_create(interp, MnnBackendType::Vulkan, 1);
+        let session = mnn_sys::mnn_session_create(interp, MnnBackendType::Vulkan, 1, 1);
         if session.is_null() {
             eprintln!("Failed to create session");
             mnn_sys::mnn_interpreter_destroy(interp);

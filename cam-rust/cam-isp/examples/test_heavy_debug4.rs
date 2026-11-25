@@ -46,7 +46,6 @@ fn main() {
         vec![
             Box::new(
                 cam_isp::blocks::RawInputBlock::new()
-                    .with_elem_type(6)
                     .with_concrete_width(960)
                     .with_concrete_height(1080),
             ),
@@ -72,7 +71,6 @@ fn main() {
         vec![
             Box::new(
                 cam_isp::blocks::RawInputBlock::new()
-                    .with_elem_type(6)
                     .with_concrete_width(960)
                     .with_concrete_height(1080),
             ),
@@ -99,7 +97,6 @@ fn main() {
         vec![
             Box::new(
                 cam_isp::blocks::RawInputBlock::new()
-                    .with_elem_type(6)
                     .with_concrete_width(960)
                     .with_concrete_height(1080),
             ),

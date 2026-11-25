@@ -72,11 +72,7 @@ fn main() {
 
     let mut blocks: Vec<Box<dyn IspBlock>> = vec![
         // 1. Packed INT32 input
-        Box::new(
-            RawInputBlock::new()
-                .with_elem_type(6)
-                .with_concrete_dims(full_h, packed_w),
-        ),
+        Box::new(RawInputBlock::new().with_concrete_dims(full_h, packed_w)),
         // 2. Unpack CFA: stride=2 height (4320→2160), stride=1 width
         //    Output: [1,4,2160,3840] = 4K Bayer (unpacked + normalized + BLC)
         Box::new(

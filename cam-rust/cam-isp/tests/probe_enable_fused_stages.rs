@@ -77,6 +77,10 @@ fn render(stages: FuseStages) -> Result<Frame, String> {
         output_format: OutputFormat::FloatRgb,
         timestamp_ns: 0,
         isp_params: None,
+        input_buffer: None,
+        output_buffer: None,
+        input_ahb: None,
+        output_ahb: None,
     };
 
     // Warm-up: the first call allocates and resizes.

@@ -178,7 +178,7 @@ impl CameraIspService {
             {
                 use crate::blocks::{
                     BayerWbBlock, BlcBlock, CcmBlock, CfaBlock, DemosaicBlock, DisplayBlock,
-                    NormalizeBlock, RawInputBlock, ToneBlock,
+                    NormalizeBlock, RawInputBlock, ToneBlock, ToneLutBlock,
                 };
                 use crate::pipeline::IspBlock;
 

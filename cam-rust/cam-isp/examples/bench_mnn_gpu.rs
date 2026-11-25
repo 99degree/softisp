@@ -73,7 +73,7 @@ fn main() {
     // Create session with Vulkan backend
     let backend = cam_isp::mnn_sys::MnnBackendType::Vulkan;
     let session = interp
-        .create_session(backend, 4)
+        .create_session(backend, 4, false)
         .expect("Failed to create Vulkan session");
     eprintln!("  Vulkan session created");
 

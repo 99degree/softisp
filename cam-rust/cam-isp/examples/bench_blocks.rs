@@ -9,7 +9,7 @@
 //!   LD_LIBRARY_PATH=$PWD/lib/aarch64 \
 //!     cargo run --example bench_blocks -p cam-isp --features mnn -- [backend]
 //!
-//!   backend: cpu (default), vulkan, opencl, opengl
+//!   backend: vulkan
 
 use cam_isp::engine::IspEngine;
 use cam_isp::pipeline::IspBlock;
@@ -32,9 +32,7 @@ fn build_blocks_up_to(
     if fused {
         // Fused: raw → UnpackCfaBlock (unpack+norm+CFA+BLC)
         blocks.push(Box::new(
-            cam_isp::blocks::RawInputBlock::new()
-                .with_elem_type(6)
-                .with_concrete_dims(h, packed_w),
+            cam_isp::blocks::RawInputBlock::new().with_concrete_dims(h, packed_w),
         ));
         if blocks.len() >= count {
             return wire(blocks);
@@ -52,9 +50,7 @@ fn build_blocks_up_to(
     } else if legacy {
         // Legacy FLOAT: raw → norm → cfa
         blocks.push(Box::new(
-            cam_isp::blocks::RawInputBlock::new()
-                .with_elem_type(1)
-                .with_concrete_dims(h, full_w),
+            cam_isp::blocks::RawFloatInputBlock::new().with_concrete_dims(h, full_w),
         ));
         if blocks.len() >= count {
             return wire(blocks);
@@ -69,9 +65,7 @@ fn build_blocks_up_to(
     } else {
         // Standard packed: raw → unpack → norm → cfa → blc
         blocks.push(Box::new(
-            cam_isp::blocks::RawInputBlock::new()
-                .with_elem_type(6)
-                .with_concrete_dims(h, packed_w),
+            cam_isp::blocks::RawInputBlock::new().with_concrete_dims(h, packed_w),
         ));
         if blocks.len() >= count {
             return wire(blocks);
@@ -231,7 +225,7 @@ fn main() {
     cam_isp::init();
 
     let args: Vec<String> = std::env::args().collect();
-    let mut backend_name = "cpu";
+    let mut backend_name = "vulkan";
     let mut use_legacy = false;
     let mut w = 640u32;
     let mut h = 480u32;
@@ -260,10 +254,7 @@ fn main() {
     let backend = match backend_name {
         "vulkan" => cam_isp::mnnengine::MnnBackend::Vulkan,
         _ => {
-            eprintln!(
-                "Unknown backend: '{}' (use cpu, vulkan, opencl, opengl)",
-                backend_name
-            );
+            eprintln!("Unknown backend: '{}' (use vulkan)", backend_name);
             return;
         }
     };
@@ -284,38 +275,43 @@ fn main() {
     let profile = cam_isp::profile::PipelineProfile::custom(
         "BENCH",
         cam_isp::profile::PipelineLevel::Lite,
+        "raw",       // input_type
         !use_legacy, // use_unpack
         true,        // use_fcs
         true,        // use_ldci
         true,        // use_ee
         false,       // use_bad_pixel
         cam_isp::profile::DemosaicQuality::Standard,
-        false, // use_local_contrast
-        false, // use_unsharp
-        false, // use_lsc
-        false, // use_warp
-        false, // use_hdr
-        0,     // rotate_mode: none
-        false, // use_zone_stats
-        false, // use_channel_means
-        false, // use_tone_stats
-        false, // use_histogram
-        0,     // stats_downscale_max
-        0,     // pipeline_downscale_target
-        0.0,   // eis_margin
-        false, // use_bilateral
-        true,  // use_saturation
-        false, // use_vignetting
-        false, // use_colorspace
-        false, // use_gamma
-        false, // use_sharpen
-        false, // use_wavelet_denoise
-        false, // use_auto_contrast
-        true,  // use_normalize
-        false, // use_tiled_rendering
-        1,     // tile_count_x
-        1,     // tile_count_y
-        0,     // tile_overlap
+        false,  // use_local_contrast
+        false,  // use_unsharp
+        false,  // use_lsc
+        false,  // use_warp
+        false,  // use_hdr
+        0,      // rotate_mode: none
+        false,  // use_zone_stats
+        false,  // use_channel_means
+        false,  // use_tone_stats
+        false,  // use_histogram
+        0,      // stats_downscale_max
+        0,      // pipeline_downscale_target
+        (0, 0), // post_ccm_downscale
+        0.0,    // eis_margin
+        false,  // use_bilateral
+        true,   // use_saturation
+        false,  // use_vignetting
+        false,  // use_colorspace
+        false,  // use_gamma
+        false,  // use_sharpen
+        false,  // use_wavelet_denoise
+        false,  // use_auto_contrast
+        true,   // use_normalize
+        false,  // normalize_at_display
+        false,  // use_tiled_rendering
+        1,      // tile_count_x
+        1,      // tile_count_y
+        0,      // tile_overlap
+        0,      // opset_mode: Primitive
+        cam_isp::profile::FuseStages::NONE,
     );
     let all_blocks = profile.build_blocks(w, 0, 0);
     let max_blocks = all_blocks.len(); // use actual block count from profile

@@ -7,10 +7,10 @@
 //! Run:
 //!   cargo test -p cam-isp --test probe_fusion_map --features mnn -- --nocapture
 
-use cam_isp::pipeline::{BlockOpsetMode, IspBlock};
+use cam_isp::pipeline::BlockOpsetMode;
 use cam_isp::profile::{FuseStages, PipelineProfile};
 
-fn dump(label: &str, mut p: PipelineProfile) {
+fn dump(label: &str, p: PipelineProfile) {
     let blocks = p.build_blocks(1296, 970, 2);
     eprintln!("\n{label}: {} blocks\n", blocks.len());
     eprintln!("{:<3} {:<26} {:<9} {}", "#", "block", "emits", "notes");
