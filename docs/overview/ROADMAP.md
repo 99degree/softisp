@@ -66,8 +66,8 @@
 - **Application code target changed** (user direction, 2026-11-25):
   `android-app/` will hold only non-code resources and packaging metadata; all
   Rust/native application code moves to `anw/`, and NativeActivity loads
-  `softisp_anw`. Tracked as P2g; P2e remains only the interim diagnosis of the
-  current `libcam_camera_app.so` packaging bug. See
+  `softisp` (`libsoftisp.so`). Tracked as P2g; P2e remains only the interim
+  diagnosis of the current `libcam_camera_app.so` packaging bug. See
   `docs/ipa/ANW_SPLIT_PLAN.md`.
 - **HEAVY MNN test repaired** (this session): `test_mnn_engine` now fills the
   new zero-copy `ProcessParams` fields via `ProcessParams::new()`, passes the
@@ -349,7 +349,7 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   the previous build's library.
 - **Scope:** this is an interim fix for the current tree only. The intended
   architecture is P2g, where `libcam_camera_app.so` is retired and the APK loads
-  a freshly built `libsoftisp_anw.so`.
+  a freshly built `libsoftisp.so`.
 
 ### P2f — Recent local branch patches without upstream equivalents (TODO)
 
@@ -368,7 +368,10 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
 
 - **User direction recorded 2026-11-25.** `android-app/` holds non-code APK
   resources and packaging metadata only. All Rust/native application code lives
-  in `anw/`, whose `softisp_anw` cdylib is loaded by NativeActivity.
+  in `anw/`, whose `softisp` cdylib (`libsoftisp.so`) is loaded by
+  NativeActivity.
+- **Library name:** `libsoftisp.so` is the preferred filename. Existing
+  `softisp_anw_*` C ABI symbol names remain unchanged for compatibility.
 - **Target split:**
   - `android-app/`: `AndroidManifest.xml`, `Sources/res/**`, cargo-apk2 metadata
     pointing at those resources; no camera/ISP/pipeline/storage/crash-log code.
@@ -382,18 +385,18 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
      library target and `src/**` from `android-app`.
   3. Repoint `anw/Cargo.toml` packaging at `../android-app/AndroidManifest.xml`
      and `../android-app/Sources/res`, keep package identity
-     `com.softisp.camera`, set `android.app.lib_name` to `softisp_anw`, and keep
+     `com.softisp.camera`, set `android.app.lib_name` to `softisp`, and keep
      `runtime_libs = "../cam-rust/lib"`.
   4. Change `build-apk.sh` to build/package `softisp-anw`; delete the stale
      `libcam_camera_app.so` copy/patch step and apply the libc++ `patchelf`
-     rewrite to a freshly built `libsoftisp_anw.so`.
+     rewrite to a freshly built `libsoftisp.so`.
   5. Retire `libcam_camera_app.so` references in docs, CI, and runtime dirs, and
      update the P4 crate table accordingly.
 - **Behaviour constraints:** preserve `OutputFormat::PackedRgb`, final
   `isp.display_uint32_bgra`, dual-engine execution, staged frame phases, no
   float fallback, AHB only for large tensors, and the existing crash-log path.
 - **Verification:** workspace format/clippy/tests for `anw`; successful
-  `./build-apk.sh`; APK contains `lib/arm64-v8a/libsoftisp_anw.so` and no
+  `./build-apk.sh`; APK contains `lib/arm64-v8a/libsoftisp.so` and no
   `libcam_camera_app.so`; target/runtime/APK hashes match; device logs show
   camera startup, dual-engine ISP, and preview from `anw`. Assistant must not
   install or share the APK. Full plan: `docs/ipa/ANW_SPLIT_PLAN.md`.

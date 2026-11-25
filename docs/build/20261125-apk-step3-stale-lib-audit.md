@@ -67,7 +67,8 @@ TODO P2e in `docs/overview/ROADMAP.md`.
 Yes — per user direction, `anw/` is the intended owner of all application
 code. `android-app/` is to become a non-code APK shell holding the manifest and
 `Sources/res`, while `anw/` owns `android_main`, camera capture, pipeline,
-presentation, storage, crash logging, and the `softisp_anw` cdylib. See
+presentation, storage, crash logging, and the `softisp` cdylib
+(`libsoftisp.so`). See
 `docs/ipa/ANW_SPLIT_PLAN.md` and P2g in `docs/overview/ROADMAP.md`.
 
 The current tree has not landed that migration yet: `anw/` has presentation and
@@ -78,4 +79,4 @@ and `anw/Cargo.toml` still points at local `AndroidManifest.xml` and
 
 P2e is therefore only the interim diagnosis of the current packaging bug. Once
 P2g lands, `libcam_camera_app.so` is retired and the APK must package a freshly
-built `libsoftisp_anw.so` instead.
+built `libsoftisp.so` instead.

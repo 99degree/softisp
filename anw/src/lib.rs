@@ -1,12 +1,13 @@
-//! softisp_anw: ANativeWindow consumer for softisp IPA on Android
+//! softisp: ANativeWindow application library for softisp IPA on Android
 //!
 //! Consumes ANativeWindow buffers and runs them through the cam-ipa IPA
-//! pipeline (MNN/Vulkan GPU engine). The presentation logic (Viewport,
-//! WindowTarget, present(), paint_bars()) lives in presentation.rs and is
-//! reused here for displaying processed frames.
+//! pipeline (MNN/Vulkan GPU engine). The cdylib is `libsoftisp.so`; the existing
+//! C ABI symbol names keep their `softisp_anw_*` prefix for compatibility.
+//! The presentation logic (Viewport, WindowTarget, present(), paint_bars())
+//! lives in presentation.rs and is reused here for displaying frames.
 //!
-//! Build: cargo build --release -p softisp_anw (for Android target)
-//! APK:   cargo apk2 build -p softisp_anw
+//! Build: cargo build --release -p softisp-anw (for Android target)
+//! APK:   cargo apk2 build -p softisp-anw
 
 use android_activity::ndk::native_window::NativeWindow;
 use cam_ipa::{IpaConfig, IpaContext, IpaFormat, MemBuffer};

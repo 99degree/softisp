@@ -8,7 +8,9 @@
 `android-app/` becomes the non-code APK shell. It keeps the Android manifest,
 `Sources/res`, and cargo-apk2 packaging metadata that points at those files.
 All Rust/native application code moves to `anw/`, which produces the
-`softisp_anw` cdylib loaded by NativeActivity.
+`softisp` cdylib (`libsoftisp.so`) loaded by NativeActivity. The existing
+`softisp_anw_*` C ABI symbol names are kept for compatibility; only the library
+filename changes.
 
 The shipped application identity stays `com.softisp.camera` / `softisp-camera`
 unless the user explicitly chooses a new package ID. This is a code-location
@@ -35,7 +37,8 @@ change, not a new app.
   `softisp-camera`, `manifest_override = "../android-app/AndroidManifest.xml"`,
   `resources = "../android-app/Sources/res"`, and
   `runtime_libs = "../cam-rust/lib"`.
-- NativeActivity `android.app.lib_name` becomes `softisp_anw`.
+- NativeActivity `android.app.lib_name` becomes `softisp`, which loads
+  `libsoftisp.so`.
 - Own the Android linker build script with the flags currently in
   `android-app/build.rs`.
 
@@ -53,12 +56,11 @@ change, not a new app.
 
 - `build-apk.sh` builds the APK from `anw`, not `cam-camera-app`.
 - The stale `libcam_camera_app.so` copy/patch step is removed.
-- `libsoftisp_anw.so` is built first, copied into both ABI runtime dirs,
-  patched with `patchelf --replace-needed libc++_shared.so
-  libsoftisp_cpp_shared.so`, then packaged.
+- `libsoftisp.so` is built first, copied into both ABI runtime dirs, patched with
+  `patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so`, then
+  packaged.
 - Verify that the target, runtime copy, and APK entry hashes match and that the
-  APK contains `lib/arm64-v8a/libsoftisp_anw.so` and no
-  `libcam_camera_app.so`.
+  APK contains `lib/arm64-v8a/libsoftisp.so` and no `libcam_camera_app.so`.
 
 ## Verification
 

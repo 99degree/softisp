@@ -429,7 +429,7 @@ members = [
 1. **cam-ipa**: Builds as rlib, unit tests pass, API documented
 2. **libcamera-ipa**: Produces `libipa_softisp.so`, loads in libcamera-99degree
 3. **jni**: `libsoftisp_jni.so`, callable from Kotlin
-4. **anw**: `libsoftisp_anw.so`, consumes ANativeWindow buffers
+4. **anw**: `libsoftisp.so`, consumes ANativeWindow buffers
 5. **cli**: 4K frame generation + V4L2 capture + 3A/neural processing; polyglot ELF
 6. **Integration**: All frontends produce identical ISP output for same input
 7. **Performance**: Vulkan path >30 FPS at 4K (target hardware)

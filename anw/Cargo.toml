@@ -17,7 +17,7 @@ log = { workspace = true }
 android_logger = { workspace = true }
 
 [lib]
-name = "softisp_anw"
+name = "softisp"
 path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
@@ -53,7 +53,7 @@ config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|keybo
 
 [[package.metadata.android.application.activity.meta_data]]
 name = "android.app.lib_name"
-value = "softisp_anw"
+value = "softisp"
 
 [[package.metadata.android.application.activity.intent_filter]]
 actions = ["android.intent.action.MAIN"]
