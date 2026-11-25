@@ -26,7 +26,7 @@
 //! block applies them per-pixel after the parametric tone stage.
 
 use crate::onnx::proto::Proto;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{BlockOpsetMode, IspBlock};
 
 /// Segment width shared by the 7 control points at `x = i/6`.
 pub const TONE_LUT_SEGMENT_WIDTH: f32 = 1.0 / 6.0;
@@ -56,6 +56,8 @@ pub struct ToneLutBlock {
     brightness: f32,
     /// Gamma (1.0 = linear, 2.2 = sRGB-like)
     gamma: f32,
+    /// Fused/primitive switch, set by `profile_builder` from `FuseStages`.
+    forced_mode: Option<BlockOpsetMode>,
 }
 
 impl Default for ToneLutBlock {
@@ -84,7 +86,14 @@ impl ToneLutBlock {
             contrast: 1.0,
             brightness: 0.0,
             gamma: 1.0,
+            forced_mode: None,
         }
+    }
+
+    /// Build with an explicit opset mode (used by the fused profile).
+    pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
+        self.forced_mode = Some(mode);
+        self
     }
 
     /// Set the 7-point tone curve LUT.
@@ -135,6 +144,22 @@ impl IspBlock for ToneLutBlock {
 
     fn tensor_ns(&self) -> String {
         "ToneLutBlock".to_string()
+    }
+
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        Some(&["isp.tonelut"])
+    }
+
+    fn custom_opsets(&self) -> Vec<(String, i64)> {
+        vec![("isp".to_string(), 1)]
+    }
+
+    fn opset_mode(&self) -> BlockOpsetMode {
+        self.forced_mode.unwrap_or(BlockOpsetMode::Primitive)
+    }
+
+    fn set_opset_mode(&mut self, mode: BlockOpsetMode) {
+        self.forced_mode = Some(mode);
     }
 
     fn frame_tensor(&self) -> Option<&str> {
@@ -202,6 +227,33 @@ impl IspBlock for ToneLutBlock {
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let x = &self.input_source;
+
+        if matches!(
+            self.opset_mode(),
+            BlockOpsetMode::MnnIspMin | BlockOpsetMode::Custom
+        ) {
+            // One fused Vulkan op. Only the frame, the y0 seed, the six
+            // CPU-derived slopes, and the three parametric coefficients are
+            // graph inputs; segment starts and widths are baked into the MNN
+            // Vulkan shader. No scalar derivation lives in the graph.
+            let mut inputs: Vec<String> = vec![x.clone(), format!("{}/y0", ns)];
+            for i in 0..6 {
+                inputs.push(format!("{}/s{}", ns, i));
+            }
+            inputs.push(format!("{}/contrast", ns));
+            inputs.push(format!("{}/brightness", ns));
+            inputs.push(format!("{}/inv_gamma", ns));
+            let input_refs: Vec<&str> = inputs.iter().map(|s| s.as_str()).collect();
+
+            return vec![Proto::node_with_domain(
+                "isp.tonelut",
+                "isp",
+                &input_refs,
+                &[&self.frame_tensor],
+                &[Proto::attribute_int("elementwise", 1)],
+            )];
+        }
+
         let mut nodes = Vec::new();
 
         // Accumulator starts at y_0. Every remaining node operates on the
@@ -523,5 +575,55 @@ mod tests {
     fn test_tone_lut_graph_output() {
         let b = ToneLutBlock::new();
         assert!(b.graph_output_name().is_some());
+    }
+
+    fn assert_contains(bytes: &[u8], needle: &[u8]) {
+        assert!(
+            bytes.windows(needle.len()).any(|w| w == needle),
+            "missing {:?} in fused node",
+            String::from_utf8_lossy(needle)
+        );
+    }
+
+    #[test]
+    fn test_tone_lut_fused_emits_single_isp_tonelut_node() {
+        let mut b = ToneLutBlock::new();
+        b.set_input_source("in/frame");
+        b.set_opset_mode(BlockOpsetMode::MnnIspMin);
+        let nodes = b.nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_contains(&nodes[0], b"isp.tonelut");
+        assert_contains(&nodes[0], b"isp"); // domain
+        assert_contains(&nodes[0], b"ToneLutBlock/y0");
+        for i in 0..6 {
+            assert_contains(&nodes[0], format!("ToneLutBlock/s{}", i).as_bytes());
+        }
+        assert_contains(&nodes[0], b"ToneLutBlock/contrast");
+        assert_contains(&nodes[0], b"ToneLutBlock/brightness");
+        assert_contains(&nodes[0], b"ToneLutBlock/inv_gamma");
+        assert!(!nodes[0].windows(b"spirv".len()).any(|w| w == b"spirv"));
+        // Segment starts/width are baked into the shader, not graph inputs.
+        assert!(!nodes[0]
+            .windows(b"ToneLutBlock/t0".len())
+            .any(|w| w == b"ToneLutBlock/t0"));
+        assert_eq!(b.custom_op_types(), Some(&["isp.tonelut"][..]));
+    }
+
+    #[test]
+    fn test_tone_lut_fused_has_no_scalar_derivation() {
+        let mut b = ToneLutBlock::new();
+        b.set_opset_mode(BlockOpsetMode::MnnIspMin);
+        let nodes = b.nodes();
+        assert!(
+            nodes.iter().all(|n| !n.windows(3).any(|w| w == b"Div")),
+            "fused tone-lut graph must stay parallel-only"
+        );
+    }
+
+    #[test]
+    fn test_tone_lut_primitive_mode_unchanged() {
+        let b = ToneLutBlock::new();
+        assert_eq!(b.opset_mode(), BlockOpsetMode::Primitive);
+        assert_eq!(b.nodes().len(), 30);
     }
 }

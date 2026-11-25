@@ -659,6 +659,24 @@ impl PipelineBuilder {
         self
     }
 
+    /// Add the tone stages with explicit fused/primitive modes.
+    ///
+    /// `MnnIspMin` emits one `isp.tone` / `isp.tonelut` dispatch per block;
+    /// `Primitive` emits the standard ONNX node chains. Use
+    /// `PipelineProfile::tone_opset_mode()` / `tone_lut_opset_mode()` to derive
+    /// the modes from a profile's `opset_mode` and `FuseStages` allowlist.
+    pub fn tone_with_modes(
+        mut self,
+        tone_mode: BlockOpsetMode,
+        tonelut_mode: BlockOpsetMode,
+    ) -> Self {
+        self.blocks
+            .push(Box::new(ToneBlock::new().with_opset_mode(tone_mode)));
+        self.blocks
+            .push(Box::new(ToneLutBlock::new().with_opset_mode(tonelut_mode)));
+        self
+    }
+
     /// Add `NormalizeBlock` — Cast INT32→FLOAT + Div by sensor max.
     ///
     /// # Example

@@ -1,10 +1,13 @@
 use crate::onnx::proto::Proto;
-use crate::pipeline::IspBlock;
+use crate::pipeline::{BlockOpsetMode, IspBlock};
 
 /// ToneBlock — Mul+Add+Clip tone mapping.
 ///
 /// Simple per-pixel tone curve: `clip(x * mul + add)`. All parameters
 /// are hot-swappable at runtime via `hot_swap_const_buffer()`.
+///
+/// In `MnnIspMin` / `Custom` mode the four primitives collapse to one
+/// `isp.tone` fused Vulkan op with the same per-frame coefficient inputs.
 #[derive(Debug)]
 pub struct ToneBlock {
     pub id: String,
@@ -18,6 +21,8 @@ pub struct ToneBlock {
     brightness: f32,
     /// Gamma (1.0 = linear, 2.2 = sRGB-like)
     gamma: f32,
+    /// Fused/primitive switch, set by `profile_builder` from `FuseStages`.
+    forced_mode: Option<BlockOpsetMode>,
 }
 impl Default for ToneBlock {
     fn default() -> Self {
@@ -36,7 +41,14 @@ impl ToneBlock {
             contrast: 1.0,
             brightness: 0.0,
             gamma: 1.0,
+            forced_mode: None,
         }
+    }
+
+    /// Build with an explicit opset mode (used by the fused profile).
+    pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
+        self.forced_mode = Some(mode);
+        self
     }
 
     /// Set contrast (1.0 = neutral, >1.0 = more contrast).
@@ -75,6 +87,22 @@ impl IspBlock for ToneBlock {
     }
     fn tensor_ns(&self) -> String {
         "ToneBlock".to_string()
+    }
+
+    fn custom_op_types(&self) -> Option<&[&str]> {
+        Some(&["isp.tone"])
+    }
+
+    fn custom_opsets(&self) -> Vec<(String, i64)> {
+        vec![("isp".to_string(), 1)]
+    }
+
+    fn opset_mode(&self) -> BlockOpsetMode {
+        self.forced_mode.unwrap_or(BlockOpsetMode::Primitive)
+    }
+
+    fn set_opset_mode(&mut self, mode: BlockOpsetMode) {
+        self.forced_mode = Some(mode);
     }
     fn frame_tensor(&self) -> Option<&str> {
         Some(&self.frame_tensor)
@@ -129,37 +157,61 @@ impl IspBlock for ToneBlock {
     }
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
-        vec![
-            // Exposure first: gain scales the signal, then contrast shapes it.
-            Proto::node(
-                "Mul",
-                &[&self.input_source, &format!("{}/exposure", ns)],
-                &[&format!("{}/exposed", ns)],
-                &[],
-            ),
-            Proto::node(
-                "Mul",
-                &[&format!("{}/exposed", ns), &format!("{}/contrast", ns)],
-                &[&format!("{}/contrasted", ns)],
-                &[],
-            ),
-            Proto::node(
-                "Add",
-                &[&format!("{}/contrasted", ns), &format!("{}/brightness", ns)],
-                &[&format!("{}/brightened", ns)],
-                &[],
-            ),
-            Proto::node(
-                "Clip",
-                &[
-                    &format!("{}/brightened", ns),
-                    &format!("{}/zero", ns),
-                    &format!("{}/one", ns),
-                ],
-                &[&self.frame_tensor],
-                &[],
-            ),
-        ]
+        match self.opset_mode() {
+            BlockOpsetMode::MnnIspMin | BlockOpsetMode::Custom => {
+                // One fused Vulkan op replaces the four primitive nodes. The
+                // SPIR-V lives in libMNN_Vulkan.so's embedded lookup (see
+                // docs/mnn/ISP_TONE_TONELUT_FORK_PATCH.md for the required
+                // shader contract); softisp only emits the op and its tensors.
+                vec![Proto::node_with_domain(
+                    "isp.tone",
+                    "isp",
+                    &[
+                        &self.input_source,
+                        &format!("{}/exposure", ns),
+                        &format!("{}/contrast", ns),
+                        &format!("{}/brightness", ns),
+                    ],
+                    &[&self.frame_tensor],
+                    &[
+                        // Elementwise so VulkanFuse hot-swaps W/H into binding 0
+                        // and derives the dispatch from the frame tensor.
+                        Proto::attribute_int("elementwise", 1),
+                    ],
+                )]
+            }
+            BlockOpsetMode::Primitive => vec![
+                // Exposure first: gain scales the signal, then contrast shapes it.
+                Proto::node(
+                    "Mul",
+                    &[&self.input_source, &format!("{}/exposure", ns)],
+                    &[&format!("{}/exposed", ns)],
+                    &[],
+                ),
+                Proto::node(
+                    "Mul",
+                    &[&format!("{}/exposed", ns), &format!("{}/contrast", ns)],
+                    &[&format!("{}/contrasted", ns)],
+                    &[],
+                ),
+                Proto::node(
+                    "Add",
+                    &[&format!("{}/contrasted", ns), &format!("{}/brightness", ns)],
+                    &[&format!("{}/brightened", ns)],
+                    &[],
+                ),
+                Proto::node(
+                    "Clip",
+                    &[
+                        &format!("{}/brightened", ns),
+                        &format!("{}/zero", ns),
+                        &format!("{}/one", ns),
+                    ],
+                    &[&self.frame_tensor],
+                    &[],
+                ),
+            ],
+        }
     }
     fn initializers(&self) -> Vec<Vec<u8>> {
         vec![]
@@ -257,5 +309,44 @@ mod tests {
     fn test_tone_tensor_ns() {
         let b = ToneBlock::new();
         assert!(!b.tensor_ns().is_empty());
+    }
+
+    fn assert_contains(bytes: &[u8], needle: &[u8]) {
+        assert!(
+            bytes.windows(needle.len()).any(|w| w == needle),
+            "missing {:?} in fused node",
+            String::from_utf8_lossy(needle)
+        );
+    }
+
+    #[test]
+    fn test_tone_fused_emits_single_isp_tone_node() {
+        let mut b = ToneBlock::new();
+        b.set_input_source("in/frame");
+        b.set_opset_mode(BlockOpsetMode::MnnIspMin);
+        let nodes = b.nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_contains(&nodes[0], b"isp.tone");
+        assert_contains(&nodes[0], b"isp"); // domain
+        assert_contains(&nodes[0], b"ToneBlock/exposure");
+        assert_contains(&nodes[0], b"ToneBlock/contrast");
+        assert_contains(&nodes[0], b"ToneBlock/brightness");
+        assert_contains(&nodes[0], b"elementwise");
+        assert!(!nodes[0].windows(b"spirv".len()).any(|w| w == b"spirv"));
+        assert_eq!(b.custom_op_types(), Some(&["isp.tone"][..]));
+    }
+
+    #[test]
+    fn test_tone_fused_custom_mode_also_emits() {
+        let mut b = ToneBlock::new();
+        b.set_opset_mode(BlockOpsetMode::Custom);
+        assert_eq!(b.nodes().len(), 1);
+    }
+
+    #[test]
+    fn test_tone_primitive_mode_unchanged() {
+        let b = ToneBlock::new();
+        assert_eq!(b.opset_mode(), BlockOpsetMode::Primitive);
+        assert_eq!(b.nodes().len(), 4);
     }
 }

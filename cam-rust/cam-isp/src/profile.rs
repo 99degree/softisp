@@ -233,6 +233,10 @@ pub struct FuseStages {
     pub ee: bool,
     /// `LdciBlock` as `isp.ldci`.
     pub ldci: bool,
+    /// `ToneBlock` as one `isp.tone` dispatch (exposure * contrast + brightness).
+    pub tone: bool,
+    /// `ToneLutBlock` as one `isp.tonelut` dispatch (7-point curve + parametric tone).
+    pub tonelut: bool,
     /// `DisplayBlock` as `isp.display`.
     pub display: bool,
     /// The post-CCM RGB tail downscale as `isp.downscale`.
@@ -259,6 +263,8 @@ impl FuseStages {
         ccm: true,
         ee: true,
         ldci: true,
+        tone: true,
+        tonelut: true,
         display: true,
         // Verified against `AdaptiveDownscaleBlock` (Resize): mean|Δ| 0.00037,
         // peak|Δ| 0.00037 on a 1296x970 -> 648x485 tail.
@@ -278,6 +284,8 @@ impl FuseStages {
         ccm: false,
         ee: false,
         ldci: false,
+        tone: false,
+        tonelut: false,
         display: false,
         tail_downscale: false,
         whole_pipeline: false,

@@ -11,6 +11,30 @@ use crate::profile::PipelineProfile;
 use log::info;
 
 impl PipelineProfile {
+    /// Opset mode for `ToneBlock`, derived from `opset_mode` + `FuseStages`.
+    pub fn tone_opset_mode(&self) -> BlockOpsetMode {
+        if self
+            .fuse_stages
+            .allows(self.opset_mode, self.fuse_stages.tone)
+        {
+            BlockOpsetMode::MnnIspMin
+        } else {
+            BlockOpsetMode::Primitive
+        }
+    }
+
+    /// Opset mode for `ToneLutBlock`, derived from `opset_mode` + `FuseStages`.
+    pub fn tone_lut_opset_mode(&self) -> BlockOpsetMode {
+        if self
+            .fuse_stages
+            .allows(self.opset_mode, self.fuse_stages.tonelut)
+        {
+            BlockOpsetMode::MnnIspMin
+        } else {
+            BlockOpsetMode::Primitive
+        }
+    }
+
     /// Build an ordered list of ISP blocks according to this profile.
     pub fn build_blocks(
         &self,
@@ -453,7 +477,11 @@ impl PipelineProfile {
             blocks.push(Box::new(CcmBlock::with_instance("warp")));
         }
 
-        blocks.push(Box::new(ToneBlock::new()));
+        let tone_mode = self.tone_opset_mode();
+        if tone_mode == BlockOpsetMode::MnnIspMin {
+            info!("  tone: isp.tone (fused)");
+        }
+        blocks.push(Box::new(ToneBlock::new().with_opset_mode(tone_mode)));
 
         // Tap point: tone stats read `aux_hook_out/out`.
         blocks.push(Box::new(
