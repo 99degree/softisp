@@ -29,14 +29,40 @@ fn env_usize(key: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-struct Timing {
-    label: String,
-    blocks: usize,
+#[derive(Clone, Copy, Default)]
+struct PhaseStats {
+    mean: f64,
     p50: f64,
     p95: f64,
     max: f64,
+}
+
+struct Timing {
+    label: String,
+    blocks: usize,
+    total: PhaseStats,
+    prep: PhaseStats,
+    infer: PhaseStats,
+    post: PhaseStats,
     fps: f64,
-    mean: f64,
+}
+
+fn phase_stats(mut samples: Vec<f64>, sum: f64) -> PhaseStats {
+    if samples.is_empty() {
+        return PhaseStats::default();
+    }
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let len = samples.len();
+    PhaseStats {
+        mean: sum / len as f64,
+        p50: samples[len / 2],
+        p95: samples[(len * 95) / 100],
+        max: samples[len - 1],
+    }
+}
+
+fn ms(ns: u64) -> f64 {
+    ns as f64 / 1e6
 }
 
 fn run_single(
@@ -102,7 +128,7 @@ fn run_single(
         output_buffer: None,
         input_ahb: None,
         output_ahb: None,
-        output_format: OutputFormat::FloatRgb,
+        output_format: fmt,
         timestamp_ns: 0,
         isp_params: None,
     };
@@ -115,25 +141,36 @@ fn run_single(
         }
     }
 
-    let mut t: Vec<f64> = Vec::with_capacity(frames);
-    let mut sum = 0.0f64;
+    let (mut total, mut prep, mut infer, mut post) = (
+        Vec::with_capacity(frames),
+        Vec::with_capacity(frames),
+        Vec::with_capacity(frames),
+        Vec::with_capacity(frames),
+    );
+    let (mut total_sum, mut prep_sum, mut infer_sum, mut post_sum) = (0.0, 0.0, 0.0, 0.0);
     let mut picture = false;
     for _ in 0..frames {
         match engine.process(&params) {
             Ok(f) => {
-                let ms = f.inference_duration_ns as f64 / 1e6;
-                t.push(ms);
-                sum += ms;
+                let total_ms = ms(f.total_duration_ns);
+                let prep_ms = ms(f.prep_duration_ns);
+                let infer_ms = ms(f.inference_duration_ns);
+                let post_ms = ms(f
+                    .total_duration_ns
+                    .saturating_sub(f.prep_duration_ns.saturating_add(f.inference_duration_ns)));
+                total.push(total_ms);
+                prep.push(prep_ms);
+                infer.push(infer_ms);
+                post.push(post_ms);
+                total_sum += total_ms;
+                prep_sum += prep_ms;
+                infer_sum += infer_ms;
+                post_sum += post_ms;
                 if !picture {
-                    let vals: Vec<f32> = f
-                        .data
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .map(|b| f32::from_le_bytes(*b))
-                        .collect();
-                    let m = vals.iter().map(|v| *v as f64).sum::<f64>() / vals.len().max(1) as f64;
-                    picture = m > 0.02;
+                    // Packed output is BGRA bytes in a u32 word, not four f32
+                    // bytes. Interpret it as floats only made every frame look
+                    // blank (NaNs compare false), so use a byte-level check.
+                    picture = f.data.iter().any(|b| *b != 0);
                 }
             }
             Err(e) => {
@@ -142,11 +179,10 @@ fn run_single(
             }
         }
     }
-    t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let p50 = t[t.len() / 2];
-    let p95 = t[(t.len() * 95) / 100];
-    let max = *t.last().unwrap();
-    let mean = sum / t.len() as f64;
+    let total = phase_stats(total, total_sum);
+    let prep = phase_stats(prep, prep_sum);
+    let infer = phase_stats(infer, infer_sum);
+    let post = phase_stats(post, post_sum);
     if !picture {
         eprintln!("{label:<28} produced a blank frame");
         return None;
@@ -154,11 +190,11 @@ fn run_single(
     Some(Timing {
         label: label.to_string(),
         blocks: n_blocks,
-        p50,
-        p95,
-        max,
-        fps: 1000.0 / p50,
-        mean,
+        fps: 1000.0 / total.p50.max(0.001),
+        total,
+        prep,
+        infer,
+        post,
     })
 }
 
@@ -237,7 +273,7 @@ fn run_dual(
         output_buffer: None,
         input_ahb: None,
         output_ahb: None,
-        output_format: OutputFormat::FloatRgb,
+        output_format: fmt,
         timestamp_ns: 0,
         isp_params: None,
     };
@@ -253,25 +289,36 @@ fn run_dual(
         }
     }
 
-    let mut t: Vec<f64> = Vec::with_capacity(frames);
-    let mut sum = 0.0f64;
+    let (mut total, mut prep, mut infer, mut post) = (
+        Vec::with_capacity(frames),
+        Vec::with_capacity(frames),
+        Vec::with_capacity(frames),
+        Vec::with_capacity(frames),
+    );
+    let (mut total_sum, mut prep_sum, mut infer_sum, mut post_sum) = (0.0, 0.0, 0.0, 0.0);
     let mut picture = false;
     for _ in 0..frames {
         match dual.next().process(&params) {
             Ok(f) => {
-                let ms = f.inference_duration_ns as f64 / 1e6;
-                t.push(ms);
-                sum += ms;
+                let total_ms = ms(f.total_duration_ns);
+                let prep_ms = ms(f.prep_duration_ns);
+                let infer_ms = ms(f.inference_duration_ns);
+                let post_ms = ms(f
+                    .total_duration_ns
+                    .saturating_sub(f.prep_duration_ns.saturating_add(f.inference_duration_ns)));
+                total.push(total_ms);
+                prep.push(prep_ms);
+                infer.push(infer_ms);
+                post.push(post_ms);
+                total_sum += total_ms;
+                prep_sum += prep_ms;
+                infer_sum += infer_ms;
+                post_sum += post_ms;
                 if !picture {
-                    let vals: Vec<f32> = f
-                        .data
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .map(|b| f32::from_le_bytes(*b))
-                        .collect();
-                    let m = vals.iter().map(|v| *v as f64).sum::<f64>() / vals.len().max(1) as f64;
-                    picture = m > 0.02;
+                    // Packed output is BGRA bytes in a u32 word, not four f32
+                    // bytes. Interpret it as floats only made every frame look
+                    // blank (NaNs compare false), so use a byte-level check.
+                    picture = f.data.iter().any(|b| *b != 0);
                 }
             }
             Err(e) => {
@@ -280,11 +327,10 @@ fn run_dual(
             }
         }
     }
-    t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let p50 = t[t.len() / 2];
-    let p95 = t[(t.len() * 95) / 100];
-    let max = *t.last().unwrap();
-    let mean = sum / t.len() as f64;
+    let total = phase_stats(total, total_sum);
+    let prep = phase_stats(prep, prep_sum);
+    let infer = phase_stats(infer, infer_sum);
+    let post = phase_stats(post, post_sum);
     if !picture {
         eprintln!("{label:<28} produced a blank frame");
         return None;
@@ -292,11 +338,11 @@ fn run_dual(
     Some(Timing {
         label: label.to_string(),
         blocks: n_blocks,
-        p50,
-        p95,
-        max,
-        fps: 1000.0 / p50,
-        mean,
+        fps: 1000.0 / total.p50.max(0.001),
+        total,
+        prep,
+        infer,
+        post,
     })
 }
 
@@ -336,6 +382,21 @@ fn perf_4k() {
         ("Argb", OutputFormat::Argb),
     ];
 
+    eprintln!("\n== {w}x{h}, {frames} frames after warmup (single GPU engine) ==");
+    eprintln!(
+        "{:<30} {:>7} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>8} {:<10}",
+        "profile",
+        "blocks",
+        "prep ms",
+        "infer ms",
+        "post ms",
+        "p50 ms",
+        "p95 ms",
+        "max ms",
+        "FPS",
+        "format"
+    );
+
     let mut rows: Vec<Timing> = Vec::new();
     for (fmt_name, fmt) in formats {
         for (label, p) in [
@@ -348,12 +409,15 @@ fn perf_4k() {
             let stats_on = !label.ends_with("stats off");
             if let Some(t) = run_single(label, w, h, frames, stats_on, fmt, build(p, fmt)) {
                 eprintln!(
-                    "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
+                    "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
                     format!("{} ({})", t.label, fmt_name),
                     t.blocks,
-                    t.p50,
-                    t.p95,
-                    t.max,
+                    t.prep.mean,
+                    t.infer.mean,
+                    t.post.mean,
+                    t.total.p50,
+                    t.total.p95,
+                    t.total.max,
                     t.fps,
                     fmt_name
                 );
@@ -368,9 +432,9 @@ fn perf_4k() {
     ) {
         eprintln!(
             "\nfusion: {:.2}x at p50, mean {:.1} -> {:.1} ms",
-            med_r.p50 / fused_r.p50,
-            med_r.mean,
-            fused_r.mean
+            med_r.total.p50 / fused_r.total.p50.max(0.001),
+            med_r.total.mean,
+            fused_r.total.mean
         );
     }
     if let (Some(on), Some(off)) = (
@@ -379,8 +443,8 @@ fn perf_4k() {
     ) {
         eprintln!(
             "statistics readback: {:.1} ms per frame ({:.0}% of the p50)",
-            on.p50 - off.p50,
-            100.0 * (on.p50 - off.p50) / on.p50.max(0.01)
+            on.post.mean - off.post.mean,
+            100.0 * (on.post.mean - off.post.mean) / on.total.p50.max(0.01)
         );
     }
 }
@@ -420,22 +484,33 @@ fn perf_4k_dual() {
 
     eprintln!("\n== {w}x{h}, {frames} frames after warmup (DUAL GPU engine) ==");
     eprintln!(
-        "{:<30} {:>7} {:>9} {:>9} {:>9} {:>8} {:<10}",
-        "profile", "blocks", "p50 ms", "p95 ms", "max ms", "FPS", "format"
+        "{:<30} {:>7} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>8} {:<10}",
+        "profile",
+        "blocks",
+        "prep ms",
+        "infer ms",
+        "post ms",
+        "p50 ms",
+        "p95 ms",
+        "max ms",
+        "FPS",
+        "format"
     );
 
     let mut rows: Vec<Timing> = Vec::new();
     for (fmt_name, fmt) in formats {
         for (label, p) in [("DUAL fused", fused())] {
-            let stats_on = !label.ends_with("stats off");
             if let Some(t) = run_dual(label, w, h, frames, fmt, build(p, fmt)) {
                 eprintln!(
-                    "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
+                    "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
                     format!("{} ({})", t.label, fmt_name),
                     t.blocks,
-                    t.p50,
-                    t.p95,
-                    t.max,
+                    t.prep.mean,
+                    t.infer.mean,
+                    t.post.mean,
+                    t.total.p50,
+                    t.total.p95,
+                    t.total.max,
                     t.fps,
                     fmt_name
                 );
@@ -446,8 +521,9 @@ fn perf_4k_dual() {
 
     if let Some(fused_r) = rows.first() {
         eprintln!(
-            "\nDUAL engine: engine A stats ON + engine B stats OFF, mean {:.1} ms",
-            fused_r.mean
+            "\nDUAL engine: engine A stats ON + engine B stats OFF, mean {:.1} ms \
+             (prep {:.1}, infer {:.1}, post {:.1})",
+            fused_r.total.mean, fused_r.prep.mean, fused_r.infer.mean, fused_r.post.mean
         );
     }
 }

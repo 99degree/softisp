@@ -2407,6 +2407,7 @@ impl IspEngine for MnnEngine {
             // a buffer whose length disagrees with `frame.width * height *
             // channels` (silently truncating or mis-slicing the image).
             let out_tensor = interp.get_output(sess, &output_name);
+            let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
             let mut oh = p.target_height as usize;
             let mut ow = tw as usize;
             let mut graph_channels = p.output_format.channel_count();
@@ -2431,7 +2432,19 @@ impl IspEngine for MnnEngine {
                     // fed to a `FloatRgb` caller is silently wrong — every
                     // plane lands 8x too large in the wrong place — so say so
                     // instead of rendering garbage.
-                    let expected = p.output_format.channel_count();
+                    // A fused `isp.display_*` shader writes one packed BGRA
+                    // word per pixel, so its `[1,1,H,W]` shape is correct even
+                    // for a four-byte u8 format. Compare against one channel
+                    // there; the host expands the word afterwards.
+                    let packed_u8_tail = !p.output_format.is_raw_output()
+                        && !matches!(p.output_format, OutputFormat::PackedRgb)
+                        && graph_channels == 1
+                        && (out_type != 4 || self.has_fused_display);
+                    let expected = if packed_u8_tail {
+                        1
+                    } else {
+                        p.output_format.channel_count()
+                    };
                     if graph_channels != expected
                         && !CHANNEL_MISMATCH_REPORTED.swap(true, Ordering::Relaxed)
                     {
@@ -2463,7 +2476,6 @@ impl IspEngine for MnnEngine {
             // Inferring the encoding from the element *count* instead would
             // misfire, because a 1×1 Conv output of `pixels/channels` lands on
             // the same count.
-            let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
             let packed_display_by_type = !p.output_format.is_raw_output() && out_type != 4;
 
             // `isp.display_uint32_bgra` writes one BGRA uint32 per pixel. MNN

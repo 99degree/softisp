@@ -81,6 +81,15 @@ fn setup_ndk_linker() {
         return;
     }
 
+    // These are needed by every Android linkage that pulls in cam-isp, not only
+    // by builds where an NDK sysroot was found. In particular the host-targeted
+    // ignored MNN probes call the ANativeWindow C ABI and need `-landroid`
+    // even when no local NDK checkout is configured.
+    println!("cargo:rustc-link-lib=log");
+    println!("cargo:rustc-link-lib=android");
+    println!("cargo:rustc-link-lib=c++_shared");
+    println!("cargo:rustc-link-lib=mediandk");
+
     let ndk = match find_ndk() {
         Some(p) => p,
         None => {
@@ -129,12 +138,6 @@ fn setup_ndk_linker() {
             sysroot.join("usr").join("lib").display()
         );
     }
-
-    // Link against NDK system libraries
-    println!("cargo:rustc-link-lib=log");
-    println!("cargo:rustc-link-lib=android");
-    println!("cargo:rustc-link-lib=c++_shared");
-    println!("cargo:rustc-link-lib=mediandk");
 
     eprintln!(
         "NDK: abi={}, arch={}, api={}, sysroot={}",
