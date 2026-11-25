@@ -11,7 +11,7 @@ use cam_isp::{
     neural_controller::NeuralController,
     pipeline::IspFrame,
 };
-use cam_types::ToneParams;
+use cam_types::{AhbBinding, ToneParams};
 use std::path::Path;
 
 /// Main IPA context managing the full pipeline
@@ -291,12 +291,17 @@ impl IpaContext {
         params.input_buffer = Some((input.as_mut_ptr(), input.len()));
         params.output_buffer = Some((output.as_mut_ptr(), output.len()));
 
-        // Handle AHardwareBuffer for Vulkan zero-copy
+        // Handle AHardwareBuffer for Vulkan zero-copy. The fence tokens are a
+        // non-owning view; `input`/`output` keep the fds alive for this call.
         if input.is_ahb() {
-            params.input_ahb = input.ahb_ptr().map(|p| (p, input.len()));
+            params.input_ahb = input
+                .ahb_ptr()
+                .map(|p| AhbBinding::new(p, input.len(), input.fences()));
         }
         if output.is_ahb() {
-            params.output_ahb = output.ahb_ptr().map(|p| (p, output.len()));
+            params.output_ahb = output
+                .ahb_ptr()
+                .map(|p| AhbBinding::new(p, output.len(), output.fences()));
         }
 
         // Process frame

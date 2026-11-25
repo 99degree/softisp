@@ -1,6 +1,7 @@
 //! Public types for cam-ipa stable API
 
 use cam_isp::profile::PipelineProfile;
+use cam_types::AhbFenceTokens;
 use serde::{Deserialize, Serialize};
 use std::os::fd::RawFd;
 use std::path::PathBuf;
@@ -209,6 +210,14 @@ pub trait Buffer: Send + Sync {
     }
     fn ahb_ptr(&self) -> Option<*mut std::ffi::c_void> {
         None
+    }
+    /// Fence tokens for an AHB slot. Non-AHB buffers return no tokens.
+    fn fences(&self) -> AhbFenceTokens {
+        AhbFenceTokens::default()
+    }
+    /// Generation these fence tokens apply to.
+    fn generation(&self) -> u64 {
+        self.fences().generation
     }
 }
 

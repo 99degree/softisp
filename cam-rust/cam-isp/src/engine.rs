@@ -1,7 +1,7 @@
 //! Backend-agnostic inference engine for the ISP pipeline.
 //! Ported from com.camcore.isp.engine.IspEngine
 
-use cam_types::ToneParams;
+use cam_types::{AhbBinding, ToneParams};
 use log::info;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -207,14 +207,15 @@ pub struct ProcessParams<'a> {
     /// input tensor. When `Some` alongside `input_buffer`, MNN's Vulkan
     /// backend binds the AHB fd as device memory and reads directly from GPU
     /// memory, eliminating the host→device copy on Vulkan. The caller keeps
-    /// the buffer locked for the duration of `process()`.
-    pub input_ahb: Option<(*mut std::ffi::c_void, usize)>,
+    /// the buffer locked and owns the fence fds for the duration of `process()`.
+    pub input_ahb: Option<AhbBinding>,
 
     /// Optional `AHardwareBuffer*` imported as Vulkan device memory for the
     /// output tensor. When `Some` alongside `output_buffer`, MNN's Vulkan
     /// backend binds the AHB fd as device memory and writes directly to GPU
-    /// memory, eliminating the device→host copy on Vulkan.
-    pub output_ahb: Option<(*mut std::ffi::c_void, usize)>,
+    /// memory, eliminating the device→host copy on Vulkan. The release fence
+    /// is owned by the caller until the display has consumed it.
+    pub output_ahb: Option<AhbBinding>,
     /// Output format: PackedInt32 (raw) or Bgra (converted).
     pub output_format: OutputFormat,
     /// Capture timestamp in nanoseconds (from HAL/framework). Passed through to IspFrame.
@@ -278,6 +279,10 @@ pub struct PrepareParams {
     pub sensor_max: f32,
     pub bayer_pattern: i32,
     pub output_format: OutputFormat,
+    /// AHB slot generation whose metadata was prepared. `run_prepared()`
+    /// rejects a frame from a different generation.
+    pub input_generation: u64,
+    pub output_generation: u64,
 }
 
 impl<'a> From<&ProcessParams<'a>> for PrepareParams {
@@ -290,6 +295,8 @@ impl<'a> From<&ProcessParams<'a>> for PrepareParams {
             sensor_max: p.sensor_max,
             bayer_pattern: p.bayer_pattern,
             output_format: p.output_format,
+            input_generation: p.input_ahb.map_or(0, |b| b.generation()),
+            output_generation: p.output_ahb.map_or(0, |b| b.generation()),
         }
     }
 }
@@ -636,6 +643,25 @@ mod tests {
         assert_eq!(prep.sensor_max, 4095.0);
         assert_eq!(prep.bayer_pattern, 2);
         assert_eq!(prep.output_format, OutputFormat::PackedRgb);
+    }
+
+    #[test]
+    fn test_prepare_params_carries_ahb_generation() {
+        let data = vec![0u8; 64];
+        let mut p = ProcessParams::new(8, 8, &data);
+        p.input_ahb = Some(AhbBinding::new(
+            std::ptr::null_mut(),
+            64,
+            cam_types::AhbFenceTokens::new(3, -1, 17),
+        ));
+        p.output_ahb = Some(AhbBinding::new(
+            std::ptr::null_mut(),
+            64,
+            cam_types::AhbFenceTokens::new(-1, 4, 18),
+        ));
+        let prep = PrepareParams::from(&p);
+        assert_eq!(prep.input_generation, 17);
+        assert_eq!(prep.output_generation, 18);
     }
 
     #[test]

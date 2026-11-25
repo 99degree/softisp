@@ -225,16 +225,16 @@ impl AHardwareBufferBacked {
             frame_number,
         }
     }
-}
-
-impl cam_hal::buffer::MappedBuffer for AHardwareBufferBacked {
-    fn map(&self) -> Result<(*mut u8, usize), String> {
+    /// Lock for CPU read, waiting on `acquire_fd` before exposing the pointer.
+    ///
+    /// The fd remains owned by the caller; NDK lock does not consume it.
+    pub fn map_with_fence(&self, acquire_fd: i32) -> Result<(*mut u8, usize), String> {
         let mut cpu_ptr: *mut c_void = std::ptr::null_mut();
         let ret = unsafe {
             AHardwareBuffer_lock(
                 self.buffer,
                 AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
-                -1,
+                acquire_fd,
                 std::ptr::null(),
                 &mut cpu_ptr,
             )
@@ -246,12 +246,25 @@ impl cam_hal::buffer::MappedBuffer for AHardwareBufferBacked {
         Ok((cpu_ptr as *mut u8, self.size))
     }
 
-    fn unmap(&self) -> Result<(), String> {
-        let ret = unsafe { AHardwareBuffer_unlock(self.buffer, std::ptr::null_mut()) };
+    /// Unlock and return the release fd. The caller owns the returned fd.
+    pub fn unmap_with_fence(&self) -> Result<i32, String> {
+        let mut release_fd = -1;
+        let ret = unsafe { AHardwareBuffer_unlock(self.buffer, &mut release_fd) };
         self.mapped_ptr.set(std::ptr::null_mut());
         if ret != 0 {
             return Err(format!("AHardwareBuffer_unlock failed: {}", ret));
         }
+        Ok(release_fd)
+    }
+}
+
+impl cam_hal::buffer::MappedBuffer for AHardwareBufferBacked {
+    fn map(&self) -> Result<(*mut u8, usize), String> {
+        self.map_with_fence(-1)
+    }
+
+    fn unmap(&self) -> Result<(), String> {
+        let _ = self.unmap_with_fence()?;
         Ok(())
     }
 

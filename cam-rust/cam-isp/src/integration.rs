@@ -251,8 +251,16 @@ impl CameraIspService {
         // backend reads/writes GPU memory directly (eliminates host<->GPU
         // copies on Vulkan). The input/output buffers are locked by the HAL
         // for the duration of this call and unlocked by the caller afterwards.
-        params.input_ahb = Some((input.ptr as *mut std::ffi::c_void, input.size));
-        params.output_ahb = Some((output.ptr as *mut std::ffi::c_void, output.size));
+        params.input_ahb = Some(cam_types::AhbBinding::new(
+            input.ptr as *mut std::ffi::c_void,
+            input.size,
+            cam_types::AhbFenceTokens::default(),
+        ));
+        params.output_ahb = Some(cam_types::AhbBinding::new(
+            output.ptr as *mut std::ffi::c_void,
+            output.size,
+            cam_types::AhbFenceTokens::default(),
+        ));
 
         let frame = self.engine.process(&params).map_err(|e| e.to_string())?;
 

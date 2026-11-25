@@ -336,3 +336,107 @@ pub trait IspBlock: Send + Sync {
     /// Boxed output data that can be passed to the next block
     fn compute(&self, coeffs: &dyn std::any::Any) -> Box<dyn std::any::Any>;
 }
+
+/// fd value used when no sync fence is present.
+pub const INVALID_SYNC_FD: i32 = -1;
+
+/// Non-owning reference to an Android sync fence.
+///
+/// The owner is the AHB slot or lock guard that produced the fd. It must stay
+/// alive for the whole call that receives this token; closing the fd earlier
+/// makes any Vulkan/BufferQueue wait undefined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct SyncFenceToken {
+    pub fd: i32,
+    pub generation: u64,
+}
+
+impl SyncFenceToken {
+    pub const NONE: Self = Self {
+        fd: INVALID_SYNC_FD,
+        generation: 0,
+    };
+
+    pub fn new(fd: i32, generation: u64) -> Self {
+        Self { fd, generation }
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.fd >= 0
+    }
+
+    pub fn matches(self, generation: u64) -> bool {
+        self.generation == generation
+    }
+}
+
+/// Fence pair for one AHB slot generation.
+///
+/// `acquire` is a camera/BufferQueue fence the consumer must wait on before
+/// reading. `release` is produced by the consumer (CPU unlock, Vulkan submit,
+/// or display queue) and must be waited on before the slot is reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct AhbFenceTokens {
+    pub acquire: SyncFenceToken,
+    pub release: SyncFenceToken,
+    pub generation: u64,
+}
+
+impl Default for AhbFenceTokens {
+    fn default() -> Self {
+        Self {
+            acquire: SyncFenceToken::NONE,
+            release: SyncFenceToken::NONE,
+            generation: 0,
+        }
+    }
+}
+
+impl AhbFenceTokens {
+    pub fn new(acquire_fd: i32, release_fd: i32, generation: u64) -> Self {
+        Self {
+            acquire: SyncFenceToken::new(acquire_fd, generation),
+            release: SyncFenceToken::new(release_fd, generation),
+            generation,
+        }
+    }
+
+    pub fn matches(self, generation: u64) -> bool {
+        self.generation == generation
+    }
+}
+
+/// AHB pointer plus the fence state that makes the borrow safe.
+///
+/// This is a non-owning view. The AHB slot owns the buffer and the sync fds.
+#[derive(Debug, Clone, Copy)]
+pub struct AhbBinding {
+    pub ptr: *mut std::ffi::c_void,
+    pub len: usize,
+    pub fences: AhbFenceTokens,
+}
+
+impl AhbBinding {
+    pub fn new(ptr: *mut std::ffi::c_void, len: usize, fences: AhbFenceTokens) -> Self {
+        Self { ptr, len, fences }
+    }
+
+    pub fn generation(self) -> u64 {
+        self.fences.generation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fence_tokens_track_generation() {
+        let tokens = AhbFenceTokens::new(7, -1, 9);
+        assert!(tokens.acquire.is_valid());
+        assert!(!tokens.release.is_valid());
+        assert!(tokens.matches(9));
+        assert!(!tokens.matches(8));
+        assert_eq!(SyncFenceToken::NONE.fd, INVALID_SYNC_FD);
+    }
+}

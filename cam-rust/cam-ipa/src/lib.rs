@@ -12,6 +12,7 @@ pub mod controller;
 pub mod engine_manager;
 pub mod error;
 pub mod events;
+pub mod fence;
 pub mod types;
 
 // Re-export public API
@@ -21,6 +22,7 @@ pub use controller::IpaController;
 pub use engine_manager::EngineManager;
 pub use error::{IpaError, IpaResult};
 pub use events::EventEmitter;
+pub use fence::{AhbFenceState, SyncFence, ZeroPolicy};
 pub use types::{
     Buffer, ControlInfoMap, ControlList, EngineBackend, IpaCallbacks, IpaConfig, IpaConfigureInfo,
     IpaFormat, IpaInitResult, IpaSensorInfo, IpaSettings, Rectangle, Size,

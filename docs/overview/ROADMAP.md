@@ -99,6 +99,15 @@
   while stats readback updates the next controller state. Also audit buffer
   zeroing as a warm-up cost and add explicit AHB fence tokens. Tracked as TODO
   below; depends on P2b and on-device fence/lifetime validation.
+- **P2h fence foundation landed** (2026-11-26): generation-tagged fence tokens
+  now travel through `ProcessParams`, `cam-ipa` owns sync fds and AHB slot
+  generations, and the Android HAL passes acquire fds into
+  `AHardwareBuffer_lock` and captures release fds from
+  `AHardwareBuffer_unlock`. `run_prepared()` rejects cross-generation AHB
+  bindings. The non-Android dmabuf/sync_fd equivalent is a separate TODO below.
+  Verified with fmt, workspace check, canonical clippy, 1 `cam-types` / 3
+  `cam-hal` / 2 `cam-onnx` / 6 `cam-motion` / 9 `cam-ipa` / 840 `cam-isp` /
+  49 `softisp-anw` hermetic tests and 875 real MNN tests.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
@@ -448,23 +457,33 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   The output AHB may not be recycled until both the display release fence and
   `finish()` have completed; track this with the existing staged token plus an
   explicit display-release token.
-- **AHB fence plumbing (explicit TODO):** Android `AHardwareBuffer` has no fence
-  field of its own; the sync fd travels with the BufferQueue/capture slot.
-  `AhwBuffer` currently carries only handle, dimensions, format and strides, and
-  `ProcessParams::{input_ahb, output_ahb}` carry only `(ptr, size)`. Add a
-  generation-tagged fence pair per AHB slot: camera acquire fence → Vulkan wait
-  semaphore before `run_prepared()`, GPU completion → display release fence
+- **AHB fence plumbing (foundation landed, full handoff TODO):** Android
+  `AHardwareBuffer` has no fence field of its own; the sync fd travels with the
+  BufferQueue/capture slot. `cam_types::{SyncFenceToken, AhbFenceTokens,
+  AhbBinding}` now carry non-owning fd/generation tokens, `cam_ipa::AhbFenceState`
+  owns the fds, and `ProcessParams::{input_ahb, output_ahb}` carry them instead
+  of bare tuples. The Android HAL `AHardwareBuffer_lock`/`unlock` wrappers pass
+  the acquire fd and return the release fd. `MnnEngine::run_prepared()` rejects
+  a binding from the wrong generation. Still TODO: camera acquire fd → Vulkan
+  wait semaphore before `run_prepared()`, GPU completion → display release fd
   after inference, and wait for both display release and `finish()` before
-  recycling. Define fd/semaphore ownership and close-on-consumer rules explicitly;
-  never assume implicit driver ordering.
+  recycling. Never assume implicit driver ordering.
+- **Non-Android dmabuf/sync_fd TODO:** AHB is Android-specific. V4L2/dmabuf
+  platforms need the same generation-tagged contract using `dma-buf` fds and
+  `sync_file`/fence fds, with Vulkan external-fence import and
+  `BufferManager::allocate_dmabuf()` slots. Do not let the Android AHB wrappers
+  become a proxy for host dmabuf ordering; add the Linux path separately with
+  hermetic fd-ownership tests and an ignored device test.
 - **Zeroing audit:** measure before changing. `MemBuffer::new()` zeroes with
   `vec![0u8; size]`, scratch vectors use `resize(..., 0)`, and
   `AHardwareBuffer_allocate` zeroing is allocator/driver-dependent. Skip the
   clear only for buffers the camera or GPU fully overwrites before any read;
   keep zeroing for partial stats/readback buffers and for any buffer that can
-  be observed before the producer write completes. Add an explicit
-  `needs_zero`/generation flag rather than relying on allocator defaults, and
-  report warm-up time with and without the clear.
+  be observed before the producer write completes. An explicit `ZeroPolicy`
+  flag is now available; the host `MemBuffer` still zeroes both policies because
+  skipping safely needs a producer callback that initialises every byte. TODO:
+  wire the policy into an allocating producer path, report warm-up time with and
+  without the clear, and confirm `AHardwareBuffer_allocate` assumptions on-device.
 - **Constraints:** `OutputFormat::PackedRgb` and `isp.display_uint32_bgra`
   stay unchanged; no float fallback; AHB only for large tensors, small tensors
   stay non-AHB; dual-engine ordering and P2d cancellation must drain both the
@@ -474,10 +493,12 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   ownership; P2c for the staged API; on-device fence/gralloc validation for
   the output surface. Do not bypass P2b with a host-pointer bind the Vulkan
   backend ignores.
-- **Verification:** hermetic tests for metadata/frame generation matching,
-  idempotent cancel with both token types, fence ownership/close-on-consumer,
-  no reuse before release, and the zeroing policy; extend the per-phase perf
-  probe to separate capture-fill,
+- **Verification:** hermetic tests now cover metadata/frame generation matching
+  in `PrepareParams`, fence ownership/close-on-consumer, no reuse before the
+  release fence is taken, the zeroing policy and full-overwrite host allocation.
+  Still TODO: idempotent cancel with both AHB token types and extending the
+  per-phase perf probe
+  to separate capture-fill,
   prefill, inference, display handoff and readback. Add an ignored on-device
   test that checks warm-up allocation time and confirms no stale/blank frames
   after cancel + restart.

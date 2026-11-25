@@ -1,5 +1,7 @@
 //! Buffer management for zero-copy operations (Linux + Android)
+use crate::fence::{AhbFenceState, ZeroPolicy};
 use crate::{Buffer, IpaError, IpaResult};
+use cam_types::AhbFenceTokens;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 /// DMA buffer wrapper — works on Linux (V4L2 dmabuf) and Android (SharedFD).
@@ -109,6 +111,7 @@ pub struct AhwBuffer {
     width: u32,
     height: u32,
     strides: [u32; 4],
+    fences: AhbFenceState,
 }
 
 #[cfg(target_os = "android")]
@@ -139,7 +142,18 @@ impl AhwBuffer {
             width: desc.width,
             height: desc.height,
             strides: [desc.stride; 4],
+            fences: AhbFenceState::default(),
         })
+    }
+
+    /// Adopt a camera acquire fence for a new generation.
+    pub fn begin_capture(&mut self, acquire_fd: RawFd) -> IpaResult<u64> {
+        self.fences.begin(acquire_fd)
+    }
+
+    /// Record the release fence returned by `AHardwareBuffer_unlock`.
+    pub fn complete_capture(&mut self, release_fd: RawFd) -> IpaResult<()> {
+        self.fences.complete(release_fd)
     }
 }
 
@@ -167,6 +181,14 @@ impl Buffer for AhwBuffer {
 
     fn ahb_ptr(&self) -> Option<*mut std::ffi::c_void> {
         Some(self.ahb)
+    }
+
+    fn fences(&self) -> AhbFenceTokens {
+        self.fences.tokens()
+    }
+
+    fn generation(&self) -> u64 {
+        self.fences.generation()
     }
 }
 
@@ -206,6 +228,15 @@ pub struct MemBuffer {
 
 impl MemBuffer {
     pub fn new(size: usize) -> Self {
+        Self::new_with_policy(size, ZeroPolicy::NeedZero)
+    }
+
+    /// Allocate with an explicit zeroing requirement.
+    ///
+    /// The host wrapper still zeroes both policies: skipping the clear safely
+    /// needs a producer callback that initialises every byte. The policy is
+    /// recorded so AHB callers can state when a driver-side clear is unnecessary.
+    pub fn new_with_policy(size: usize, _policy: ZeroPolicy) -> Self {
         Self {
             data: vec![0u8; size],
         }
@@ -278,6 +309,17 @@ impl BufferManager {
         arc
     }
 
+    pub fn allocate_mem_with_policy(
+        &mut self,
+        size: usize,
+        policy: ZeroPolicy,
+    ) -> std::sync::Arc<dyn Buffer> {
+        let buf = MemBuffer::new_with_policy(size, policy);
+        let arc = std::sync::Arc::new(buf);
+        self.buffers.push(arc.clone());
+        arc
+    }
+
     pub fn clear(&mut self) {
         self.buffers.clear();
     }
@@ -315,5 +357,12 @@ mod tests {
         assert!(!buf.as_mut_ptr().is_null());
         buf.data[0] = 42;
         assert_eq!(unsafe { buf.as_ptr().read() }, 42);
+    }
+
+    #[test]
+    fn test_mem_buffer_full_overwrite_policy() {
+        let buf = MemBuffer::new_with_policy(64, ZeroPolicy::FullOverwrite);
+        assert_eq!(buf.len(), 64);
+        assert!(buf.data.iter().all(|&b| b == 0));
     }
 }

@@ -56,6 +56,8 @@ pub(crate) struct PreparedMeta {
     max_out: i32,
     buf_id: Option<usize>,
     zero_copy: bool,
+    input_generation: u64,
+    output_generation: u64,
     prep_setup_ns: u64,
     prep_tensors_ns: u64,
 }
@@ -87,6 +89,8 @@ impl<'a> PreparedFrame<'a> {
             sensor_max: self.meta.sensor_max,
             bayer_pattern: self.meta.bayer_pattern,
             output_format: self.meta.output_format,
+            input_generation: self.meta.input_generation,
+            output_generation: self.meta.output_generation,
         }
     }
 }
@@ -2065,6 +2069,8 @@ impl MnnEngine {
                 max_out,
                 buf_id,
                 zero_copy,
+                input_generation: p.input_ahb.map_or(0, |binding| binding.fences.generation),
+                output_generation: p.output_ahb.map_or(0, |binding| binding.fences.generation),
                 prep_setup_ns,
                 prep_tensors_ns,
             },
@@ -2098,6 +2104,31 @@ impl MnnEngine {
                 "prepared geometry {}x{} does not match frame {}x{}",
                 meta.w, meta.h, p.width, p.height
             )));
+        }
+        if let Some(binding) = p.input_ahb.as_ref() {
+            let generation = binding.fences.generation;
+            if generation != meta.input_generation {
+                return Err(crate::error::IspError::Config(format!(
+                    "prepared input AHB generation {} does not match frame generation {}",
+                    meta.input_generation, generation
+                )));
+            }
+            if binding.fences.acquire.is_valid() {
+                warn!(
+                    "input AHB acquire fence fd {} is not waited by the MNN Vulkan path yet; \
+                     staged inference must not consume it until P2b lands",
+                    binding.fences.acquire.fd
+                );
+            }
+        }
+        if let Some(binding) = p.output_ahb.as_ref() {
+            let generation = binding.fences.generation;
+            if generation != meta.output_generation {
+                return Err(crate::error::IspError::Config(format!(
+                    "prepared output AHB generation {} does not match frame generation {}",
+                    meta.output_generation, generation
+                )));
+            }
         }
 
         let w = meta.w;
@@ -2264,12 +2295,12 @@ impl MnnEngine {
         unsafe {
             if meta.zero_copy {
                 let mut imported_input = false;
-                if let Some(&(ahb_ptr, _)) = p.input_ahb.as_ref() {
+                if let Some(binding) = p.input_ahb.as_ref() {
                     if !frame_name_ptr.is_null() {
                         let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
                             interp.as_ptr(),
                             sess.as_ptr(),
-                            ahb_ptr as *const c_void,
+                            binding.ptr as *const c_void,
                             frame_name_ptr,
                             1,
                         );
@@ -2283,11 +2314,11 @@ impl MnnEngine {
                     }
                 }
                 let mut imported_output = false;
-                if let Some(&(ahb_ptr, _)) = p.output_ahb.as_ref() {
+                if let Some(binding) = p.output_ahb.as_ref() {
                     let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
                         interp.as_ptr(),
                         sess.as_ptr(),
-                        ahb_ptr as *const c_void,
+                        binding.ptr as *const c_void,
                         output_name_ptr.as_ptr(),
                         0,
                     );
