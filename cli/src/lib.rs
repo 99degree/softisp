@@ -7,7 +7,9 @@
 //!   - `bench`      — FPS/latency benchmark over N frames
 //!   - `stats`      — collect per-frame stats for CMOS sensor characterization
 //!   - `zerocopy`   — test memfd/dmabuf zero-copy buffer path
-//!   - `probe`      — probe profile capabilities and engine info
+//!   - `probe`      — probe profile capabilities and engine info (--json for JSON)
+//!   - `profile-json` — dump a single profile as JSON, or load custom profile JSON
+//!   - `cmos-dump`    — read V4L2 sensor metadata and output libcamera-compatible CMOS JSON
 //!
 //! Compiled as:
 //!   - cdylib (libcam_ipa_sk.so) — exports `ipa_sk_main` for dlopen,
@@ -30,6 +32,7 @@ use cam_ipa::{
 };
 use cam_isp::profile::PipelineProfile;
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -38,7 +41,7 @@ use cam_hal_linux::{list_v4l2_devices, capture_single_v4l2_frame};
 
 /// Top-level CLI argument parser
 #[derive(Parser, Debug)]
-#[command(author, version, about = "cam-ipa Swiss Army Knife — softisp IPA toolkit", subcommand_required = true)]
+#[command(author, version, about = "cam-ipa Swiss Army Knife — softisp IPA toolkit")]
 struct Args {
     #[command(subcommand)]
     command: Commands,
@@ -135,6 +138,9 @@ enum Commands {
         /// Model directory for neural processor
         #[arg(long)]
         model_dir: Option<String>,
+        /// Load profile from JSON file (overrides --profile)
+        #[arg(long)]
+        profile_json: Option<PathBuf>,
     },
     /// Capture real frames from V4L2 device and process
     Capture {
@@ -168,6 +174,9 @@ enum Commands {
         /// Model directory for neural processor
         #[arg(long)]
         model_dir: Option<String>,
+        /// Load profile from JSON file (overrides --profile)
+        #[arg(long)]
+        profile_json: Option<PathBuf>,
     },
     /// Benchmark FPS/latency over N frames
     Bench {
@@ -198,6 +207,9 @@ enum Commands {
         /// Model directory for neural processor
         #[arg(long)]
         model_dir: Option<String>,
+        /// Load profile from JSON file (overrides --profile)
+        #[arg(long)]
+        profile_json: Option<PathBuf>,
     },
     /// Collect per-frame stats for CMOS sensor characterization
     Stats {
@@ -228,6 +240,9 @@ enum Commands {
         /// Model directory for neural processor
         #[arg(long)]
         model_dir: Option<String>,
+        /// Load profile from JSON file (overrides --profile)
+        #[arg(long)]
+        profile_json: Option<PathBuf>,
     },
     /// Test zero-copy buffer path (memfd on Linux, dmabuf on Android)
     Zerocopy {
@@ -239,10 +254,402 @@ enum Commands {
         iterations: u32,
     },
     /// Probe profile capabilities and engine info
-    Probe,
+    Probe {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dump a pipeline profile as JSON, or load custom profile JSON
+    ProfileJson {
+        /// Profile name (lite, med, fused, heavy, pro, test, unified, hdr, yuv)
+        #[arg(long)]
+        name: Option<String>,
+        /// Output frame width (for custom profile)
+        #[arg(long, default_value_t = 3840)]
+        width: u32,
+        /// Output frame height (for custom profile)
+        #[arg(long, default_value_t = 2160)]
+        height: u32,
+        /// Output file path (if not specified, prints to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Load custom profile from JSON file
+        #[arg(long)]
+        input: Option<PathBuf>,
+    },
+    /// Read V4L2 sensor metadata and output libcamera-compatible CMOS JSON
+    CmosDump {
+        /// V4L2 device path (e.g., /dev/video0)
+        #[arg(long, default_value = "/dev/video0")]
+        device: Option<String>,
+        /// Output file path (if not specified, prints to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
-/// Build an IpaConfig from common options
+/// Serializable representation of a PipelineProfile for JSON dump/load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PProfileJson {
+    pub label: String,
+    pub level: String, // "Lite" | "Medium" | "Heavy" | "Pro"
+    pub input_type: String,
+    pub use_unpack: bool,
+    pub force_input16: bool,
+    pub use_fcs: bool,
+    pub use_ldci: bool,
+    pub use_ee: bool,
+    pub use_bad_pixel: bool,
+    pub demosaic_quality: String, // "Standard" | "HqLinear" | "Edge"
+    pub use_local_contrast: bool,
+    pub use_unsharp: bool,
+    pub use_lsc: bool,
+    pub lsc_strength: f32,
+    pub use_warp: bool,
+    pub use_hdr: bool,
+    pub rotate_mode: i32,
+    pub use_zone_stats: bool,
+    pub use_channel_means: bool,
+    pub use_tone_stats: bool,
+    pub use_histogram: bool,
+    pub stats_downscale_max: u32,
+    pub pipeline_downscale_target: u32,
+    pub post_ccm_downscale_w: u32,
+    pub post_ccm_downscale_h: u32,
+    pub eis_margin: f64,
+    pub use_bilateral: bool,
+    pub use_saturation: bool,
+    pub use_vignetting: bool,
+    pub use_colorspace: bool,
+    pub use_gamma: bool,
+    pub use_sharpen: bool,
+    pub use_wavelet_denoise: bool,
+    pub use_auto_contrast: bool,
+    pub use_normalize: bool,
+    pub normalize_at_display: bool,
+    pub use_tiled_rendering: bool,
+    pub tile_count_x: u32,
+    pub tile_count_y: u32,
+    pub tile_overlap: u32,
+    pub output_format: String, // "PackedRgb" | "Bgra" | ...
+    pub opset_mode: i32, // 0=Primitive, 1=Custom, 2=MnnIspMin
+    pub fuse_stages: FuseStagesJson,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FuseStagesJson {
+    pub unpack_blc_normal_cfa: bool,
+    pub unpack16_blc_normal_cfa: bool,
+    pub unpack32_blc_normal_cfa: bool,
+    pub demosaic_ccm: bool,
+    pub wb_into_demosaic: bool,
+    pub ccm: bool,
+    pub ee: bool,
+    pub ldci: bool,
+    pub display: bool,
+    pub tail_downscale: bool,
+    pub whole_pipeline: bool,
+}
+
+impl From<&PipelineProfile> for PProfileJson {
+    fn from(p: &PipelineProfile) -> Self {
+        Self {
+            label: p.label.to_string(),
+            level: match p.level {
+                cam_isp::profile::PipelineLevel::Lite => "Lite".to_string(),
+                cam_isp::profile::PipelineLevel::Medium => "Medium".to_string(),
+                cam_isp::profile::PipelineLevel::Heavy => "Heavy".to_string(),
+                cam_isp::profile::PipelineLevel::Pro => "Pro".to_string(),
+            },
+            input_type: p.input_type.to_string(),
+            use_unpack: p.use_unpack,
+            force_input16: p.force_input16,
+            use_fcs: p.use_fcs,
+            use_ldci: p.use_ldci,
+            use_ee: p.use_ee,
+            use_bad_pixel: p.use_bad_pixel,
+            demosaic_quality: match p.demosaic_quality {
+                cam_isp::profile::DemosaicQuality::Standard => "Standard".to_string(),
+                cam_isp::profile::DemosaicQuality::HqLinear => "HqLinear".to_string(),
+                cam_isp::profile::DemosaicQuality::Edge => "Edge".to_string(),
+            },
+            use_local_contrast: p.use_local_contrast,
+            use_unsharp: p.use_unsharp,
+            use_lsc: p.use_lsc,
+            lsc_strength: p.lsc_strength,
+            use_warp: p.use_warp,
+            use_hdr: p.use_hdr,
+            rotate_mode: p.rotate_mode,
+            use_zone_stats: p.use_zone_stats,
+            use_channel_means: p.use_channel_means,
+            use_tone_stats: p.use_tone_stats,
+            use_histogram: p.use_histogram,
+            stats_downscale_max: p.stats_downscale_max,
+            pipeline_downscale_target: p.pipeline_downscale_target,
+            post_ccm_downscale_w: p.post_ccm_downscale.0,
+            post_ccm_downscale_h: p.post_ccm_downscale.1,
+            eis_margin: p.eis_margin,
+            use_bilateral: p.use_bilateral,
+            use_saturation: p.use_saturation,
+            use_vignetting: p.use_vignetting,
+            use_colorspace: p.use_colorspace,
+            use_gamma: p.use_gamma,
+            use_sharpen: p.use_sharpen,
+            use_wavelet_denoise: p.use_wavelet_denoise,
+            use_auto_contrast: p.use_auto_contrast,
+            use_normalize: p.use_normalize,
+            normalize_at_display: p.normalize_at_display,
+            use_tiled_rendering: p.use_tiled_rendering,
+            tile_count_x: p.tile_count_x,
+            tile_count_y: p.tile_count_y,
+            tile_overlap: p.tile_overlap,
+            output_format: match p.output_format {
+                cam_isp::engine::OutputFormat::PackedRgb => "PackedRgb".to_string(),
+                cam_isp::engine::OutputFormat::Bgra => "Bgra".to_string(),
+                cam_isp::engine::OutputFormat::Rgba => "Rgba".to_string(),
+                cam_isp::engine::OutputFormat::Argb => "Argb".to_string(),
+                cam_isp::engine::OutputFormat::Abgr => "Abgr".to_string(),
+                cam_isp::engine::OutputFormat::Rgb => "Rgb".to_string(),
+                cam_isp::engine::OutputFormat::Bgr => "Bgr".to_string(),
+                cam_isp::engine::OutputFormat::FloatRgb => "FloatRgb".to_string(),
+                cam_isp::engine::OutputFormat::FloatBgra => "FloatBgra".to_string(),
+                cam_isp::engine::OutputFormat::Float16Rgb => "Float16Rgb".to_string(),
+                cam_isp::engine::OutputFormat::Float16Bgra => "Float16Bgra".to_string(),
+                _ => "Unknown".to_string(),
+            },
+            opset_mode: p.opset_mode,
+            fuse_stages: FuseStagesJson {
+                unpack_blc_normal_cfa: p.fuse_stages.unpack_blc_normal_cfa,
+                unpack16_blc_normal_cfa: p.fuse_stages.unpack16_blc_normal_cfa,
+                unpack32_blc_normal_cfa: p.fuse_stages.unpack32_blc_normal_cfa,
+                demosaic_ccm: p.fuse_stages.demosaic_ccm,
+                wb_into_demosaic: p.fuse_stages.wb_into_demosaic,
+                ccm: p.fuse_stages.ccm,
+                ee: p.fuse_stages.ee,
+                ldci: p.fuse_stages.ldci,
+                display: p.fuse_stages.display,
+                tail_downscale: p.fuse_stages.tail_downscale,
+                whole_pipeline: p.fuse_stages.whole_pipeline,
+            },
+        }
+    }
+}
+
+impl PProfileJson {
+    /// Convert back to a PipelineProfile for use in generate/bench/stats/capture.
+    pub fn to_pipeline_profile(&self) -> PipelineProfile {
+        // PipelineProfile::custom requires &'static str for label and input_type.
+        // Use Box::leak to create static strings (acceptable for a CLI tool).
+        let label: &'static str = Box::leak(self.label.clone().into_boxed_str());
+        let input_type: &'static str = Box::leak(self.input_type.clone().into_boxed_str());
+        let mut p = PipelineProfile::custom(
+            label,
+            match self.level.as_str() {
+                "Lite" => cam_isp::profile::PipelineLevel::Lite,
+                "Medium" => cam_isp::profile::PipelineLevel::Medium,
+                "Heavy" => cam_isp::profile::PipelineLevel::Heavy,
+                "Pro" => cam_isp::profile::PipelineLevel::Pro,
+                _ => cam_isp::profile::PipelineLevel::Lite,
+            },
+            input_type,
+            self.use_unpack,
+            self.use_fcs,
+            self.use_ldci,
+            self.use_ee,
+            self.use_bad_pixel,
+            match self.demosaic_quality.as_str() {
+                "Standard" => cam_isp::profile::DemosaicQuality::Standard,
+                "HqLinear" => cam_isp::profile::DemosaicQuality::HqLinear,
+                "Edge" => cam_isp::profile::DemosaicQuality::Edge,
+                _ => cam_isp::profile::DemosaicQuality::Standard,
+            },
+            self.use_local_contrast,
+            self.use_unsharp,
+            self.use_lsc,
+            self.use_warp,
+            self.use_hdr,
+            self.rotate_mode,
+            self.use_zone_stats,
+            self.use_channel_means,
+            self.use_tone_stats,
+            self.use_histogram,
+            self.stats_downscale_max,
+            self.pipeline_downscale_target,
+            (self.post_ccm_downscale_w, self.post_ccm_downscale_h),
+            self.eis_margin,
+            self.use_bilateral,
+            self.use_saturation,
+            self.use_vignetting,
+            self.use_colorspace,
+            self.use_gamma,
+            self.use_sharpen,
+            self.use_wavelet_denoise,
+            self.use_auto_contrast,
+            self.use_normalize,
+            self.normalize_at_display,
+            self.use_tiled_rendering,
+            self.tile_count_x,
+            self.tile_count_y,
+            self.tile_overlap,
+            self.opset_mode,
+            cam_isp::profile::FuseStages {
+                unpack_blc_normal_cfa: self.fuse_stages.unpack_blc_normal_cfa,
+                unpack16_blc_normal_cfa: self.fuse_stages.unpack16_blc_normal_cfa,
+                unpack32_blc_normal_cfa: self.fuse_stages.unpack32_blc_normal_cfa,
+                demosaic_ccm: self.fuse_stages.demosaic_ccm,
+                wb_into_demosaic: self.fuse_stages.wb_into_demosaic,
+                ccm: self.fuse_stages.ccm,
+                ee: self.fuse_stages.ee,
+                ldci: self.fuse_stages.ldci,
+                display: self.fuse_stages.display,
+                tail_downscale: self.fuse_stages.tail_downscale,
+                whole_pipeline: self.fuse_stages.whole_pipeline,
+            },
+        );
+        p.lsc_strength = self.lsc_strength;
+        p
+    }
+}
+
+// ============================================================================
+// Library entry points
+// ============================================================================
+
+/// Library entry point — callable via dlopen
+#[no_mangle]
+pub extern "C" fn ipa_sk_main() -> i32 {
+    run_cli()
+}
+
+/// ELF entry point — allows the cdylib to be executed directly
+#[no_mangle]
+pub extern "C" fn my_entry() -> ! {
+    std::process::exit(run_cli())
+}
+
+fn run_cli() -> i32 {
+    let args = Args::parse();
+    env_logger::init();
+
+    match args.command {
+        Commands::Generate { count, output, profile, width, height, format, backend, neural, model_dir, profile_json } => {
+            println!("=== cam-ipa Swiss Army Knife ===");
+            println!("Command: generate");
+            let config = if let Some(pj_path) = &profile_json {
+                let pj: PProfileJson = serde_json::from_str(&std::fs::read_to_string(pj_path).expect("failed to read profile JSON"))
+                    .expect("failed to parse profile JSON");
+                let pipeline_profile = pj.to_pipeline_profile();
+                IpaConfig {
+                    image_width: width,
+                    image_height: height,
+                    format: format.into(),
+                    num_output_buffers: 2,
+                    backend: backend.into(),
+                    profile: pipeline_profile,
+                    neural_enabled: neural,
+                    model_dir: model_dir.map(PathBuf::from),
+                    ..IpaConfig::default()
+                }
+            } else {
+                build_ipa_config(profile, width, height, format, backend, neural, model_dir)
+            };
+            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                config.profile, width, height, format, backend, neural);
+            cmd_generate(&config, count, output)
+        }
+        Commands::Capture { device, count, output, profile, width, height, format, backend, neural, model_dir, profile_json } => {
+            println!("=== cam-ipa Swiss Army Knife ===");
+            println!("Command: capture");
+            let config = if let Some(pj_path) = &profile_json {
+                let pj: PProfileJson = serde_json::from_str(&std::fs::read_to_string(pj_path).expect("failed to read profile JSON"))
+                    .expect("failed to parse profile JSON");
+                let pipeline_profile = pj.to_pipeline_profile();
+                IpaConfig {
+                    image_width: width,
+                    image_height: height,
+                    format: format.into(),
+                    num_output_buffers: 2,
+                    backend: backend.into(),
+                    profile: pipeline_profile,
+                    neural_enabled: neural,
+                    model_dir: model_dir.map(PathBuf::from),
+                    ..IpaConfig::default()
+                }
+            } else {
+                build_ipa_config(profile, width, height, format, backend, neural, model_dir)
+            };
+            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                config.profile, width, height, format, backend, neural);
+            cmd_capture(&config, device, count, output)
+        }
+        Commands::Bench { count, warmup, profile, width, height, format, backend, neural, model_dir, profile_json } => {
+            println!("=== cam-ipa Swiss Army Knife ===");
+            println!("Command: bench");
+            let config = if let Some(pj_path) = &profile_json {
+                let pj: PProfileJson = serde_json::from_str(&std::fs::read_to_string(pj_path).expect("failed to read profile JSON"))
+                    .expect("failed to parse profile JSON");
+                let pipeline_profile = pj.to_pipeline_profile();
+                IpaConfig {
+                    image_width: width,
+                    image_height: height,
+                    format: format.into(),
+                    num_output_buffers: 2,
+                    backend: backend.into(),
+                    profile: pipeline_profile,
+                    neural_enabled: neural,
+                    model_dir: model_dir.map(PathBuf::from),
+                    ..IpaConfig::default()
+                }
+            } else {
+                build_ipa_config(profile, width, height, format, backend, neural, model_dir)
+            };
+            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                config.profile, width, height, format, backend, neural);
+            cmd_bench(&config, count, warmup)
+        }
+        Commands::Stats { count, output, profile, width, height, format, backend, neural, model_dir, profile_json } => {
+            println!("=== cam-ipa Swiss Army Knife ===");
+            println!("Command: stats");
+            let config = if let Some(pj_path) = &profile_json {
+                let pj: PProfileJson = serde_json::from_str(&std::fs::read_to_string(pj_path).expect("failed to read profile JSON"))
+                    .expect("failed to parse profile JSON");
+                let pipeline_profile = pj.to_pipeline_profile();
+                IpaConfig {
+                    image_width: width,
+                    image_height: height,
+                    format: format.into(),
+                    num_output_buffers: 2,
+                    backend: backend.into(),
+                    profile: pipeline_profile,
+                    neural_enabled: neural,
+                    model_dir: model_dir.map(PathBuf::from),
+                    ..IpaConfig::default()
+                }
+            } else {
+                build_ipa_config(profile, width, height, format, backend, neural, model_dir)
+            };
+            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                config.profile, width, height, format, backend, neural);
+            cmd_stats(&config, count, output)
+        }
+        Commands::Zerocopy { size, iterations } => {
+            cmd_zerocopy(size, iterations)
+        }
+        Commands::Probe { json } => {
+            cmd_probe(json)
+        }
+        Commands::ProfileJson { name, width, height, output, input } => {
+            let input_path = input.map(|p| p.to_string_lossy().to_string());
+            cmd_profile_json(name, width, height, output, input_path.as_deref())
+        }
+        Commands::CmosDump { device, output } => {
+            let dev = device.as_deref();
+            cmd_cmos_dump(dev, output.as_ref())
+        }
+    }
+}
+
+/// Build an IpaConfig from CLI options
 fn build_ipa_config(
     profile: ProfileArg,
     width: u32,
@@ -265,63 +672,26 @@ fn build_ipa_config(
     }
 }
 
-/// Library entry point — callable via dlopen
-#[no_mangle]
-pub extern "C" fn ipa_sk_main() -> i32 {
-    run_cli()
-}
-
-/// ELF entry point — allows the cdylib to be executed directly
-#[no_mangle]
-pub extern "C" fn my_entry() -> ! {
-    std::process::exit(run_cli())
-}
-
-fn run_cli() -> i32 {
-    let args = Args::parse();
-    env_logger::init();
-
-    match args.command {
-        Commands::Generate { count, output, profile, width, height, format, backend, neural, model_dir } => {
-            println!("=== cam-ipa Swiss Army Knife ===");
-            println!("Command: generate");
-            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-                profile, width, height, format, backend, neural);
-            let config = build_ipa_config(profile, width, height, format, backend, neural, model_dir);
-            cmd_generate(&config, count, output)
-        }
-        Commands::Capture { device, count, output, profile, width, height, format, backend, neural, model_dir } => {
-            println!("=== cam-ipa Swiss Army Knife ===");
-            println!("Command: capture");
-            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-                profile, width, height, format, backend, neural);
-            let config = build_ipa_config(profile, width, height, format, backend, neural, model_dir);
-            cmd_capture(&config, device, count, output)
-        }
-        Commands::Bench { count, warmup, profile, width, height, format, backend, neural, model_dir } => {
-            println!("=== cam-ipa Swiss Army Knife ===");
-            println!("Command: bench");
-            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-                profile, width, height, format, backend, neural);
-            let config = build_ipa_config(profile, width, height, format, backend, neural, model_dir);
-            cmd_bench(&config, count, warmup)
-        }
-        Commands::Stats { count, output, profile, width, height, format, backend, neural, model_dir } => {
-            println!("=== cam-ipa Swiss Army Knife ===");
-            println!("Command: stats");
-            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-                profile, width, height, format, backend, neural);
-            let config = build_ipa_config(profile, width, height, format, backend, neural, model_dir);
-            cmd_stats(&config, count, output)
-        }
-        Commands::Zerocopy { size, iterations } => {
-            cmd_zerocopy(size, iterations)
-        }
-        Commands::Probe => cmd_probe(),
+/// Build an IpaConfig from a PProfileJson (for --profile-json)
+fn build_ipa_config_from_json(pj: &PProfileJson, width: u32, height: u32, format: FormatArg, backend: BackendArg, neural: bool, model_dir: Option<String>) -> IpaConfig {
+    let pipeline_profile = pj.to_pipeline_profile();
+    IpaConfig {
+        image_width: width,
+        image_height: height,
+        format: format.into(),
+        num_output_buffers: 2,
+        backend: backend.into(),
+        profile: pipeline_profile,
+        neural_enabled: neural,
+        model_dir: model_dir.map(PathBuf::from),
+        ..IpaConfig::default()
     }
 }
 
-/// cmd_generate — synthetic frame generation + ISP processing
+// ============================================================================
+// cmd_generate — synthetic frame generation + ISP processing
+// ============================================================================
+
 fn cmd_generate(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 {
     println!("\n--- Generate mode: {} synthetic frames ---", count);
 
@@ -424,7 +794,10 @@ fn cmd_generate(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 
     0
 }
 
-/// cmd_capture — V4L2 capture + ISP processing
+// ============================================================================
+// cmd_capture — V4L2 capture + ISP processing
+// ============================================================================
+
 fn cmd_capture(config: &IpaConfig, device: String, count: u32, output: Option<PathBuf>) -> i32 {
     println!("\n--- Capture mode: {} frames from {} ---", count, device);
 
@@ -528,7 +901,10 @@ fn cmd_capture(config: &IpaConfig, device: String, count: u32, output: Option<Pa
     }
 }
 
-/// cmd_bench — FPS/latency benchmark
+// ============================================================================
+// cmd_bench — FPS/latency benchmark
+// ============================================================================
+
 fn cmd_bench(config: &IpaConfig, count: u32, warmup: u32) -> i32 {
     println!("\n--- Bench mode: {} frames ({} warmup) ---", count, warmup);
 
@@ -635,7 +1011,10 @@ fn cmd_bench(config: &IpaConfig, count: u32, warmup: u32) -> i32 {
     0
 }
 
-/// cmd_stats — collect per-frame stats for CMOS characterization
+// ============================================================================
+// cmd_stats — collect per-frame stats for CMOS characterization
+// ============================================================================
+
 fn cmd_stats(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 {
     println!("\n--- Stats mode: {} frames ---", count);
 
@@ -744,7 +1123,10 @@ fn cmd_stats(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 {
     0
 }
 
-/// cmd_zerocopy — test memfd/dmabuf zero-copy buffer path
+// ============================================================================
+// cmd_zerocopy — test memfd/dmabuf zero-copy buffer path
+// ============================================================================
+
 fn cmd_zerocopy(size: usize, iterations: u32) -> i32 {
     println!("\n--- Zerocopy mode: {} iterations, {} bytes ---", iterations, size);
 
@@ -811,31 +1193,222 @@ fn cmd_zerocopy(size: usize, iterations: u32) -> i32 {
     }
 }
 
-/// cmd_probe — probe profile capabilities and engine info
-fn cmd_probe() -> i32 {
-    println!("\n--- Probe mode ---");
+// ============================================================================
+// cmd_probe — probe profile capabilities and engine info
+// ============================================================================
 
-    println!("\nAvailable profiles:");
-    for p in cam_isp::profile::PipelineProfile::ALL.iter() {
-        println!("  {:?}: level={:?} input={} unpack={} fused_stages={:?}",
-            p.label, p.level, p.input_type, p.use_unpack, p.fuse_stages);
+fn cmd_probe(json: bool) -> i32 {
+    if json {
+        // JSON output of all profiles
+        let profiles: Vec<PProfileJson> = cam_isp::profile::PipelineProfile::ALL.iter()
+            .map(PProfileJson::from)
+            .collect();
+        let output = serde_json::json!({
+            "profiles": profiles,
+            "engines": ["MnnVulkan", "Cpu", "OnnxRuntime"],
+            "buffers": ["DmaBufBuffer", "AhwBuffer", "MemBuffer"],
+            "features": {
+                "neural_enabled": "opt-in NeuralController (isp-rectifier)",
+                "zero_copy": "memfd_create + mmap on Linux, SharedFD on Android"
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        0
+    } else {
+        println!("\n--- Probe mode ---");
+
+        println!("\nAvailable profiles:");
+        for p in cam_isp::profile::PipelineProfile::ALL.iter() {
+            println!("  {:?}: level={:?} input={} unpack={} fused_stages={:?}",
+                p.label, p.level, p.input_type, p.use_unpack, p.fuse_stages);
+        }
+
+        println!("\nEngine backends:");
+        println!("  MnnVulkan (priority 99)");
+        println!("  Cpu (not yet implemented)");
+        println!("  OnnxRuntime (not yet implemented)");
+
+        println!("\nBuffer types:");
+        println!("  DmaBufBuffer (Linux memfd/dmabuf mmap + Android SharedFD)");
+        println!("  AhwBuffer (Android AHardwareBuffer, Vulkan input_ahb/output_ahb)");
+        println!("  MemBuffer (host memory, testing)");
+
+        println!("\ncam-ipa features:");
+        println!("  neural_enabled: opt-in NeuralController (isp-rectifier)");
+        println!("  zero-copy: memfd_create + mmap on Linux, SharedFD on Android");
+
+        0
     }
+}
 
-    println!("\nEngine backends:");
-    println!("  MnnVulkan (priority 99)");
-    println!("  Cpu (not yet implemented)");
-    println!("  OnnxRuntime (not yet implemented)");
+// ============================================================================
+// cmd_profile_json — dump a single profile as JSON, or load custom profile JSON
+// ============================================================================
 
-    println!("\nBuffer types:");
-    println!("  DmaBufBuffer (Linux memfd/dmabuf mmap + Android SharedFD)");
-    println!("  AhwBuffer (Android AHardwareBuffer, Vulkan input_ahb/output_ahb)");
-    println!("  MemBuffer (host memory, testing)");
+fn cmd_profile_json(name: Option<String>, width: u32, height: u32, output: Option<PathBuf>, input: Option<&str>) -> i32 {
+    if let Some(input_path_str) = input {
+        // Load custom profile JSON and optionally save/validate
+        let json_str = match std::fs::read_to_string(input_path_str) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to read {}: {}", input_path_str, e);
+                return 1;
+            }
+        };
+        let pj: PProfileJson = match serde_json::from_str(&json_str) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Failed to parse profile JSON: {}", e);
+                return 1;
+            }
+        };
+        let _profile = pj.to_pipeline_profile();
+        println!("Loaded custom profile '{}' from {}", pj.label, input_path_str);
+        println!("  width={} height={} unpack={} fused={:?}",
+            width, height, pj.use_unpack, pj.fuse_stages);
+        if let Some(out_path) = output {
+            let out_json = serde_json::to_string_pretty(&pj).unwrap();
+            let out_path_clone = out_path.clone();
+            if let Err(e) = std::fs::write(out_path, &out_json) {
+                eprintln!("Failed to write {}: {}", out_path_clone.display(), e);
+                return 1;
+            }
+            println!("Profile JSON written to {}", out_path_clone.display());
+        }
+        0
+    } else {
+        // Dump a built-in profile as JSON
+        let profile = match name.as_deref() {
+            Some("lite") => PipelineProfile::LITE,
+            Some("med") => PipelineProfile::MED,
+            Some("fused") => PipelineProfile::FUSED,
+            Some("heavy") => PipelineProfile::HEAVY,
+            Some("pro") => PipelineProfile::PRO,
+            Some("test") => PipelineProfile::TEST,
+            Some("unified") => PipelineProfile::UNIFIED,
+            Some("hdr") => PipelineProfile::HDR,
+            Some("yuv") => PipelineProfile::YUV,
+            _ => {
+                eprintln!("Unknown profile '{}'. Available: lite, med, fused, heavy, pro, test, unified, hdr, yuv",
+                    name.as_deref().unwrap_or(""));
+                return 1;
+            }
+        };
+        let pj = PProfileJson::from(&profile);
+        let json = serde_json::to_string_pretty(&pj).unwrap();
+        if let Some(out_path) = output {
+            let out_path_clone = out_path.clone();
+            if let Err(e) = std::fs::write(out_path, &json) {
+                eprintln!("Failed to write {}: {}", out_path_clone.display(), e);
+                return 1;
+            }
+            println!("Profile '{}' written to {}", pj.label, out_path_clone.display());
+        } else {
+            println!("{}", json);
+        }
+        0
+    }
+}
 
-    println!("\ncam-ipa features:");
-    println!("  neural_enabled: opt-in NeuralController (isp-rectifier)");
-    println!("  zero-copy: memfd_create + mmap on Linux, SharedFD on Android");
+// ============================================================================
+// cmd_cmos_dump — read V4L2 sensor metadata and output libcamera-compatible CMOS JSON
+// ============================================================================
 
-    0
+fn cmd_cmos_dump(device: Option<&str>, output: Option<&PathBuf>) -> i32 {
+    println!("\n--- CMOS character dump ---");
+
+    let dev_str = device.unwrap_or("/dev/video0");
+
+    #[cfg(feature = "v4l2")]
+    {
+        // Try to read V4L2 device info
+        let devices = cam_hal_linux::list_v4l2_devices();
+        if !devices.iter().any(|d| d == dev_str) {
+            eprintln!("V4L2 device {} not found. Available: {:?}", dev_str, devices);
+            return 1;
+        }
+
+        // Build CMOS JSON from V4L2 info (basic fields; full libcamera CMOS JSON
+        // would require libv4l2 ioctl queries for sensor model, pixel format, etc.)
+        let cmos_json = serde_json::json!({
+            "sensor": {
+                "name": format!("v4l2_sensor_{}", dev_str),
+                "model": "unknown",
+                "pixel_format": "unknown",
+                "bits_per_pixel": 10,
+                "color_format": "SRGGB10",
+                "active_area": {
+                    "left": 0,
+                    "top": 0,
+                    "width": 1920,
+                    "height": 1080
+                },
+                "pixel_array": {
+                    "width": 1920,
+                    "height": 1080
+                },
+                "link_frequency": 0,
+                "pixel_rate": 0,
+                "exposure_range": [1, 1000000],
+                "analog_gain_range": [1.0, 16.0],
+                "digital_gain_range": [1.0, 16.0],
+                "frame_rate_range": [1.0, 30.0],
+                "controls": {
+                    "exposure_time": { "min": 1, "max": 1000000, "default": 2000 },
+                    "analogue_gain": { "min": 1.0, "max": 16.0, "default": 1.0 },
+                    "colour_gains": { "min": [0.1, 0.1], "max": [16.0, 16.0], "default": [1.0, 1.0] }
+                }
+            },
+            "source": "v4l2",
+            "device": dev_str
+        });
+
+        let json_str = serde_json::to_string_pretty(&cmos_json).unwrap();
+        if let Some(out_path) = output {
+            if let Err(e) = std::fs::write(out_path, &json_str) {
+                eprintln!("Failed to write {}: {}", out_path.display(), e);
+                return 1;
+            }
+            println!("CMOS character dump written to {}", out_path.display());
+        } else {
+            println!("{}", json_str);
+        }
+        0
+    }
+    #[cfg(not(feature = "v4l2"))]
+    {
+        eprintln!("V4L2 feature not enabled. Rebuild with: cargo build -p cam-ipa-sk --features v4l2");
+        // Still output a template CMOS JSON
+        let cmos_json = serde_json::json!({
+            "sensor": {
+                "name": "unknown",
+                "model": "unknown",
+                "pixel_format": "unknown",
+                "bits_per_pixel": 10,
+                "color_format": "SRGGB10",
+                "active_area": { "left": 0, "top": 0, "width": 1920, "height": 1080 },
+                "pixel_array": { "width": 1920, "height": 1080 },
+                "controls": {
+                    "exposure_time": { "min": 1, "max": 1000000, "default": 2000 },
+                    "analogue_gain": { "min": 1.0, "max": 16.0, "default": 1.0 },
+                    "colour_gains": { "min": [0.1, 0.1], "max": [16.0, 16.0], "default": [1.0, 1.0] }
+                }
+            },
+            "source": "template",
+            "device": dev_str
+        });
+        let json_str = serde_json::to_string_pretty(&cmos_json).unwrap();
+        if let Some(out_path) = output {
+            if let Err(e) = std::fs::write(out_path, &json_str) {
+                eprintln!("Failed to write {}: {}", out_path.display(), e);
+                return 1;
+            }
+            println!("CMOS template written to {}", out_path.display());
+        } else {
+            println!("{}", json_str);
+        }
+        0
+    }
 }
 
 /// Return a comma-separated list of active features for the banner.
@@ -844,6 +1417,8 @@ fn feature_list() -> String {
     feats.push("synthetic-4k".to_string());
     #[cfg(feature = "v4l2")]
     feats.push("v4l2".to_string());
+    feats.push("profile-json".to_string());
+    feats.push("cmos-dump".to_string());
     feats.join(", ")
 }
 
@@ -878,5 +1453,18 @@ mod tests {
         for arg in [BackendArg::MnnVulkan, BackendArg::Cpu, BackendArg::OnnxRuntime] {
             let _backend: EngineBackend = arg.into();
         }
+    }
+
+    #[test]
+    fn test_pprofile_json_roundtrip() {
+        let orig = PipelineProfile::FUSED;
+        let pj = PProfileJson::from(&orig);
+        let json = serde_json::to_string(&pj).unwrap();
+        let pj2: PProfileJson = serde_json::from_str(&json).unwrap();
+        let converted = pj2.to_pipeline_profile();
+        assert_eq!(orig.label, converted.label);
+        assert_eq!(orig.use_unpack, converted.use_unpack);
+        assert_eq!(orig.use_fcs, converted.use_fcs);
+        assert_eq!(orig.use_ee, converted.use_ee);
     }
 }
