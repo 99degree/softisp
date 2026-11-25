@@ -12,7 +12,7 @@
 //!   4. Read output float32 → BGRA U8
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -160,7 +160,10 @@ pub struct MnnEngine {
     /// ISP controller for AWB/AE/CCM/tone parameter estimation.
     /// After each inference, stats output tensors are read and fed
     /// into the controller to update state for the next frame.
-    pub controller: Mutex<IspController>,
+    ///
+    /// Shared by both workers in dual-engine mode: one engine measures stats
+    /// and advances the controller, the other only reads its tuned params.
+    pub controller: Arc<Mutex<IspController>>,
     /// Number of parallel sessions.
     pool_size: usize,
     /// MNN interpreter + session pool.
@@ -241,7 +244,7 @@ impl MnnEngine {
             stats_countdown: AtomicU32::new(0),
             stats_enabled: AtomicBool::new(true),
             expected_input_elements: None,
-            controller: Mutex::new(IspController::new()),
+            controller: Arc::new(Mutex::new(IspController::new())),
             pool_size,
             #[cfg(feature = "mnn")]
             pool: None,
@@ -327,10 +330,28 @@ impl MnnEngine {
         self.preserve_input_type
     }
 
-    /// Set the shared ISP controller. Used by dual-engine mode so that both
-    /// engine instances read the same AWB/AE/CCM/tone state.
+    /// Replace this engine's ISP controller with `ctrl`.
+    ///
+    /// Prefer [`Self::share_controller`] when two engines must see the same
+    /// AWB/AE/CCM/tone state: this method takes ownership and no other engine
+    /// can hold the same controller.
     pub fn set_controller(&mut self, ctrl: Mutex<IspController>) {
-        self.controller = ctrl;
+        self.controller = Arc::new(ctrl);
+    }
+
+    /// Point this engine at a controller shared with another engine.
+    ///
+    /// Dual-engine mode has one worker measure 3A statistics and advance the
+    /// controller while the other skips the readback and still consumes the
+    /// tuned params. Only the controller state is shared; each engine owns its
+    /// sessions and GPU buffers.
+    pub fn share_controller(&mut self, ctrl: &Arc<Mutex<IspController>>) {
+        self.controller = Arc::clone(ctrl);
+    }
+
+    /// Clone this engine's controller handle, for wiring a second engine.
+    pub fn controller_handle(&self) -> Arc<Mutex<IspController>> {
+        Arc::clone(&self.controller)
     }
 
     /// Choose fp16 (`true`, the default) or fp32 (`false`) tensor storage.
@@ -1450,7 +1471,7 @@ impl IspEngine for MnnEngine {
         self
     }
     fn controller(&self) -> &Mutex<IspController> {
-        &self.controller
+        self.controller.as_ref()
     }
 
     fn build(
@@ -3002,5 +3023,28 @@ mod tests {
     #[test]
     fn test_f32_to_u8_empty() {
         assert!(MnnEngine::f32_to_u8(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_share_controller_between_engines() {
+        let shared = Arc::new(Mutex::new(IspController::new()));
+        let mut a = MnnEngine::new(MnnBackend::Vulkan);
+        let mut b = MnnEngine::new(MnnBackend::Vulkan);
+        a.share_controller(&shared);
+        b.share_controller(&shared);
+
+        assert!(Arc::ptr_eq(&a.controller, &shared));
+        assert!(Arc::ptr_eq(&b.controller, &shared));
+        assert!(Arc::ptr_eq(&a.controller_handle(), &b.controller_handle()));
+    }
+
+    #[test]
+    fn test_stats_enabled_toggle() {
+        let engine = MnnEngine::new(MnnBackend::Vulkan);
+        assert!(engine.stats_enabled());
+        engine.set_stats_enabled(false);
+        assert!(!engine.stats_enabled());
+        engine.set_stats_enabled(true);
+        assert!(engine.stats_enabled());
     }
 }

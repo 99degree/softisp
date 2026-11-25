@@ -335,7 +335,6 @@ mod tests {
         let (id0, buf) = pool.acquire(256);
         assert_eq!(id0, 0);
         assert_eq!(buf.len(), 256);
-        drop(buf);
         pool.release(id0);
         // The other two buffers grew too — a later acquire must not hand back
         // the 4-byte placeholder again.

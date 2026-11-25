@@ -21,7 +21,7 @@
 //!
 //! Both engines share the same `IspController` (AWB/AE/CCM/tone state) so that
 //! 3A feedback is consistent across frames. Call
-//! `MnnEngine::set_controller(ctrl.clone())` on each engine before wrapping
+//! `MnnEngine::share_controller(&ctrl)` on each engine before wrapping
 //! them in `DualGpuEngine` to share controller state.
 
 use std::sync::{
@@ -38,12 +38,6 @@ use crate::pipeline::{IspBlock, IspFrame};
 pub struct DualGpuEngine {
     engines: [Box<dyn IspEngine>; 2],
     toggle: AtomicBool,
-    /// Shared controller so both engines see the same AWB/AE/CCM/tone state.
-    ///
-    /// Set via [`Self::set_controller`] on each engine before wrapping, or via
-    /// `MnnEngine::set_controller` on each individual engine. The `DualGpuEngine`
-    /// exposes engine A's controller through [`IspEngine::controller`].
-    controller: Mutex<IspController>,
 }
 
 impl DualGpuEngine {
@@ -51,13 +45,12 @@ impl DualGpuEngine {
     ///
     /// Both engines must have been built with the same block chain. The engine
     /// instances keep their own `IspController`; callers who want shared state
-    /// should call `set_controller` on each `MnnEngine` before wrapping them
+    /// should call `share_controller` on each `MnnEngine` before wrapping them
     /// here.
     pub fn new(engine_a: Box<dyn IspEngine>, engine_b: Box<dyn IspEngine>) -> Self {
         Self {
             engines: [engine_a, engine_b],
             toggle: AtomicBool::new(false),
-            controller: Mutex::new(IspController::default()),
         }
     }
 
@@ -67,7 +60,8 @@ impl DualGpuEngine {
         &*self.engines[idx]
     }
 
-    /// Returns engine A's controller (`IspEngine::controller()`).
+    /// Returns the controller engine A reads (`IspEngine::controller()`).
+    /// Engine B is expected to share the same instance when 3A is enabled.
     pub fn controller(&self) -> &Mutex<IspController> {
         self.engines[0].controller()
     }
@@ -95,7 +89,7 @@ impl IspEngine for DualGpuEngine {
     }
 
     fn controller(&self) -> &Mutex<IspController> {
-        &self.controller
+        self.engines[0].controller()
     }
 
     /// Build both engines with identical chains.

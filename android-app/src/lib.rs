@@ -16,11 +16,12 @@ pub mod storage;
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use android_activity::ndk::native_window::NativeWindow;
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
+use cam_isp::controller::IspController;
 use cam_isp::engine::{select_engine_by_name, IspEngine};
 use cam_isp::mnnengine::MnnEngine;
 use cam_isp::profile::PipelineProfile;
@@ -432,12 +433,19 @@ impl Preview {
         let aux_b = profile.build_aux_blocks(pipeline_height as i64, pipeline_width as i64);
         blocks_b.extend(aux_b);
 
+        // One 3A controller for both workers. Engine A measures stats and
+        // advances it; engine B skips the GPU->host readback and consumes the
+        // same tuned AWB/CCM/tone state on the next frame.
+        let shared_controller = Arc::new(Mutex::new(IspController::new()));
+
         // Tell the engine whether the chain divides by `sensor_max` up front.
         // With `normalize_at_display` there is no NormalizeBlock, so the graph
         // stays in raw sensor counts and the engine scales the display weights
         // and the clamp bounds itself.
         if let Some(mnn) = engine.as_any_mut().downcast_mut::<MnnEngine>() {
             mnn.set_normalizes_at_input(!profile.normalize_at_display);
+            mnn.share_controller(&shared_controller);
+            mnn.set_stats_enabled(true);
         }
 
         engine
@@ -449,6 +457,8 @@ impl Preview {
             .ok_or_else(|| format!("no ISP engine matching '{engine_name}'"))?;
         if let Some(mnn) = engine_b.as_any_mut().downcast_mut::<MnnEngine>() {
             mnn.set_normalizes_at_input(!profile.normalize_at_display);
+            mnn.share_controller(&shared_controller);
+            mnn.set_stats_enabled(false);
         }
         engine_b
             .build(head_b, blocks_b, None, 21)
