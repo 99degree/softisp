@@ -61,6 +61,25 @@ show `pipeline stage=infer_done ... infer=~65 ms` and `prep=~215 ms` at
   dominates even at this tiny size, but these numbers include session warmup
   variance and are not a device production measurement. A fresh APK is required
   to parse the new `pipeline timer` debug lines on the real preview path.
+- **Device measurement (FUSED, RAW 1600x1200 -> packed 800x600, 181 timed
+  frames):** mean total 314.0 ms (p50 305.5, p95 419.0, max 550.5). The mean
+  phase split is `setup 47.6`, `tensor_assign 10.3`, `input 46.9`, `infer 112.2`,
+  `output_meta 17.2`, `output_copy 0.8`, `stats 79.3` ms. Inference is the
+  largest single phase, but GPU->CPU statistics readback (`stats`) is a close
+  second and happens on **every** frame because `stats_interval` defaults to 1
+  and both engine workers leave it enabled. The next optimization should phase
+  the two engines (`interval=2`, opposite starting countdowns) so each frame
+  still feeds 3A once while each engine pays the stall only every other frame.
+  The ~95 ms spent in `setup` + `input` contains no allocation on the zero-copy
+  path; it is almost certainly scheduler/log-write latency from the per-frame
+  debug records, which needs a finer timer around the logging calls before it
+  is changed.
+- **Fresh APK log hygiene:** 0 `default for ... has no tensor`, 0
+  `output channel mismatch`, 0 `present failed`, 0 `black frame`. The preview
+  was non-black 100% of sampled frames at 800x600 with mean RGB around
+  `[155..169, 147..165, 153..160]`. One `ACameraDevice: error 4` callback was
+  observed and the recovery path reopened capture; the session reached `ready`
+  again. This confirms the earlier warning fixes did not regress output.
 
 ## User correction: recurring diagnostics are functional, not noise
 
@@ -122,6 +141,54 @@ both receive the controller decision exactly once.
 A permanent explanation of the block, its plane ordering, its identity-graph
 special case, and its fused-sink algebra is now in
 `docs/isp/BAYER_WB_DESIGN.md`.
+
+## Heavy-profile MNN test case is broken by the zero-copy `ProcessParams` fields
+
+**Symptom.** `cargo test -p cam-isp --test test_mnn_engine HEAVY --features mnn`
+fails to compile before any engine runs:
+
+```
+error[E0063]: missing fields `input_ahb`, `input_buffer`, `output_ahb` and 1
+other field in initializer of `ProcessParams<'_>`
+```
+
+There are ten such initializers in `cam-rust/cam-isp/tests/test_mnn_engine.rs`,
+including `run_mnn_profile_test()`, which is the helper used by
+`test_mnn_all_profiles` for the HEAVY arm.
+
+**Root cause.** The zero-copy surface added `input_buffer`, `output_buffer`,
+`input_ahb` and `output_ahb` to `ProcessParams`. Every caller that still uses a
+full struct literal must now name those fields. `ProcessParams::new()` already
+sets them to `None`, so the fix is to keep each test's explicit fields and fill
+the rest with struct-update syntax (`..ProcessParams::new(...)`) instead of
+adding four `None` lines ten times.
+
+**Fix applied.** All ten initializers now use
+`..ProcessParams::new(...)`, so future fields get the safe default. Three more
+stale assumptions in the same test file were uncovered while making HEAVY run:
+
+1. `build_blocks(width, 0, 0)` now asserts `concrete_h > 0`; the helpers passed
+   a zero height. They pass the real target height.
+2. Pre-converted `.mnn` tests passed a dummy `RawInputBlock` to `build()`, but
+   that block's `graph_input_name()` is what the engine uses to find the frame
+   input. Primitive profiles start at `RawInputPackedBlock`, so inference failed
+   with `frame input 'RawInputBlock/frame' not found in session`. They now pass
+   the profile's real head via `profile_head()`.
+3. Size assertions assumed `64*H*3` bytes and a full-width output. The packed
+   head halves the width and the graph emits RGBA, so they now derive the
+   expected size from `IspFrame::width/height/format`.
+
+**Verification.** `test_mnn_all_profiles --ignored` gets through LITE, MED and
+HEAVY; HEAVY converts 91 MNN ops, runs, and returns a valid `12×32 RGBA` frame.
+PRO still fails conversion (`isp-domain model=0 isp Extra ops emitted=0`), which
+is a separate unsupported-op issue. A standalone ignored
+`test_mnn_heavy_profile` was added so HEAVY can be checked without the PRO arm.
+
+**Perf-test layout.** `probe_4k_perf` is split into one ignored test per profile
+(`perf_4k_fused`, `perf_4k_med`, `perf_4k_heavy`, `perf_4k_whole`,
+`perf_4k_unified`), a `perf_4k_dual` test, and an explicit `perf_4k_all` matrix.
+`perf_4k` remains as the FUSED-only breakage check so a routine verification
+does not run every profile.
 
 ## Fused WB is intentional, not a missing stage
 

@@ -16,7 +16,18 @@
   infer, post and total durations, and its ignored MNN test links on Android
   because `cam-isp/build.rs` always emits the NDK system libraries. The false
   packed-u8 output-channel warning and the probe's packed-byte blank-frame check
-  are fixed. See `docs/isp/20261125-perf-phase-instrumentation.md`.
+  are fixed. It is split into per-profile ignored tests (`perf_4k_fused`,
+  `perf_4k_med`, `perf_4k_heavy`, `perf_4k_whole`, `perf_4k_unified`,
+  `perf_4k_dual`); `perf_4k` remains the FUSED-only breakage check and
+  `perf_4k_all` is the explicit full matrix. See
+  `docs/isp/20261125-perf-phase-instrumentation.md`.
+- **HEAVY MNN test repaired** (this session): `test_mnn_engine` now fills the
+  new zero-copy `ProcessParams` fields via `ProcessParams::new()`, passes the
+  profile's real head block for pre-converted models, uses the real sensor
+  height, and derives expected frame bytes from `IspFrame` geometry/format.
+  HEAVY converts 91 ops, runs, and returns a valid frame; a standalone ignored
+  `test_mnn_heavy_profile` was added. PRO still fails conversion on unsupported
+  ops and is tracked separately.
 - **P2b re-verified against the current MNN tree:** the AHB `setDevicePtr`
   surface in cam-isp is a stub — Vulkan `onAcquire` ignores the flag and
   `mnn_run_true_zero_copy` binds host pointers Vulkan also ignores. The
