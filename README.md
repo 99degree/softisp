@@ -48,11 +48,16 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
   trajectory smoothing) with an optional fully-GPU pipeline; integrates with
   `WarpGridBlock` for GDC + EIS + lens-shading + rotation.
 - **Neural controller** — ONNX-based 3A (AWB/AE/AF/CCM/tone/scene) and a
-  `NeuralController` that emits ISP params.
+  `NeuralController` that emits ISP params. It loads an ONNX model (via the
+  `isp-rectifier` neural ISP controller) to compute metadata coefficients —
+  exposure, gain, colour gains, CCM matrix, tone curve — from scene stats and
+  applies them per-frame through the ISP pipeline.
 - **Multiple profiles** — LITE / MED / HEAVY / PRO / UNIFIED, plus **FUSED** and
   **WHOLE** (whole-pipeline `isp.pipeline`).
 - **HAL integration** — bridges for Android Camera HAL3, V4L2, and AOSP binder HAL.
+- **libcamera IPA** — `libcamera-ipa` crate implements libcamera's `IPAInterface`/`IPASoftIspInterface` as a C FFI plugin, built on top of the stable `cam-ipa` Rust API. `cam-ipa` (Image Processing Algorithm API) is now stable: `IpaContext`, `IpaController`, `BufferManager`, `EngineBackend`, `ControlList`, and the full `IpaConfig` surface are version-stable and reusable across frontends (libcamera plugin, Android JNI, ANativeWindow consumer, CLI).
 - **Zero-copy memory** — CMA / ION / memfd buffer manager for camera → ISP → MNN.
+- **CLI (`ipa_sk` / `cam-ipa-sk`)** — Swiss-army-knife test binary: `generate` (synthetic frames), `capture` (V4L2), `process`, `bench` (FPS/latency), `stats` (CMOS characterization), `zerocopy` (memfd/dmabuf), `probe` (capabilities), `profile-json`, `cmos-dump` (libcamera-compatible CMOS JSON). Use it to exercise the ISP pipeline end to end without building the APK.
 - **801 lib tests** pass with `--features rectifier`, 0 failures.
 
 ## Prebuilt APK
@@ -312,9 +317,40 @@ samples, and composable into `WarpGridBlock`.
 - **`AndroidHalIspBridge`** — bridges Android Camera HAL3 frames into the ISP.
 - **`V4l2IspBridge`** — bridges V4L2 captures (via `cam-hal-linux`) into the ISP,
   with `process_frame()` / `process_batch()` and `BridgeStats`.
+- **`libcamera-ipa`** — libcamera C FFI plugin (`IPAInterface`/`IPASoftIspInterface`)
+  that bridges libcamera into the ISP through the stable `cam-ipa` Rust API
+  (`IpaContext`, `IpaController`, `BufferManager`, `EngineBackend`, `ControlList`).
+  `cam-ipa` has a stable API and is reusable across frontends: the libcamera plugin,
+  Android JNI, ANativeWindow consumer, and the `ipa_sk` CLI.
 
 Real capture lives in `cam-hal-linux` (V4L2 adapter) and `cam-hal-android`
 (Camera2 HAL3 + AHardwareBuffer); the bridges above run only the ISP stage.
+
+## CLI (`ipa_sk` / `cam-ipa-sk`)
+
+The `cli` crate builds `ipa_sk` (binary wrapper) and `libcam_ipa_sk.so` (cdylib
+exporting `ipa_sk_main` for dlopen). It is a Swiss-army-knife for exercising the
+ISP pipeline end to end without building the APK:
+
+- `generate` — synthetic Bayer test frames, run through the full ISP pipeline
+- `capture` — real V4L2 frames via `cam-hal-linux` (feature `v4l2`)
+- `bench` — FPS/latency over N frames
+- `stats` — per-frame stats for CMOS sensor characterization
+- `zerocopy` — memfd/dmabuf zero-copy buffer path test
+- `probe` — profile capabilities and engine info (`--json` for JSON)
+- `profile-json` — dump or load a pipeline profile as JSON
+- `cmos-dump` — read V4L2 sensor metadata and output libcamera-compatible CMOS JSON
+
+Build and run:
+
+```bash
+cargo build -p cam-ipa-sk                          # synthetic only
+cargo build -p cam-ipa-sk --features v4l2          # + V4L2 capture
+
+./target/debug/ipa_sk generate --count 1 --profile fused --width 3840 --height 2160
+./target/debug/ipa_sk bench --count 30 --profile fused
+./target/debug/ipa_sk probe --json
+```
 
 ## Architecture (10 crates)
 
