@@ -652,6 +652,10 @@ impl PipelineBuilder {
     /// ```
     pub fn tone(mut self) -> Self {
         self.blocks.push(Box::new(ToneBlock::new()));
+        // ToneLutBlock applies the 7-point tone curve LUT from the neural
+        // controller. Default identity LUT (output = input) until set via
+        // ToneLutBlock::set_tone_curve_lut().
+        self.blocks.push(Box::new(ToneLutBlock::new()));
         self
     }
 

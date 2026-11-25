@@ -1504,6 +1504,7 @@ mod tests {
         let mut dem = DemosaicBlock::new(2); // GBRG
         let mut ccm = CcmBlock::new();
         let mut tone = ToneBlock::new();
+        let mut tone_lut = ToneLutBlock::new();
         let mut disp = DisplayBlock::new(1280);
 
         // Link blocks
@@ -1514,10 +1515,11 @@ mod tests {
         dem.set_input_source(wb.frame_tensor().unwrap_or(""));
         ccm.set_input_source(dem.frame_tensor().unwrap_or(""));
         tone.set_input_source(ccm.frame_tensor().unwrap_or(""));
-        disp.set_input_source(tone.frame_tensor().unwrap_or(""));
+        tone_lut.set_input_source(tone.frame_tensor().unwrap_or(""));
+        disp.set_input_source(tone_lut.frame_tensor().unwrap_or(""));
 
         let pipeline: Vec<&dyn IspBlock> =
-            vec![&raw, &norm, &cfa, &blc, &wb, &dem, &ccm, &tone, &disp];
+            vec![&raw, &norm, &cfa, &blc, &wb, &dem, &ccm, &tone, &tone_lut, &disp];
         let model = GraphComposer::compose_from_vec(&pipeline, &[], 16).expect("Compose failed");
         assert!(!model.is_empty());
         assert!(model.len() > 2000); // Expected ~2719 bytes
