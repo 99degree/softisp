@@ -93,6 +93,12 @@
   import is per-tensor via `setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)` and
   `TensorUtils::sharedMem`, so two workers can bind different buffers without
   serialization. Rebuilt via `scripts/build_mnn_libs.sh arm64-v8a`.
+- **P2h overlap / allocation fast path recorded** (2026-11-26): extend the
+  staged phases so camera DMA fills a pre-bound input AHB while the next frame's
+  metadata tensors are prefilled, and hand the output AHB to Android for display
+  while stats readback updates the next controller state. Also audit buffer
+  zeroing as a warm-up cost. Tracked as TODO below; depends on P2b and on-device
+  fence/lifetime validation.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
@@ -412,6 +418,59 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   `libcam_camera_app.so`; target and APK entry hashes match. Device logs remain
   a user-side check (the assistant does not install or share the APK). Full
   plan: `docs/ipa/ANW_SPLIT_PLAN.md`.
+
+### P2h — Overlap AHB framing with metadata prefill/readback (TODO)
+
+- **User concern recorded 2026-11-26.** Reduce the visible per-frame critical
+  path to inference itself: while the sensor fills an input AHB, upload the
+  metadata tensors that frame will consume; once the buffer is ready, run only
+  inference. On the output side, give the finished output AHB to Android for
+  display and read back the metadata tensors for the next neural/ISP controller
+  at the same time. Skip unnecessary zeroing/memset during AHB allocation to
+  shorten warm-up.
+- **Current state:** P2c already splits `MnnEngine` into `prepare()` /
+  `run_prepared()` / `finish()`, and the workers prep before capture and call
+  `finish()` after presentation. However capture still goes through
+  `AImageReader_acquireLatestImage` plus a CPU copy, presentation still uses
+  `ANativeWindow_lock` and a CPU blit, and the `ProcessParams::{input_ahb,
+  output_ahb}` fields are inert for the APK because Vulkan AHB import is not
+  implemented (P2b). The two overlap opportunities are therefore not yet live.
+- **Proposed input path:** allocate/bind the input AHB before capture and hand
+  it to camera2 as the capture target. While the sensor writes that buffer,
+  `prepare()` snapshots the already-current controller state and uploads the
+  metadata tensors for the arriving frame. A buffer-ready fence/generation
+  token releases `run_prepared()`; the visible path then contains only
+  `runSession` plus any unavoidable output handoff. Never read the AHB before
+  the capture fence and never reuse a slot the GPU still reads.
+- **Proposed output path:** import/queue the output AHB to the Android
+  compositor immediately after inference; in parallel call `finish()` on the
+  worker to read 3A/histogram/zone tensors into the next controller state.
+  The output AHB may not be recycled until both the display release fence and
+  `finish()` have completed; track this with the existing staged token plus an
+  explicit display-release token.
+- **Zeroing audit:** measure before changing. `MemBuffer::new()` zeroes with
+  `vec![0u8; size]`, scratch vectors use `resize(..., 0)`, and
+  `AHardwareBuffer_allocate` zeroing is allocator/driver-dependent. Skip the
+  clear only for buffers the camera or GPU fully overwrites before any read;
+  keep zeroing for partial stats/readback buffers and for any buffer that can
+  be observed before the producer write completes. Add an explicit
+  `needs_zero`/generation flag rather than relying on allocator defaults, and
+  report warm-up time with and without the clear.
+- **Constraints:** `OutputFormat::PackedRgb` and `isp.display_uint32_bgra`
+  stay unchanged; no float fallback; AHB only for large tensors, small tensors
+  stay non-AHB; dual-engine ordering and P2d cancellation must drain both the
+  AHB slots and `PreparedFrame`/`PendingStats` guards. No APK install or launch
+  by the assistant — device checks are user-side log evidence.
+- **Dependencies:** P2b for Vulkan external-memory/AHB import and camera buffer
+  ownership; P2c for the staged API; on-device fence/gralloc validation for
+  the output surface. Do not bypass P2b with a host-pointer bind the Vulkan
+  backend ignores.
+- **Verification:** hermetic tests for metadata/frame generation matching,
+  idempotent cancel with both token types, no reuse before release, and the
+  zeroing policy; extend the per-phase perf probe to separate capture-fill,
+  prefill, inference, display handoff and readback. Add an ignored on-device
+  test that checks warm-up allocation time and confirms no stale/blank frames
+  after cancel + restart.
 
 ### P4 — Multi-Frontend IPA Plugin Architecture ✅ (implemented 2026-11-25)
 
