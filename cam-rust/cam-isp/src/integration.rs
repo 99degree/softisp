@@ -191,6 +191,7 @@ impl CameraIspService {
                     Box::new(DemosaicBlock::new(0)),
                     Box::new(CcmBlock::new()),
                     Box::new(ToneBlock::new()),
+                    Box::new(ToneLutBlock::new()),
                     Box::new(DisplayBlock::new(64)),
                 ];
 

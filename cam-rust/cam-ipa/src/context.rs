@@ -8,6 +8,7 @@ use crate::{
 use cam_isp::{
     engine::{OutputFormat, ProcessParams},
     isp_params::IspParams,
+    neural_controller::NeuralController,
     pipeline::IspFrame,
 };
 use cam_types::ToneParams;
@@ -18,6 +19,13 @@ pub struct IpaContext {
     config: IpaConfig,
     engine: EngineManager,
     controller: IpaController,
+    /// Neural controller (ISP rectifier) — used when config.neural_enabled is true.
+    /// Runs complementarily with IpaController: neural predicts WB/CCM/tone LUT/zoom,
+    /// rule-based handles BLC/denoise/sharpen/lens/saturation/parametric tone.
+    neural_controller: Option<NeuralController>,
+    /// Last ISP params computed by the neural controller (or rule-based fallback).
+    /// Stored during compute_params() so process_frame() can reuse them.
+    last_isp_params: IspParams,
     buffers: BufferManager,
     events: EventEmitter,
     initialized: bool,
@@ -35,6 +43,11 @@ impl IpaContext {
     pub fn new(config: IpaConfig) -> IpaResult<Self> {
         let engine = EngineManager::new(config.clone())?;
         let controller = IpaController::new();
+        let neural_controller = if config.neural_enabled {
+            Some(NeuralController::with_default_model())
+        } else {
+            None
+        };
         let buffers = BufferManager::new();
         let events = EventEmitter::new();
 
@@ -46,6 +59,8 @@ impl IpaContext {
             config,
             engine,
             controller,
+            neural_controller,
+            last_isp_params: IspParams::default(),
             buffers,
             events,
             initialized: false,
@@ -182,8 +197,15 @@ impl IpaContext {
             external_data: None,
         };
 
-        // Run 3A analysis
-        let _params = self.controller.analyze_and_update(&dummy_frame);
+        // Run 3A analysis via neural controller (complementary: neural predicts WB/CCM/tone LUT/zoom,
+        // rule-based handles BLC/denoise/sharpen/lens/saturation/parametric tone).
+        let params = if let Some(ref mut ctrl) = self.neural_controller {
+            ctrl.analyze_and_update(&dummy_frame)
+        } else {
+            self.controller.analyze_and_update(&dummy_frame)
+        };
+        // Store last ISP params so process_frame() can reuse them without recompute.
+        self.last_isp_params = params;
 
         // Emit set ISP params callback
         self.events.emit_set_isp_params();
@@ -245,8 +267,8 @@ impl IpaContext {
         params.output_format = self.ipa_format_to_output_format(self.target_format);
         params.timestamp_ns = 0; // Would be set from frame timing
 
-        // Set ISP parameters from controller
-        let isp_params = self.controller.get_params();
+        // Set ISP parameters from controller (stored during compute_params()).
+        let isp_params = self.last_isp_params.clone();
         let awb_gains = self.controller.get_awb_gains();
         let analog_gain = self.controller.get_analog_gain();
         let ctrl_tone = isp_params.tone.clone();
