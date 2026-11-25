@@ -12,6 +12,10 @@ members = [
     "cam-rust/cam-motion",
     "cam-rust/cam-binder",
     "cam-rust/cam-disp",
+    "cam-rust/cam-ipa",
+    "libcamera-ipa",
+    "jni",
+    "anw",
     "android-app",
 ]
 

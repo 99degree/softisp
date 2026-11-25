@@ -1,0 +1,17 @@
+[package]
+name = "libcamera-ipa"
+version = "0.1.0"
+edition = "2021"
+description = "libcamera IPA plugin for softisp"
+license = "LGPL-2.1-or-later"
+
+[dependencies]
+cam-ipa = { path = "../cam-rust/cam-ipa" }
+libc = "0.2"
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[lib]
+name = "libcamera_ipa"
+path = "src/lib.rs"
+crate-type = ["cdylib"]

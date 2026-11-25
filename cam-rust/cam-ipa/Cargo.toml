@@ -1,0 +1,23 @@
+[package]
+name = "cam-ipa"
+version = "0.1.0"
+edition = "2021"
+description = "Stable Rust IPA API for camera image processing"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+cam-isp = { path = "../cam-isp", features = ["mnn", "rectifier"] }
+cam-types = { path = "../cam-types" }
+cam-core = { path = "../cam-core" }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1"
+parking_lot = "0.12"
+libc = "0.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-sys = { version = "0.6" }
+
+[lib]
+crate-type = ["rlib"]
