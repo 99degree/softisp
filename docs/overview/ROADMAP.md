@@ -269,7 +269,66 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   A-on/B-off stats split and is documented in
   `docs/isp/20261125-perf-phase-instrumentation.md`.
 
-### P3 — Hardening / CI ✅ (workspace clean)
+### P4 — Multi-Frontend IPA Plugin Architecture ✅ (implemented 2026-11-25)
+
+New crates added to the workspace:
+
+| Crate | Type | Path | Purpose |
+|-------|------|------|---------|
+| `cam-ipa` | rlib | `cam-rust/cam-ipa/` | Stable Rust IPA API — `IpaContext`, `EngineManager`, `IpaController`, `IpaPipeline`, `BufferManager`, `EventEmitter` |
+| `libcamera-ipa` | cdylib | `libcamera-ipa/` | libcamera C FFI plugin — exports `ipaCreate()` / `IPAModuleInfo`, implements `IPASoftIspInterface` vtable |
+| `softisp-jni` | cdylib | `jni/` | Android JNI bridge — `JNI_OnLoad`, `IpaSession` native peer, `HardwareBuffer` → `AhwBuffer` |
+| `softisp-anw` | cdylib | `anw/` | ANativeWindow consumer — dequeues buffer queue, feeds frames through cam-ipa ISP pipeline |
+
+**Architecture** (`docs/ipa/MULTI_FRONTEND_IPA_ARCHITECTURE.md`):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      cam-ipa (CORE, rlib)                       │
+│  IpaContext (lifecycle) │ EngineManager (MnnEngine) │ IpaController │
+│  BufferManager (zero-copy) │ EventEmitter (callbacks)           │
+└──────────────────────────┬──────────────────────────────────────┘
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                 ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+│libcamera-ipa  │ │     jni       │ │     anw       │
+│  (cdylib)     │ │   (cdylib)    │ │   (cdylib)    │
+│• IPAInterface │ │• JNI_OnLoad   │ │• ANativeWindow│
+│• IPASoftIsp   │ │• Java API     │ │• BufferQueue  │
+│• SharedFD     │ │• AHardwareBuf │ │• EGL/GPU      │
+└───────────────┘ └───────────────┘ └───────────────┘
+```
+
+**cam-ipa public API:**
+- `IpaConfig` / `IpaSettings` / `IpaSensorInfo` / `IpaFormat` — configuration types
+- `IpaContext::new/init/start/stop/configure/process_frame/process_stats` — lifecycle + processing
+- `Buffer` trait (zero-copy) with `DmaBufBuffer` (libcamera dmabuf), `AhwBuffer` (Android AHB), `MemBuffer` (testing)
+- `ControlList` / `ControlInfoMap` — serializable control exchange
+- `IpaCallbacks` — `metadata_ready`, `frame_done`, `set_sensor_controls`, `set_isp_params`
+
+**libcamera-ipa FFI exports:**
+- `IPA_MODULE_INFO` static (`moduleAPIVersion=1`, `pipelineName="softisp"`, `name="SoftISP"`)
+- `ipa_create()` → `*mut IPAInterface`
+- VTable implementing `IPASoftIspInterface` (init/start/stop/configure/configure_frame_backend/queue_request/compute_params/process_stats/process_frame)
+- `SharedFD` → `RawFd` → `DmaBufBuffer` mapping for zero-copy buffer passing
+
+**Integration points (reused from cam-isp):**
+- `MnnEngine` / `DualGpuEngine` — Vulkan GPU inference backend
+- `IspController` — 3A (AWB/AE/CCM/tone/scene)
+- `PipelineBuilder` — standard ISP block chain (unpack → demosaic → tone → denoise → display)
+- `ProcessParams` — zero-copy input/output buffers + AHB import for Vulkan
+
+**Verification status:**
+- `cargo build -p cam-ipa` — compiles (rlib)
+- `cargo build -p libcamera-ipa` — compiles (cdylib)
+- `cargo build -p softisp-jni` / `softisp-anw` — compile-stubbed (Android target only)
+- Not yet runtime-tested against libcamera pipeline handler (requires libcamera-99degree fork build)
+
+**Next steps:**
+- Runtime test: load `libipa_softisp.so` in libcamera-99degree pipeline handler
+- End-to-end frame processing: stats → params → frame output
+- JNI frontend wired to android-app crate
+- ANativeWindow frontend wired to display surface
 - **`cargo clippy --workspace --all-targets --features mnn -D warnings` passes** on all
   7 buildable crates (cam-types, cam-hal, cam-motion, cam-onnx, cam-core, cam-hal-linux,
   cam-app, cam-isp). Zero Rust warnings. Only 2 NDK crates excluded (cam-hal-android,
