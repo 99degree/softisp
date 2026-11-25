@@ -1196,6 +1196,22 @@ impl MnnEngine {
         write_f32(&mut pending, "ToneBlock/brightness", tone.brightness);
         // ToneBlock/gamma_recip [1]
         write_f32(&mut pending, "ToneBlock/gamma_recip", tone.gamma_recip);
+        // ToneLutBlock/contrast, brightness, inv_gamma (parametric tone from neural model)
+        write_f32(&mut pending, "ToneLutBlock/contrast", tone.contrast);
+        write_f32(&mut pending, "ToneLutBlock/brightness", tone.brightness);
+        write_f32(&mut pending, "ToneLutBlock/inv_gamma", 1.0 / tone.gamma.max(1e-4));
+        // ToneLutBlock tone curve LUT [7 points] from neural model
+        for i in 0..7 {
+            write_f32(
+                &mut pending,
+                &format!("ToneLutBlock/t{}", i),
+                tone.curve_lut[i],
+            );
+        }
+        // ToneLutBlock segment width = 1/6
+        write_f32(&mut pending, "ToneLutBlock/seg_width", 1.0 / 6.0);
+        // ToneLutBlock zero constant
+        write_f32(&mut pending, "ToneLutBlock/zero", 0.0);
         // SaturationBlock/scale [3] — per-channel saturation, from the tone
         // controller. Its `tone_saturation` was previously ignored here, so the
         // stage always ran at 1.0 and the controller's tuning never reached the
