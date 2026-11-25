@@ -254,7 +254,11 @@ impl UnifiedPipeline {
         let controller: Box<dyn ControllerApi> = {
             #[cfg(feature = "rectifier")]
             {
-                Box::new(crate::neural_controller::NeuralController::with_mock_model())
+                // Use the default pre-trained rectifier ONNX model
+                // (fusedispcontroller_light_int8.onnx → light.onnx → light_fp16.onnx,
+                // trying both models/ and repo-root locations). Falls back to
+                // rule-based if no model loads.
+                Box::new(crate::neural_controller::NeuralController::with_default_model())
             }
             #[cfg(not(feature = "rectifier"))]
             {

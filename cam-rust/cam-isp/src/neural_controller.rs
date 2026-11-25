@@ -2,6 +2,12 @@
 //!
 //! Wraps `isp_rectifier::OptimizedInference` with automatic fallback
 //! to the rule-based `IspController` when the model is unavailable or fails.
+//!
+//! Multiple pre-trained ONNX model variants are supported. The default
+//! production model is `fusedispcontroller_light_int8.onnx` (INT8, fastest),
+//! with FP32 and FP16 variants as fallbacks. For testing/CI, `with_mock_model()`
+//! generates a self-contained ONNX that matches the real interface
+//! (hist[256] + meta[52] → wb/ccm/tone/zoom).
 
 #[cfg(feature = "rectifier")]
 use crate::error::IspResult;
@@ -111,6 +117,40 @@ impl NeuralController {
             fallback: IspController::new(),
             last_params: None,
         }
+    }
+
+    /// Default pre-trained model candidates, in priority order (fastest first).
+    /// All variants share the same interface: hist[256] + meta[52] → wb/ccm/tone/zoom.
+    #[cfg(feature = "rectifier")]
+    const DEFAULT_MODEL_CANDIDATES: &[&str] = &[
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light_int8.onnx"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light.onnx"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light_fp16.onnx"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light_int8.onnx"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light.onnx"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light_fp16.onnx"),
+    ];
+
+    /// Create controller with the default pre-trained ONNX model.
+    ///
+    /// Tries each candidate path in order; the first one that loads successfully
+    /// is used. If none load, falls back to the rule-based controller.
+    #[cfg(feature = "rectifier")]
+    pub fn with_default_model() -> Self {
+        for &path in Self::DEFAULT_MODEL_CANDIDATES {
+            if std::path::Path::new(path).exists() {
+                let ctrl = Self::with_model(path);
+                if ctrl.has_model() {
+                    return ctrl;
+                }
+            }
+        }
+
+        // None of the pre-trained models exist/load; fall back to rule-based.
+        warn!(
+            "NeuralController: no pre-trained ONNX model found, using fallback"
+        );
+        Self::new()
     }
 
     /// Check if neural model is available.

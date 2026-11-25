@@ -80,11 +80,15 @@ Metadata layout (52 dims):
 use cam_isp::neural_controller::NeuralController;
 use cam_isp::controller_api::ControllerApi;
 
-// Default: mock model (no pre-trained model needed)
-let mut ctrl = NeuralController::with_mock_model();
+// Default: tries pre-trained ONNX models (light_int8 → light → light_fp16,
+// both in isp-rectifier/models/ and repo root), falls back to rule-based.
+let mut ctrl = NeuralController::with_default_model();
 
-// With a pre-trained model:
+// With a specific pre-trained model:
 let mut ctrl = NeuralController::with_model("isp-rectifier/models/fusedispcontroller_light_int8.onnx");
+
+// Mock model for testing/CI (self-contained, matches real interface):
+let mut ctrl = NeuralController::with_mock_model();
 
 let params = ctrl.analyze_and_update(&frame);
 // params.wb = [R, G, B]
@@ -100,11 +104,11 @@ use cam_isp::unified_pipeline::{UnifiedPipeline, UnifiedConfig};
 
 let config = UnifiedConfig::fhd();
 let pipeline = UnifiedPipeline::new(config)?
-    .with_controller(Box::new(NeuralController::with_mock_model()));
+    .with_controller(Box::new(NeuralController::with_default_model()));
 ```
 
 When the `rectifier` feature is enabled, `UnifiedPipeline::new()` already
-wires `NeuralController::with_mock_model()` as the default controller.
+wires `NeuralController::with_default_model()` as the default controller.
 
 ## Fallback behavior
 
