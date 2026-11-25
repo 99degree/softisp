@@ -450,7 +450,11 @@ impl PipelineProfile {
         use_zone_stats: true,
         use_channel_means: true,
         use_tone_stats: true,
-        use_histogram: false,
+        // AE clipping needs the histogram: without it `histogram_valid` is
+        // always false and `IspController::update_histogram()` never runs, so
+        // the production FUSED chain had an open AE loop. It reads the same
+        // pooled stats tensor as the other reductions.
+        use_histogram: true,
         // The one downscale every statistics block shares.
         //
         // Measured at 3840x2160 (`probe_4k_stats_shared`): 438.6 ms with the

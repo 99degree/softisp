@@ -11,7 +11,7 @@
 //!   3. Run session
 //!   4. Read output float32 → BGRA U8
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use log::{debug, error, info, warn};
@@ -191,6 +191,11 @@ pub struct MnnEngine {
     /// Populated at build() from each block's `extra_input_defaults()`.
     #[cfg(feature = "mnn")]
     default_inputs: Mutex<Vec<(String, Vec<u8>)>>,
+    /// Names whose defaults are not session inputs in this graph. Logged once
+    /// per build; emitting a warning every frame costs more than the upload it
+    /// describes and hides the tensors that actually carry the value.
+    #[cfg(feature = "mnn")]
+    missing_inputs_reported: Mutex<HashSet<String>>,
     /// Whether the chain contains fused `isp.display_*` ops.
     /// Computed at build() and used in process() for output decoding.
     #[cfg(feature = "mnn")]
@@ -250,6 +255,8 @@ impl MnnEngine {
             scratch_f32: Mutex::new(Vec::new()),
             #[cfg(feature = "mnn")]
             default_inputs: Mutex::new(Vec::new()),
+            #[cfg(feature = "mnn")]
+            missing_inputs_reported: Mutex::new(HashSet::new()),
             #[cfg(feature = "mnn")]
             has_fused_display: false,
         }
@@ -889,9 +896,9 @@ impl MnnEngine {
         // output channels.  The weights depend on the sensor's Bayer pattern:
         //
         //   Pattern 0 (RGGB):  R=[1,0,0,0]  G=[0,½,½,0]  B=[0,0,0,1]
-        //   Pattern 1 (BGGR):  R=[0,0,0,1]  G=[0,½,½,0]  B=[1,0,0,0]
-        //   Pattern 2 (GRBG):  R=[0,1,0,0]  G=[½,0,0,½]  B=[0,0,1,0]
-        //   Pattern 3 (GBRG):  R=[0,0,1,0]  G=[½,0,0,½]  B=[0,1,0,0]
+        //   Pattern 1 (GRBG):  R=[0,1,0,0]  G=[½,0,0,½]  B=[0,0,1,0]
+        //   Pattern 2 (GBRG):  R=[0,0,1,0]  G=[½,0,0,½]  B=[0,1,0,0]
+        //   Pattern 3 (BGGR):  R=[0,0,0,1]  G=[0,½,½,0]  B=[1,0,0,0]
         //
         // fused[i,j] = Σₖ ccm[i,k] * demo[k,j]   (i=RGB, j=quadrant)
         const DEMO_RGGB: [f32; 12] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0];
@@ -915,18 +922,22 @@ impl MnnEngine {
             _ => &DEMO_RGGB,
         };
 
-        // Is white balance still its own block?
+        // White balance has several possible sinks. Pick the one that survived
+        // conversion from the *session*, not from the profile declaration: a
+        // fused demosaic+CCM renames both the demosaic and CCM tensors, while a
+        // primitive chain keeps them separate, and either may omit BayerWbBlock.
         //
-        // `isp.demosaic_ccm` divides one matrix, so when `BayerWbBlock` is absent
-        // the gains have to ride in as a scale on that matrix's columns:
-        //
-        //     fused[i][j] = Σₖ ccm[i][k] · demo[k][j] · wb[j]
-        //
-        // The plane index `j` is the CFA quad site, which is exactly what
-        // `bayer_gains` is ordered by. Folding is only correct when `ccm` is
-        // present — with the matrix missing the default is the demosaic table
-        // alone, and the gains would be dropped on the floor.
+        //   BayerWbBlock/gains present  -> write gains there, fold nothing.
+        //   DemosaicCcmBlock/w present  -> fold gains into the fused 3x4 matrix.
+        //   DemosaicBlock/w present     -> fold gains into its 3x4 columns.
+        //   CcmBlock_ccm/matrix only    -> fold a per-colour gain into CCM.
+        let wb_gains: [f32; 4] = bayer.copied().unwrap_or([1.0; 4]);
         let wb_folded = find(pool, "BayerWbBlock/gains").is_none();
+        let fused_ccm_sink = find(pool, "DemosaicCcmBlock/w").is_some();
+        let primitive_demosaic_sink = find(pool, "DemosaicBlock/w").is_some();
+        let ccm_base: [f32; 9] = ccm
+            .copied()
+            .unwrap_or([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
 
         // Is a separate tone stage present?
         //
@@ -940,23 +951,21 @@ impl MnnEngine {
         // and clips.
         let tone_stage_present = find(pool, "ToneBlock/contrast").is_some();
 
-        // Fused CCM weights: w[i,j] = Σₖ ccm[i,k] * demo[k,j]
-        if let Some(ccm) = ccm {
+        // Fused CCM weights: w[i,j] = Σₖ ccm[i,k] · demo[k,j] · wb[j].
+        // The WB fold belongs here only when this fused tensor is the real sink;
+        // when the primitive demosaic survives, folding it below into
+        // DemosaicBlock/w keeps the same exact per-plane scale.
+        if fused_ccm_sink {
             let mut fused = [0.0f32; 12];
             for i in 0..3 {
                 for j in 0..4 {
                     let mut s = 0.0;
                     for k in 0..3 {
-                        s += ccm[i * 3 + k] * demo[k * 4 + j];
+                        s += ccm_base[i * 3 + k] * demo[k * 4 + j];
                     }
-                    // Absorb white balance, which is a per-plane scalar on the
-                    // matrix's columns.
                     if wb_folded {
-                        if let Some(g) = bayer {
-                            s *= g[j];
-                        }
+                        s *= wb_gains[j];
                     }
-                    // Absorb contrast only when no tone stage will apply it.
                     fused[i * 4 + j] = if tone_stage_present {
                         s
                     } else {
@@ -965,15 +974,15 @@ impl MnnEngine {
                 }
             }
             write_f32_array(&mut pending, "DemosaicCcmBlock/w", &fused);
+            // DemosaicCcmBlock/b [3] — CCM bias, plus tone brightness when the
+            // tone stage is not there to add it itself.
+            let demosaic_bias = if tone_stage_present {
+                [0.0f32; 3]
+            } else {
+                [tone.brightness; 3]
+            };
+            write_f32_array(&mut pending, "DemosaicCcmBlock/b", &demosaic_bias);
         }
-        // DemosaicCcmBlock/b [3] — CCM bias, plus tone brightness when the tone
-        // stage is not there to add it itself.
-        let demosaic_bias = if tone_stage_present {
-            [0.0f32; 3]
-        } else {
-            [tone.brightness; 3]
-        };
-        write_f32_array(&mut pending, "DemosaicCcmBlock/b", &demosaic_bias);
 
         // ── Coefficient buffers for the fused isp.* ops ──
         //
@@ -1044,28 +1053,47 @@ impl MnnEngine {
         // exponent, so the shader wants its reciprocal.
         write_f32(&mut pending, "DisplayBlock/gamma", 2.4);
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains.
-        //
-        // This must ALWAYS be written. `BayerWbBlock::extra_input_defaults`
-        // returns an empty list when its gains are the identity, so with no AWB
-        // yet there is no default to fall back on: the tensor stays zeroed and
-        // the Mul that applies it multiplies the whole frame by 0. Every later
-        // stage then reports success on a black image.
-        let identity_gains = [1.0f32; 4];
-        write_f32_array(
-            &mut pending,
-            "BayerWbBlock/gains",
-            bayer.map_or(&identity_gains[..], |g| g),
-        );
+        // Written unconditionally; the flush below drops names this session does
+        // not have. When the block is absent the gains are folded into whichever
+        // demosaic/CCM tensor exists instead, so 3A feedback still reaches the
+        // picture.
+        write_f32_array(&mut pending, "BayerWbBlock/gains", &wb_gains);
         // DemosaicBlock/w + b [3,4,1,1]/[3] — production demosaic conv weights
-        // (depend on the sensor Bayer pattern). CcmBlock_ccm/matrix [3,3] —
-        // color matrix (identity when not provided). All three are true
-        // runtime inputs on the production pipeline (no initializer defaults).
-        write_f32_array(&mut pending, "DemosaicBlock/w", demo);
+        // (depend on the sensor Bayer pattern). When WB has no block of its own
+        // and no fused demosaic+CCM exists, its per-plane scale belongs in these
+        // columns: demo_wb[k,j] = demo[k,j] * wb[j]. This is exact even though
+        // a colour's row can cover two same-colour CFA sites.
+        let mut demo_wb = *demo;
+        if wb_folded && !fused_ccm_sink {
+            for k in 0..3 {
+                for j in 0..4 {
+                    demo_wb[k * 4 + j] *= wb_gains[j];
+                }
+            }
+        }
+        write_f32_array(&mut pending, "DemosaicBlock/w", &demo_wb);
         write_f32_array(&mut pending, "DemosaicBlock/b", &[0.0f32; 3]);
-        let ccm_mat: [f32; 9] = match ccm {
-            Some(m) => *m,
-            None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        };
+        // CcmBlock_ccm/matrix [3,3]. Last-resort fold: only when neither
+        // demosaic sink exists. Each output colour's rows from the demosaic
+        // table touch same-colour sites, so their weighted WB gain is the right
+        // per-colour scale for the CCM column.
+        let mut ccm_mat = ccm_base;
+        if wb_folded && !fused_ccm_sink && !primitive_demosaic_sink {
+            for i in 0..3 {
+                for k in 0..3 {
+                    let mut weighted = 0.0f32;
+                    let mut total = 0.0f32;
+                    for j in 0..4 {
+                        let w = demo[k * 4 + j];
+                        weighted += w * wb_gains[j];
+                        total += w;
+                    }
+                    if total > 0.0 {
+                        ccm_mat[i * 3 + k] *= weighted / total;
+                    }
+                }
+            }
+        }
         write_f32_array(&mut pending, "CcmBlock_ccm/matrix", &ccm_mat);
         // ToneBlock/contrast [1]
         write_f32(&mut pending, "ToneBlock/contrast", tone.contrast);
@@ -1265,36 +1293,46 @@ impl MnnEngine {
             write_f32_array(&mut pending, "WarpGrid/shading_lut", lut);
         }
 
-        // One upload per tensor, using the value that won.
+        // One upload per tensor, using the value that won. A fused/converted
+        // graph legitimately lacks many primitive-sink names: warn once per
+        // build (with the reason) instead of paying a file write per frame.
+        let mut missing = Vec::new();
         for (name, value) in pending {
+            let Some(t) = find(pool, &name) else {
+                missing.push(name);
+                continue;
+            };
             match value {
                 PendingWrite::Scalar(val) => {
-                    if let Some(t) = find(pool, &name) {
-                        t.upload_f32_shaped(&[1], &[val]);
+                    t.upload_f32_shaped(&[1], &[val]);
+                }
+                PendingWrite::Array(vals) => {
+                    // A failed upload leaves the tensor at whatever it was
+                    // allocated with — usually zeros. Say so instead of
+                    // swallowing the bool into a silently black frame.
+                    if !t.upload_f32(&vals) {
+                        warn!(
+                            "{name}: upload of {} f32 rejected (tensor wants a different size)",
+                            vals.len()
+                        );
                     }
                 }
-                PendingWrite::Array(vals) => match find(pool, &name) {
-                    Some(t) => {
-                        // A failed upload leaves the tensor at whatever it was
-                        // allocated with — usually zeros. Say so instead of
-                        // swallowing the bool into a silently black frame.
-                        if !t.upload_f32(&vals) {
-                            warn!(
-                                "{name}: upload of {} f32 rejected (tensor wants a different size)",
-                                vals.len()
-                            );
-                        }
+                PendingWrite::Raw(data) => {
+                    if !t.upload_bytes(&data, 2, 32) {
+                        warn!("default for {name} ({} B) failed to upload", data.len());
                     }
-                    None => warn!("{name}: no such tensor in the session"),
-                },
-                PendingWrite::Raw(data) => match find(pool, &name) {
-                    Some(t) => {
-                        if !t.upload_bytes(&data, 2, 32) {
-                            warn!("default for {name} ({} B) failed to upload", data.len());
-                        }
-                    }
-                    None => warn!("default for {name} has no tensor in the session"),
-                },
+                }
+            }
+        }
+        if !missing.is_empty() {
+            let mut reported = self.missing_inputs_reported.lock().unwrap();
+            for name in missing {
+                if reported.insert(name.clone()) {
+                    debug!(
+                        "extra input '{name}' is not a session input; skipped \
+                         (fused into another tensor or its block is absent)"
+                    );
+                }
             }
         }
     }
@@ -1655,6 +1693,7 @@ impl IspEngine for MnnEngine {
                 1 + extra_names.len(),
                 extra_names.len()
             );
+            debug!("MNN model input names: {}", extra_names.join(", "));
             // Don't need probe session any more — pool will create its own.
             drop(probe_sess);
 
@@ -1684,6 +1723,7 @@ impl IspEngine for MnnEngine {
                 pool.tensor_count()
             );
             self.pool = Some(pool);
+            self.missing_inputs_reported.lock().unwrap().clear();
             // Cache block-provided default values for extra inputs (formerly
             // baked as Const initializers).  These are written before each
             // inference; isp_params per-frame values take precedence.
@@ -1822,10 +1862,12 @@ impl IspEngine for MnnEngine {
                 .pool
                 .as_ref()
                 .ok_or(crate::error::IspError::Config("no pool".into()))?;
+            let t_enter = Instant::now();
             let mut slot = pool.acquire();
             let interp = &pool.interp;
 
             let t_start = Instant::now();
+            debug!("pipeline timer pool_acquire={:?}", t_start - t_enter);
 
             debug!(
                 "pipeline stage=arrive raw={}×{} bayer={}B sensor_max={}",
@@ -2193,6 +2235,7 @@ impl IspEngine for MnnEngine {
             let path: &str = path_str;
             let t_prep_end: std::time::Instant = Instant::now();
             let t_infer_start: std::time::Instant = Instant::now();
+            let t_infer_end: std::time::Instant;
             let n: i32;
             // Frame input tensor name for the FFI call (None → nullptr for
             // single-input models; MNN then picks its first input).
@@ -2300,6 +2343,7 @@ impl IspEngine for MnnEngine {
                         max_out,
                     );
                 }
+                t_infer_end = Instant::now();
                 // ------------------------------------------------------------------
                 // Optional MNN profiling dump – prints per‑node timings if the
                 // MNN session was built with profiling enabled.
@@ -2312,9 +2356,7 @@ impl IspEngine for MnnEngine {
                 }
                 // ------------------------------------------------------------------
             }
-
-            let t_total_elapsed = t_start.elapsed();
-            let t_infer_elapsed = t_infer_start.elapsed();
+            let t_after_profiling = Instant::now();
 
             if n <= 0 {
                 // The FFI's negative code alone cannot say *why*: -6/-7/-8 are
@@ -2348,9 +2390,14 @@ impl IspEngine for MnnEngine {
                 return Err(crate::error::IspError::Mnn(reason));
             }
 
-            debug!("pipeline stage=infer_done path={} total={:?} ({}x{} -> {} elts) prep={:?} infer={:?}",
-                path, t_infer_elapsed, w, h, n,
-                t_prep_end - t_start, t_infer_elapsed);
+            debug!(
+                "pipeline stage=infer_done path={} ({}x{} -> {} elts) infer={:?}",
+                path,
+                w,
+                h,
+                n,
+                t_infer_end - t_infer_start
+            );
 
             // ── Determine output size and encoding from the output tensor ──
             //
@@ -2434,6 +2481,7 @@ impl IspEngine for MnnEngine {
                 && !matches!(p.output_format, OutputFormat::PackedRgb);
             let packed_display =
                 packed_u32 || packed_display_by_type || (has_fused_display && is_u8_format);
+            let t_output_meta = Instant::now();
 
             let n_valid = n.max(0) as usize;
             let out_elems = n_valid.min(pixels * graph_channels);
@@ -2496,6 +2544,7 @@ impl IspEngine for MnnEngine {
                 };
                 Self::f32_to_u8(buf_bytes)
             };
+            let t_output_copy = Instant::now();
 
             // Black-frame triage: an all-zero frame means either the graph
             // tail ran on zeroed inputs or the readback branch disagreed with
@@ -2613,11 +2662,7 @@ impl IspEngine for MnnEngine {
                     debug!(
                         "session exposes {} outputs: {}",
                         names.len(),
-                        if names.len() > 8 {
-                            format!("{} ...", names[..8].join(", "))
-                        } else {
-                            names.join(", ")
-                        }
+                        names.join(", ")
                     );
                 }
 
@@ -2793,13 +2838,31 @@ impl IspEngine for MnnEngine {
                     }
                 }
             }
+            let t_stats_done = Instant::now();
+            let t_frame_done = Instant::now();
 
-            debug!("pipeline stage=output_frame {}×{} frame={}B total={:?} prep={:?} resize={:?} infer={:?}",
-                ow, oh, data_out.len(), t_total_elapsed,
-                t_prep_end - t_start,
+            debug!(
+                "pipeline timer path={} setup={:?} tensor_assign={:?} input={:?} infer={:?} \
+                 profiling={:?} output_meta={:?} output_copy={:?} stats={:?} frame={:?} total={:?}",
+                path,
+                t_tensor_before - t_start,
                 t_tensor_after - t_tensor_before,
-                t_infer_elapsed);
-            let total_duration_ns = t_total_elapsed.as_nanos() as u64;
+                t_prep_end - t_tensor_after,
+                t_infer_end - t_infer_start,
+                t_after_profiling - t_infer_end,
+                t_output_meta - t_after_profiling,
+                t_output_copy - t_output_meta,
+                t_stats_done - t_output_copy,
+                t_frame_done - t_stats_done,
+                t_frame_done - t_enter
+            );
+            debug!(
+                "pipeline stage=output_frame {}×{} frame={}B",
+                ow,
+                oh,
+                data_out.len()
+            );
+            let total_duration_ns = (t_frame_done - t_enter).as_nanos() as u64;
             let mut frame = IspFrame::new(ow as u32, oh as u32, FrameFormat::Rgba8888);
             if zero_copy {
                 // MNN wrote directly into the caller's buffer; hand back the
@@ -2826,14 +2889,13 @@ impl IspEngine for MnnEngine {
                 ..Default::default()
             });
             frame.timestamp_ns = p.timestamp_ns;
-            // prep = time before inference starts (setup + norm for float path)
-            // infer = time for MNN inference only
-            // total = prep + infer + bgra conversion
-            // t_prep_end - t_start = prep time (shape setup, allocation)
-            // For float fallback: prep also includes norm time (t_prep_end reset after norm)
-            let prep_ns = t_prep_end.duration_since(t_start).as_nanos() as u64;
+            // prep = everything before the MNN call (pool + setup + uploads)
+            // infer = the MNN call only; post-inference readback/controller work
+            // is excluded here and reported by `pipeline timer` at debug level.
+            // total = enter -> frame ready, including post-inference.
+            let prep_ns = (t_prep_end - t_enter).as_nanos() as u64;
             frame.prep_duration_ns = prep_ns;
-            frame.inference_duration_ns = t_infer_elapsed.as_nanos() as u64;
+            frame.inference_duration_ns = (t_infer_end - t_infer_start).as_nanos() as u64;
             frame.total_duration_ns = total_duration_ns;
             Ok(frame)
         }
