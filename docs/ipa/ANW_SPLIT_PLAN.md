@@ -1,56 +1,69 @@
-# Plan: Split ANativeWindow UI from android-app into anw/
+# Plan: make `anw/` the application code owner
+
+> Status: planned, not implemented. Tracked as P2g in
+> `docs/overview/ROADMAP.md`.
 
 ## Goal
-Split the ANativeWindow presentation logic from `android-app/` into the standalone `anw/` crate so it can grow into its own APK with a richer UI (egui). The `anw/` crate will own:
-- ANativeWindow buffer lock/present logic (moved from android-app/src/preview.rs)
-- Viewport/aspect-ratio letterbox logic
-- cam-ipa IPA engine integration (process frames through IPA pipeline)
-- Optional egui UI overlay for future rich UI
 
-## Files to modify/create
+`android-app/` becomes the non-code APK shell. It keeps the Android manifest,
+`Sources/res`, and cargo-apk2 packaging metadata that points at those files.
+All Rust/native application code moves to `anw/`, which produces the
+`softisp_anw` cdylib loaded by NativeActivity.
 
-### 1. anw/Cargo.toml — Add egui dependency and Android APK metadata
-- Add `egui` + `egui_winit` + `winit` dependencies (feature-gated behind `egui`)
-- Add `android-activity` workspace dep
-- Add `[package.metadata.android]` for APK packaging (like android-app/)
-- Keep `cam-ipa` dependency for IPA pipeline processing
+The shipped application identity stays `com.softisp.camera` / `softisp-camera`
+unless the user explicitly chooses a new package ID. This is a code-location
+change, not a new app.
 
-### 2. anw/src/lib.rs — Expand from FFI stubs to full ANativeWindow consumer
-- Move `WindowTarget`, `Viewport`, `Rect`, `BYTES_PER_PIXEL` from android-app/src/preview.rs
-- Implement `present_planar_rgb` and `present` (BGRA → RGBA conversion)
-- Implement `paint_bars`
-- Keep existing `softisp_anw_init/start/stop` FFI exports
-- Add `egui` integration (feature-gated)
+## Target layout
 
-### 3. anw/src/presentation.rs (new) — Presentation logic extracted
-- `WindowTarget` struct
-- `Viewport` struct with `fit()`
-- `present_planar_rgb` / `present` methods
-- `paint_bars` method
+### `android-app/` — resources and packaging shell only
 
-### 4. anw/AndroidManifest.xml (new) — Standalone APK manifest
-- NativeActivity pointing to `softisp_anw` lib
-- CAMERA permission
-- Same metadata as android-app/Cargo.toml
+- Keep `AndroidManifest.xml` and `Sources/res/**`.
+- Keep no camera, ISP, pipeline, storage, crash-log, or presentation code.
+- Remove the `cam-camera-app` Rust library target and `src/**`.
+- Remove/move the linker setup in `build.rs`; it is application build code.
 
-### 5. anw/build.rs (new) — cargo-apk2 packaging config
-- Similar to android-app/build.rs but for anw crate
+### `anw/` — all application code
 
-### 6. android-app/ — Remove ANativeWindow presentation code (keep camera capture)
-- Remove `preview.rs` or reduce to thin wrapper that calls into anw
-- Keep camera capture pipeline (camera.rs, pipeline.rs, pipeline_runner.rs)
-- The android-app becomes the capture + IPA processing frontend
-- anw becomes the display/consumer frontend
+- Keep `presentation.rs` as the ANativeWindow/viewport owner.
+- Move in `android-app/src/camera.rs`, `crashlog.rs`, `pipeline.rs`,
+  `pipeline_runner.rs`, `storage.rs`, and the `android_main` entry point from
+  `lib.rs`.
+- Keep the existing C ABI (`softisp_anw_init/start/stop`,
+  `softisp_anw_process_and_present`) for callers that hand in raw frames.
+- Own the cargo-apk2 metadata: package `com.softisp.camera`, APK name
+  `softisp-camera`, `manifest_override = "../android-app/AndroidManifest.xml"`,
+  `resources = "../android-app/Sources/res"`, and
+  `runtime_libs = "../cam-rust/lib"`.
+- NativeActivity `android.app.lib_name` becomes `softisp_anw`.
+- Own the Android linker build script with the flags currently in
+  `android-app/build.rs`.
 
-### 7. softisp/Cargo.toml — Add anw to workspace members (already there)
+## Behaviour that must be preserved
 
-## Build & Test
-- `cargo build -p softisp_anw` — compiles on host (Android target for APK)
-- `cargo build -p cam-camera-app` — android-app still builds (may need preview.rs adjusted)
-- APK: `./build-apk.sh` builds cam-camera-app APK
-- Future: `cargo apk2 build -p softisp_anw` builds anw APK
+- Final production output remains `OutputFormat::PackedRgb` with
+  `isp.display_uint32_bgra` as the last op.
+- Dual GPU engine still runs and is tested as a dual engine.
+- Staged `prepare` / `run_prepared` / `finish` phases remain available.
+- No float fallback or `FloatRgb should not happen` path in production.
+- AHB remains reserved for large tensors; small tensors stay non-AHB.
+- Crash log path and storage permission behaviour stay unchanged.
 
-## Risks
-- android-app/src/preview.rs is ~390 lines; moving it requires careful API boundary design
-- egui on Android NativeActivity requires winit integration — may need additional setup
-- cam-ipa IpaContext needs to be shared between android-app (capture) and anw (display) — may need IPC or shared memory
+## Build changes
+
+- `build-apk.sh` builds the APK from `anw`, not `cam-camera-app`.
+- The stale `libcam_camera_app.so` copy/patch step is removed.
+- `libsoftisp_anw.so` is built first, copied into both ABI runtime dirs,
+  patched with `patchelf --replace-needed libc++_shared.so
+  libsoftisp_cpp_shared.so`, then packaged.
+- Verify that the target, runtime copy, and APK entry hashes match and that the
+  APK contains `lib/arm64-v8a/libsoftisp_anw.so` and no
+  `libcam_camera_app.so`.
+
+## Verification
+
+- Workspace format/clippy/tests with `anw` as the application crate.
+- `./build-apk.sh` completes and the signed APK has the expected native lib.
+- On-device logs (`/sdcard/download/softisp-app.log` and `logcat`) show camera
+  startup, dual-engine ISP execution, and preview presentation from `anw`.
+- Assistant does not install or share the APK; the user installs and launches it.
