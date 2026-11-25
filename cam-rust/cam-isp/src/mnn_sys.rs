@@ -166,6 +166,25 @@ extern "C" {
         tensor_name: *const c_char,
     ) -> c_int;
 
+    /// Run inference on an AHB-backed output tensor without `copyToHostTensor`.
+    ///
+    /// The output AHB must already be bound to the output tensor via
+    /// `mnn_import_ahb_as_device_memory` *before* `resizeSession`. The function
+    /// waits for the GPU write and returns the output element count; the caller
+    /// reads the pixels from its own CPU mapping of the AHB.
+    pub fn mnn_run_ahb_output(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        input_name: *const c_char,
+        output_name: *const c_char,
+        buffer: *const c_void,
+        buffer_type_code: c_int,
+        buffer_type_bits: c_int,
+        in_shape: *const c_int,
+        in_ndim: c_int,
+        max_out: c_int,
+    ) -> c_int;
+
     pub fn mnn_run_with_output(
         interpreter: *mut c_void,
         session: *mut c_void,

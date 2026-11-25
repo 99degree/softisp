@@ -374,6 +374,32 @@ int mnn_release_ahb_device_memory(
     MnnSession session,
     const char* tensor_name);
 
+/**
+ * Run inference with an AHB-backed output tensor and return WITHOUT
+ * `copyToHostTensor`. The output tensor must already be bound to an
+ * `AHardwareBuffer` via `mnn_import_ahb_as_device_memory`; the Vulkan backend
+ * writes straight into that buffer's device memory, so the caller reads the
+ * result from its own CPU mapping after this call.
+ *
+ * `Tensor::wait(MAP_TENSOR_READ, true)` makes the GPU write visible to that
+ * mapping before returning. `max_out` is the AHB capacity in output elements
+ * and is checked against the tensor's real element count; overflow is an
+ * error, never a silent truncation.
+ *
+ * @return output element count on success, negative on failure.
+ */
+int mnn_run_ahb_output(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    const char* input_name,
+    const char* output_name,
+    const void* buffer,
+    int buffer_type_code,
+    int buffer_type_bits,
+    const int* in_shape,
+    int in_ndim,
+    int max_out);
+
 // ── Get model input type ──────────────────────────────────────────────────
 extern "C" int mnn_get_model_input_type(MnnInterpreter interpreter, MnnSession session,
     int* out_code, int* out_bits);
