@@ -21,7 +21,7 @@
 //! Run:
 //!   ./target/debug/libcam_ipa_sk.so --help       # direct execution (polyglot)
 //!   ./target/debug/ipa_sk --help                 # binary wrapper
-//!   ./target/debug/ipa_sk generate --width 3840 --height 2160 --profile FUSED
+//!   ./target/debug/ipa_sk generate --count 1 --profile fused --width 3840 --height 2160
 
 use cam_ipa::{
     IpaConfig, IpaSettings, IpaSensorInfo, IpaFormat, IpaCallbacks,
@@ -38,105 +38,10 @@ use cam_hal_linux::{list_v4l2_devices, capture_single_v4l2_frame};
 
 /// Top-level CLI argument parser
 #[derive(Parser, Debug)]
-#[command(author, version, about = "cam-ipa Swiss Army Knife — softisp IPA toolkit")]
+#[command(author, version, about = "cam-ipa Swiss Army Knife — softisp IPA toolkit", subcommand_required = true)]
 struct Args {
     #[command(subcommand)]
-    command: Option<Commands>,
-}
-
-/// All subcommands share these common options via a helper struct
-#[derive(Parser, Debug, Clone)]
-struct CommonOpts {
-    /// Pipeline profile preset
-    #[arg(long, default_value = "fused", value_enum)]
-    profile: ProfileArg,
-
-    /// Output frame width
-    #[arg(long, default_value_t = 3840)]
-    width: u32,
-
-    /// Output frame height
-    #[arg(long, default_value_t = 2160)]
-    height: u32,
-
-    /// Output format
-    #[arg(long, default_value = "bgra", value_enum)]
-    format: FormatArg,
-
-    /// Backend engine
-    #[arg(long, default_value = "mnn-vulkan", value_enum)]
-    backend: BackendArg,
-
-    /// Enable neural controller (isp-rectifier)
-    #[arg(long)]
-    neural: bool,
-
-    /// Model directory for neural processor
-    #[arg(long)]
-    model_dir: Option<String>,
-}
-
-/// Subcommands
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Generate synthetic test frames and process through ISP
-    Generate {
-        /// Number of frames to generate
-        #[arg(short, long, default_value_t = 1)]
-        count: u32,
-        /// Write output frame to file
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        #[command(flatten)]
-        common: CommonOpts,
-    },
-    /// Capture real frames from V4L2 device and process
-    Capture {
-        /// V4L2 device path (e.g., /dev/video0)
-        #[arg(long, default_value = "/dev/video0")]
-        device: String,
-        /// Number of frames to capture
-        #[arg(short, long, default_value_t = 1)]
-        count: u32,
-        /// Write output frame to file
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        #[command(flatten)]
-        common: CommonOpts,
-    },
-    /// Benchmark FPS/latency over N frames
-    Bench {
-        /// Number of frames
-        #[arg(short, long, default_value_t = 30)]
-        count: u32,
-        /// Warmup frames (not timed)
-        #[arg(long, default_value_t = 5)]
-        warmup: u32,
-        #[command(flatten)]
-        common: CommonOpts,
-    },
-    /// Collect per-frame stats for CMOS sensor characterization
-    Stats {
-        /// Number of frames
-        #[arg(short, long, default_value_t = 100)]
-        count: u32,
-        /// Write stats to JSON file
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        #[command(flatten)]
-        common: CommonOpts,
-    },
-    /// Test zero-copy buffer path (memfd on Linux, dmabuf on Android)
-    Zerocopy {
-        /// Buffer size in bytes
-        #[arg(long, default_value_t = 1048576)]
-        size: usize,
-        /// Number of write/read iterations
-        #[arg(long, default_value_t = 1000)]
-        iterations: u32,
-    },
-    /// Probe profile capabilities and engine info
-    Probe,
+    command: Commands,
 }
 
 /// Profile argument enum
@@ -198,30 +103,164 @@ impl From<BackendArg> for EngineBackend {
     }
 }
 
-/// Build an IpaConfig from CLI args
-fn build_config(args: &Args) -> IpaConfig {
+/// Subcommands
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate synthetic test frames and process through ISP
+    Generate {
+        /// Number of frames to generate
+        #[arg(short, long, default_value_t = 1)]
+        count: u32,
+        /// Write output frame to file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Pipeline profile preset
+        #[arg(long, default_value = "fused", value_enum)]
+        profile: ProfileArg,
+        /// Output frame width
+        #[arg(long, default_value_t = 3840)]
+        width: u32,
+        /// Output frame height
+        #[arg(long, default_value_t = 2160)]
+        height: u32,
+        /// Output format
+        #[arg(long, default_value = "bgra", value_enum)]
+        format: FormatArg,
+        /// Backend engine
+        #[arg(long, default_value = "mnn-vulkan", value_enum)]
+        backend: BackendArg,
+        /// Enable neural controller (isp-rectifier)
+        #[arg(long)]
+        neural: bool,
+        /// Model directory for neural processor
+        #[arg(long)]
+        model_dir: Option<String>,
+    },
+    /// Capture real frames from V4L2 device and process
+    Capture {
+        /// V4L2 device path (e.g., /dev/video0)
+        #[arg(long, default_value = "/dev/video0")]
+        device: String,
+        /// Number of frames to capture
+        #[arg(short, long, default_value_t = 1)]
+        count: u32,
+        /// Write output frame to file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Pipeline profile preset
+        #[arg(long, default_value = "fused", value_enum)]
+        profile: ProfileArg,
+        /// Output frame width
+        #[arg(long, default_value_t = 3840)]
+        width: u32,
+        /// Output frame height
+        #[arg(long, default_value_t = 2160)]
+        height: u32,
+        /// Output format
+        #[arg(long, default_value = "bgra", value_enum)]
+        format: FormatArg,
+        /// Backend engine
+        #[arg(long, default_value = "mnn-vulkan", value_enum)]
+        backend: BackendArg,
+        /// Enable neural controller (isp-rectifier)
+        #[arg(long)]
+        neural: bool,
+        /// Model directory for neural processor
+        #[arg(long)]
+        model_dir: Option<String>,
+    },
+    /// Benchmark FPS/latency over N frames
+    Bench {
+        /// Number of frames
+        #[arg(short, long, default_value_t = 30)]
+        count: u32,
+        /// Warmup frames (not timed)
+        #[arg(long, default_value_t = 5)]
+        warmup: u32,
+        /// Pipeline profile preset
+        #[arg(long, default_value = "fused", value_enum)]
+        profile: ProfileArg,
+        /// Output frame width
+        #[arg(long, default_value_t = 3840)]
+        width: u32,
+        /// Output frame height
+        #[arg(long, default_value_t = 2160)]
+        height: u32,
+        /// Output format
+        #[arg(long, default_value = "bgra", value_enum)]
+        format: FormatArg,
+        /// Backend engine
+        #[arg(long, default_value = "mnn-vulkan", value_enum)]
+        backend: BackendArg,
+        /// Enable neural controller (isp-rectifier)
+        #[arg(long)]
+        neural: bool,
+        /// Model directory for neural processor
+        #[arg(long)]
+        model_dir: Option<String>,
+    },
+    /// Collect per-frame stats for CMOS sensor characterization
+    Stats {
+        /// Number of frames
+        #[arg(short, long, default_value_t = 100)]
+        count: u32,
+        /// Write stats to JSON file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Pipeline profile preset
+        #[arg(long, default_value = "fused", value_enum)]
+        profile: ProfileArg,
+        /// Output frame width
+        #[arg(long, default_value_t = 3840)]
+        width: u32,
+        /// Output frame height
+        #[arg(long, default_value_t = 2160)]
+        height: u32,
+        /// Output format
+        #[arg(long, default_value = "bgra", value_enum)]
+        format: FormatArg,
+        /// Backend engine
+        #[arg(long, default_value = "mnn-vulkan", value_enum)]
+        backend: BackendArg,
+        /// Enable neural controller (isp-rectifier)
+        #[arg(long)]
+        neural: bool,
+        /// Model directory for neural processor
+        #[arg(long)]
+        model_dir: Option<String>,
+    },
+    /// Test zero-copy buffer path (memfd on Linux, dmabuf on Android)
+    Zerocopy {
+        /// Buffer size in bytes
+        #[arg(long, default_value_t = 1048576)]
+        size: usize,
+        /// Number of write/read iterations
+        #[arg(long, default_value_t = 1000)]
+        iterations: u32,
+    },
+    /// Probe profile capabilities and engine info
+    Probe,
+}
+
+/// Build an IpaConfig from common options
+fn build_ipa_config(
+    profile: ProfileArg,
+    width: u32,
+    height: u32,
+    format: FormatArg,
+    backend: BackendArg,
+    neural: bool,
+    model_dir: Option<String>,
+) -> IpaConfig {
     IpaConfig {
-        image_width: args.width,
-        image_height: args.height,
-        format: match args.format {
-            FormatArg::Rgb => IpaFormat::RGB,
-            FormatArg::Rgba => IpaFormat::RGBA,
-            FormatArg::Bgra => IpaFormat::BGRA,
-            FormatArg::Argb => IpaFormat::ARGB,
-            FormatArg::Abgr => IpaFormat::ABGR,
-            FormatArg::Yuv => IpaFormat::YUV,
-            FormatArg::Nv12 => IpaFormat::NV12,
-            FormatArg::P010 => IpaFormat::P010,
-        },
+        image_width: width,
+        image_height: height,
+        format: format.into(),
         num_output_buffers: 2,
-        backend: match args.backend {
-            BackendArg::MnnVulkan => EngineBackend::MnnVulkan,
-            BackendArg::Cpu => EngineBackend::Cpu,
-            BackendArg::OnnxRuntime => EngineBackend::OnnxRuntime,
-        },
-        profile: args.profile.into(),
-        neural_enabled: args.neural,
-        model_dir: args.model_dir.clone().map(PathBuf::from),
+        backend: backend.into(),
+        profile: profile.into(),
+        neural_enabled: neural,
+        model_dir: model_dir.map(PathBuf::from),
         ..IpaConfig::default()
     }
 }
@@ -242,72 +281,43 @@ fn run_cli() -> i32 {
     let args = Args::parse();
     env_logger::init();
 
-    // Extract common config fields before consuming args.command
-    let profile = args.profile;
-    let width = args.width;
-    let height = args.height;
-    let format = args.format;
-    let backend = args.backend;
-    let neural = args.neural;
-    let model_dir = args.model_dir.clone();
-    let command = args.command;
-
-    println!("=== cam-ipa Swiss Army Knife ===");
-    println!("Command: {:?}", command);
-    println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-        profile, width, height, format, backend, neural);
-    if let Some(dir) = &model_dir {
-        println!("Model dir: {}", dir);
-    }
-
-    let config = IpaConfig {
-        image_width: width,
-        image_height: height,
-        format: match format {
-            FormatArg::Rgb => IpaFormat::RGB,
-            FormatArg::Rgba => IpaFormat::RGBA,
-            FormatArg::Bgra => IpaFormat::BGRA,
-            FormatArg::Argb => IpaFormat::ARGB,
-            FormatArg::Abgr => IpaFormat::ABGR,
-            FormatArg::Yuv => IpaFormat::YUV,
-            FormatArg::Nv12 => IpaFormat::NV12,
-            FormatArg::P010 => IpaFormat::P010,
-        },
-        num_output_buffers: 2,
-        backend: match backend {
-            BackendArg::MnnVulkan => EngineBackend::MnnVulkan,
-            BackendArg::Cpu => EngineBackend::Cpu,
-            BackendArg::OnnxRuntime => EngineBackend::OnnxRuntime,
-        },
-        profile: profile.into(),
-        neural_enabled: neural,
-        model_dir: model_dir.map(PathBuf::from),
-        ..IpaConfig::default()
-    };
-
-    match command {
-        None => {
-            println!("No subcommand given. Run 'ipa_sk --help' for usage.");
-            cmd_probe()
-        }
-        Some(Commands::Generate { count, output }) => {
+    match args.command {
+        Commands::Generate { count, output, profile, width, height, format, backend, neural, model_dir } => {
+            println!("=== cam-ipa Swiss Army Knife ===");
+            println!("Command: generate");
+            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                profile, width, height, format, backend, neural);
+            let config = build_ipa_config(profile, width, height, format, backend, neural, model_dir);
             cmd_generate(&config, count, output)
         }
-        Some(Commands::Capture { device, count, output }) => {
+        Commands::Capture { device, count, output, profile, width, height, format, backend, neural, model_dir } => {
+            println!("=== cam-ipa Swiss Army Knife ===");
+            println!("Command: capture");
+            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                profile, width, height, format, backend, neural);
+            let config = build_ipa_config(profile, width, height, format, backend, neural, model_dir);
             cmd_capture(&config, device, count, output)
         }
-        Some(Commands::Bench { count, warmup }) => {
+        Commands::Bench { count, warmup, profile, width, height, format, backend, neural, model_dir } => {
+            println!("=== cam-ipa Swiss Army Knife ===");
+            println!("Command: bench");
+            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                profile, width, height, format, backend, neural);
+            let config = build_ipa_config(profile, width, height, format, backend, neural, model_dir);
             cmd_bench(&config, count, warmup)
         }
-        Some(Commands::Stats { count, output }) => {
+        Commands::Stats { count, output, profile, width, height, format, backend, neural, model_dir } => {
+            println!("=== cam-ipa Swiss Army Knife ===");
+            println!("Command: stats");
+            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                profile, width, height, format, backend, neural);
+            let config = build_ipa_config(profile, width, height, format, backend, neural, model_dir);
             cmd_stats(&config, count, output)
         }
-        Some(Commands::Zerocopy { size, iterations }) => {
+        Commands::Zerocopy { size, iterations } => {
             cmd_zerocopy(size, iterations)
         }
-        Some(Commands::Probe) => {
-            cmd_probe()
-        }
+        Commands::Probe => cmd_probe(),
     }
 }
 
