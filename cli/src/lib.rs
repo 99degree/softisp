@@ -1,10 +1,9 @@
-//! Polyglot IPA test CLI — executable directly and dlopen-able as shared library
+//! Shared logic for cam-ipa-test-cli polyglot ELF.
 //!
-//! Build:
-//!   cargo build -p cam-ipa-test-cli      # produces cli/target/debug/libcam_ipa_test_cli.so
-//!   # Run directly:
-//!   ./cli/target/debug/libcam_ipa_test_cli.so
-//!   # Or dlopen it from another program to call ipa_test_main()
+//! Compiled as:
+//!   - cdylib (libcam_ipa_test_cli.so) — exports `ipa_test_main` for dlopen,
+//!     and `my_entry` as ELF entry point for direct execution.
+//!   - included by src/main.rs for the `ipa_test_cli` binary.
 
 use cam_ipa::{
     IpaConfig, IpaSettings, IpaSensorInfo, IpaFormat, IpaCallbacks,
@@ -18,7 +17,8 @@ pub extern "C" fn ipa_test_main() -> i32 {
     run_cli()
 }
 
-/// Executable entry point — called by the dynamic linker when run directly
+/// ELF entry point — allows the cdylib to be executed directly.
+/// Called by the dynamic linker when the .so is run as ./libcam_ipa_test_cli.so
 #[no_mangle]
 pub extern "C" fn my_entry() -> ! {
     unsafe { std::process::exit(run_cli()) }
@@ -180,8 +180,6 @@ mod tests {
 
     #[test]
     fn test_run_cli_returns_zero() {
-        // run_cli() does I/O and may fail in CI without a real camera;
-        // just verify it doesn't panic on entry
         let _ = run_cli();
     }
 }
