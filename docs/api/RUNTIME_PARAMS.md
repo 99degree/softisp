@@ -34,13 +34,14 @@ but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
-| `gains` | sensor-pattern dependent | [1,4,1,1] | FLOAT | identity | Per-plane gains in TL,TR,BL,BR order |
+| `BAYER_GAINS` | sensor-pattern dependent | [1,4,1,1] | FLOAT | identity | Per-plane gains in TL,TR,BL,BR order (`BAYERWBBLOCK/BAYER_GAINS`) |
 | `zero` | fixed | [] | FLOAT | 0.0 | Lower clip bound |
 | `one` | fixed | [] | FLOAT | 1.0 | Upper clip bound |
 
-The `gains`, `zero`, and `one` inputs are declared only when the block's
-build-time gains are non-identity. Production builds use identity gains, so the
-live controller gains are folded into the surviving demosaic/CCM sink instead;
+The `BAYER_GAINS`, `zero`, and `one` inputs are declared only when the block's
+build-time gains are non-identity. `BayerWbBlock/gains` remains as a legacy
+alias for already-converted models. Production builds use identity gains, so
+the live controller gains are folded into the surviving demosaic/CCM sink;
 see [BAYER_WB_DESIGN.md](../isp/BAYER_WB_DESIGN.md).
 
 ### Input / Output Tensors
@@ -56,8 +57,10 @@ see [BAYER_WB_DESIGN.md](../isp/BAYER_WB_DESIGN.md).
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
-| `w` | rggb | [3,4,1,1] | FLOAT | 4×3×1×1 weights, 3×1 bias | CCM convolution weights: shape [3,4,1,1] for 3×4 color correction matrix |
-| `b` | rggb | [3] | FLOAT | 4×3×1×1 weights, 3×1 bias | CCM bias: shape [3] for per-channel offset |
+| `W` | rggb | [3,4,1,1] | FLOAT | 4×3×1×1 weights, 3×1 bias | Fused weights (`DEMOSAICCCMBLOCK/W`), shape [3,4,1,1] |
+| `B` | rggb | [3] | FLOAT | 4×3×1×1 weights, 3×1 bias | Fused bias (`DEMOSAICCCMBLOCK/B`), shape [3] |
+
+`DemosaicCcmBlock/w` and `DemosaicCcmBlock/b` are accepted legacy aliases.
 
 ### Input / Output Tensors
 
@@ -210,5 +213,9 @@ reciprocal `1/γ` is derived on the CPU where a tensor needs an exponent
   block's parameter exceeds its activation threshold.
 - **Shape convention**: `scalar` = rank-0 tensor; `[N]` = 1D; `[H,W]` = 2D
 - **Data type**: All runtime params are FLOAT (32-bit).
-- **Tensor naming**: `{Namespace}/{suffix}`. Namespace = block's `tensor_ns()`.
+- **Tensor naming**: canonical WB/CCM names follow `docs/reference/TensorNames.java`.
+  The engine writes `BayerWbBlock/gains`, `DemosaicCcmBlock/w` / `b`, and
+  `CcmBlock_ccm/matrix` as aliases so existing MNN models keep loading. The
+  production CCM matrix is `CCMBLOCK/CCM_MATRIX` and its bias is
+  `CCMBLOCK/CCM_BIAS`.
 - **Dynamic dims**: `-1` denotes dynamic (H/W) resolved at inference time.

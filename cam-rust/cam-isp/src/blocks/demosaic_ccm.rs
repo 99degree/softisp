@@ -1,5 +1,6 @@
 use crate::onnx::proto::Proto;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
+use crate::tensor_names;
 
 /// Fused Demosaic + CCM block — single Conv1×1 with runtime‑fused weights.
 ///
@@ -8,7 +9,7 @@ use crate::pipeline::{BlockOpsetMode, IspBlock};
 ///
 /// Graph:  Conv1×1 → Clip(0, 1)   — **2 nodes** (fused sensor_max norm)
 ///
-/// The Conv weight tensor `DemosaicCcm/w` `[3, 4, 1, 1]` is exposed as an
+/// The Conv weight tensor `DEMOSAICCCMBLOCK/W` `[3, 4, 1, 1]` is exposed as an
 /// extra input.  At build time it is initialised to the demosaic weights
 /// divided by sensor_max.  At runtime, the controller pre‑multiplies:
 ///
@@ -277,7 +278,11 @@ impl IspBlock for DemosaicCcmBlock {
                 vec![Proto::node_with_domain(
                     "isp.demosaic_ccm",
                     "isp",
-                    &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
+                    &[
+                        &inp,
+                        tensor_names::DEMOSAIC_CCM_W,
+                        tensor_names::DEMOSAIC_CCM_B,
+                    ],
                     &[&self.frame_tensor],
                     &[
                         Proto::attribute_ints("kernel_shape", &[1, 1]),
@@ -298,7 +303,11 @@ impl IspBlock for DemosaicCcmBlock {
                 vec![
                     Proto::node(
                         "Conv",
-                        &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
+                        &[
+                            &inp,
+                            tensor_names::DEMOSAIC_CCM_W,
+                            tensor_names::DEMOSAIC_CCM_B,
+                        ],
                         &[&format!("{}/conv_out", ns)],
                         &[
                             Proto::attribute_ints("kernel_shape", &[1, 1]),
@@ -323,7 +332,11 @@ impl IspBlock for DemosaicCcmBlock {
                 vec![Proto::node_with_domain(
                     "isp.demosaic_ccm",
                     "isp",
-                    &[&inp, &format!("{}/w", ns), &format!("{}/b", ns)],
+                    &[
+                        &inp,
+                        tensor_names::DEMOSAIC_CCM_W,
+                        tensor_names::DEMOSAIC_CCM_B,
+                    ],
                     &[&self.frame_tensor],
                     &[
                         Proto::attribute_ints("kernel_shape", &[1, 1]),
@@ -342,8 +355,12 @@ impl IspBlock for DemosaicCcmBlock {
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/w", ns).to_string(), 1, vec![3, 4, 1, 1]),
-            (format!("{}/b", ns).to_string(), 1, vec![3]),
+            (
+                tensor_names::DEMOSAIC_CCM_W.to_string(),
+                1,
+                vec![3, 4, 1, 1],
+            ),
+            (tensor_names::DEMOSAIC_CCM_B.to_string(), 1, vec![3]),
             (format!("{}/zero", ns).to_string(), 1, vec![]),
             (format!("{}/one", ns).to_string(), 1, vec![]),
         ]
@@ -358,14 +375,14 @@ impl IspBlock for DemosaicCcmBlock {
             // `ccm` can legitimately be `None` (no controller yet) — which
             // renders a black frame with no error anywhere.
             (
-                format!("{}/w", ns).to_string(),
+                tensor_names::DEMOSAIC_CCM_W.to_string(),
                 self.demosaic_weights()
                     .iter()
                     .flat_map(|v| v.to_ne_bytes())
                     .collect::<Vec<u8>>(),
             ),
             (
-                format!("{}/b", ns).to_string(),
+                tensor_names::DEMOSAIC_CCM_B.to_string(),
                 [0.0f32; 3]
                     .iter()
                     .flat_map(|v| v.to_ne_bytes())
@@ -394,6 +411,9 @@ mod tests {
         let nodes = block.nodes();
         // Default Custom mode emits the single fused isp.demosaic_ccm node.
         assert_eq!(nodes.len(), 1, "Custom mode should produce 1 fused node");
+        let node = String::from_utf8_lossy(&nodes[0]);
+        assert!(node.contains(tensor_names::DEMOSAIC_CCM_W));
+        assert!(node.contains(tensor_names::DEMOSAIC_CCM_B));
     }
 
     #[test]
@@ -438,8 +458,8 @@ mod tests {
         let block = DemosaicCcmBlock::new(2);
         let extra = block.extra_inputs();
         assert_eq!(extra.len(), 4, "Should expose 4 extra inputs");
-        assert_eq!(extra[0].0, "DemosaicCcmBlock/w");
-        assert_eq!(extra[1].0, "DemosaicCcmBlock/b");
+        assert_eq!(extra[0].0, tensor_names::DEMOSAIC_CCM_W);
+        assert_eq!(extra[1].0, tensor_names::DEMOSAIC_CCM_B);
     }
 
     #[test]

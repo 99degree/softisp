@@ -95,6 +95,7 @@ pub mod stats;
 pub mod store;
 pub mod synth_bayer;
 pub mod temporal;
+pub mod tensor_names;
 
 // C ABI — enables building cam-isp as a cdylib (.so) with a minimal pipeline API.
 #[cfg(feature = "cabi")]

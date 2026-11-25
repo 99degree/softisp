@@ -212,12 +212,12 @@ The following log lines are **not** harmless and must not be dismissed:
   the graph. Enable the histogram in the production FUSED profile and verify
   `ctrl.update_histogram()` runs.
 - `BayerWbBlock/gains: no such tensor` / `CcmBlock_ccm/matrix: no such tensor`
-  — these are not failures in the fused path, but the default-input cache still
-  queues writes for primitives the converter removed. The functional values
-  must be folded into the surviving sink (`DemosaicCcmBlock/w` for the fused
-  demosaic+CCM, `DemosaicBlock/w` when WB is folded without a fused CCM),
-  and missing-sink writes must be filtered once at build time instead of
-  warning every frame.
+  — these legacy spellings are not failures in the fused path. The canonical
+  names are `BAYERWBBLOCK/BAYER_GAINS` and `CCMBLOCK/CCM_MATRIX`; the engine
+  writes both spellings. The functional values must be folded into the
+  surviving sink (`DEMOSAICCCMBLOCK/W` for fused demosaic+CCM,
+  `DemosaicBlock/w` when WB is folded without a fused CCM), and missing-sink
+  writes are filtered once at build time instead of warning every frame.
 - `ACameraDevice: error 4` (`ERROR_CAMERA_DEVICE`) — fatal camera-device
   callback. The callback currently only logs; the app must close and reopen
   the session on the main loop, otherwise capture stays dead.
@@ -230,7 +230,8 @@ fixed as part of this perf study, not silenced.
 The suggested path does **not** exist in the current graph as a literal tensor:
 
 - `BayerWbBlock::output_tensors()` returns only `BayerWbBlock/frame`.
-- `BayerWbBlock::extra_inputs()` declares `BayerWbBlock/gains`, `/zero`, `/one`.
+- `BayerWbBlock::extra_inputs()` declares `BAYERWBBLOCK/BAYER_GAINS`, `/zero`,
+  `/one` (with `BayerWbBlock/gains` as a legacy alias).
   `BayerWbBlock/wb_applied` is an internal node, not a graph output.
 - The controller does not read a WB-block output. It reads the pre-WB stats tap
   `aux_hook_src/out` (placed after BLC, before LSC/WB/demosaic), so its channel
@@ -248,10 +249,10 @@ The intended *functional* path is present, though:
    explicit `ccm_matrix` / `bayer_gains`, so these controller values are the
    source for the next frame.
 4. The engine maps `[R,G,B]` gains to CFA plane order with
-   `bayer_planes::gains_by_plane(bayer_pattern)` and, when `BayerWbBlock/gains`
-   is absent from the converted session, folds them plus the controller CCM into
-   the surviving `DemosaicCcmBlock/w` (or `DemosaicBlock/w`, or as a last resort
-   `CcmBlock_ccm/matrix`). That fused 3x4 tensor is the "correspondent CCM
+   `bayer_planes::gains_by_plane(bayer_pattern)` and, when the canonical WB
+   tensor is absent from the converted session, folds them plus the controller
+   CCM into the surviving `DEMOSAICCCMBLOCK/W` (or `DemosaicBlock/w`, or as a last
+   resort `CCMBLOCK/CCM_MATRIX`). That fused 3x4 tensor is the "correspondent CCM
    tensor value" consumed by the next inference.
 
 So: no WB metadata output tensor, but the controller already owns the WB/CCM
@@ -314,22 +315,23 @@ does not run every profile.
 
 ## Fused WB is intentional, not a missing stage
 
-The fused `DemosaicCcmBlock` already has runtime extra inputs `/w` and `/b`.
-`/w` is the whole `CCM × demosaic × WB` matrix, so WB is a column scale on it,
-not a second dispatch. `profile_builder` now omits `BayerWbBlock` whenever the
-fused demosaic+CCM op is enabled; `wb_into_demosaic` is kept as a compatibility
-field but no longer controls block presence. The primitive chain keeps the
-separate block. `DemosaicCcmBlock::fuse_weights_ext()` is the explicit
-implementation of the algebra, and `set_extra_inputs()` writes the
-already-normalized form because the fused RAW head has divided by `sensor_max`.
+The fused `DemosaicCcmBlock` already has canonical runtime inputs
+`DEMOSAICCCMBLOCK/W` and `DEMOSAICCCMBLOCK/B`. `W` is the whole
+`CCM × demosaic × WB` matrix, so WB is a column scale on it, not a second
+dispatch. `profile_builder` now omits `BayerWbBlock` whenever the fused
+demosaic+CCM op is enabled; `wb_into_demosaic` is kept as a compatibility field
+but no longer controls block presence. The primitive chain keeps the separate
+block. `DemosaicCcmBlock::fuse_weights_ext()` is the explicit implementation of
+the algebra, and `set_extra_inputs()` writes the already-normalized form because
+the fused RAW head has divided by `sensor_max`.
 
-The name `w` is intentionally generic because it is not a WB gain vector. The
-logical 3A name remains `BayerWbBlock/gains`; the engine always attempts that
-write first and falls back to the fused sink. A repository-wide rename
-(`BayerWbBlock/wb_gain`, unified suffixes for demosaic, CCM, tone, and shader
-bindings) is recorded as a P3 follow-up in `docs/overview/ROADMAP.md`. Shared
-Rust constants for the current names were tried and removed: the strings are
-simple, and the rename belongs in the coordinated follow-up.
+The name `W` is intentionally generic because it is not a WB gain vector. The
+logical 3A name is now `BAYERWBBLOCK/BAYER_GAINS`, with `BayerWbBlock/gains` as a
+legacy alias; the engine attempts both writes and falls back to the fused sink.
+A repository-wide rename of unrelated suffixes (demosaic primitive, tone,
+shader bindings) remains a separate follow-up. See
+`docs/isp/20261126-p3-runtime-tensor-names.md` for the coordinated WB/CCM
+contract.
 
 The ignored `probe_wb_fused` test previously set `wb_into_demosaic: true` on
 both arms, so it compared a frame with itself. It now disables `demosaic_ccm`

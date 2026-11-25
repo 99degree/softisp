@@ -5,6 +5,7 @@
 
 use crate::onnx::proto::Proto;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
+use crate::tensor_names;
 
 /// CcmBlock — Color Correction Matrix via per-channel Conv(1×1).
 ///
@@ -156,6 +157,8 @@ impl IspBlock for CcmBlock {
     }
     fn nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
+        let matrix = tensor_names::ccm_matrix_name(&self.instance);
+        let bias = tensor_names::ccm_bias_name(&self.instance);
         if self.opset_mode() == BlockOpsetMode::MnnIspMin {
             // One `isp.ccm` dispatch instead of Conv(1x1) + Clip. The matrix
             // arrives at binding 5 as a runtime tensor, which is the same
@@ -170,7 +173,7 @@ impl IspBlock for CcmBlock {
                 return vec![Proto::node_with_domain(
                     "isp.ccm",
                     "isp",
-                    &[&self.input_source, &format!("{}/matrix", ns)],
+                    &[&self.input_source, &matrix],
                     &[&self.frame_tensor],
                     &[Proto::attribute_int("elementwise", 1)],
                 )];
@@ -179,11 +182,7 @@ impl IspBlock for CcmBlock {
         vec![
             Proto::node(
                 "Conv",
-                &[
-                    &self.input_source,
-                    &format!("{}/matrix", ns),
-                    &format!("{}/bias", ns),
-                ],
+                &[&self.input_source, &matrix, &bias],
                 &[&format!("{}/applied", ns)],
                 &[
                     Proto::attribute_ints("kernel_shape", &[1, 1]),
@@ -233,11 +232,15 @@ impl IspBlock for CcmBlock {
         let ns = self.tensor_ns();
         vec![
             (
-                format!("{}/matrix", ns).to_string(),
+                tensor_names::ccm_matrix_name(&self.instance),
                 1,
                 vec![self.out_ch, self.in_ch, 1, 1],
             ),
-            (format!("{}/bias", ns).to_string(), 1, vec![self.out_ch]),
+            (
+                tensor_names::ccm_bias_name(&self.instance),
+                1,
+                vec![self.out_ch],
+            ),
             (format!("{}/zero", ns).to_string(), 1, vec![]),
             (format!("{}/one", ns).to_string(), 1, vec![]),
         ]
@@ -248,14 +251,14 @@ impl IspBlock for CcmBlock {
         vec![
             // Conv weights [out_ch, in_ch, 1, 1] — row-major.
             (
-                format!("{}/matrix", ns).to_string(),
+                tensor_names::ccm_matrix_name(&self.instance),
                 self.matrix
                     .iter()
                     .flat_map(|v| v.to_ne_bytes())
                     .collect::<Vec<u8>>(),
             ),
             (
-                format!("{}/bias", ns).to_string(),
+                tensor_names::ccm_bias_name(&self.instance),
                 self.bias
                     .iter()
                     .flat_map(|v| v.to_ne_bytes())
@@ -315,6 +318,15 @@ mod tests {
     #[test]
     fn test_ccm_extra_inputs() {
         let b = CcmBlock::new();
-        assert!(!b.extra_inputs().is_empty());
+        let extra = b.extra_inputs();
+        assert_eq!(extra[0].0, tensor_names::CCM_MATRIX);
+        assert_eq!(extra[1].0, tensor_names::CCM_BIAS);
+
+        let production = CcmBlock::with_instance("ccm");
+        assert_eq!(production.extra_inputs()[0].0, tensor_names::CCM_MATRIX);
+
+        let other = CcmBlock::with_instance("lsc");
+        assert_eq!(other.extra_inputs()[0].0, "CcmBlock_lsc/matrix");
+        assert_eq!(other.extra_inputs()[1].0, "CcmBlock_lsc/bias");
     }
 }

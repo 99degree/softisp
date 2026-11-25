@@ -121,6 +121,7 @@ type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 use crate::controller::IspController;
 use crate::engine::{IspEngine, OutputFormat, ProcessParams};
 use crate::pipeline::{ExternalBuffer, FramePhaseTimings, IspAuxOutput, IspBlock, IspFrame};
+use crate::tensor_names;
 use crate::upload_cache::UploadCache;
 use cam_types::{FrameFormat, ToneParams};
 
@@ -1003,7 +1004,7 @@ impl MnnEngine {
         }
         drop(defaults);
 
-        // DemosaicCcmBlock/w [3,4,1,1] — fused CCM × demosaic weights
+        // DEMOSAICCCMBLOCK/W [3,4,1,1] — fused CCM × demosaic weights
         //
         // The demosaic operation extracts 2×2 Bayer quadrants into 3 RGB
         // output channels.  The weights depend on the sensor's Bayer pattern:
@@ -1040,13 +1041,16 @@ impl MnnEngine {
         // fused demosaic+CCM renames both the demosaic and CCM tensors, while a
         // primitive chain keeps them separate, and either may omit BayerWbBlock.
         //
-        //   BayerWbBlock/gains present  -> write gains there, fold nothing.
-        //   DemosaicCcmBlock/w present  -> fold gains into the fused 3x4 matrix.
-        //   DemosaicBlock/w present     -> fold gains into its 3x4 columns.
-        //   CcmBlock_ccm/matrix only    -> fold a per-colour gain into CCM.
+        //   BAYERWBBLOCK/BAYER_GAINS present -> write gains there, fold nothing.
+        //   DEMOSAICCCMBLOCK/W present       -> fold gains into the fused 3x4 matrix.
+        //   DemosaicBlock/w present          -> fold gains into its 3x4 columns.
+        //   CCMBLOCK/CCM_MATRIX only         -> fold a per-colour gain into CCM.
+        // Legacy aliases are accepted so already-converted models keep loading.
         let wb_gains: [f32; 4] = bayer.copied().unwrap_or([1.0; 4]);
-        let wb_folded = find(pool, "BayerWbBlock/gains").is_none();
-        let fused_ccm_sink = find(pool, "DemosaicCcmBlock/w").is_some();
+        let wb_folded =
+            tensor_names::find_first(pool, &tensor_names::BAYER_WB_GAINS_ALIASES).is_none();
+        let fused_ccm_sink =
+            tensor_names::find_first(pool, &tensor_names::DEMOSAIC_CCM_W_ALIASES).is_some();
         let primitive_demosaic_sink = find(pool, "DemosaicBlock/w").is_some();
         let ccm_base: [f32; 9] = ccm
             .copied()
@@ -1086,15 +1090,19 @@ impl MnnEngine {
                     };
                 }
             }
-            write_f32_array(&mut pending, cache, "DemosaicCcmBlock/w", &fused);
-            // DemosaicCcmBlock/b [3] — CCM bias, plus tone brightness when the
+            for name in tensor_names::DEMOSAIC_CCM_W_ALIASES {
+                write_f32_array(&mut pending, cache, name, &fused);
+            }
+            // DEMOSAICCCMBLOCK/B [3] — CCM bias, plus tone brightness when the
             // tone stage is not there to add it itself.
             let demosaic_bias = if tone_stage_present {
                 [0.0f32; 3]
             } else {
                 [tone.brightness; 3]
             };
-            write_f32_array(&mut pending, cache, "DemosaicCcmBlock/b", &demosaic_bias);
+            for name in tensor_names::DEMOSAIC_CCM_B_ALIASES {
+                write_f32_array(&mut pending, cache, name, &demosaic_bias);
+            }
         }
 
         // ── Coefficient buffers for the fused isp.* ops ──
@@ -1166,12 +1174,14 @@ impl MnnEngine {
         // so pass 1.0 here to make that encode an identity. Zero would be worse
         // (`pow(x, 0) == 1`, a white frame), hence the explicit neutral value.
         write_f32(&mut pending, "DisplayBlock/gamma", 1.0);
-        // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains.
-        // Written unconditionally; the flush below drops names this session does
-        // not have. When the block is absent the gains are folded into whichever
-        // demosaic/CCM tensor exists instead, so 3A feedback still reaches the
-        // picture.
-        write_f32_array(&mut pending, cache, "BayerWbBlock/gains", &wb_gains);
+        // BAYERWBBLOCK/BAYER_GAINS [1,4,1,1] — white balance per-channel gains.
+        // Written under both the canonical and legacy names; the flush below
+        // drops names this session does not have. When the block is absent the
+        // gains are folded into whichever demosaic/CCM tensor exists instead,
+        // so 3A feedback still reaches the picture.
+        for name in tensor_names::BAYER_WB_GAINS_ALIASES {
+            write_f32_array(&mut pending, cache, name, &wb_gains);
+        }
         // DemosaicBlock/w + b [3,4,1,1]/[3] — production demosaic conv weights
         // (depend on the sensor Bayer pattern). When WB has no block of its own
         // and no fused demosaic+CCM exists, its per-plane scale belongs in these
@@ -1187,10 +1197,10 @@ impl MnnEngine {
         }
         write_f32_array(&mut pending, cache, "DemosaicBlock/w", &demo_wb);
         write_f32_array(&mut pending, cache, "DemosaicBlock/b", &[0.0f32; 3]);
-        // CcmBlock_ccm/matrix [3,3]. Last-resort fold: only when neither
+        // CCMBLOCK/CCM_MATRIX [3,3]. Last-resort fold: only when neither
         // demosaic sink exists. Each output colour's rows from the demosaic
         // table touch same-colour sites, so their weighted WB gain is the right
-        // per-colour scale for the CCM column.
+        // per-colour scale for the CCM column. Legacy instances are written too.
         let mut ccm_mat = ccm_base;
         if wb_folded && !fused_ccm_sink && !primitive_demosaic_sink {
             for i in 0..3 {
@@ -1208,7 +1218,9 @@ impl MnnEngine {
                 }
             }
         }
-        write_f32_array(&mut pending, cache, "CcmBlock_ccm/matrix", &ccm_mat);
+        for name in tensor_names::ccm_matrix_aliases("ccm") {
+            write_f32_array(&mut pending, cache, &name, &ccm_mat);
+        }
         // ToneBlock/contrast [1]
         write_f32(&mut pending, "ToneBlock/contrast", tone.contrast);
         // ToneBlock/brightness [1]
@@ -1765,7 +1777,7 @@ impl IspEngine for MnnEngine {
                 ))?;
             // Resolve the frame input by NAME: getSessionInput(nullptr) returns
             // the alphabetically-first input, which is a runtime-fed weight
-            // tensor in multi-input models (e.g. CcmBlock_ccm/matrix <
+            // tensor in multi-input models (e.g. CCMBLOCK/CCM_MATRIX <
             // RawInputPackedBlock/frame), and reading ITS dims would misclassify
             // the input convention.
             let frame_t = interp

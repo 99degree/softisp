@@ -836,8 +836,9 @@ fn write_markdown(params: &[DocParam], tensors: &[DocTensor], path: &Path) {
     md.push_str("  block's parameter exceeds its activation threshold.\n");
     md.push_str("- **Shape convention**: `scalar` = rank-0 tensor; `[N]` = 1D; `[H,W]` = 2D\n");
     md.push_str("- **Data type**: All runtime params are FLOAT (32-bit).\n");
+    md.push_str("- **Tensor naming**: canonical names follow `docs/reference/TensorNames.java`;\n");
     md.push_str(
-        "- **Tensor naming**: `{Namespace}/{suffix}`. Namespace = block's `tensor_ns()`.\n",
+        "  WB/CCM runtime sinks also accept their legacy `{Namespace}/{suffix}` aliases.\n",
     );
     md.push_str("- **Dynamic dims**: `-1` denotes dynamic (H/W) resolved at inference time.\n");
 

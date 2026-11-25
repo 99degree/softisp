@@ -115,6 +115,10 @@
   durations, and `probe_4k_perf` prints the visible split with a focused
   `perf_critical_path` case. See
   `docs/isp/20261126-critical-path-instrumentation.md`.
+- **P3 WB/CCM tensor names normalized** (2026-11-26): canonical registry names
+  are emitted by the WB/CCM blocks, with legacy aliases accepted by `MnnEngine`.
+  Verified with 851 rectifier / 886 real-MNN tests and three ignored MNN probes;
+  see `docs/isp/20261126-p3-runtime-tensor-names.md`.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
@@ -599,26 +603,26 @@ New crates added to the workspace:
 - JNI frontend wired to android-app crate
 - ANativeWindow frontend wired to display surface
 
-### P3 — Follow-up: unified runtime tensor naming
+### P3 — Follow-up: unified runtime tensor naming ✅ (landed 2026-11-26)
 
-- **Survey and normalize `extra_inputs()` tensor suffixes across all blocks.**
-  The WB path currently has three names for one decision:
-  `BayerWbBlock/gains` is the logical 3A input, `DemosaicCcmBlock/w` is the
-  fused coefficient matrix that actually consumes it, and callers writing
-  `ProcessParams::bayer_gains` use a third spelling. Keep the current names for
-  this perf/WB work; do the rename as one atomic follow-up with compatibility
-  aliases so existing MNN models and probes keep loading.
-- **Use `docs/reference/TensorNames.java` as the canonical naming reference.**
-  It already defines `BAYERWBBLOCK/BAYER_GAINS` for the logical `[4]` FLOAT WB
-  gains and `DEMOSAICCCMBLOCK/W` / `DEMOSAICCCMBLOCK/B` for the fused matrix and
-  bias. That supports the user's request for a semantic WB name, but points to
-  `BAYER_GAINS` (or `AWB_GAINS` elsewhere) rather than inventing `wb_gain`, and
-  it confirms that `W` is intentionally generic: it is the fused demosaic+CCM
-  weight matrix, not a WB gain vector. A future Rust rename should converge on
-  that registry, including `DemosaicBlock/w`, `CcmBlock_ccm/matrix`, shader
-  bindings, `RUNTIME_PARAMS.md`, and the ignored `probe_wb_fused` comparison.
-  The Java file is generated from `TensorNames.kt`; if the registry itself must
-  change, update the Kotlin source and regenerate the Java wrapper.
+- **WB/CCM runtime sinks converge on `docs/reference/TensorNames.java`.**
+  `cam_isp::tensor_names` is the single Rust mirror of the registry subset.
+  Blocks now emit `BAYERWBBLOCK/BAYER_GAINS`, `DEMOSAICCCMBLOCK/W`,
+  `DEMOSAICCCMBLOCK/B`, `CCMBLOCK/CCM_MATRIX`, and `CCMBLOCK/CCM_BIAS`; the
+  engine detects sink presence and writes values under both canonical and
+  legacy names. Existing MNN models and probes therefore keep loading. Details
+  and explicit deferrals are in `docs/isp/20261126-p3-runtime-tensor-names.md`.
+- **Intentionally deferred:** `DemosaicBlock/w` / `b` have no registry entry;
+  `bayer_proc` and controller-model `awb.gains*` are separate namespaces;
+  GLSL/C++ uniforms are positional bindings; `ProcessParams` field names and a
+  repo-wide suffix normalization across unrelated blocks are separate changes.
+  The Java registry is generated from `TensorNames.kt`; if the registry itself
+  must change, update the Kotlin source and regenerate the Java wrapper.
+- **Verification:** `cargo fmt --all -- --check`, canonical clippy for `cam-isp`
+  with `rectifier` and `rectifier mnn`, 851 rectifier / 886 real-MNN hermetic
+  tests, and the ignored `probe_isp_ccm_bindings`, `probe_wb_fused`, and
+  `probe_isp_contract` MNN probes are clean. `RUNTIME_PARAMS.md`,
+  `BAYER_WB_DESIGN.md`, and the perf-phase findings were updated with aliases.
 
 ## Build & Test
 

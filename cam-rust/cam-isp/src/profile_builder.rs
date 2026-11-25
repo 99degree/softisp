@@ -380,7 +380,7 @@ impl PipelineProfile {
         // The fused demosaic+CCM op already multiplies the CFA quad by a 3x4
         // matrix, so per-plane WB is a scale on that matrix's columns. Whenever
         // that op is present, do not emit a separate BayerWbBlock: the engine
-        // folds the controller gains into `DemosaicCcmBlock/w` instead.
+        // folds the controller gains into `DEMOSAICCCMBLOCK/W` instead.
         // `wb_into_demosaic` is kept for compatibility but is not what decides
         // block presence — a fused chain without the allow bit must still be
         // able to apply WB.

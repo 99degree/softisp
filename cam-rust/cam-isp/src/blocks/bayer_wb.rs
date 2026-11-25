@@ -5,6 +5,7 @@
 
 use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
+use crate::tensor_names;
 
 /// BayerWbBlock — per-channel white balance gain for Bayer data.
 ///
@@ -132,7 +133,7 @@ impl IspBlock for BayerWbBlock {
         vec![
             Proto::node(
                 "Mul",
-                &[&self.input_source, &format!("{}/gains", ns)],
+                &[&self.input_source, tensor_names::BAYER_WB_GAINS],
                 &[&format!("{}/wb_applied", ns)],
                 &[],
             ),
@@ -158,7 +159,11 @@ impl IspBlock for BayerWbBlock {
         }
         let ns = self.tensor_ns();
         vec![
-            (format!("{}/gains", ns).to_string(), 1, vec![1, 4, 1, 1]),
+            (
+                tensor_names::BAYER_WB_GAINS.to_string(),
+                1,
+                vec![1, 4, 1, 1],
+            ),
             (format!("{}/zero", ns).to_string(), 1, vec![]),
             (format!("{}/one", ns).to_string(), 1, vec![]),
         ]
@@ -171,7 +176,7 @@ impl IspBlock for BayerWbBlock {
         let ns = self.tensor_ns();
         vec![
             (
-                format!("{}/gains", ns).to_string(),
+                tensor_names::BAYER_WB_GAINS.to_string(),
                 self.gains.iter().flat_map(|v| v.to_ne_bytes()).collect(),
             ),
             (
@@ -211,6 +216,8 @@ mod tests {
         let nodes = b.nodes();
         // Non-identity gains → Mul + Clip = 2 nodes
         assert_eq!(nodes.len(), 2);
+        let mul = String::from_utf8_lossy(&nodes[0]);
+        assert!(mul.contains(tensor_names::BAYER_WB_GAINS));
     }
 
     #[test]
@@ -247,6 +254,7 @@ mod tests {
         let b = BayerWbBlock::new().with_gains(1.2, 1.0, 1.0, 0.8);
         let extra = b.extra_inputs();
         assert_eq!(extra.len(), 3);
+        assert_eq!(extra[0].0, tensor_names::BAYER_WB_GAINS);
         assert_eq!(extra[0].2, vec![1, 4, 1, 1]);
     }
 

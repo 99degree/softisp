@@ -66,18 +66,19 @@ The runtime inputs are:
 
 | Tensor | Shape | Meaning |
 |---|---|---|
-| `BayerWbBlock/gains` | `[1,4,1,1]` | per-plane gains |
+| `BAYERWBBLOCK/BAYER_GAINS` | `[1,4,1,1]` | per-plane gains |
 | `BayerWbBlock/zero` | scalar | lower clip bound |
 | `BayerWbBlock/one` | scalar | upper clip bound |
 
 The graph is `Mul(input, gains) -> Clip(0, 1) -> frame`.
 
-`BayerWbBlock/gains` is the stable **logical** name for the 3A decision. The
-engine always attempts that write first, even when the block was fused away,
-then falls back to a physical sink. `DemosaicCcmBlock/w` is not a WB gain: it is
-the whole `CCM × demosaic × WB` matrix the shader consumes. Renaming these
-suffixes to `wb_gain` would be clearer but must be done across every block and
-shader binding, so it is tracked as a P3 follow-up in `docs/overview/ROADMAP.md`.
+`BAYERWBBLOCK/BAYER_GAINS` is the canonical **logical** name for the 3A decision,
+with `BayerWbBlock/gains` kept as a legacy alias. The engine attempts the gains
+write under both names, even when the block was fused away, then falls back to a
+physical sink. `DEMOSAICCCMBLOCK/W` is not a WB gain: it is the whole
+`CCM × demosaic × WB` matrix the shader consumes. See
+`docs/isp/20261126-p3-runtime-tensor-names.md` for the alias contract and the
+names intentionally left unchanged.
 
 ### Identity special case
 
@@ -89,7 +90,7 @@ Primitive profiles take this path: the profile builder constructs
 `BayerWbBlock::new()` with identity gains. The live gains are not baked into
 the graph; they are written from the controller every frame. The FUSED profile
 goes one step further and omits `BayerWbBlock` entirely (see §5), so a converted
-production session usually has **no** `BayerWbBlock/gains` tensor. That absence
+production session usually has **no** WB-gain tensor. That absence
 is the signal that the gains must be folded into a surviving downstream tensor.
 
 ## 4. Where the live gains come from
@@ -123,7 +124,8 @@ carry it.
 ## 5. Folding WB into the fused demosaic+CCM
 
 The user's design intuition is correct: on the fused path `BayerWbBlock` is
-**not needed**, because `DemosaicCcmBlock` already has runtime extra inputs
+**not needed**, because `DemosaicCcmBlock` already exposes the canonical
+`DEMOSAICCCMBLOCK/W` and `DEMOSAICCCMBLOCK/B` runtime inputs
 that can carry the white-balance decision. Its `Conv` weight is `[3,4]`, i.e.
 one column per CFA plane, so a per-plane WB gain is exactly a column scale:
 
@@ -153,10 +155,10 @@ removes blocks:
 
 | Session inputs | Where WB goes |
 |---|---|
-| `BayerWbBlock/gains` exists | write gains there; fold nothing |
-| `DemosaicCcmBlock/w` exists | fold into the fused 3×4 weights |
+| `BAYERWBBLOCK/BAYER_GAINS` (or its legacy alias) exists | write gains there; fold nothing |
+| `DEMOSAICCCMBLOCK/W` (or its legacy alias) exists | fold into the fused 3×4 weights |
 | `DemosaicBlock/w` exists | fold into the primitive demosaic columns |
-| only `CcmBlock_ccm/matrix` remains | last-resort per-colour scale on CCM |
+| only `CCMBLOCK/CCM_MATRIX` (or its legacy alias) remains | last-resort per-colour scale on CCM |
 
 Names that are absent are logged once per build at debug level. They are not
 errors: they say which primitive was merged away. Logging them every frame was
@@ -184,7 +186,8 @@ silence them, but to:
 - AWB statistics must be read from the **pre-WB** tap.
 - Gains must be expanded from `[R,G,B]` to plane order using the reported
   sensor pattern.
-- When a real `BayerWbBlock/gains` input exists, do not also fold WB into
+- When a real `BAYERWBBLOCK/BAYER_GAINS` input exists (including the legacy
+  alias), do not also fold WB into
   demosaic/CCM — that would apply it twice.
 - When it does not exist, WB must be folded somewhere; dropping it leaves a
   permanent cast.
