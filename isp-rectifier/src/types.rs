@@ -42,7 +42,12 @@ pub struct FrameMetadata {
 
 impl FrameMetadata {
     /// Convert to feature vector for model input (267 dimensions)
-    /// Layout: histogram(256) + cct(1) + wb_gains(3) + ae(2) + af(2) + other(3) = 267
+    /// Layout: histogram(256) + metadata(52) = 308
+    ///
+    /// The pre-trained fusedispcontroller_* models expect a 52-dimensional
+    /// metadata vector (histogram is always 256). This mirrors the Python
+    /// teacher-training pipeline (gen_mock.py, ISPLightModel with
+    /// metadata_dim=52).
     pub fn to_feature_vector(&self) -> (Vec<f32>, Vec<f32>) {
         // Histogram: normalize to fixed sum
         let mut histogram: Vec<f32> = self.histogram.iter().map(|&x| x as f32).collect();
@@ -53,20 +58,29 @@ impl FrameMetadata {
             }
         }
 
-        // Metadata features (11 dims)
-        let metadata = vec![
-            self.cct / 10000.0, // Normalized CCT
-            self.wb_gains[0],
-            self.wb_gains[1],
-            self.wb_gains[2],      // WB gains
-            self.ae.exposure_time, // Exposure time
-            self.ae.iso_gain,      // ISO gain
-            self.af.position,      // Focus position
-            self.af.sharpness,     // Sharpness
-            self.brightness,       // Brightness
-            self.contrast,         // Contrast
-            self.noise_level,      // Noise level
-        ];
+        // Metadata features (52 dims)
+        // [0]  CCT / 10000.0
+        // [1-3] WB gains [R, G, B]
+        // [4]  exposure_time (clamped to [0,1])
+        // [5]  ISO gain normalized (log2(iso)/14)
+        // [6]  AF position
+        // [7]  AF sharpness
+        // [8]  brightness
+        // [9]  contrast
+        // [10] noise_level / 0.3
+        // [11-51] reserved (zeros for forward compatibility)
+        let mut metadata = vec![0.0f32; 52];
+        metadata[0] = self.cct / 10000.0; // Normalized CCT
+        metadata[1] = self.wb_gains[0];
+        metadata[2] = self.wb_gains[1];
+        metadata[3] = self.wb_gains[2]; // WB gains
+        metadata[4] = self.ae.exposure_time.clamp(0.0, 1.0); // Exposure time
+        metadata[5] = (self.ae.iso_gain.log2() / 14.0).clamp(0.0, 1.0); // ISO gain
+        metadata[6] = self.af.position; // Focus position
+        metadata[7] = self.af.sharpness; // Sharpness
+        metadata[8] = self.brightness; // Brightness
+        metadata[9] = self.contrast; // Contrast
+        metadata[10] = (self.noise_level / 0.3).clamp(0.0, 1.0); // Noise level
 
         (histogram, metadata)
     }
@@ -288,7 +302,7 @@ mod tests {
 
         let (hist, meta) = metadata.to_feature_vector();
         assert_eq!(hist.len(), 256);
-        assert_eq!(meta.len(), 11);
+        assert_eq!(meta.len(), 52);
 
         // Check metadata values
         assert!((meta[0] - 0.55).abs() < 0.01); // CCT normalized

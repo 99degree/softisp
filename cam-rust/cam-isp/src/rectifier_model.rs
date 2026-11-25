@@ -60,7 +60,7 @@ pub fn generate_rectifier_model() -> Vec<u8> {
         Proto::tensor_proto_float("bias_ccm", &[9], &bias_ccm),
         Proto::tensor_proto_float("weights_tone", &[256, 7], &weights_tone),
         Proto::tensor_proto_float("bias_tone", &[7], &bias_tone),
-        Proto::tensor_proto_float("weights_zoom", &[11, 1], &weights_zoom),
+        Proto::tensor_proto_float("weights_zoom", &[52, 1], &weights_zoom),
         Proto::tensor_proto_float("bias_zoom", &[1], &bias_zoom),
     ];
 
@@ -73,7 +73,7 @@ pub fn generate_rectifier_model() -> Vec<u8> {
         ),
         Proto::value_info(
             "meta",
-            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(11)],
+            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(52)],
             1,
         ),
     ];
@@ -173,9 +173,9 @@ fn create_tone_bias() -> Vec<f32> {
     (0..7).map(|i| i as f32 / 6.0).collect()
 }
 
-/// Zoom weights: 11→1. Uses metadata[0] (CCT).
+/// Zoom weights: 52→1. Uses metadata[0] (CCT).
 fn create_zoom_weights() -> Vec<f32> {
-    vec![0.0f32; 11]
+    vec![0.0f32; 52]
 }
 
 /// Zoom bias: default 1.0
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn test_zoom_weights_size() {
         let weights = create_zoom_weights();
-        assert_eq!(weights.len(), 11);
+        assert_eq!(weights.len(), 52);
     }
 
     #[test]

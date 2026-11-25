@@ -67,7 +67,7 @@ mod tests {
 
         let (hist, meta) = metadata.to_feature_vector();
         assert_eq!(hist.len(), 256);
-        assert_eq!(meta.len(), 11);
+        assert_eq!(meta.len(), 52);
     }
 
     #[test]

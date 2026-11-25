@@ -20,9 +20,9 @@ impl TractInference {
     }
 
     pub fn run(&mut self, histogram: &[f32], metadata: &[f32]) -> TractResult<ISPOptimizedParams> {
-        // Create tensors
+        // Create tensors — model expects hist [1,256] + meta [1,52]
         let hist_tensor = Tensor::from_shape(&[1, 256], histogram)?.into();
-        let meta_tensor = Tensor::from_shape(&[1, 11], metadata)?.into();
+        let meta_tensor = Tensor::from_shape(&[1, 52], metadata)?.into();
 
         // Run
         let outputs = self.model.run(tvec!(hist_tensor, meta_tensor))?;
@@ -55,7 +55,7 @@ impl TractInference {
         let batch_size = histograms.len() / 256;
 
         let hist_tensor = Tensor::from_shape(&[batch_size, 256], histograms)?.into();
-        let meta_tensor = Tensor::from_shape(&[batch_size, 11], metadatas)?.into();
+        let meta_tensor = Tensor::from_shape(&[batch_size, 52], metadatas)?.into();
 
         let outputs = self.model.run(tvec!(hist_tensor, meta_tensor))?;
 
