@@ -235,12 +235,20 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   The WB path currently has three names for one decision:
   `BayerWbBlock/gains` is the logical 3A input, `DemosaicCcmBlock/w` is the
   fused coefficient matrix that actually consumes it, and callers writing
-  `ProcessParams::bayer_gains` use a third spelling. The user-proposed
-  `BayerWbBlock/wb_gain` is clearer than `gains`, but a repository-wide rename
-  must also cover `DemosaicBlock/w`, `CcmBlock_ccm/matrix`, shader bindings,
-  `RUNTIME_PARAMS.md`, and the ignored `probe_wb_fused` comparison. Keep the
-  current names for this perf/WB work; do the rename as one atomic follow-up
-  with compatibility aliases so existing MNN models and probes keep loading.
+  `ProcessParams::bayer_gains` use a third spelling. Keep the current names for
+  this perf/WB work; do the rename as one atomic follow-up with compatibility
+  aliases so existing MNN models and probes keep loading.
+- **Use `docs/reference/TensorNames.java` as the canonical naming reference.**
+  It already defines `BAYERWBBLOCK/BAYER_GAINS` for the logical `[4]` FLOAT WB
+  gains and `DEMOSAICCCMBLOCK/W` / `DEMOSAICCCMBLOCK/B` for the fused matrix and
+  bias. That supports the user's request for a semantic WB name, but points to
+  `BAYER_GAINS` (or `AWB_GAINS` elsewhere) rather than inventing `wb_gain`, and
+  it confirms that `W` is intentionally generic: it is the fused demosaic+CCM
+  weight matrix, not a WB gain vector. A future Rust rename should converge on
+  that registry, including `DemosaicBlock/w`, `CcmBlock_ccm/matrix`, shader
+  bindings, `RUNTIME_PARAMS.md`, and the ignored `probe_wb_fused` comparison.
+  The Java file is generated from `TensorNames.kt`; if the registry itself must
+  change, update the Kotlin source and regenerate the Java wrapper.
 
 ## Build & Test
 
@@ -260,4 +268,5 @@ cargo run --example camera_isp -p cam-isp --features mnn -- --width 640 --height
 | `cam-isp/src/engine.rs` | `IspEngine` trait (`as_any` now required) |
 | `cam-isp/src/deshake/` | `DeshakeEngine` + GPU pipeline |
 | `cam-isp/src/blocks/` | 52 ISP block implementations |
-| `docs/ROADMAP.md` | This document |
+| `docs/reference/TensorNames.java` | Canonical runtime tensor-name registry for future renames |
+| `docs/overview/ROADMAP.md` | This document |
