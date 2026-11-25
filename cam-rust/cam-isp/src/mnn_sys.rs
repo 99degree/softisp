@@ -336,6 +336,13 @@ impl MnnInterpreterSafe {
         self.inner
     }
 
+    /// Consume this handle and return the raw pointer without dropping it.
+    pub fn into_raw(self) -> *mut c_void {
+        let ptr = self.inner;
+        std::mem::forget(self);
+        ptr
+    }
+
     /// Create a session with the given backend.
     ///
     /// `fp16_storage` asks for `Precision_Normal` rather than the historical
@@ -496,6 +503,14 @@ impl MnnSessionSafe {
     /// Get raw session pointer (for C FFI calls).
     pub fn as_ptr(&self) -> *mut c_void {
         self.inner
+    }
+
+    /// Re-wrap a raw session pointer into a safe handle.
+    pub unsafe fn from_raw(ptr: *mut c_void) -> Self {
+        Self {
+            interpreter: ptr,
+            inner: ptr,
+        }
     }
 
     /// Resize the session for current input shapes.

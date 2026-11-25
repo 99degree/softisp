@@ -9,17 +9,17 @@ categories = ["embedded", "hardware-support", "image-processing"]
 keywords = ["isp", "camera", "image-processing", "onnx", "distillation"]
 
 [features]
-default = ["onnx-runtime"]
+# Default: MNN backend (APK deployment target — no tract-onnx dependency).
+# The MNN native libs (libMNNConvertDeps.so, libmnn_wrapper.a, libMNN.so,
+# libMNN_Vulkan.so) are bundled in cam-rust/lib/<abi>/ and linked by build.rs.
+# For dev/CI on hosts without MNN libs, enable `onnx-runtime` instead:
+#   cargo test -p isp-rectifier --features onnx-runtime
+default = ["mnn"]
+mnn = ["libc", "cc"]
+# Tract ONNX backend (dev/CI only, requires tract crates).
 onnx-runtime = ["tract-onnx", "tract-core", "tract-data", "tract-hir", "tract-linalg"]
 
 [dependencies]
-# ONNX Runtime via tract
-tract-onnx = { version = "0.20", features = ["default"], optional = true }
-tract-core = { version = "0.20", optional = true }
-tract-data = { version = "0.20", optional = true }
-tract-hir = { version = "0.20", optional = true }
-tract-linalg = { version = "0.20", optional = true }
-
 # Serialization (required - used by types.rs)
 serde = { version = "1.0", features = ["derive"] }
 
@@ -28,6 +28,19 @@ thiserror = "1.0"
 
 # Logging
 log = "0.4"
+
+# MNN ONNX→MNN conversion + inference (libMNNConvertDeps.so via build.rs link).
+# The actual .so is linked by cam-isp's build.rs; isp-rectifier declares the
+# feature gate only and calls the FFI through its own mnn_sys module.
+cc = { version = "1.0", optional = true }
+libc = { version = "0.2", optional = true }
+
+# ONNX Runtime via tract (optional dev/CI backend).
+tract-onnx = { version = "0.20", features = ["default"], optional = true }
+tract-core = { version = "0.20", optional = true }
+tract-data = { version = "0.20", optional = true }
+tract-hir = { version = "0.20", optional = true }
+tract-linalg = { version = "0.20", optional = true }
 
 [dev-dependencies]
 approx = "0.5"
@@ -38,3 +51,6 @@ criterion = { version = "0.5", features = ["html_reports"] }
 # `[profile.*]` in a non-root manifest — it printed
 #   "warning: profiles for the non root package will be ignored"
 # for every build — so these duplicates were dead weight.
+
+[build-dependencies]
+cc = { version = "1.0", optional = true }

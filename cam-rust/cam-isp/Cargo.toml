@@ -76,7 +76,7 @@ required-features = ["mnn"]
 mnn_buffer = []
 ort = ["dep:ort"]
 mnn = ["mnn_buffer"]
-rectifier = ["isp-rectifier"]
+rectifier = ["isp-rectifier"]   # isp-rectifier defaults to `mnn` backend
 cabi = []
 
 [dependencies.ort]
