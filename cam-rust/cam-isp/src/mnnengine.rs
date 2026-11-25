@@ -12,6 +12,7 @@
 //!   4. Read output float32 → BGRA U8
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
@@ -29,6 +30,25 @@ struct ControllerState {
     frames: u32,
     /// Auto-exposure gain, already including the histogram constraint.
     exposure_gain: f32,
+}
+
+/// Output tensor facts fixed once the session has been resized.
+///
+/// Derived in `prepare()` so `run_prepared()` does not pay for another tensor
+/// lookup, FFI shape read or packing decision on the visible path.
+#[cfg(any(feature = "mnn", test))]
+#[derive(Debug, Clone, Copy)]
+struct OutputLayout {
+    out_type: i32,
+    out_h: usize,
+    out_w: usize,
+    graph_channels: usize,
+    pixels: usize,
+    graph_elem: usize,
+    packed_u32: bool,
+    packed_display: bool,
+    is_raw_output: bool,
+    channel_mismatch: bool,
 }
 
 /// Result of the deferred statistics phase.
@@ -55,6 +75,8 @@ pub(crate) struct PreparedMeta {
     mode: InputMode,
     shape: Vec<i32>,
     output_name: String,
+    output_name_c: CString,
+    layout: OutputLayout,
     out_ptr: *mut f32,
     max_out: i32,
     buf_id: Option<usize>,
@@ -122,7 +144,7 @@ use crate::controller::IspController;
 use crate::engine::{IspEngine, OutputFormat, ProcessParams};
 use crate::pipeline::{ExternalBuffer, FramePhaseTimings, IspAuxOutput, IspBlock, IspFrame};
 use crate::tensor_names;
-use crate::upload_cache::{trace_enabled, UploadCache};
+use crate::upload_cache::{cache_enabled, trace_enabled, UploadCache};
 use cam_types::{FrameFormat, ToneParams};
 
 #[cfg(feature = "mnn")]
@@ -205,6 +227,8 @@ pub struct MnnEngine {
     /// which is a runtime-fed weight tensor in multi-input models — the frame
     /// must always be looked up by name.
     frame_input_name: Option<String>,
+    /// Same name as a `CString`, built once at `build()` for the inference FFI.
+    frame_input_c: Option<CString>,
     /// Input convention inferred from the converted model (shape + type).
     input_mode: Option<InputMode>,
     /// Whether to preserve input type (int16/uint16/float16) instead of widening to int32.
@@ -319,6 +343,7 @@ impl MnnEngine {
             model_path: None,
             model_input_type: None,
             frame_input_name: None,
+            frame_input_c: None,
             input_mode: None,
             preserve_input_type: false,
             fp16_storage: true,
@@ -345,6 +370,60 @@ impl MnnEngine {
             missing_inputs_reported: Mutex::new(HashSet::new()),
             #[cfg(feature = "mnn")]
             has_fused_display: false,
+        }
+    }
+
+    #[cfg(any(feature = "mnn", test))]
+    fn derive_output_layout(
+        shape: &[i32],
+        out_type: i32,
+        output_format: OutputFormat,
+        has_fused_display: bool,
+        target_width: u32,
+        target_height: u32,
+    ) -> OutputLayout {
+        let is_raw_output = output_format.is_raw_output();
+        let mut out_h = target_height as usize;
+        let mut out_w = target_width as usize;
+        let mut graph_channels = output_format.channel_count();
+        let mut channel_mismatch = false;
+
+        if shape.len() == 4 && shape[2] > 0 && shape[3] > 0 {
+            graph_channels = shape[1].max(1) as usize;
+            out_h = shape[2] as usize;
+            out_w = shape[3] as usize;
+            let packed_u8_tail = !is_raw_output
+                && !matches!(output_format, OutputFormat::PackedRgb)
+                && graph_channels == 1
+                && (out_type != 4 || has_fused_display);
+            let expected = if packed_u8_tail {
+                1
+            } else {
+                output_format.channel_count()
+            };
+            channel_mismatch = graph_channels != expected;
+        }
+
+        let packed_word_tail = !is_raw_output && graph_channels == 1;
+        let packed_display_by_type = packed_word_tail && out_type != 4;
+        let packed_u32 =
+            matches!(output_format, OutputFormat::PackedRgb) && matches!(out_type, 5 | 6);
+        let is_u8_format = !is_raw_output && !matches!(output_format, OutputFormat::PackedRgb);
+        let packed_display = packed_u32
+            || packed_display_by_type
+            || (has_fused_display && is_u8_format && packed_word_tail);
+
+        OutputLayout {
+            out_type,
+            out_h,
+            out_w,
+            graph_channels,
+            pixels: out_h * out_w,
+            graph_elem: if output_format.is_fp16() { 2 } else { 4 },
+            packed_u32,
+            packed_display,
+            is_raw_output,
+            channel_mismatch,
         }
     }
 
@@ -1480,9 +1559,10 @@ impl MnnEngine {
         // One upload per tensor, using the value that won. A fused/converted
         // graph legitimately lacks many primitive-sink names: warn once per
         // build (with the reason) instead of paying a file write per frame.
-        // Most queued values are build-time defaults and never change, so skip
-        // any whose exact bytes are already resident in this session.
+        // Dedup is opt-in: a reused session cannot be assumed to retain its
+        // previous tensor bytes, so the default is one write per queued value.
         let mut missing = Vec::new();
+        let dedup = cache_enabled();
         let trace = trace_enabled();
         let mut trace_lines = Vec::new();
         for (name, value) in pending {
@@ -1497,17 +1577,17 @@ impl MnnEngine {
             };
             match value {
                 PendingWrite::Scalar(val) => {
-                    let needed = cache.needs_scalar(&name, val);
+                    let needed = !dedup || cache.needs_scalar(&name, val);
                     if trace && trace_name(&name) {
                         let action = if needed { "upload" } else { "hit" };
                         trace_lines.push(format!("{name}({action})= {val:.4}"));
                     }
-                    if needed && t.upload_f32_shaped(&[1], &[val]) {
+                    if needed && t.upload_f32_shaped(&[1], &[val]) && dedup {
                         cache.record_scalar(&name, val);
                     }
                 }
                 PendingWrite::Array(vals) => {
-                    let needed = cache.needs_f32(&name, &vals);
+                    let needed = !dedup || cache.needs_f32(&name, &vals);
                     if trace && trace_name(&name) {
                         let action = if needed { "upload" } else { "hit" };
                         let shown = vals
@@ -1526,7 +1606,9 @@ impl MnnEngine {
                     // allocated with — usually zeros. Say so instead of
                     // swallowing the bool into a silently black frame.
                     if t.upload_f32(&vals) {
-                        cache.record_f32(&name, &vals);
+                        if dedup {
+                            cache.record_f32(&name, &vals);
+                        }
                     } else {
                         warn!(
                             "{name}: upload of {} f32 rejected (tensor wants a different size)",
@@ -1536,7 +1618,7 @@ impl MnnEngine {
                     cache.put_f32(name, vals);
                 }
                 PendingWrite::Raw(data) => {
-                    let needed = cache.needs_bytes(&name, &data);
+                    let needed = !dedup || cache.needs_bytes(&name, &data);
                     if trace && trace_name(&name) {
                         let action = if needed { "upload" } else { "hit" };
                         let shown = data
@@ -1552,7 +1634,9 @@ impl MnnEngine {
                         continue;
                     }
                     if t.upload_bytes(&data, 2, 32) {
-                        cache.record_bytes(&name, &data);
+                        if dedup {
+                            cache.record_bytes(&name, &data);
+                        }
                     } else {
                         warn!("default for {name} ({} B) failed to upload", data.len());
                     }
@@ -1718,6 +1802,10 @@ impl IspEngine for MnnEngine {
                     // runtime-fed weights); record the frame tensor name so the
                     // engine never relies on getSessionInput(nullptr) ordering.
                     self.frame_input_name = head.graph_input_name().map(str::to_string);
+                    self.frame_input_c = self
+                        .frame_input_name
+                        .as_deref()
+                        .and_then(|n| CString::new(n).ok());
                     let bytes = std::fs::read(p).map_err(|e| {
                         error!("Failed to read MNN model: {}", p);
                         crate::error::IspError::Io(format!("read {}: {}", p, e))
@@ -1731,6 +1819,10 @@ impl IspEngine for MnnEngine {
                     // tensor; multi-input models (runtime-fed weights) need it
                     // looked up by name, never via getSessionInput(nullptr).
                     self.frame_input_name = head.graph_input_name().map(str::to_string);
+                    self.frame_input_c = self
+                        .frame_input_name
+                        .as_deref()
+                        .and_then(|n| CString::new(n).ok());
                     let mut all: Vec<Box<dyn IspBlock>> = vec![head];
                     all.extend(aux);
                     let refs: Vec<&dyn IspBlock> = all.iter().map(|b| b.as_ref()).collect();
@@ -2171,6 +2263,29 @@ impl MnnEngine {
                 None => "DisplayBlock/frame".to_string(),
             }
         };
+        let out_tensor = interp.get_output(sess, &output_name);
+        let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
+        let out_shape = out_tensor.as_ref().map(|t| t.shape()).unwrap_or_default();
+        let layout = Self::derive_output_layout(
+            &out_shape,
+            out_type,
+            p.output_format,
+            self.has_fused_display,
+            p.target_width,
+            p.target_height,
+        );
+        if layout.channel_mismatch && !CHANNEL_MISMATCH_REPORTED.swap(true, Ordering::Relaxed) {
+            warn!(
+                "output channel mismatch: graph produced {} channels, {:?} expects {}. \
+                 The profile's `output_format` and `ProcessParams::output_format` \
+                 must agree, or every plane lands in the wrong place.",
+                layout.graph_channels,
+                p.output_format,
+                p.output_format.channel_count()
+            );
+        }
+        let output_name_c =
+            CString::new(output_name.as_str()).unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
 
         let t_prep_end = Instant::now();
         debug!(
@@ -2190,6 +2305,8 @@ impl MnnEngine {
                 mode,
                 shape,
                 output_name,
+                output_name_c,
+                layout,
                 out_ptr,
                 max_out,
                 buf_id,
@@ -2357,8 +2474,7 @@ impl MnnEngine {
             }
         }
 
-        let output_name_ptr = std::ffi::CString::new(meta.output_name.clone())
-            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+        let output_name_ptr = &meta.output_name_c;
         let (buffer_ptr, buffer_type_code, buffer_type_bits, path_str) = match mode {
             InputMode::SplitInt32 => (
                 split_scratch_i32.as_ref().unwrap().as_ptr() as *const c_void,
@@ -2407,14 +2523,8 @@ impl MnnEngine {
         let t_infer_start = Instant::now();
         let t_infer_end: Instant;
         let n: i32;
-        let frame_name_c = self
-            .frame_input_name
-            .as_deref()
-            .map(std::ffi::CString::new)
-            .transpose()
-            .ok()
-            .flatten();
-        let frame_name_ptr = frame_name_c
+        let frame_name_ptr = self
+            .frame_input_c
             .as_ref()
             .map_or(std::ptr::null(), |c| c.as_ptr());
         unsafe {
@@ -2550,58 +2660,20 @@ impl MnnEngine {
             t_infer_end - t_infer_start
         );
 
-        let out_tensor = interp.get_output(sess, &meta.output_name);
-        let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
-        let mut oh = meta.target_height as usize;
-        let mut ow = meta.target_width as usize;
-        let mut graph_channels = meta.output_format.channel_count();
-        if let Some(t) = &out_tensor {
-            let shape = t.shape();
-            if shape.len() == 4 && shape[2] > 0 && shape[3] > 0 {
-                graph_channels = shape[1].max(1) as usize;
-                oh = shape[2] as usize;
-                ow = shape[3] as usize;
-                let packed_u8_tail = !meta.output_format.is_raw_output()
-                    && !matches!(meta.output_format, OutputFormat::PackedRgb)
-                    && graph_channels == 1
-                    && (out_type != 4 || self.has_fused_display);
-                let expected = if packed_u8_tail {
-                    1
-                } else {
-                    meta.output_format.channel_count()
-                };
-                if graph_channels != expected
-                    && !CHANNEL_MISMATCH_REPORTED.swap(true, Ordering::Relaxed)
-                {
-                    warn!(
-                        "output channel mismatch: graph produced {} channels, {:?} expects {}. \
-                         The profile's `output_format` and `ProcessParams::output_format` \
-                         must agree, or every plane lands in the wrong place.",
-                        graph_channels, meta.output_format, expected
-                    );
-                }
-            }
-        }
-        let pixels = oh * ow;
-        let packed_word_tail = !meta.output_format.is_raw_output() && graph_channels == 1;
-        let packed_display_by_type = packed_word_tail && out_type != 4;
-        let packed_u32 =
-            matches!(meta.output_format, OutputFormat::PackedRgb) && matches!(out_type, 5 | 6);
-        let has_fused_display = self.has_fused_display;
-        let is_u8_format = !meta.output_format.is_raw_output()
-            && !matches!(meta.output_format, OutputFormat::PackedRgb);
-        let packed_display = packed_u32
-            || packed_display_by_type
-            || (has_fused_display && is_u8_format && packed_word_tail);
         let t_output_meta = Instant::now();
+        let layout = meta.layout;
+        let out_type = layout.out_type;
+        let oh = layout.out_h;
+        let ow = layout.out_w;
+        let graph_channels = layout.graph_channels;
 
         let n_valid = n.max(0) as usize;
-        let out_elems = n_valid.min(pixels * graph_channels);
-        let graph_elem = if meta.output_format.is_fp16() { 2 } else { 4 };
+        let out_elems = n_valid.min(layout.pixels * layout.graph_channels);
+        let graph_elem = layout.graph_elem;
         let valid_bytes = out_elems * graph_elem;
         let data_out = if meta.zero_copy {
             Vec::new()
-        } else if packed_u32 || meta.output_format.is_raw_output() || packed_display {
+        } else if layout.packed_u32 || layout.is_raw_output || layout.packed_display {
             let id = meta.buf_id.expect("pool buffer id");
             let buf = buf_guard.buffer_mut(id);
             let buf_bytes =
@@ -2628,11 +2700,11 @@ impl MnnEngine {
                     data_out.len(),
                     if meta.zero_copy {
                         "zero_copy"
-                    } else if packed_u32 {
+                    } else if layout.packed_u32 {
                         "packed_u32"
-                    } else if meta.output_format.is_raw_output() {
+                    } else if layout.is_raw_output {
                         "raw"
-                    } else if packed_display {
+                    } else if layout.packed_display {
                         "packed"
                     } else {
                         "narrow"
@@ -3043,5 +3115,49 @@ mod tests {
         assert!(!engine.stats_enabled());
         engine.set_stats_enabled(true);
         assert!(engine.stats_enabled());
+    }
+
+    #[test]
+    fn test_derive_output_layout_packed_u32() {
+        let layout = MnnEngine::derive_output_layout(
+            &[1, 1, 60, 80],
+            5,
+            OutputFormat::PackedRgb,
+            false,
+            80,
+            60,
+        );
+        assert_eq!((layout.out_h, layout.out_w), (60, 80));
+        assert_eq!((layout.graph_channels, layout.pixels), (1, 4800));
+        assert!(layout.packed_u32);
+        assert!(layout.packed_display);
+        assert!(!layout.channel_mismatch);
+    }
+
+    #[test]
+    fn test_derive_output_layout_packed_u8_tail() {
+        let layout =
+            MnnEngine::derive_output_layout(&[1, 1, 4, 8], 4, OutputFormat::Bgra, true, 8, 4);
+        assert_eq!(layout.graph_channels, 1);
+        assert!(!layout.packed_u32);
+        assert!(layout.packed_display);
+        assert!(!layout.channel_mismatch);
+        assert_eq!(layout.graph_elem, 4);
+    }
+
+    #[test]
+    fn test_derive_output_layout_raw_float_and_fallback() {
+        let raw =
+            MnnEngine::derive_output_layout(&[1, 3, 4, 8], 4, OutputFormat::FloatRgb, false, 8, 4);
+        assert_eq!(raw.graph_channels, 3);
+        assert!(raw.is_raw_output);
+        assert!(!raw.packed_display);
+        assert!(!raw.channel_mismatch);
+
+        let fallback =
+            MnnEngine::derive_output_layout(&[], 4, OutputFormat::Float16Rgb, false, 8, 4);
+        assert_eq!((fallback.out_h, fallback.out_w), (4, 8));
+        assert_eq!(fallback.graph_elem, 2);
+        assert!(!fallback.channel_mismatch);
     }
 }

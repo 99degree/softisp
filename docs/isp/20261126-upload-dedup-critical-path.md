@@ -19,8 +19,9 @@ then unconditionally uploads all of them. The working hypothesis was that
 is rewritten or the session is resized, so re-uploading an identical value buys
 nothing and puts a separate host→device transfer on the visible path before
 `runSession`. That persistence premise has already failed once on device (see
-the prior incident below), so the dedup remains a hypothesis until the marker
-A/B confirms it on reused slots.
+the prior incident below), so the dedup is now **opt-in and off by default**:
+the safe path uploads every queued tensor, and enabling dedup requires an
+explicit switch plus a reused-slot A/B check.
 
 ## Fix
 
@@ -31,10 +32,11 @@ A/B confirms it on reused slots.
 - `SessionSlot` owns the cache, so each pooled session has its own view of the
   device tensors. A cross-generation or parallel session cannot suppress
   another slot's upload.
-- `set_extra_inputs()` skips a write when the cache says the device tensor
-  already holds that exact value, and records it only after the upload call
-  succeeds. A rejected upload is retried on the next frame instead of being
-  cached as a lie.
+- `set_extra_inputs()` skips a write only when `cache_enabled()` and the cache
+  says the device tensor already holds that exact value; it records the value
+  only after the upload call succeeds. With the switch off (the default) every
+  queued value is uploaded and nothing is recorded. A rejected upload is retried
+  on the next frame instead of being cached as a lie.
 - `SessionGuard::refresh_tensors()` clears the cache: `resizeSession` throws
   away the backend buffers, so every cached value is stale at that point. The
   vignetting gain map is written directly during resize; its names are not in
@@ -42,11 +44,13 @@ A/B confirms it on reused slots.
 
 ## Expected effect
 
-Frame 1 of each session still uploads every tensor. Frames 2..N upload only
-values the controller actually changed (CCM/tone/WB/scene-dependent arrays),
-so the per-frame prefill no longer pays for constant graph weights. No pixels
-or graph semantics change: the device tensors keep the same bytes they were
-already being given.
+With dedup off, every frame uploads the full queued set — the behaviour before
+the cache was introduced — while still reusing host scratch allocations. With
+dedup explicitly enabled, frame 1 of each session uploads every tensor and
+frames 2..N upload only values the controller actually changed (CCM/tone/WB/
+scene-dependent arrays), so the per-frame prefill no longer pays for constant
+graph weights. No pixels or graph semantics change when the switch is on: the
+device tensors keep the same bytes they were already being given.
 
 ## Follow-up: host scratch pool for the coefficient arrays
 
@@ -85,8 +89,8 @@ HKT) was checked without changing source.
 
 Evidence from the log:
 
-- Upload dedup is active: steady-state `pipeline stage=tensor_assign` is
-  ~1–2 ms in this run, versus 5–36 ms in the preceding 18:17 run at the same
+- Upload dedup was active in that APK: steady-state `pipeline stage=tensor_assign`
+  is ~1–2 ms in this run, versus 5–36 ms in the preceding 18:17 run at the same
   1600×1200 RAW path. No `upload of … rejected`, `failed to upload`, resize
   failure, panic or kill appears after startup; both 4-slot pools are created
   successfully at 19:26:28 and 19:26:31.
@@ -141,23 +145,26 @@ host and from marker files in the public Download directory on the device:
 | Switch | Host env | Device marker | Effect |
 |--------|----------|---------------|--------|
 | trace | `SOFTISP_CACHE_TRACE` | `/sdcard/download/softisp-cache-trace` | one `tensor cache frame [...]` debug line per `set_extra_inputs()` showing the colour-critical tensors as `name(upload\|hit)=value` |
-| force | `SOFTISP_CACHE_OFF` | `/sdcard/download/softisp-cache-off` | `needs_scalar/f32/bytes` always return `true`, so every queued value is uploaded again |
+| dedup | `SOFTISP_CACHE_ON` | `/sdcard/download/softisp-cache-on` | consult the last-value cache and skip identical uploads; without it every queued value is uploaded |
 
-Both default to off, so normal builds keep the dedup fast path. Trace covers
-only the fused demosaic/CCM weight, WB gains, CCM matrix, saturation, tone scalars,
-FCS gain and `isp_pipeline` colour inputs; one compact line per frame avoids
-rotating the crash log away.
+Both default to off. Normal builds therefore upload every tensor (the old safe
+behaviour); dedup can be brought back without a rebuild by adding the marker
+and relaunching. Trace covers only the fused demosaic/CCM weight, WB gains, CCM
+matrix, saturation, tone scalars, FCS gain and `isp_pipeline` colour inputs; one
+compact line per frame avoids rotating the crash log away. The former
+`SOFTISP_CACHE_OFF` / `softisp-cache-off` switch is obsolete: its effect is now
+the default, so a stale marker file is harmless.
 
-Device procedure with a single APK: launch once to get the cached (possibly
-blue) baseline, then `touch /sdcard/download/softisp-cache-off` and relaunch.
-Compare `DEMOSAICCCMBLOCK/W` and `BAYERWBBLOCK/BAYER_GAINS` values in the trace
-lines against the `CcmGuard` controller lines. Add the trace marker alone first
-if only the last-uploaded values are needed while dedup stays active. Look for
-`name(hit)` on a reused slot with `needs_resize=false` while the picture is
-wrong; that is the signature of the 2026-11-25 regression. A single stale name
-can be invalidated narrowly, but a reused-slot hit that tracks the colour fault
-means the whole device-residency premise is unsafe again — use the force marker
-until a fence-backed proof replaces it. Remove both markers afterwards.
+Device procedure with a single APK: launch once to get the always-upload
+baseline, then `touch /sdcard/download/softisp-cache-on` (and optionally the
+trace marker) and relaunch for the dedup sample. Compare `DEMOSAICCCMBLOCK/W`
+and `BAYERWBBLOCK/BAYER_GAINS` values in the trace lines against the `CcmGuard`
+controller lines. Look for `name(hit)` on a reused slot with `needs_resize=false`
+while the picture is wrong; that is the signature of the 2026-11-25 regression.
+A single stale name can be invalidated narrowly, but a reused-slot hit that
+tracks the colour fault means the whole device-residency premise is unsafe
+again — remove the dedup marker until a fence-backed proof replaces it. Remove
+all markers afterwards.
 
 ## Remaining work
 
@@ -168,4 +175,4 @@ until a fence-backed proof replaces it. Remove both markers afterwards.
 - Run the marker-file A/B above, sampling reused slots with
   `needs_resize=false` as in the 2026-11-25 incident. If one tensor is proven
   stale, invalidate only that name; if reused-slot hits track the colour fault,
-  keep the force marker until device residency is proven with fences.
+  leave the dedup marker off until device residency is proven with fences.

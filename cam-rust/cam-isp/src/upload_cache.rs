@@ -1,31 +1,33 @@
 //! Last-value cache and reusable host scratch for MNN runtime tensor uploads.
 //!
-//! `copyFromHostTensor` persists in a session's backend buffer until the tensor
-//! is rewritten or the session is resized. Constants in `default_inputs` are
-//! re-queued every frame but never change, so uploading them again only puts
-//! another host→device barrier on the visible path. The cache is per session
-//! slot: pooled sessions own independent backend buffers.
+//! The dedup is deliberately **off by default**: a previous per-slot cache
+//! produced zero/colour-cast frames on reused sessions, so skipping an upload
+//! is only safe once device residency is proven (see
+//! `docs/isp/20261126-upload-dedup-critical-path.md`). Enable it with the
+//! `SOFTISP_CACHE_ON` env var or the Android marker file.
 //!
-//! Array/raw pending values are built in scratch `Vec`s owned by the same slot,
-//! so a steady-state frame allocates no host buffer for the fixed-shape
-//! coefficient tensors.
+//! The host scratch pool is always active and independent of that switch:
+//! array/raw values are built in scratch `Vec`s owned by the per-slot cache, so
+//! a steady-state frame allocates no host buffer for the fixed-shape
+//! coefficient tensors even when every value is uploaded.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
-// On-device A/B switches for the colour-cast investigation. The marker files
-// live in the public Download directory so the APK can be toggled without a
-// rebuild; host probes use the equivalent env vars. Both default to off.
+// On-device switches for the colour-cast investigation. The marker files live
+// in the public Download directory so the APK can be toggled without a rebuild;
+// host probes use the equivalent env vars. Dedup defaults to off: the prior
+// incident falsified tensor residency on reused sessions.
 const TRACE_ENV: &str = "SOFTISP_CACHE_TRACE";
-const FORCE_ENV: &str = "SOFTISP_CACHE_OFF";
+const ENABLE_ENV: &str = "SOFTISP_CACHE_ON";
 #[cfg(target_os = "android")]
 const TRACE_MARKER: &str = "/sdcard/download/softisp-cache-trace";
 #[cfg(target_os = "android")]
-const FORCE_MARKER: &str = "/sdcard/download/softisp-cache-off";
+const ENABLE_MARKER: &str = "/sdcard/download/softisp-cache-on";
 
 static TRACE: AtomicBool = AtomicBool::new(false);
-static FORCE: AtomicBool = AtomicBool::new(false);
+static ENABLED: AtomicBool = AtomicBool::new(false);
 static SWITCHES: OnceLock<()> = OnceLock::new();
 
 fn init_switches() {
@@ -33,16 +35,16 @@ fn init_switches() {
         if std::env::var_os(TRACE_ENV).is_some() {
             TRACE.store(true, Ordering::Relaxed);
         }
-        if std::env::var_os(FORCE_ENV).is_some() {
-            FORCE.store(true, Ordering::Relaxed);
+        if std::env::var_os(ENABLE_ENV).is_some() {
+            ENABLED.store(true, Ordering::Relaxed);
         }
         #[cfg(target_os = "android")]
         {
             if std::path::Path::new(TRACE_MARKER).exists() {
                 TRACE.store(true, Ordering::Relaxed);
             }
-            if std::path::Path::new(FORCE_MARKER).exists() {
-                FORCE.store(true, Ordering::Relaxed);
+            if std::path::Path::new(ENABLE_MARKER).exists() {
+                ENABLED.store(true, Ordering::Relaxed);
             }
         }
     });
@@ -53,9 +55,11 @@ pub(crate) fn trace_enabled() -> bool {
     TRACE.load(Ordering::Relaxed)
 }
 
-pub(crate) fn force_upload() -> bool {
+/// Whether the last-value dedup may skip an upload. Host scratch reuse is
+/// independent and stays on either way.
+pub(crate) fn cache_enabled() -> bool {
     init_switches();
-    FORCE.load(Ordering::Relaxed)
+    ENABLED.load(Ordering::Relaxed)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,15 +79,11 @@ pub(crate) struct UploadCache {
 impl UploadCache {
     /// Whether a rank-0 scalar still needs to be uploaded.
     pub(crate) fn needs_scalar(&self, name: &str, val: f32) -> bool {
-        force_upload()
-            || !matches!(self.values.get(name), Some(Value::Scalar(bits)) if *bits == val.to_bits())
+        !matches!(self.values.get(name), Some(Value::Scalar(bits)) if *bits == val.to_bits())
     }
 
     /// Whether an f32 array still needs to be uploaded.
     pub(crate) fn needs_f32(&self, name: &str, vals: &[f32]) -> bool {
-        if force_upload() {
-            return true;
-        }
         match self.values.get(name) {
             Some(Value::F32(bits)) => {
                 bits.len() != vals.len()
@@ -98,8 +98,7 @@ impl UploadCache {
 
     /// Whether raw serialized tensor bytes still need to be uploaded.
     pub(crate) fn needs_bytes(&self, name: &str, data: &[u8]) -> bool {
-        force_upload()
-            || !matches!(self.values.get(name), Some(Value::Bytes(old)) if old.as_slice() == data)
+        !matches!(self.values.get(name), Some(Value::Bytes(old)) if old.as_slice() == data)
     }
 
     pub(crate) fn record_scalar(&mut self, name: &str, val: f32) {
