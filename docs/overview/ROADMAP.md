@@ -229,6 +229,19 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   error display), `HardwareBufferBridge` (pool, formats, acquire/release), and
   `CameraIspService` wiring (mnn-gated). All pass with and without `--features mnn`. ✅
 
+### P3 — Follow-up: unified runtime tensor naming
+
+- **Survey and normalize `extra_inputs()` tensor suffixes across all blocks.**
+  The WB path currently has three names for one decision:
+  `BayerWbBlock/gains` is the logical 3A input, `DemosaicCcmBlock/w` is the
+  fused coefficient matrix that actually consumes it, and callers writing
+  `ProcessParams::bayer_gains` use a third spelling. The user-proposed
+  `BayerWbBlock/wb_gain` is clearer than `gains`, but a repository-wide rename
+  must also cover `DemosaicBlock/w`, `CcmBlock_ccm/matrix`, shader bindings,
+  `RUNTIME_PARAMS.md`, and the ignored `probe_wb_fused` comparison. Keep the
+  current names for this perf/WB work; do the rename as one atomic follow-up
+  with compatibility aliases so existing MNN models and probes keep loading.
+
 ## Build & Test
 
 ```bash

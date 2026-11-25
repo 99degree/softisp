@@ -72,18 +72,25 @@ The runtime inputs are:
 
 The graph is `Mul(input, gains) -> Clip(0, 1) -> frame`.
 
+`BayerWbBlock/gains` is the stable **logical** name for the 3A decision. The
+engine always attempts that write first, even when the block was fused away,
+then falls back to a physical sink. `DemosaicCcmBlock/w` is not a WB gain: it is
+the whole `CCM × demosaic × WB` matrix the shader consumes. Renaming these
+suffixes to `wb_gain` would be clearer but must be done across every block and
+shader binding, so it is tracked as a P3 follow-up in `docs/overview/ROADMAP.md`.
+
 ### Identity special case
 
 `BayerWbBlock::new()` uses identity gains. When all four gains are `1.0`, the
 block emits a single `Identity` node and declares no extra inputs. This keeps
 MNN's ISP-fusion chain from being broken by a no-op `Mul`.
 
-Production builds take this path: the profile builder constructs
+Primitive profiles take this path: the profile builder constructs
 `BayerWbBlock::new()` with identity gains. The live gains are not baked into
-the graph; they are written from the controller every frame. Consequently a
-converted production session usually has **no** `BayerWbBlock/gains` tensor.
-That absence is the signal that the gains must be folded into a surviving
-downstream tensor.
+the graph; they are written from the controller every frame. The FUSED profile
+goes one step further and omits `BayerWbBlock` entirely (see §5), so a converted
+production session usually has **no** `BayerWbBlock/gains` tensor. That absence
+is the signal that the gains must be folded into a surviving downstream tensor.
 
 ## 4. Where the live gains come from
 
@@ -115,17 +122,29 @@ carry it.
 
 ## 5. Folding WB into the fused demosaic+CCM
 
-The fastest profile uses `DemosaicCcmBlock`, a single `Conv` whose weight is
-`[3,4]`: it already multiplies the CFA quad by a colour matrix. Because WB is
-a per-plane scale, it can be absorbed into that matrix exactly:
+The user's design intuition is correct: on the fused path `BayerWbBlock` is
+**not needed**, because `DemosaicCcmBlock` already has runtime extra inputs
+that can carry the white-balance decision. Its `Conv` weight is `[3,4]`, i.e.
+one column per CFA plane, so a per-plane WB gain is exactly a column scale:
 
 ```text
 fused_w[i,j] = Σ_k ccm[i,k] * demosaic[k,j] * wb_plane[j]
+fused_b[i]   = -Σ_j fused_w[i,j] * blc[j]      (when BLC is still in raw counts)
 ```
 
 Here `i` is the output RGB channel, `k` is the demosaic source channel, and `j`
-is the CFA plane. This is the algebraic reason `BayerWbBlock` can disappear
-from the graph without losing AWB: the same numbers ride in `DemosaicCcmBlock/w`.
+is the CFA plane. `DemosaicCcmBlock::fuse_weights_ext()` implements this
+algebra, and `profile_builder.rs` omits `BayerWbBlock` when
+`fuse_stages.wb_into_demosaic` is allowed with the MNN ISP opset. On the actual
+production chain the fused RAW head has already divided by `sensor_max` and
+subtracted BLC, so `MnnEngine::set_extra_inputs()` writes the
+already-normalized form without dividing again.
+
+`BayerWbBlock` therefore remains useful only for primitive/unfused graphs, where
+demosaic and CCM are separate and no other tensor can absorb a per-plane scale
+before demosaic mixes the sites. That is why the block still exists: it is the
+primitive-era spelling of the same operation, not an extra stage required by the
+fused one.
 
 `MnnEngine::set_extra_inputs()` chooses the sink from the **converted session's
 input names**, because that is the ground truth after MNN's converter merges or
