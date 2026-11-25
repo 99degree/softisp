@@ -8,8 +8,9 @@ contract the MNN fork must satisfy for softisp's fused tone stages.
 ## softisp emission (already implemented)
 
 - `ToneBlock` in `MnnIspMin` / `Custom` mode emits one `isp.tone` node with
-  inputs `[frame, ToneBlock/exposure, ToneBlock/contrast, ToneBlock/brightness]`
-  and `elementwise=1`.
+  inputs `[frame, ToneBlock/exposure, ToneBlock/contrast, ToneBlock/brightness,
+  ToneBlock/inv_gamma]` and `elementwise=1`. Gamma is owned by the tone stage —
+  `isp.display*` must receive `gamma=1.0` so its encode is an identity.
 - `ToneLutBlock` in `MnnIspMin` / `Custom` mode emits one `isp.tonelut` node with
   inputs `[frame, ToneLutBlock/y0, ToneLutBlock/s0..s5, ToneLutBlock/contrast,
   ToneLutBlock/brightness, ToneLutBlock/inv_gamma]` and `elementwise=1`.
@@ -48,23 +49,28 @@ layout(set = 0, binding = 4) writeonly buffer OutBuf { float out_data[]; };
 layout(set = 0, binding = 5) readonly  buffer ExposureBuf  { float exposure[]; };
 layout(set = 0, binding = 6) readonly  buffer ContrastBuf  { float contrast[]; };
 layout(set = 0, binding = 7) readonly  buffer BrightnessBuf { float brightness[]; };
+layout(set = 0, binding = 8) readonly  buffer InvGammaBuf  { float inv_gamma[]; };
 
 void main() {
     uint x = gl_GlobalInvocationID.x, y = gl_GlobalInvocationID.y;
     int w = int(u.width), h = int(u.height);
     if (int(x) >= w || int(y) >= h) return;
     int plane = w * h, p = int(y) * w + int(x);
+    float ig = max(inv_gamma[0], 1e-6);
     for (int ch = 0; ch < 3; ++ch) {
-        float v = in_data[ch * plane + p];
-        out_data[ch * plane + p] =
-            clamp(v * max(exposure[0], 0.05) * contrast[0] + brightness[0],
-                  0.0, 1.0);
+        float v = clamp(in_data[ch * plane + p]
+                        * max(exposure[0], 0.05) * contrast[0] + brightness[0],
+                        0.0, 1.0);
+        out_data[ch * plane + p] = pow(v, ig);
     }
 }
 ```
 
-Gamma is **not** applied here — it is a separate `GammaBlock` stage. The old
-fork shader's `u.gamma` exponent does not belong to `isp.tone`.
+Gamma is applied here (`pow(v, 1/γ)` via the CPU-derived `inv_gamma` input),
+matching `ToneBlock`'s primitive `Pow` node. The old fork shader's `u.gamma`
+binding-0 exponent was removed; `GammaBlock` is no longer emitted in the
+profile chain. The patched `isp_tone.comp` / `isp_tone_spv.h` are already staged
+in the local MNN checkout.
 
 ### `isp.tonelut` — add a new embedded shader
 

@@ -1146,11 +1146,11 @@ impl MnnEngine {
             );
         }
 
-        // DisplayBlock/gamma — `isp.display` computes `pow(x, 1/gamma)` and reads
-        // gamma from binding 0. Left at zero the shader's `pow(x, 0)` yields 1.0
-        // everywhere, i.e. a white frame. The primitive path uses 1/2.4 as an
-        // exponent, so the shader wants its reciprocal.
-        write_f32(&mut pending, "DisplayBlock/gamma", 2.4);
+        // DisplayBlock/gamma — every `isp.display*` shader applies `pow(x,
+        // 1/gamma)` as part of byte packing. Gamma is owned by the tone stage,
+        // so pass 1.0 here to make that encode an identity. Zero would be worse
+        // (`pow(x, 0) == 1`, a white frame), hence the explicit neutral value.
+        write_f32(&mut pending, "DisplayBlock/gamma", 1.0);
         // BayerWbBlock/gains [1,4,1,1] — white balance per-channel gains.
         // Written unconditionally; the flush below drops names this session does
         // not have. When the block is absent the gains are folded into whichever
@@ -1198,6 +1198,17 @@ impl MnnEngine {
         write_f32(&mut pending, "ToneBlock/contrast", tone.contrast);
         // ToneBlock/brightness [1]
         write_f32(&mut pending, "ToneBlock/brightness", tone.brightness);
+        // ToneBlock/inv_gamma [1] — display gamma exponent (1/γ), derived here
+        // so neither the graph nor the Vulkan shader needs a scalar divide.
+        write_f32(
+            &mut pending,
+            "ToneBlock/inv_gamma",
+            if tone.gamma > 0.0 {
+                1.0 / tone.gamma
+            } else {
+                1.0
+            },
+        );
         // ToneLutBlock runs after ToneBlock with identity parametric defaults;
         // only the neural 7-point curve needs a per-frame override. Slopes are
         // scalar derivations, so compute them here on the CPU before inference
@@ -1261,7 +1272,7 @@ impl MnnEngine {
         write_f32(&mut pending, "AutoContrast/zero", 0.0);
         write_f32(&mut pending, "AutoContrast/one", 1.0);
         write_f32(&mut pending, "DisplayBlock/scale", 1.0);
-        write_f32(&mut pending, "DisplayBlock/gamma_exp", 1.0 / 2.4);
+        write_f32(&mut pending, "DisplayBlock/gamma_exp", 1.0);
         write_f32(&mut pending, "DisplayBlock/zero", 0.0);
         write_f32(&mut pending, "DisplayBlock/one", input_scale);
         // ── The whole-pipeline op's own coefficients ──
@@ -1361,7 +1372,7 @@ impl MnnEngine {
             write_f32(&mut pending, "AutoContrast/one", 1.0);
             // DisplayBlock — scale, gamma_exp, zero, one (FloatRgb path)
             write_f32(&mut pending, "DisplayBlock/scale", 1.0);
-            write_f32(&mut pending, "DisplayBlock/gamma_exp", 1.0 / 2.4);
+            write_f32(&mut pending, "DisplayBlock/gamma_exp", 1.0);
             write_f32(&mut pending, "DisplayBlock/zero", 0.0);
             write_f32(&mut pending, "DisplayBlock/one", input_scale);
             // SaturationBlock/scale [3] — from saturation.factor

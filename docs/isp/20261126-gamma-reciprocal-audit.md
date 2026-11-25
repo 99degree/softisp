@@ -73,13 +73,13 @@ Two follow-up findings:
    `pow(v, 2.2)` and darkens WHOLE-profile frames. It now writes `1/γ`, with a
    regression test pinning the block default to `1/2.2`.
 
-2. **`isp.tone` is not a drop-in tone stage.** Its `u.gamma` is applied as the
-   exponent itself, unlike `isp.algo_gamma`, which takes `1/u.gamma`. It is only
-   referenced by the unused `fusion_patterns.rs` table and by probe tests — no
-   `IspBlock` emits it — so nothing in the running pipeline is affected. If it
-   is ever wired up, the CPU must feed `1/γ` (the `inv_gamma` value), not the
-   display γ, or the tone stage will darken the frame. This belongs in the MNN
-   fork if the field is renamed there; softisp cannot fix that shader here.
+2. **`isp.tone` is now the gamma owner.** The fork shader was rewritten to take
+   `inv_gamma = 1/γ` as graph input (binding 8) and apply `pow(v, inv_gamma)`
+   after clip; the old binding-0 `u.gamma` exponent was removed. `ToneBlock`
+   emits `ToneBlock/inv_gamma` for both primitive and fused forms, the
+   standalone `GammaBlock` is no longer emitted by `profile_builder`, and
+   `DisplayBlock/gamma` is fed `1.0` so `isp.display*` does not encode twice.
+   See [`20261126-isp-display-absorption-audit.md`](20261126-isp-display-absorption-audit.md).
 
 ## Follow-up: missing `isp.tonelut`
 

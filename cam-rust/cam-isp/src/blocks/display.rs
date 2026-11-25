@@ -293,8 +293,9 @@ impl DisplayBlock {
         self.with_output_format(OutputFormat::Abgr)
     }
 
-    /// Emit MNN ISP min opset nodes — uses isp.display fused shader
-    /// that handles rotation + format conversion + gamma + BCS in one dispatch.
+    /// Emit MNN ISP min opset nodes — one `isp.display_*` dispatch for format
+    /// conversion and packing. Gamma is encoded by the tone stage; the shader
+    /// receives `gamma=1.0` so its own encode is an identity.
     fn emit_mnn_isp_min_nodes(&self) -> Vec<Vec<u8>> {
         let _ns = self.tensor_ns();
         let inp = self.effective_input();
@@ -460,9 +461,8 @@ impl IspBlock for DisplayBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        // MNN ISP min mode fuses rotation, format conversion, gamma and BCS
-        // into the single `isp.display` dispatch, so the per-step nodes below
-        // do not apply.
+        // MNN ISP min mode emits one `isp.display_*` dispatch for format
+        // conversion; the per-step nodes below do not apply.
         if self.opset_mode() == BlockOpsetMode::MnnIspMin {
             return self.emit_mnn_isp_min_nodes();
         }
@@ -471,9 +471,8 @@ impl IspBlock for DisplayBlock {
         let scale = format!("{}/scale", ns);
         let final_output = &self.frame_tensor;
 
-        // Fast path: no rotation, FloatRgb output → Pow+Clip matching R6
-        // R6 detects: BinaryOp(POW,exp≈1/2.4) + optional Clip(0,1) → isp.display
-        // The isp.display shader does gamma correction + BCS in one dispatch.
+        // Fast path: no rotation, FloatRgb output → Pow+Clip matching R6.
+        // `gamma_exp` is neutral (1.0) because the tone stage owns gamma.
         if self.is_identity() {
             let gamma_exp = format!("{}/gamma_exp", ns);
             let gamma = format!("{}/gamma", ns);
@@ -782,12 +781,11 @@ impl IspBlock for DisplayBlock {
         let mut defaults = Vec::new();
         match self.output_format {
             FloatRgb | Float16Rgb => {
-                // Same three tensors as `extra_inputs`. Brightness-only
-                // defaults: gamma 1/2.4 (sRGB-ish display encode, what the
-                // engine writes anyway) and a [0,1] clip.
+                // Same three tensors as `extra_inputs`. Gamma is neutral: the
+                // tone stage already encoded, so this Pow is an identity.
                 defaults.push((
                     format!("{}/gamma_exp", ns).to_string(),
-                    (1.0f32 / 2.4).to_ne_bytes().to_vec(),
+                    (1.0f32).to_ne_bytes().to_vec(),
                 ));
                 defaults.push((
                     format!("{}/zero", ns).to_string(),

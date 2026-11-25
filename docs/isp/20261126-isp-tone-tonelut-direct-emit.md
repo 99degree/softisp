@@ -52,11 +52,12 @@ embedded map. softisp does not use that fallback.
 
 - `isp.gamma` expects `1/γ` directly.
 - `isp.display*` expect display γ and compute `1/γ` internally.
-- `ToneLutBlock` computes `inv_gamma = 1/γ` on the CPU and feeds it as the
-  `ToneLutBlock/inv_gamma` tensor.
-- `isp.tone` should not apply gamma at all — gamma is a separate `GammaBlock`
-  stage. The current fork shader's `exp(log(v) * u.gamma)` is wrong for this
-  op and must be replaced (see the MNN contract doc).
+- Gamma is owned by the tone stage, not by `isp.display*` (which already
+  applies `pow(v, 1/γ)` during byte packing) and not by a separate `GammaBlock`.
+  `ToneBlock` computes `inv_gamma = 1/γ` on the CPU and feeds
+  `ToneBlock/inv_gamma`; `ToneLutBlock` does the same with
+  `ToneLutBlock/inv_gamma`. Both primitive and fused forms apply the exponent.
+  `DisplayBlock/gamma` is fed `1.0` so the display encode is an identity.
 
 ### CPU-derived slopes
 
@@ -69,8 +70,8 @@ consume those same slopes; no slope-derivation node may be reintroduced.
 
 1. **Rust direct emit**:
    - `ToneBlock` gains `BlockOpsetMode` support; fused form emits one
-     `isp.tone` node with `[frame, exposure, contrast, brightness]` as graph
-     inputs and `elementwise=1`.
+     `isp.tone` node with `[frame, exposure, contrast, brightness, inv_gamma]`
+     as graph inputs and `elementwise=1`. It now owns the gamma encode.
    - `ToneLutBlock` gains `BlockOpsetMode` support; fused form emits one
      `isp.tonelut` node with `[frame, y0, s0..s5, contrast, brightness,
      inv_gamma]` as graph inputs and `elementwise=1`.
@@ -83,13 +84,12 @@ consume those same slopes; no slope-derivation node may be reintroduced.
    the shader source and registration changes required in the fork so its
    embedded SPIR-V matches the emitted tensor contract.
 
-## TODO — deferred follow-up
+## Follow-up resolved
 
-- Check whether any `isp.display*` shader absorbs tone-stage work in addition
-  to gamma. Initial inspection shows gamma only; if a variant also applies
-  exposure/contrast/brightness/LUT, the standalone `isp.tone` / `isp.tonelut`
-  stages may double-apply the curve on that path. See the TODO in
-  `docs/mnn/ISP_TONE_TONELUT_FORK_PATCH.md`.
+`isp.display*` audit is complete
+([`20261126-isp-display-absorption-audit.md`](20261126-isp-display-absorption-audit.md)):
+all display shaders apply only gamma + format packing — no BCS, rotation or
+tone. Gamma is now owned by the tone stage and the display encode is neutral.
 
 ## Verification
 

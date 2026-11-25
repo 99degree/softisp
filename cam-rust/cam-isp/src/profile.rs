@@ -485,7 +485,9 @@ impl PipelineProfile {
         use_saturation: true,
         use_vignetting: false,
         use_colorspace: false,
-        use_gamma: false,
+        // Gamma is encoded by isp.tone now; keep it enabled so the fused
+        // preview matches the gamma the display shader used to apply.
+        use_gamma: true,
         use_sharpen: false,
         use_wavelet_denoise: false,
         use_auto_contrast: false,

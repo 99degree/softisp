@@ -35,6 +35,18 @@ impl PipelineProfile {
         }
     }
 
+    /// Opset mode for `DisplayBlock`, derived from `opset_mode` + `FuseStages`.
+    pub fn display_opset_mode(&self) -> BlockOpsetMode {
+        if self
+            .fuse_stages
+            .allows(self.opset_mode, self.fuse_stages.display)
+        {
+            BlockOpsetMode::MnnIspMin
+        } else {
+            BlockOpsetMode::Primitive
+        }
+    }
+
     /// Build an ordered list of ISP blocks according to this profile.
     pub fn build_blocks(
         &self,
@@ -481,7 +493,12 @@ impl PipelineProfile {
         if tone_mode == BlockOpsetMode::MnnIspMin {
             info!("  tone: isp.tone (fused)");
         }
-        blocks.push(Box::new(ToneBlock::new().with_opset_mode(tone_mode)));
+        let tone_gamma = if self.use_gamma { 2.2 } else { 1.0 };
+        blocks.push(Box::new(
+            ToneBlock::new()
+                .with_opset_mode(tone_mode)
+                .with_gamma(tone_gamma),
+        ));
 
         // Tap point: tone stats read `aux_hook_out/out`.
         blocks.push(Box::new(
@@ -578,13 +595,11 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("colorspace")));
         }
 
-        if self.use_gamma {
-            info!("  gamma: GammaBlock");
-            blocks.push(Box::new(crate::blocks::GammaBlock::new(2.2)));
-        } else {
-            info!("  gamma: IDENTITY");
-            blocks.push(Box::new(crate::blocks::IdentityBlock::new("gamma")));
-        }
+        // Gamma is owned by ToneBlock (primitive Pow / fused isp.tone), which
+        // already sits in this chain. A separate GammaBlock would apply the
+        // curve twice. See docs/isp/20261126-isp-display-absorption-audit.md.
+        info!("  gamma: IDENTITY (encoded by tone stage)");
+        blocks.push(Box::new(crate::blocks::IdentityBlock::new("gamma")));
 
         if self.use_sharpen {
             info!("  sharpen: SharpenBlock");
@@ -616,16 +631,11 @@ impl PipelineProfile {
             DisplayBlock::new(tail_w)
                 .with_rotate(self.rotate_mode)
                 .with_output_format(self.output_format)
-                .with_opset_mode(
-                    if self
-                        .fuse_stages
-                        .allows(self.opset_mode, self.fuse_stages.display)
-                    {
-                        2
-                    } else {
-                        0
-                    },
-                )
+                .with_opset_mode(if self.display_opset_mode() == BlockOpsetMode::MnnIspMin {
+                    2
+                } else {
+                    0
+                })
                 .with_concrete_dims(tail_h as i64, tail_w as i64),
         ));
 
@@ -784,5 +794,42 @@ impl PipelineProfile {
     /// Estimate ONNX node count for this profile.
     pub fn node_estimate(&self) -> usize {
         self.block_count() * 2 + 2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gamma_stage_is_identity_because_tone_owns_gamma() {
+        let blocks = PipelineProfile::HEAVY.build_blocks(1920, 1080, 0);
+        // The identity gamma stage is elided by `elide_noops`; what matters is
+        // that no standalone GammaBlock survives in the composed chain.
+        assert!(
+            blocks
+                .iter()
+                .all(|b| !format!("{:?}", b).contains("GammaBlock")),
+            "standalone GammaBlock must not be emitted when tone owns gamma"
+        );
+
+        let tone = blocks
+            .iter()
+            .find(|b| b.id() == "tone")
+            .expect("tone stage must exist");
+        let dbg = format!("{:?}", tone);
+        assert!(dbg.contains("2.2"), "tone must receive gamma: {}", dbg);
+    }
+
+    #[test]
+    fn test_display_opset_mode_tracks_fuse_stages() {
+        assert_eq!(
+            PipelineProfile::HEAVY.display_opset_mode(),
+            BlockOpsetMode::Primitive
+        );
+        assert_eq!(
+            PipelineProfile::FUSED.display_opset_mode(),
+            BlockOpsetMode::MnnIspMin
+        );
     }
 }

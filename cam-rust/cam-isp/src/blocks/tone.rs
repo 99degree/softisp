@@ -1,13 +1,17 @@
 use crate::onnx::proto::Proto;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
 
-/// ToneBlock — Mul+Add+Clip tone mapping.
+/// ToneBlock — exposure × contrast + brightness, clip, then gamma encode.
 ///
-/// Simple per-pixel tone curve: `clip(x * mul + add)`. All parameters
-/// are hot-swappable at runtime via `hot_swap_const_buffer()`.
+/// Simple per-pixel tone curve: `pow(clip(x * exposure * contrast + brightness),
+/// 1/gamma)`. All parameters are hot-swappable at runtime via tensor inputs.
 ///
-/// In `MnnIspMin` / `Custom` mode the four primitives collapse to one
-/// `isp.tone` fused Vulkan op with the same per-frame coefficient inputs.
+/// Gamma lives here (not in `DisplayBlock`) so the display format conversion
+/// never applies the curve twice — see
+/// `docs/isp/20261126-isp-display-absorption-audit.md`.
+///
+/// In `MnnIspMin` / `Custom` mode the primitives collapse to one `isp.tone`
+/// fused Vulkan op with the same per-frame coefficient inputs.
 #[derive(Debug)]
 pub struct ToneBlock {
     pub id: String,
@@ -48,6 +52,12 @@ impl ToneBlock {
     /// Build with an explicit opset mode (used by the fused profile).
     pub fn with_opset_mode(mut self, mode: BlockOpsetMode) -> Self {
         self.forced_mode = Some(mode);
+        self
+    }
+
+    /// Build with a display gamma. `1.0` leaves the tone curve linear.
+    pub fn with_gamma(mut self, gamma: f32) -> Self {
+        self.gamma = gamma;
         self
     }
 
@@ -159,10 +169,9 @@ impl IspBlock for ToneBlock {
         let ns = self.tensor_ns();
         match self.opset_mode() {
             BlockOpsetMode::MnnIspMin | BlockOpsetMode::Custom => {
-                // One fused Vulkan op replaces the four primitive nodes. The
-                // SPIR-V lives in libMNN_Vulkan.so's embedded lookup (see
-                // docs/mnn/ISP_TONE_TONELUT_FORK_PATCH.md for the required
-                // shader contract); softisp only emits the op and its tensors.
+                // One fused Vulkan op replaces the primitive nodes. The SPIR-V
+                // lives in libMNN_Vulkan.so's embedded lookup; softisp emits
+                // only the op and its tensors. `inv_gamma` is derived CPU-side.
                 vec![Proto::node_with_domain(
                     "isp.tone",
                     "isp",
@@ -171,6 +180,7 @@ impl IspBlock for ToneBlock {
                         &format!("{}/exposure", ns),
                         &format!("{}/contrast", ns),
                         &format!("{}/brightness", ns),
+                        &format!("{}/inv_gamma", ns),
                     ],
                     &[&self.frame_tensor],
                     &[
@@ -207,6 +217,12 @@ impl IspBlock for ToneBlock {
                         &format!("{}/zero", ns),
                         &format!("{}/one", ns),
                     ],
+                    &[&format!("{}/clipped", ns)],
+                    &[],
+                ),
+                Proto::node(
+                    "Pow",
+                    &[&format!("{}/clipped", ns), &format!("{}/inv_gamma", ns)],
                     &[&self.frame_tensor],
                     &[],
                 ),
@@ -233,6 +249,9 @@ impl IspBlock for ToneBlock {
             (format!("{}/exposure", ns).to_string(), 1, vec![1]),
             (format!("{}/zero", ns).to_string(), 1, vec![]),
             (format!("{}/one", ns).to_string(), 1, vec![]),
+            // Display gamma exponent (1/γ), derived on the CPU; both the
+            // primitive Pow and the fused shader consume it.
+            (format!("{}/inv_gamma", ns).to_string(), 1, vec![1]),
         ]
     }
 
@@ -260,6 +279,16 @@ impl IspBlock for ToneBlock {
                 format!("{}/one", ns).to_string(),
                 (1.0f32).to_ne_bytes().to_vec(),
             ),
+            (
+                format!("{}/inv_gamma", ns).to_string(),
+                if self.gamma > 0.0 {
+                    1.0f32 / self.gamma
+                } else {
+                    1.0f32
+                }
+                .to_ne_bytes()
+                .to_vec(),
+            ),
         ]
     }
 
@@ -283,8 +312,8 @@ mod tests {
         let mut b = ToneBlock::new();
         b.set_input_source("in/frame");
         let nodes = b.nodes();
-        // exposure Mul + contrast Mul + brightness Add + Clip = 4 nodes
-        assert_eq!(nodes.len(), 4);
+        // exposure Mul + contrast Mul + brightness Add + Clip + Pow = 5 nodes
+        assert_eq!(nodes.len(), 5);
     }
 
     #[test]
@@ -297,12 +326,13 @@ mod tests {
     fn test_tone_initializers() {
         let b = ToneBlock::new();
         let inits = b.extra_input_defaults();
-        // contrast + brightness + exposure (Mul/Add node inputs) + zero/one
-        assert_eq!(inits.len(), 5);
+        // contrast + brightness + exposure + zero/one + inv_gamma
+        assert_eq!(inits.len(), 6);
         let names: Vec<&str> = inits.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"ToneBlock/contrast"));
         assert!(names.contains(&"ToneBlock/brightness"));
         assert!(names.contains(&"ToneBlock/exposure"));
+        assert!(names.contains(&"ToneBlock/inv_gamma"));
     }
 
     #[test]
@@ -331,6 +361,7 @@ mod tests {
         assert_contains(&nodes[0], b"ToneBlock/exposure");
         assert_contains(&nodes[0], b"ToneBlock/contrast");
         assert_contains(&nodes[0], b"ToneBlock/brightness");
+        assert_contains(&nodes[0], b"ToneBlock/inv_gamma");
         assert_contains(&nodes[0], b"elementwise");
         assert!(!nodes[0].windows(b"spirv".len()).any(|w| w == b"spirv"));
         assert_eq!(b.custom_op_types(), Some(&["isp.tone"][..]));
@@ -347,6 +378,6 @@ mod tests {
     fn test_tone_primitive_mode_unchanged() {
         let b = ToneBlock::new();
         assert_eq!(b.opset_mode(), BlockOpsetMode::Primitive);
-        assert_eq!(b.nodes().len(), 4);
+        assert_eq!(b.nodes().len(), 5);
     }
 }
