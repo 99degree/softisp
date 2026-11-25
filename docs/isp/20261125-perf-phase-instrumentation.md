@@ -29,16 +29,38 @@ show `pipeline stage=infer_done ... infer=~65 ms` and `prep=~215 ms` at
 1. Add debug-level timers inside `MnnEngine::process()` for each phase and keep
    `IspFrame` fields compatible (prep = enter->MNN call including pool acquire;
    infer = MNN call only; total = enter->frame ready including post).
-2. Extend the existing ignored perf probe to report aggregated prep / infer /
-   post / total, so a single run can quantify phase costs without parsing logs.
-3. Run on device with MNN `mnn` feature and small frame size first, then a
-   production-sized run if time permits.
+2. **Done:** extend the existing ignored perf probe to report aggregated prep /
+   infer / post / total, so a single run can quantify phase costs without parsing
+   logs.
+3. **Pending:** run on device with a fresh APK and parse the new `pipeline timer`
+   debug lines at production preview size. The old log predates those timers.
 4. Update this brief with measured numbers, identify the dominant code piece,
    and propose an optimization with a concrete patch.
 
 ## Findings
 
-Pending.
+- **Phase aggregation is implemented.** `probe_4k_perf` now reports mean prep,
+  infer and post plus total p50/p95/max for both the single-engine and dual-engine
+  runs. `post` is computed as `total - prep - infer`, so it contains output
+  metadata, packed-byte extraction, profiling and stats/controller work without
+  adding another `IspFrame` field.
+- **The ignored MNN probes can now link on Android.** `cam-isp/build.rs` emits
+  `-landroid` (and the other NDK system libraries) for every Android build that
+  enables `mnn`/`ort`, instead of only when a local NDK checkout is found. The
+  probes call the `ANativeWindow` C ABI and previously failed with undefined
+  `ANativeWindow_acquire`/`release`.
+- **Probe sanity check fixed.** Packed BGRA words were being interpreted as four
+  `f32` bytes, so the probe reported every packed frame as blank. It now checks
+  for any non-zero output byte, which is format-independent.
+- **Packed-output warning fixed.** The engine compared a one-channel fused
+  `isp.display_*` tensor against `channel_count() == 4` for `Bgra`/`Argb` and
+  logged a false mismatch. It now expects one channel only when the graph shape
+  really is one packed word; normal four-channel u8 graphs still expect four.
+- **Local smoke measurement (160x120, dual fused, 2 measured frames):** prep
+  ~10–13 ms, infer ~54–98 ms, post ~1–2 ms, total p50 ~68–115 ms. Inference
+  dominates even at this tiny size, but these numbers include session warmup
+  variance and are not a device production measurement. A fresh APK is required
+  to parse the new `pipeline timer` debug lines on the real preview path.
 
 ## User correction: recurring diagnostics are functional, not noise
 

@@ -12,6 +12,11 @@
 - **Pipelined dual engine** (this session): the app loop runs two ISP workers,
   one pinned per Vulkan engine, with sequence-numbered results reordered on the
   presenting thread, so camera capture/staging overlaps inference.
+- **Per-phase perf probe** (this session): `probe_4k_perf` now aggregates prep,
+  infer, post and total durations, and its ignored MNN test links on Android
+  because `cam-isp/build.rs` always emits the NDK system libraries. The false
+  packed-u8 output-channel warning and the probe's packed-byte blank-frame check
+  are fixed. See `docs/isp/20261125-perf-phase-instrumentation.md`.
 - **P2b re-verified against the current MNN tree:** the AHB `setDevicePtr`
   surface in cam-isp is a stub — Vulkan `onAcquire` ignores the flag and
   `mnn_run_true_zero_copy` binds host pointers Vulkan also ignores. The
