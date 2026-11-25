@@ -123,12 +123,30 @@ impl NeuralController {
     /// All variants share the same interface: hist[256] + meta[52] → wb/ccm/tone/zoom.
     #[cfg(feature = "rectifier")]
     const DEFAULT_MODEL_CANDIDATES: &[&str] = &[
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light_int8.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light_fp16.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light_int8.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light_fp16.onnx"),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/models/fusedispcontroller_light_int8.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/models/fusedispcontroller_light.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/models/fusedispcontroller_light_fp16.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/fusedispcontroller_light_int8.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/fusedispcontroller_light.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/fusedispcontroller_light_fp16.onnx"
+        ),
     ];
 
     /// Embedded INT8 model bytes (compiled into the APK at build time).
@@ -167,10 +185,7 @@ impl NeuralController {
         }
 
         // 2. Try embedded model bytes (APK / installed builds)
-        for embedded in [
-            Self::EMBEDDED_MODEL_INT8,
-            Self::EMBEDDED_MODEL_FP32,
-        ] {
+        for embedded in [Self::EMBEDDED_MODEL_INT8, Self::EMBEDDED_MODEL_FP32] {
             if !embedded.is_empty() {
                 match Self::load_from_bytes(embedded) {
                     Ok(ctrl) => {
@@ -181,19 +196,14 @@ impl NeuralController {
                         return ctrl;
                     }
                     Err(e) => {
-                        warn!(
-                            "NeuralController: failed to load embedded model: {}",
-                            e
-                        );
+                        warn!("NeuralController: failed to load embedded model: {}", e);
                     }
                 }
             }
         }
 
         // None of the models exist/load; fall back to rule-based.
-        warn!(
-            "NeuralController: no pre-trained ONNX model found, using fallback"
-        );
+        warn!("NeuralController: no pre-trained ONNX model found, using fallback");
         Self::new()
     }
 

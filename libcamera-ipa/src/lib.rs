@@ -3,9 +3,9 @@
 //! Implements libcamera's IPAInterface and IPASoftIspInterface,
 //! bridging to the cam-ipa stable Rust API.
 
-use std::os::raw::{c_char, c_int, c_uint, c_void};
+use cam_ipa::{IpaConfig, IpaContext, IpaError, IpaResult};
 use std::ffi::CStr;
-use cam_ipa::{IpaConfig, IpaContext, IpaResult, IpaError};
+use std::os::raw::{c_char, c_int, c_uint, c_void};
 
 // --- C-compatible structs matching libcamera headers ---
 
@@ -83,11 +83,8 @@ pub struct IPASoftIspVTable {
         format: c_int,
         num_output_buffers: c_uint,
     ) -> c_int,
-    pub queue_request: unsafe extern "C" fn(
-        handle: *mut c_void,
-        frame: c_uint,
-        controls: *const c_void,
-    ),
+    pub queue_request:
+        unsafe extern "C" fn(handle: *mut c_void, frame: c_uint, controls: *const c_void),
     pub compute_params: unsafe extern "C" fn(handle: *mut c_void, frame: c_uint),
     pub process_stats: unsafe extern "C" fn(
         handle: *mut c_void,
@@ -181,18 +178,20 @@ unsafe extern "C" fn ipa_init(
     if handle.is_null() {
         return -1;
     }
-    
+
     let ctx = unsafe { &mut *(handle as *mut IpaContext) };
-    
+
     // Convert C types to Rust types
     let settings = convert_settings(settings);
     let sensor_info = convert_sensor_info(sensor_info);
-    
+
     match ctx.init(&settings, &sensor_info) {
         Ok(init_result) => {
             // Copy ccm_enabled back to caller
             if !ccm_enabled.is_null() {
-                unsafe { *ccm_enabled = init_result.ccm_enabled; }
+                unsafe {
+                    *ccm_enabled = init_result.ccm_enabled;
+                }
             }
             // Copy ipa_controls back - simplified for MVP
             let _ = ipa_controls; // Would need proper serialization
@@ -226,19 +225,16 @@ unsafe extern "C" fn ipa_stop(handle: *mut c_void) {
     }
 }
 
-unsafe extern "C" fn ipa_configure(
-    handle: *mut c_void,
-    config: *const IPAConfigInfo,
-) -> c_int {
+unsafe extern "C" fn ipa_configure(handle: *mut c_void, config: *const IPAConfigInfo) -> c_int {
     if handle.is_null() || config.is_null() {
         return -1;
     }
     let ctx = unsafe { &mut *(handle as *mut IpaContext) };
     let config = &*(config as *const IPAConfigInfo);
-    
+
     // Convert sensor controls from opaque pointer
     let sensor_controls = convert_control_info_map(config.sensor_controls);
-    
+
     let ipa_config = cam_ipa::IpaConfigureInfo { sensor_controls };
     match ctx.configure(&ipa_config) {
         Ok(()) => 0,
@@ -258,13 +254,13 @@ unsafe extern "C" fn ipa_configure_frame_backend(
         return -1;
     }
     let ctx = unsafe { &mut *(handle as *mut IpaContext) };
-    
+
     let ipa_format = match format {
         0 => cam_ipa::IpaFormat::RGB,
         1 => cam_ipa::IpaFormat::YUV,
         _ => cam_ipa::IpaFormat::BGRA,
     };
-    
+
     match ctx.configure_frame_backend(ipa_format, num_output_buffers) {
         Ok(()) => 0,
         Err(e) => {
@@ -283,13 +279,13 @@ unsafe extern "C" fn ipa_queue_request(
         return;
     }
     let ctx = unsafe { &mut *(handle as *mut IpaContext) };
-    
+
     let ctrl_list = if controls.is_null() {
         cam_ipa::ControlList::new()
     } else {
         convert_control_list(controls)
     };
-    
+
     let _ = ctx.queue_request(frame, &ctrl_list);
 }
 
@@ -311,11 +307,11 @@ unsafe extern "C" fn ipa_process_stats(
         return;
     }
     let ctx = unsafe { &mut *(handle as *mut IpaContext) };
-    
+
     // For MVP, stats buffer is passed as opaque - we return default metadata
     let _ = buffer_id;
     let _ = stats;
-    
+
     // Create empty buffer for stats processing
     // In real implementation, we'd map the SharedFD buffer here
     let empty_buf: &dyn cam_ipa::Buffer = &cam_ipa::MemBuffer::new(0);
@@ -337,19 +333,20 @@ unsafe extern "C" fn ipa_process_frame(
         return;
     }
     let ctx = unsafe { &mut *(handle as *mut IpaContext) };
-    
+
     let _ = buffer_id;
     let _ = plane_index_in;
     let _ = plane_index_out;
-    
+
     // Wrap dmabuf fd as Buffer
-    let mut input_buf = match cam_ipa::buffer::DmaBufBuffer::new(buffer_fd, (width * height * 2) as usize) {
-        Ok(buf) => buf,
-        Err(e) => {
-            log::error!("Failed to create DmaBufBuffer: {}", e);
-            return;
-        }
-    };
+    let mut input_buf =
+        match cam_ipa::buffer::DmaBufBuffer::new(buffer_fd, (width * height * 2) as usize) {
+            Ok(buf) => buf,
+            Err(e) => {
+                log::error!("Failed to create DmaBufBuffer: {}", e);
+                return;
+            }
+        };
 
     let mut output_buf = cam_ipa::buffer::MemBuffer::new((width * height * 4) as usize);
 
@@ -363,10 +360,14 @@ unsafe extern "C" fn ipa_process_frame(
     let height = height as u32;
 
     if let Err(e) = ctx.process_frame(
-        frame, buffer_id,
-        &mut input_buf, &mut output_buf,
-        0, 0, // plane indices
-        width, height,
+        frame,
+        buffer_id,
+        &mut input_buf,
+        &mut output_buf,
+        0,
+        0, // plane indices
+        width,
+        height,
         &ctrl_list,
     ) {
         log::error!("IPA process_frame failed: {}", e);
@@ -382,7 +383,7 @@ fn convert_settings(settings: *const IPASettings) -> cam_ipa::IpaSettings {
             sensor_model: "unknown".to_string(),
         };
     }
-    
+
     let config_file = unsafe {
         let ptr = (*settings).configuration_file;
         if ptr.is_null() {
@@ -391,12 +392,17 @@ fn convert_settings(settings: *const IPASettings) -> cam_ipa::IpaSettings {
             CStr::from_ptr(ptr).to_string_lossy().to_string().into()
         }
     };
-    
+
     let sensor_model = unsafe {
-        CStr::from_ptr((*settings).sensor_model).to_string_lossy().to_string()
+        CStr::from_ptr((*settings).sensor_model)
+            .to_string_lossy()
+            .to_string()
     };
-    
-    cam_ipa::IpaSettings { config_file, sensor_model }
+
+    cam_ipa::IpaSettings {
+        config_file,
+        sensor_model,
+    }
 }
 
 fn convert_sensor_info(info: *const IPACameraSensorInfo) -> cam_ipa::IpaSensorInfo {
@@ -405,9 +411,20 @@ fn convert_sensor_info(info: *const IPACameraSensorInfo) -> cam_ipa::IpaSensorIn
             model: "unknown".to_string(),
             bits_per_pixel: 10,
             cfa_pattern: 0, // RGGB
-            active_area_size: cam_ipa::Size { width: 1920, height: 1080 },
-            analog_crop: cam_ipa::Rectangle { x: 0, y: 0, width: 1920, height: 1080 },
-            output_size: cam_ipa::Size { width: 1920, height: 1080 },
+            active_area_size: cam_ipa::Size {
+                width: 1920,
+                height: 1080,
+            },
+            analog_crop: cam_ipa::Rectangle {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            output_size: cam_ipa::Size {
+                width: 1920,
+                height: 1080,
+            },
             pixel_rate: 0,
             min_line_length: 0,
             max_line_length: 0,
@@ -415,7 +432,7 @@ fn convert_sensor_info(info: *const IPACameraSensorInfo) -> cam_ipa::IpaSensorIn
             max_frame_length: 0,
         };
     }
-    
+
     unsafe {
         cam_ipa::IpaSensorInfo {
             model: CStr::from_ptr((*info).model).to_string_lossy().to_string(),

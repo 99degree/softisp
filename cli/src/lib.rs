@@ -26,9 +26,8 @@
 //!   ./target/debug/ipa_sk generate --count 1 --profile fused --width 3840 --height 2160
 
 use cam_ipa::{
-    IpaConfig, IpaSettings, IpaSensorInfo, IpaFormat, IpaCallbacks,
-    ControlList, MemBuffer, IpaContext, Buffer, EngineBackend,
-    Size, Rectangle,
+    Buffer, ControlList, EngineBackend, IpaCallbacks, IpaConfig, IpaContext, IpaFormat,
+    IpaSensorInfo, IpaSettings, MemBuffer, Rectangle, Size,
 };
 use cam_isp::profile::PipelineProfile;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -37,11 +36,15 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 #[cfg(feature = "v4l2")]
-use cam_hal_linux::{list_v4l2_devices, capture_single_v4l2_frame};
+use cam_hal_linux::{capture_single_v4l2_frame, list_v4l2_devices};
 
 /// Top-level CLI argument parser
 #[derive(Parser, Debug)]
-#[command(author, version, about = "cam-ipa Swiss Army Knife — softisp IPA toolkit")]
+#[command(
+    author,
+    version,
+    about = "cam-ipa Swiss Army Knife — softisp IPA toolkit"
+)]
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -50,19 +53,36 @@ struct Args {
 /// Profile argument enum
 #[derive(ValueEnum, Clone, Debug, Copy)]
 enum ProfileArg {
-    Lite, Med, Fused, Heavy, Pro, Test, Unified, Hdr, Yuv,
+    Lite,
+    Med,
+    Fused,
+    Heavy,
+    Pro,
+    Test,
+    Unified,
+    Hdr,
+    Yuv,
 }
 
 /// Format argument enum
 #[derive(ValueEnum, Clone, Debug, Copy)]
 enum FormatArg {
-    Rgb, Rgba, Bgra, Argb, Abgr, Yuv, Nv12, P010,
+    Rgb,
+    Rgba,
+    Bgra,
+    Argb,
+    Abgr,
+    Yuv,
+    Nv12,
+    P010,
 }
 
 /// Backend argument enum
 #[derive(ValueEnum, Clone, Debug, Copy)]
 enum BackendArg {
-    MnnVulkan, Cpu, OnnxRuntime,
+    MnnVulkan,
+    Cpu,
+    OnnxRuntime,
 }
 
 impl From<ProfileArg> for PipelineProfile {
@@ -332,7 +352,7 @@ pub struct PProfileJson {
     pub tile_count_y: u32,
     pub tile_overlap: u32,
     pub output_format: String, // "PackedRgb" | "Bgra" | ...
-    pub opset_mode: i32, // 0=Primitive, 1=Custom, 2=MnnIspMin
+    pub opset_mode: i32,       // 0=Primitive, 1=Custom, 2=MnnIspMin
     pub fuse_stages: FuseStagesJson,
 }
 
@@ -532,12 +552,25 @@ fn run_cli() -> i32 {
     env_logger::init();
 
     match args.command {
-        Some(Commands::Generate { count, output, profile, width, height, format, backend, neural, model_dir, profile_json }) => {
+        Some(Commands::Generate {
+            count,
+            output,
+            profile,
+            width,
+            height,
+            format,
+            backend,
+            neural,
+            model_dir,
+            profile_json,
+        }) => {
             println!("=== cam-ipa Swiss Army Knife ===");
             println!("Command: generate");
             let config = if let Some(pj_path) = &profile_json {
-                let pj: PProfileJson = serde_json::from_str(&std::fs::read_to_string(pj_path).expect("failed to read profile JSON"))
-                    .expect("failed to parse profile JSON");
+                let pj: PProfileJson = serde_json::from_str(
+                    &std::fs::read_to_string(pj_path).expect("failed to read profile JSON"),
+                )
+                .expect("failed to parse profile JSON");
                 let pipeline_profile = pj.to_pipeline_profile();
                 IpaConfig {
                     image_width: width,
@@ -553,16 +586,32 @@ fn run_cli() -> i32 {
             } else {
                 build_ipa_config(profile, width, height, format, backend, neural, model_dir)
             };
-            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-                config.profile, width, height, format, backend, neural);
+            println!(
+                "Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                config.profile, width, height, format, backend, neural
+            );
             cmd_generate(&config, count, output)
         }
-        Some(Commands::Capture { device, count, output, profile, width, height, format, backend, neural, model_dir, profile_json }) => {
+        Some(Commands::Capture {
+            device,
+            count,
+            output,
+            profile,
+            width,
+            height,
+            format,
+            backend,
+            neural,
+            model_dir,
+            profile_json,
+        }) => {
             println!("=== cam-ipa Swiss Army Knife ===");
             println!("Command: capture");
             let config = if let Some(pj_path) = &profile_json {
-                let pj: PProfileJson = serde_json::from_str(&std::fs::read_to_string(pj_path).expect("failed to read profile JSON"))
-                    .expect("failed to parse profile JSON");
+                let pj: PProfileJson = serde_json::from_str(
+                    &std::fs::read_to_string(pj_path).expect("failed to read profile JSON"),
+                )
+                .expect("failed to parse profile JSON");
                 let pipeline_profile = pj.to_pipeline_profile();
                 IpaConfig {
                     image_width: width,
@@ -578,16 +627,31 @@ fn run_cli() -> i32 {
             } else {
                 build_ipa_config(profile, width, height, format, backend, neural, model_dir)
             };
-            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-                config.profile, width, height, format, backend, neural);
+            println!(
+                "Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                config.profile, width, height, format, backend, neural
+            );
             cmd_capture(&config, device, count, output)
         }
-        Some(Commands::Bench { count, warmup, profile, width, height, format, backend, neural, model_dir, profile_json }) => {
+        Some(Commands::Bench {
+            count,
+            warmup,
+            profile,
+            width,
+            height,
+            format,
+            backend,
+            neural,
+            model_dir,
+            profile_json,
+        }) => {
             println!("=== cam-ipa Swiss Army Knife ===");
             println!("Command: bench");
             let config = if let Some(pj_path) = &profile_json {
-                let pj: PProfileJson = serde_json::from_str(&std::fs::read_to_string(pj_path).expect("failed to read profile JSON"))
-                    .expect("failed to parse profile JSON");
+                let pj: PProfileJson = serde_json::from_str(
+                    &std::fs::read_to_string(pj_path).expect("failed to read profile JSON"),
+                )
+                .expect("failed to parse profile JSON");
                 let pipeline_profile = pj.to_pipeline_profile();
                 IpaConfig {
                     image_width: width,
@@ -603,16 +667,31 @@ fn run_cli() -> i32 {
             } else {
                 build_ipa_config(profile, width, height, format, backend, neural, model_dir)
             };
-            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-                config.profile, width, height, format, backend, neural);
+            println!(
+                "Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                config.profile, width, height, format, backend, neural
+            );
             cmd_bench(&config, count, warmup)
         }
-        Some(Commands::Stats { count, output, profile, width, height, format, backend, neural, model_dir, profile_json }) => {
+        Some(Commands::Stats {
+            count,
+            output,
+            profile,
+            width,
+            height,
+            format,
+            backend,
+            neural,
+            model_dir,
+            profile_json,
+        }) => {
             println!("=== cam-ipa Swiss Army Knife ===");
             println!("Command: stats");
             let config = if let Some(pj_path) = &profile_json {
-                let pj: PProfileJson = serde_json::from_str(&std::fs::read_to_string(pj_path).expect("failed to read profile JSON"))
-                    .expect("failed to parse profile JSON");
+                let pj: PProfileJson = serde_json::from_str(
+                    &std::fs::read_to_string(pj_path).expect("failed to read profile JSON"),
+                )
+                .expect("failed to parse profile JSON");
                 let pipeline_profile = pj.to_pipeline_profile();
                 IpaConfig {
                     image_width: width,
@@ -628,17 +707,21 @@ fn run_cli() -> i32 {
             } else {
                 build_ipa_config(profile, width, height, format, backend, neural, model_dir)
             };
-            println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
-                config.profile, width, height, format, backend, neural);
+            println!(
+                "Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+                config.profile, width, height, format, backend, neural
+            );
             cmd_stats(&config, count, output)
         }
-        Some(Commands::Zerocopy { size, iterations }) => {
-            cmd_zerocopy(size, iterations)
-        }
-        Some(Commands::Probe { json }) => {
-            cmd_probe(json)
-        }
-        Some(Commands::ProfileJson { name, width, height, output, input }) => {
+        Some(Commands::Zerocopy { size, iterations }) => cmd_zerocopy(size, iterations),
+        Some(Commands::Probe { json }) => cmd_probe(json),
+        Some(Commands::ProfileJson {
+            name,
+            width,
+            height,
+            output,
+            input,
+        }) => {
             let input_path = input.map(|p| p.to_string_lossy().to_string());
             cmd_profile_json(name, width, height, output, input_path.as_deref())
         }
@@ -677,7 +760,15 @@ fn build_ipa_config(
 }
 
 /// Build an IpaConfig from a PProfileJson (for --profile-json)
-fn build_ipa_config_from_json(pj: &PProfileJson, width: u32, height: u32, format: FormatArg, backend: BackendArg, neural: bool, model_dir: Option<String>) -> IpaConfig {
+fn build_ipa_config_from_json(
+    pj: &PProfileJson,
+    width: u32,
+    height: u32,
+    format: FormatArg,
+    backend: BackendArg,
+    neural: bool,
+    model_dir: Option<String>,
+) -> IpaConfig {
     let pipeline_profile = pj.to_pipeline_profile();
     IpaConfig {
         image_width: width,
@@ -711,9 +802,20 @@ fn cmd_generate(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 
         model: "synthetic_sensor".to_string(),
         bits_per_pixel: 10,
         cfa_pattern: 0,
-        active_area_size: Size { width: config.image_width, height: config.image_height },
-        analog_crop: Rectangle { x: 0, y: 0, width: config.image_width, height: config.image_height },
-        output_size: Size { width: config.image_width, height: config.image_height },
+        active_area_size: Size {
+            width: config.image_width,
+            height: config.image_height,
+        },
+        analog_crop: Rectangle {
+            x: 0,
+            y: 0,
+            width: config.image_width,
+            height: config.image_height,
+        },
+        output_size: Size {
+            width: config.image_width,
+            height: config.image_height,
+        },
         pixel_rate: 0,
         min_line_length: 0,
         max_line_length: 0,
@@ -774,9 +876,15 @@ fn cmd_generate(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 
         }
 
         if let Err(e) = ctx.process_frame(
-            frame, frame,
-            &mut input_buf, &mut output_buf,
-            0, 0, w, h, &controls,
+            frame,
+            frame,
+            &mut input_buf,
+            &mut output_buf,
+            0,
+            0,
+            w,
+            h,
+            &controls,
         ) {
             eprintln!("process_frame(frame {}) failed: {}", frame, e);
             continue;
@@ -786,10 +894,19 @@ fn cmd_generate(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 
             if let Err(e) = std::fs::write(path, &output_buf.data) {
                 eprintln!("Failed to write output frame: {}", e);
             } else {
-                println!("Frame {} written to {} ({} bytes)", frame, path.display(), output_buf.data.len());
+                println!(
+                    "Frame {} written to {} ({} bytes)",
+                    frame,
+                    path.display(),
+                    output_buf.data.len()
+                );
             }
         } else {
-            println!("Frame {} processed: {} bytes output", frame, output_buf.len());
+            println!(
+                "Frame {} processed: {} bytes output",
+                frame,
+                output_buf.len()
+            );
         }
     }
 
@@ -825,9 +942,20 @@ fn cmd_capture(config: &IpaConfig, device: String, count: u32, output: Option<Pa
             model: "v4l2_sensor".to_string(),
             bits_per_pixel: 10,
             cfa_pattern: 0,
-            active_area_size: Size { width: config.image_width, height: config.image_height },
-            analog_crop: Rectangle { x: 0, y: 0, width: config.image_width, height: config.image_height },
-            output_size: Size { width: config.image_width, height: config.image_height },
+            active_area_size: Size {
+                width: config.image_width,
+                height: config.image_height,
+            },
+            analog_crop: Rectangle {
+                x: 0,
+                y: 0,
+                width: config.image_width,
+                height: config.image_height,
+            },
+            output_size: Size {
+                width: config.image_width,
+                height: config.image_height,
+            },
             pixel_rate: 0,
             min_line_length: 0,
             max_line_length: 0,
@@ -854,7 +982,13 @@ fn cmd_capture(config: &IpaConfig, device: String, count: u32, output: Option<Pa
         for frame in 1..=count {
             match cam_hal_linux::capture_single_v4l2_frame(&device, w, h) {
                 Ok((cw, ch, data)) => {
-                    println!("Captured {}x{} frame {} ({} bytes)", cw, ch, frame, data.len());
+                    println!(
+                        "Captured {}x{} frame {} ({} bytes)",
+                        cw,
+                        ch,
+                        frame,
+                        data.len()
+                    );
 
                     let mut input_buf = MemBuffer::new(data.len());
                     input_buf.data.copy_from_slice(&data);
@@ -871,9 +1005,15 @@ fn cmd_capture(config: &IpaConfig, device: String, count: u32, output: Option<Pa
                         continue;
                     }
                     if let Err(e) = ctx.process_frame(
-                        frame, frame,
-                        &mut input_buf, &mut output_buf,
-                        0, 0, cw, ch, &controls,
+                        frame,
+                        frame,
+                        &mut input_buf,
+                        &mut output_buf,
+                        0,
+                        0,
+                        cw,
+                        ch,
+                        &controls,
                     ) {
                         eprintln!("process_frame(frame {}) failed: {}", frame, e);
                         continue;
@@ -884,7 +1024,12 @@ fn cmd_capture(config: &IpaConfig, device: String, count: u32, output: Option<Pa
                         if let Err(e) = std::fs::write(&fname, &output_buf.data) {
                             eprintln!("Failed to write {}: {}", fname, e);
                         } else {
-                            println!("Frame {} written to {} ({} bytes)", frame, fname, output_buf.data.len());
+                            println!(
+                                "Frame {} written to {} ({} bytes)",
+                                frame,
+                                fname,
+                                output_buf.data.len()
+                            );
                         }
                     }
                 }
@@ -900,7 +1045,9 @@ fn cmd_capture(config: &IpaConfig, device: String, count: u32, output: Option<Pa
     }
     #[cfg(not(feature = "v4l2"))]
     {
-        eprintln!("V4L2 feature not enabled. Rebuild with: cargo build -p cam-ipa-sk --features v4l2");
+        eprintln!(
+            "V4L2 feature not enabled. Rebuild with: cargo build -p cam-ipa-sk --features v4l2"
+        );
         1
     }
 }
@@ -924,9 +1071,20 @@ fn cmd_bench(config: &IpaConfig, count: u32, warmup: u32) -> i32 {
         model: "bench_sensor".to_string(),
         bits_per_pixel: 10,
         cfa_pattern: 0,
-        active_area_size: Size { width: config.image_width, height: config.image_height },
-        analog_crop: Rectangle { x: 0, y: 0, width: config.image_width, height: config.image_height },
-        output_size: Size { width: config.image_width, height: config.image_height },
+        active_area_size: Size {
+            width: config.image_width,
+            height: config.image_height,
+        },
+        analog_crop: Rectangle {
+            x: 0,
+            y: 0,
+            width: config.image_width,
+            height: config.image_height,
+        },
+        output_size: Size {
+            width: config.image_width,
+            height: config.image_height,
+        },
         pixel_rate: 0,
         min_line_length: 0,
         max_line_length: 0,
@@ -971,9 +1129,15 @@ fn cmd_bench(config: &IpaConfig, count: u32, warmup: u32) -> i32 {
         let frame_start = Instant::now();
 
         if let Err(e) = ctx.process_frame(
-            frame, frame,
-            &mut input_buf, &mut output_buf,
-            0, 0, w, h, &controls,
+            frame,
+            frame,
+            &mut input_buf,
+            &mut output_buf,
+            0,
+            0,
+            w,
+            h,
+            &controls,
         ) {
             eprintln!("process_frame(frame {}) failed: {}", frame, e);
             continue;
@@ -999,7 +1163,8 @@ fn cmd_bench(config: &IpaConfig, count: u32, warmup: u32) -> i32 {
         let avg_us: u64 = latencies.iter().sum::<u64>() / timed_count;
         let max_us = latencies.iter().max().copied().unwrap_or(0);
         let min_us = latencies.iter().min().copied().unwrap_or(0);
-        let fps = (timed_count as f64) / (total_elapsed.as_secs_f64() - (warmup as f64 * avg_us as f64 / 1_000_000.0));
+        let fps = (timed_count as f64)
+            / (total_elapsed.as_secs_f64() - (warmup as f64 * avg_us as f64 / 1_000_000.0));
 
         println!("\n--- Bench results ---");
         println!("Timed frames: {}", timed_count);
@@ -1034,9 +1199,20 @@ fn cmd_stats(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 {
         model: "stats_sensor".to_string(),
         bits_per_pixel: 10,
         cfa_pattern: 0,
-        active_area_size: Size { width: config.image_width, height: config.image_height },
-        analog_crop: Rectangle { x: 0, y: 0, width: config.image_width, height: config.image_height },
-        output_size: Size { width: config.image_width, height: config.image_height },
+        active_area_size: Size {
+            width: config.image_width,
+            height: config.image_height,
+        },
+        analog_crop: Rectangle {
+            x: 0,
+            y: 0,
+            width: config.image_width,
+            height: config.image_height,
+        },
+        output_size: Size {
+            width: config.image_width,
+            height: config.image_height,
+        },
         pixel_rate: 0,
         min_line_length: 0,
         max_line_length: 0,
@@ -1118,7 +1294,11 @@ fn cmd_stats(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 {
             eprintln!("Failed to write stats to {}: {}", path.display(), e);
             return 1;
         }
-        println!("Stats written to {} ({} frames)", path.display(), all_stats.len());
+        println!(
+            "Stats written to {} ({} frames)",
+            path.display(),
+            all_stats.len()
+        );
     } else {
         println!("Collected stats from {} frames", all_stats.len());
     }
@@ -1132,7 +1312,10 @@ fn cmd_stats(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 {
 // ============================================================================
 
 fn cmd_zerocopy(size: usize, iterations: u32) -> i32 {
-    println!("\n--- Zerocopy mode: {} iterations, {} bytes ---", iterations, size);
+    println!(
+        "\n--- Zerocopy mode: {} iterations, {} bytes ---",
+        iterations, size
+    );
 
     #[cfg(not(target_os = "android"))]
     {
@@ -1146,7 +1329,12 @@ fn cmd_zerocopy(size: usize, iterations: u32) -> i32 {
                 return 1;
             }
         };
-        println!("Created memfd dmabuf: fd={} size={} ptr={:?}", fd, buf.len(), buf.as_ptr());
+        println!(
+            "Created memfd dmabuf: fd={} size={} ptr={:?}",
+            fd,
+            buf.len(),
+            buf.as_ptr()
+        );
 
         let mut write_sum: u8 = 0;
         let start = Instant::now();
@@ -1164,7 +1352,10 @@ fn cmd_zerocopy(size: usize, iterations: u32) -> i32 {
             // Read back
             let read_val = unsafe { buf.as_ptr().read() };
             if read_val != val {
-                eprintln!("Zerocopy mismatch at iter {}: wrote {} read {}", i, val, read_val);
+                eprintln!(
+                    "Zerocopy mismatch at iter {}: wrote {} read {}",
+                    i, val, read_val
+                );
                 return 1;
             }
         }
@@ -1192,7 +1383,10 @@ fn cmd_zerocopy(size: usize, iterations: u32) -> i32 {
             }
         }
         let elapsed = start.elapsed();
-        println!("MemBuffer fallback: {} iterations in {:?}", iterations, elapsed);
+        println!(
+            "MemBuffer fallback: {} iterations in {:?}",
+            iterations, elapsed
+        );
         0
     }
 }
@@ -1204,7 +1398,8 @@ fn cmd_zerocopy(size: usize, iterations: u32) -> i32 {
 fn cmd_probe(json: bool) -> i32 {
     if json {
         // JSON output of all profiles
-        let profiles: Vec<PProfileJson> = cam_isp::profile::PipelineProfile::ALL.iter()
+        let profiles: Vec<PProfileJson> = cam_isp::profile::PipelineProfile::ALL
+            .iter()
             .map(PProfileJson::from)
             .collect();
         let output = serde_json::json!({
@@ -1223,8 +1418,10 @@ fn cmd_probe(json: bool) -> i32 {
 
         println!("\nAvailable profiles:");
         for p in cam_isp::profile::PipelineProfile::ALL.iter() {
-            println!("  {:?}: level={:?} input={} unpack={} fused_stages={:?}",
-                p.label, p.level, p.input_type, p.use_unpack, p.fuse_stages);
+            println!(
+                "  {:?}: level={:?} input={} unpack={} fused_stages={:?}",
+                p.label, p.level, p.input_type, p.use_unpack, p.fuse_stages
+            );
         }
 
         println!("\nEngine backends:");
@@ -1249,7 +1446,13 @@ fn cmd_probe(json: bool) -> i32 {
 // cmd_profile_json — dump a single profile as JSON, or load custom profile JSON
 // ============================================================================
 
-fn cmd_profile_json(name: Option<String>, width: u32, height: u32, output: Option<PathBuf>, input: Option<&str>) -> i32 {
+fn cmd_profile_json(
+    name: Option<String>,
+    width: u32,
+    height: u32,
+    output: Option<PathBuf>,
+    input: Option<&str>,
+) -> i32 {
     if let Some(input_path_str) = input {
         // Load custom profile JSON and optionally save/validate
         let json_str = match std::fs::read_to_string(input_path_str) {
@@ -1267,9 +1470,14 @@ fn cmd_profile_json(name: Option<String>, width: u32, height: u32, output: Optio
             }
         };
         let _profile = pj.to_pipeline_profile();
-        println!("Loaded custom profile '{}' from {}", pj.label, input_path_str);
-        println!("  width={} height={} unpack={} fused={:?}",
-            width, height, pj.use_unpack, pj.fuse_stages);
+        println!(
+            "Loaded custom profile '{}' from {}",
+            pj.label, input_path_str
+        );
+        println!(
+            "  width={} height={} unpack={} fused={:?}",
+            width, height, pj.use_unpack, pj.fuse_stages
+        );
         if let Some(out_path) = output {
             let out_json = serde_json::to_string_pretty(&pj).unwrap();
             let out_path_clone = out_path.clone();
@@ -1306,7 +1514,11 @@ fn cmd_profile_json(name: Option<String>, width: u32, height: u32, output: Optio
                 eprintln!("Failed to write {}: {}", out_path_clone.display(), e);
                 return 1;
             }
-            println!("Profile '{}' written to {}", pj.label, out_path_clone.display());
+            println!(
+                "Profile '{}' written to {}",
+                pj.label,
+                out_path_clone.display()
+            );
         } else {
             println!("{}", json);
         }
@@ -1328,7 +1540,10 @@ fn cmd_cmos_dump(device: Option<&str>, output: Option<&PathBuf>) -> i32 {
         // Try to read V4L2 device info
         let devices = cam_hal_linux::list_v4l2_devices();
         if !devices.iter().any(|d| d == dev_str) {
-            eprintln!("V4L2 device {} not found. Available: {:?}", dev_str, devices);
+            eprintln!(
+                "V4L2 device {} not found. Available: {:?}",
+                dev_str, devices
+            );
             return 1;
         }
 
@@ -1381,7 +1596,9 @@ fn cmd_cmos_dump(device: Option<&str>, output: Option<&PathBuf>) -> i32 {
     }
     #[cfg(not(feature = "v4l2"))]
     {
-        eprintln!("V4L2 feature not enabled. Rebuild with: cargo build -p cam-ipa-sk --features v4l2");
+        eprintln!(
+            "V4L2 feature not enabled. Rebuild with: cargo build -p cam-ipa-sk --features v4l2"
+        );
         // Still output a template CMOS JSON
         let cmos_json = serde_json::json!({
             "sensor": {
@@ -1433,9 +1650,15 @@ mod tests {
     #[test]
     fn test_profile_arg_conversion() {
         for arg in [
-            ProfileArg::Lite, ProfileArg::Med, ProfileArg::Fused,
-            ProfileArg::Heavy, ProfileArg::Pro, ProfileArg::Test,
-            ProfileArg::Unified, ProfileArg::Hdr, ProfileArg::Yuv,
+            ProfileArg::Lite,
+            ProfileArg::Med,
+            ProfileArg::Fused,
+            ProfileArg::Heavy,
+            ProfileArg::Pro,
+            ProfileArg::Test,
+            ProfileArg::Unified,
+            ProfileArg::Hdr,
+            ProfileArg::Yuv,
         ] {
             let _profile: PipelineProfile = arg.into();
         }
@@ -1444,9 +1667,14 @@ mod tests {
     #[test]
     fn test_format_arg_conversion() {
         for arg in [
-            FormatArg::Rgb, FormatArg::Rgba, FormatArg::Bgra,
-            FormatArg::Argb, FormatArg::Abgr, FormatArg::Yuv,
-            FormatArg::Nv12, FormatArg::P010,
+            FormatArg::Rgb,
+            FormatArg::Rgba,
+            FormatArg::Bgra,
+            FormatArg::Argb,
+            FormatArg::Abgr,
+            FormatArg::Yuv,
+            FormatArg::Nv12,
+            FormatArg::P010,
         ] {
             let _fmt: IpaFormat = arg.into();
         }
@@ -1454,7 +1682,11 @@ mod tests {
 
     #[test]
     fn test_backend_arg_conversion() {
-        for arg in [BackendArg::MnnVulkan, BackendArg::Cpu, BackendArg::OnnxRuntime] {
+        for arg in [
+            BackendArg::MnnVulkan,
+            BackendArg::Cpu,
+            BackendArg::OnnxRuntime,
+        ] {
             let _backend: EngineBackend = arg.into();
         }
     }

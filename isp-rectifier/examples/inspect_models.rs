@@ -31,7 +31,10 @@ fn try_run_single(runnable: &TractModel, hist: &[f32]) -> String {
 fn main() {
     let models_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models");
 
-    for model_name in ["fusedispcontroller_light.onnx", "fusedispcontroller_light_int8.onnx"] {
+    for model_name in [
+        "fusedispcontroller_light.onnx",
+        "fusedispcontroller_light_int8.onnx",
+    ] {
         let path = models_dir.join(model_name);
         if !path.exists() {
             println!("SKIP: {} not found", model_name);
@@ -41,26 +44,22 @@ fn main() {
         println!("\n=== {} ({} bytes) ===", model_name, size);
 
         match tract_onnx::onnx().model_for_path(&path) {
-            Ok(model) => {
-                match model.into_optimized() {
-                    Ok(opt) => {
-                        match opt.into_runnable() {
-                            Ok(runnable) => {
-                                let hist256 = vec![0.5f32; 256];
-                                let meta11 = vec![0.5f32; 11];
-                                let meta52 = vec![0.5f32; 52];
+            Ok(model) => match model.into_optimized() {
+                Ok(opt) => match opt.into_runnable() {
+                    Ok(runnable) => {
+                        let hist256 = vec![0.5f32; 256];
+                        let meta11 = vec![0.5f32; 11];
+                        let meta52 = vec![0.5f32; 52];
 
-                                println!("  [256]+[11]:  {}", try_run(&runnable, &hist256, &meta11));
-                                println!("  [256]+[52]:  {}", try_run(&runnable, &hist256, &meta52));
-                                let hist267 = vec![0.5f32; 267];
-                                println!("  [267]:       {}", try_run_single(&runnable, &hist267));
-                            }
-                            Err(e) => println!("  into_runnable FAILED: {}", e),
-                        }
+                        println!("  [256]+[11]:  {}", try_run(&runnable, &hist256, &meta11));
+                        println!("  [256]+[52]:  {}", try_run(&runnable, &hist256, &meta52));
+                        let hist267 = vec![0.5f32; 267];
+                        println!("  [267]:       {}", try_run_single(&runnable, &hist267));
                     }
-                    Err(e) => println!("  into_optimized FAILED: {}", e),
-                }
-            }
+                    Err(e) => println!("  into_runnable FAILED: {}", e),
+                },
+                Err(e) => println!("  into_optimized FAILED: {}", e),
+            },
             Err(e) => println!("  model_for_path FAILED: {}", e),
         }
     }

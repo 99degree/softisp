@@ -109,9 +109,7 @@ impl CameraDevice {
     /// Close the camera and all sessions.
     pub fn close(&self) {
         // Use try_lock to check opened state
-        let is_open = self.opened.try_lock()
-            .map(|g| *g)
-            .unwrap_or(false);
+        let is_open = self.opened.try_lock().map(|g| *g).unwrap_or(false);
         if !is_open {
             return;
         }

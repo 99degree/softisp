@@ -1,9 +1,9 @@
 //! Public types for cam-ipa stable API
 
-use std::path::PathBuf;
+use cam_isp::profile::PipelineProfile;
 use serde::{Deserialize, Serialize};
 use std::os::fd::RawFd;
-use cam_isp::profile::PipelineProfile;
+use std::path::PathBuf;
 
 /// Configuration for IPA context
 #[derive(Debug, Clone)]
@@ -132,29 +132,52 @@ pub struct ControlList {
 
 impl ControlList {
     pub fn new() -> Self {
-        Self { data: std::collections::HashMap::new() }
+        Self {
+            data: std::collections::HashMap::new(),
+        }
     }
-    
+
     pub fn set_f32(&mut self, key: &str, value: f32) {
-        self.data.insert(key.to_string(), serde_json::Value::Number(serde_json::Number::from_f64(value as f64).unwrap()));
+        self.data.insert(
+            key.to_string(),
+            serde_json::Value::Number(serde_json::Number::from_f64(value as f64).unwrap()),
+        );
     }
-    
+
     pub fn set_i32(&mut self, key: &str, value: i32) {
-        self.data.insert(key.to_string(), serde_json::Value::Number(value.into()));
+        self.data
+            .insert(key.to_string(), serde_json::Value::Number(value.into()));
     }
-    
+
     pub fn set_f32_array(&mut self, key: &str, values: &[f32]) {
-        self.data.insert(key.to_string(), serde_json::Value::Array(values.iter().map(|v| serde_json::Value::Number(serde_json::Number::from_f64(*v as f64).unwrap())).collect()));
+        self.data.insert(
+            key.to_string(),
+            serde_json::Value::Array(
+                values
+                    .iter()
+                    .map(|v| {
+                        serde_json::Value::Number(serde_json::Number::from_f64(*v as f64).unwrap())
+                    })
+                    .collect(),
+            ),
+        );
     }
-    
+
     pub fn get_f32(&self, key: &str) -> Option<f32> {
-        self.data.get(key).and_then(|v| v.as_f64()).map(|v| v as f32)
+        self.data
+            .get(key)
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
     }
-    
+
     pub fn get_f32_array(&self, key: &str) -> Option<Vec<f32>> {
-        self.data.get(key).and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect())
+        self.data.get(key).and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                .collect()
+        })
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -181,8 +204,12 @@ pub trait Buffer: Send + Sync {
     fn as_mut_ptr(&mut self) -> *mut u8;
     fn len(&self) -> usize;
     fn fd(&self) -> Option<RawFd>;
-    fn is_ahb(&self) -> bool { false }
-    fn ahb_ptr(&self) -> Option<*mut std::ffi::c_void> { None }
+    fn is_ahb(&self) -> bool {
+        false
+    }
+    fn ahb_ptr(&self) -> Option<*mut std::ffi::c_void> {
+        None
+    }
 }
 
 /// Callbacks for async events

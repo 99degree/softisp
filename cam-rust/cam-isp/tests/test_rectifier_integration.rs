@@ -152,15 +152,37 @@ fn test_rule_based_vs_neural() {
 #[test]
 fn test_real_onnx_model_variants() {
     let candidates = [
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light_int8.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/models/fusedispcontroller_light_fp16.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light_int8.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light.onnx"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../isp-rectifier/fusedispcontroller_light_fp16.onnx"),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/models/fusedispcontroller_light_int8.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/models/fusedispcontroller_light.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/models/fusedispcontroller_light_fp16.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/fusedispcontroller_light_int8.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/fusedispcontroller_light.onnx"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../isp-rectifier/fusedispcontroller_light_fp16.onnx"
+        ),
     ];
 
-    let existing: Vec<&str> = candidates.iter().filter(|p| std::path::Path::new(*p).exists()).copied().collect();
+    let existing: Vec<&str> = candidates
+        .iter()
+        .filter(|p| std::path::Path::new(*p).exists())
+        .copied()
+        .collect();
 
     if existing.is_empty() {
         // No pre-trained models available — verify fallback still produces valid params.
@@ -199,7 +221,10 @@ fn test_real_onnx_model_variants() {
         }
     }
 
-    assert!(loaded_any, "none of the existing ONNX models could be loaded");
+    assert!(
+        loaded_any,
+        "none of the existing ONNX models could be loaded"
+    );
 }
 
 /// Test that `with_default_model()` picks a real model when available,
@@ -243,8 +268,12 @@ fn test_mock_and_real_model_through_controller_api() {
         assert!(real_params.wb.r > 0.0);
         eprintln!(
             "Mock vs Real WB: mock=[{:.3},{:.3},{:.3}] real=[{:.3},{:.3},{:.3}] has_model={}",
-            mock_params.wb.r, mock_params.wb.g, mock_params.wb.b,
-            real_params.wb.r, real_params.wb.g, real_params.wb.b,
+            mock_params.wb.r,
+            mock_params.wb.g,
+            mock_params.wb.b,
+            real_params.wb.r,
+            real_params.wb.g,
+            real_params.wb.b,
             mock_has_model
         );
     } else {

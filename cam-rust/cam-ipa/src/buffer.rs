@@ -1,6 +1,6 @@
 //! Buffer management for zero-copy operations (Linux + Android)
-use std::os::fd::{RawFd, AsRawFd, OwnedFd, FromRawFd};
-use crate::{Buffer, IpaResult, IpaError};
+use crate::{Buffer, IpaError, IpaResult};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 /// DMA buffer wrapper — works on Linux (V4L2 dmabuf) and Android (SharedFD).
 ///
@@ -40,7 +40,10 @@ impl DmaBufBuffer {
             )
         };
         if ptr == libc::MAP_FAILED {
-            return Err(IpaError::Buffer(format!("mmap failed for fd {}", fd.as_raw_fd())));
+            return Err(IpaError::Buffer(format!(
+                "mmap failed for fd {}",
+                fd.as_raw_fd()
+            )));
         }
 
         Ok(Self {
@@ -115,7 +118,12 @@ unsafe impl Sync for AhwBuffer {}
 
 #[cfg(target_os = "android")]
 impl AhwBuffer {
-    pub fn new(ahb: *mut std::ffi::c_void, width: u32, height: u32, format: u32) -> IpaResult<Self> {
+    pub fn new(
+        ahb: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+        format: u32,
+    ) -> IpaResult<Self> {
         if ahb.is_null() {
             return Err(IpaError::Buffer("Null AHardwareBuffer".into()));
         }
@@ -171,13 +179,19 @@ pub fn create_memfd_dmabuf(size: usize) -> IpaResult<(RawFd, DmaBufBuffer)> {
     use std::os::fd::AsRawFd;
     let fd = unsafe { libc::memfd_create(b"softisp_ipa\0".as_ptr(), 0) };
     if fd < 0 {
-        return Err(IpaError::Buffer(format!("memfd_create failed: {}", std::io::Error::last_os_error())));
+        return Err(IpaError::Buffer(format!(
+            "memfd_create failed: {}",
+            std::io::Error::last_os_error()
+        )));
     }
 
     // Size the file
     if unsafe { libc::ftruncate(fd, size as i64) } != 0 {
         let _ = unsafe { libc::close(fd) };
-        return Err(IpaError::Buffer(format!("ftruncate failed: {}", std::io::Error::last_os_error())));
+        return Err(IpaError::Buffer(format!(
+            "ftruncate failed: {}",
+            std::io::Error::last_os_error()
+        )));
     }
 
     let buf = DmaBufBuffer::new(fd, size)?;
@@ -192,7 +206,9 @@ pub struct MemBuffer {
 
 impl MemBuffer {
     pub fn new(size: usize) -> Self {
-        Self { data: vec![0u8; size] }
+        Self {
+            data: vec![0u8; size],
+        }
     }
 
     pub fn from_vec(data: Vec<u8>) -> Self {
@@ -225,10 +241,16 @@ pub struct BufferManager {
 
 impl BufferManager {
     pub fn new() -> Self {
-        Self { buffers: Vec::new() }
+        Self {
+            buffers: Vec::new(),
+        }
     }
 
-    pub fn allocate_dmabuf(&mut self, fd: RawFd, size: usize) -> IpaResult<std::sync::Arc<dyn Buffer>> {
+    pub fn allocate_dmabuf(
+        &mut self,
+        fd: RawFd,
+        size: usize,
+    ) -> IpaResult<std::sync::Arc<dyn Buffer>> {
         let buf = DmaBufBuffer::new(fd, size)?;
         let arc = std::sync::Arc::new(buf);
         self.buffers.push(arc.clone());
@@ -236,7 +258,13 @@ impl BufferManager {
     }
 
     #[cfg(target_os = "android")]
-    pub fn allocate_ahb(&mut self, ahb: *mut std::ffi::c_void, width: u32, height: u32, format: u32) -> IpaResult<std::sync::Arc<dyn Buffer>> {
+    pub fn allocate_ahb(
+        &mut self,
+        ahb: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+        format: u32,
+    ) -> IpaResult<std::sync::Arc<dyn Buffer>> {
         let buf = AhwBuffer::new(ahb, width, height, format)?;
         let arc = std::sync::Arc::new(buf);
         self.buffers.push(arc.clone());

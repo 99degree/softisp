@@ -1,8 +1,8 @@
 //! Event emitter for thread-safe callback invocation
 
-use std::sync::{Arc, Mutex, mpsc};
-use std::thread;
 use crate::{ControlList, IpaCallbacks};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
 
 /// Internal event types
 enum IpaEvent {
@@ -27,11 +27,11 @@ impl EventEmitter {
             handle: None,
         }
     }
-    
+
     /// Start the event loop with callbacks
     pub fn start(&mut self, callbacks: IpaCallbacks) {
         let (tx, rx) = mpsc::channel();
-        
+
         let handle = thread::spawn(move || {
             while let Ok(event) = rx.recv() {
                 match event {
@@ -59,39 +59,39 @@ impl EventEmitter {
                 }
             }
         });
-        
+
         self.sender = Some(tx);
         self.handle = Some(handle);
     }
-    
+
     /// Emit metadata ready event
     pub fn emit_metadata_ready(&self, frame: u32, metadata: ControlList) {
         if let Some(tx) = &self.sender {
             let _ = tx.send(IpaEvent::MetadataReady(frame, metadata));
         }
     }
-    
+
     /// Emit frame done event
     pub fn emit_frame_done(&self, frame: u32, buffer_id: u32) {
         if let Some(tx) = &self.sender {
             let _ = tx.send(IpaEvent::FrameDone(frame, buffer_id));
         }
     }
-    
+
     /// Emit set sensor controls event
     pub fn emit_set_sensor_controls(&self, controls: ControlList) {
         if let Some(tx) = &self.sender {
             let _ = tx.send(IpaEvent::SetSensorControls(controls));
         }
     }
-    
+
     /// Emit set ISP params event
     pub fn emit_set_isp_params(&self) {
         if let Some(tx) = &self.sender {
             let _ = tx.send(IpaEvent::SetIspParams);
         }
     }
-    
+
     /// Shutdown the event loop
     pub fn shutdown(&mut self) {
         if let Some(tx) = self.sender.take() {

@@ -1,9 +1,9 @@
 //! IpaController wrapping cam_isp::controller::IspController for 3A
 
+use crate::{ControlInfoMap, ControlList};
 use cam_isp::controller::IspController;
-use cam_isp::isp_params::{IspParams, WbParams, ToneParams};
+use cam_isp::isp_params::{IspParams, ToneParams, WbParams};
 use std::sync::{Arc, Mutex};
-use crate::{ControlList, ControlInfoMap};
 
 /// Wrapper around IspController for IPA use
 pub struct IpaController {
@@ -17,12 +17,12 @@ impl IpaController {
             inner: Arc::new(Mutex::new(IspController::new())),
         }
     }
-    
+
     /// Get the inner controller (for engine)
     pub fn inner(&self) -> Arc<Mutex<IspController>> {
         self.inner.clone()
     }
-    
+
     /// Analyze frame and update parameters (3A)
     pub fn analyze_and_update(&self, frame: &cam_isp::pipeline::IspFrame) -> IspParams {
         let mut ctrl = self.inner.lock().unwrap();
@@ -43,22 +43,22 @@ impl IpaController {
             ..IspParams::default()
         }
     }
-    
+
     /// Get current AWB gains [R, G, B]
     pub fn get_awb_gains(&self) -> [f32; 3] {
         self.inner.lock().unwrap().awb_gains
     }
-    
+
     /// Get current analog gain
     pub fn get_analog_gain(&self) -> f32 {
         self.inner.lock().unwrap().analog_gain
     }
-    
+
     /// Get exposure time (ns)
     pub fn get_exposure_time(&self) -> i64 {
         self.inner.lock().unwrap().exposure_time_ns
     }
-    
+
     /// Get current ISP parameters
     pub fn get_params(&self) -> IspParams {
         let ctrl = self.inner.lock().unwrap();
@@ -77,11 +77,11 @@ impl IpaController {
             ..IspParams::default()
         }
     }
-    
+
     /// Update from ControlList (e.g., from sensor controls)
     pub fn update_from_controls(&self, controls: &ControlList) {
         let mut ctrl = self.inner.lock().unwrap();
-        
+
         if let Some(gain) = controls.get_f32("AnalogueGain") {
             ctrl.analog_gain = gain;
         }
@@ -94,14 +94,14 @@ impl IpaController {
             }
         }
     }
-    
+
     /// Update from ControlInfoMap (e.g., from sensor controls)
     pub fn update_from_controls_list(&self, controls: &ControlInfoMap) {
         // Convert to ControlList and update
         let ctrl_list = ControlList::from_info_map(controls);
         self.update_from_controls(&ctrl_list);
     }
-    
+
     /// Set target brightness (0.0-1.0)
     pub fn set_target_brightness(&self, brightness: f32) {
         self.inner.lock().unwrap().brightness_bias = brightness.clamp(0.0, 1.0);
