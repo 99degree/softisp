@@ -74,9 +74,42 @@ The canonical gate (fmt, per-crate clippy, lib tests,
 `perf_critical_path` is needed to quantify the millisecond saving; it is
 `#[ignore]` because it requires the MNN Vulkan libraries and a device.
 
+## On-device log check (2026-11-26, blue-frame report)
+
+User report: output turns blue after a few seconds with the dedup/scratch APK.
+The current `/sdcard/download/softisp-app.log` (19:26 UTC run, APK built 03:22
+HKT) was checked without changing source.
+
+Evidence from the log:
+
+- Upload dedup is active: steady-state `pipeline stage=tensor_assign` is
+  ~1–2 ms in this run, versus 5–36 ms in the preceding 18:17 run at the same
+  1600×1200 RAW path. No `upload of … rejected`, `failed to upload`, resize
+  failure, panic or kill appears after startup; both 4-slot pools are created
+  successfully at 19:26:28 and 19:26:31.
+- Controller values continue to move every frame: CCT 5200 → 4967,
+  `CcmGuard stats` R_gain 5.28 → 4.86 and B_gain 2.35 → 2.28. The AWB/CCM
+  state feeding the writes is therefore not frozen.
+- The canonical fused sink `DEMOSAICCCMBLOCK/W` is present in the converted
+  model; the legacy spelling alone is reported as absent, which is expected.
+  The camera reports one recoverable `ACameraDevice error 4` at 19:26:49.858
+  (frame ~359), immediately followed by `ACameraCaptureSession: ready` and
+  further frames. This correlates with the user's "after a few seconds" better
+  than any tensor event.
+
+Conclusion: the log confirms the cache is skipping uploads and shows no failed
+or rejected write, but it does not record skipped tensor names/values, so it
+cannot by itself prove or disprove a stale-upload colour cast. A targeted A/B
+run is required: add a `debug!` on each cache hit (name + value bits), or force
+`needs_*` to return `true` for one rebuild, and compare colour at the same
+frame. Do not revert the cache on log evidence alone.
+
 ## Remaining work
 
 - App-level timestamps for camera fill and display handoff (P2h, depends on
   P2b for an output AHB).
 - Confirm on device that upload phase shrinks while inference stays the floor,
   and that the first frame after a geometry change re-uploads everything.
+- Run the cache-hit A/B above to resolve the blue-frame report; if a specific
+  tensor is proven stale, invalidate only that name instead of disabling the
+  whole cache.
