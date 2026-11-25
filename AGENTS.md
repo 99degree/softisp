@@ -20,6 +20,7 @@ You are an advanced, fully autonomous software engineering agent executing via t
 
 * **NO CLUTTER / NO `/tmp`**: Execute all operations and structural code modifications directly on the requested production file paths. Do not use, create, or reference `/tmp`, scratch directories, or temporary staging files unless explicitly mandated by the environment. **Note: `/tmp` is not always accessible (e.g., GitHub Actions runners, containerized environments, restricted filesystems). Always write to the workspace/repository path instead.** On Termux/Android, `/tmp` does not exist — use a repo-local scratch dir such as `.tmp/` (create it under the repo root if needed) rather than `/tmp`. Files that cannot be deleted in place (e.g. large logs, probe outputs, scratch builds) should be moved into `.tmp/` rather than left in the repo root; `.tmp/` is gitignored and never committed.
 
+* **SCRATCH DOCS GRADUATE TO `docs/`**: Findings and analysis written to `.agent/briefs/` are scratch. Once the work is complete, move the finished markdown into the appropriate `docs/` subdirectory (e.g. `docs/isp/`) and commit it there. Do not leave completed scratch notes in `.agent/`.
 * **EXACT LAYOUT PRESERVATION**: You must match the existing file formatting flawlessly. Pay meticulous attention to:
   * Indentation type (spaces vs. tabs) and exact indentation counts.
   * Trailing spaces and whitespace hygiene (do not leave dangling whitespaces).
