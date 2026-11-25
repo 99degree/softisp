@@ -9,6 +9,14 @@ cam-ipa = { path = "../cam-rust/cam-ipa" }
 env_logger = "0.10"
 log = "0.4"
 
+# Optional V4L2 capture via cam-hal-linux
+cam-hal-linux = { path = "../cam-rust/cam-hal-linux", optional = true }
+cam-hal = { path = "../cam-rust/cam-hal", optional = true }
+
+[features]
+# Enable V4L2 frame capture (requires cam-hal-linux v4l2 feature + rscam)
+v4l2 = ["cam-hal-linux/v4l2", "cam-hal"]
+
 [lib]
 name = "cam_ipa_test_cli"
 path = "src/lib.rs"

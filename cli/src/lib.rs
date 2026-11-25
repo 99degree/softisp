@@ -1,15 +1,30 @@
 //! Shared logic for cam-ipa-test-cli polyglot ELF.
 //!
-//! Compiled as:
-//!   - cdylib (libcam_ipa_test_cli.so) — exports `ipa_test_main` for dlopen,
-//!     and `my_entry` as ELF entry point for direct execution.
-//!   - included by src/main.rs for the `ipa_test_cli` binary.
+//! Capabilities:
+//!   - Generate synthetic 4K test frames (always available)
+//!   - Capture real frames via V4L2 / cam-hal-linux (feature `v4l2`)
+//!   - Process frames through cam-ipa IPA pipeline (MnnEngine Vulkan)
+//!   - Compiled as:
+//!     - cdylib (libcam_ipa_test_cli.so) — exports `ipa_test_main` for dlopen,
+//!       and `my_entry` as ELF entry point for direct execution.
+//!     - included by src/main.rs for the `ipa_test_cli` binary.
+//!
+//! Build:
+//!   cargo build -p cam-ipa-test-cli              # synthetic frames only
+//!   cargo build -p cam-ipa-test-cli --features v4l2  # + V4L2 capture
+//!
+//! Run:
+//!   ./target/debug/libcam_ipa_test_cli.so          # direct execution
+//!   # or dlopen and call ipa_test_main()
 
 use cam_ipa::{
     IpaConfig, IpaSettings, IpaSensorInfo, IpaFormat, IpaCallbacks,
     ControlList, MemBuffer, IpaContext,
-    Size, Rectangle,
+    Size, Rectangle, Buffer,
 };
+
+#[cfg(feature = "v4l2")]
+use cam_hal_linux::{create_v4l2_adapter, list_v4l2_devices, capture_single_v4l2_frame};
 
 /// Library entry point — callable via dlopen
 #[no_mangle]
@@ -21,22 +36,24 @@ pub extern "C" fn ipa_test_main() -> i32 {
 /// Called by the dynamic linker when the .so is run as ./libcam_ipa_test_cli.so
 #[no_mangle]
 pub extern "C" fn my_entry() -> ! {
-    unsafe { std::process::exit(run_cli()) }
+    std::process::exit(run_cli())
 }
 
 fn run_cli() -> i32 {
     env_logger::init();
 
     println!("=== cam-ipa Test CLI (polyglot ELF) ===");
+    println!("Features: {}", feature_list());
 
-    // 1. Create config
+    // 1. Create config — default to 4K for pipeline stress testing
     let config = IpaConfig {
-        image_width: 1920,
-        image_height: 1080,
+        image_width: 3840,
+        image_height: 2160,
         format: IpaFormat::BGRA,
         num_output_buffers: 2,
         ..IpaConfig::default()
     };
+    let config_for_acquire = config.clone();
     println!("Config: {}x{} {:?}", config.image_width, config.image_height, config.format);
 
     // 2. Create IPA context
@@ -69,14 +86,14 @@ fn run_cli() -> i32 {
     ctx.set_callbacks(callbacks);
     println!("Callbacks registered");
 
-    // 4. Create sensor info
+    // 4. Create sensor info (4K)
     let sensor_info = IpaSensorInfo {
-        model: "test_sensor".to_string(),
+        model: "test_sensor_4k".to_string(),
         bits_per_pixel: 10,
         cfa_pattern: 0,
-        active_area_size: Size { width: 1920, height: 1080 },
-        analog_crop: Rectangle { x: 0, y: 0, width: 1920, height: 1080 },
-        output_size: Size { width: 1920, height: 1080 },
+        active_area_size: Size { width: 3840, height: 2160 },
+        analog_crop: Rectangle { x: 0, y: 0, width: 3840, height: 2160 },
+        output_size: Size { width: 3840, height: 2160 },
         pixel_rate: 0,
         min_line_length: 0,
         max_line_length: 0,
@@ -87,7 +104,7 @@ fn run_cli() -> i32 {
     // 5. Initialize
     let settings = IpaSettings {
         config_file: None,
-        sensor_model: "test_sensor".to_string(),
+        sensor_model: "test_sensor_4k".to_string(),
     };
     match ctx.init(&settings, &sensor_info) {
         Ok(init_result) => {
@@ -110,15 +127,13 @@ fn run_cli() -> i32 {
     }
     println!("Started: {}", ctx.is_started());
 
-    // 7. Create test buffers
-    let input_size = (1920 * 1080 * 2) as usize; // 16-bit Bayer
-    let output_size = (1920 * 1080 * 4) as usize; // BGRA
+    // 7. Acquire frame input — V4L2 if available, otherwise synthetic
+    let (width, height, input_data) = acquire_frame(&config_for_acquire);
 
-    let mut input_buf = MemBuffer::new(input_size);
-    for (i, b) in input_buf.data.iter_mut().enumerate() {
-        *b = (i % 256) as u8;
-    }
+    let mut input_buf = MemBuffer::new(input_data.len());
+    input_buf.data.copy_from_slice(&input_data);
 
+    let output_size = (width * height * 4) as usize; // BGRA
     let mut output_buf = MemBuffer::new(output_size);
 
     // 8. Queue request
@@ -139,7 +154,7 @@ fn run_cli() -> i32 {
     }
 
     // 10. Process stats
-    let stats_buf = MemBuffer::new(640 * 480);
+    let stats_buf = MemBuffer::new(((width / 4) * (height / 4) * 4) as usize);
     match ctx.process_stats(1, 100, &stats_buf) {
         Ok(metadata) => {
             println!("process_stats OK: keys={:?}",
@@ -148,15 +163,23 @@ fn run_cli() -> i32 {
         Err(e) => eprintln!("process_stats failed: {}", e),
     }
 
-    // 11. Process frame
+    // 11. Process frame through full ISP pipeline
     match ctx.process_frame(
         1, 100,
         &mut input_buf, &mut output_buf,
         0, 0,
-        1920, 1080,
+        width, height,
         &controls,
     ) {
-        Ok(()) => println!("process_frame(1) OK"),
+        Ok(()) => {
+            println!("process_frame(1) OK — output {} bytes", output_buf.len());
+            // Write output to file for inspection
+            if let Err(e) = std::fs::write("/data/data/com.termux/files/home/softisp/output_frame.bgra", &output_buf.data) {
+                eprintln!("Failed to write output frame: {}", e);
+            } else {
+                println!("Output frame written to output_frame.bgra ({} bytes)", output_buf.data.len());
+            }
+        }
         Err(e) => eprintln!("process_frame failed: {}", e),
     }
 
@@ -174,12 +197,69 @@ fn run_cli() -> i32 {
     0
 }
 
+/// Acquire a frame: V4L2 if feature enabled and device available, otherwise synthetic.
+fn acquire_frame(config: &IpaConfig) -> (u32, u32, Vec<u8>) {
+    #[cfg(feature = "v4l2")]
+    {
+        // Try V4L2 first
+        let devices = list_v4l2_devices();
+        if let Some(dev) = devices.first() {
+            println!("V4L2 device found: {}", dev);
+            match capture_single_v4l2_frame(dev, config.image_width, config.image_height) {
+                Ok((w, h, data)) => {
+                    println!("Captured {}x{} frame from V4L2 ({} bytes)", w, h, data.len());
+                    return (w, h, data);
+                }
+                Err(e) => {
+                    println!("V4L2 capture failed: {}, falling back to synthetic", e);
+                }
+            }
+        } else {
+            println!("No V4L2 device found, using synthetic frame");
+        }
+    }
+    #[cfg(not(feature = "v4l2"))]
+    {
+        println!("V4L2 feature not enabled, using synthetic frame");
+    }
+
+    // Synthetic 4K Bayer-like pattern
+    let w = config.image_width;
+    let h = config.image_height;
+    let size = (w * h * 2) as usize; // 16-bit Bayer
+    let mut data = vec![0u8; size];
+    for (i, chunk) in data.chunks_mut(2).enumerate() {
+        let val = (i as u16) ^ ((i >> 11) as u16); // spatial pattern
+        chunk[0] = val as u8;
+        chunk[1] = (val >> 8) as u8;
+    }
+    println!("Generated synthetic {}x{} 16-bit Bayer frame ({} bytes)", w, h, data.len());
+    (w, h, data)
+}
+
+/// Return a comma-separated list of active features for the banner.
+fn feature_list() -> String {
+    let mut feats = Vec::new();
+    feats.push("synthetic-4k".to_string());
+    #[cfg(feature = "v4l2")]
+    feats.push("v4l2".to_string());
+    feats.join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_run_cli_returns_zero() {
-        let _ = run_cli();
+    fn test_synthetic_frame_generation() {
+        let config = IpaConfig {
+            image_width: 64,
+            image_height: 48,
+            format: IpaFormat::BGRA,
+            num_output_buffers: 1,
+            ..IpaConfig::default()
+        };
+        let (_w, _h, data) = acquire_frame(&config);
+        assert_eq!(data.len(), 64 * 48 * 2);
     }
 }

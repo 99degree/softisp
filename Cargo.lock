@@ -373,6 +373,8 @@ dependencies = [
 name = "cam-ipa-test-cli"
 version = "0.1.0"
 dependencies = [
+ "cam-hal",
+ "cam-hal-linux",
  "cam-ipa",
  "env_logger 0.10.2",
  "log",

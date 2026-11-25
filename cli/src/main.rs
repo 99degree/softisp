@@ -1,8 +1,7 @@
 //! Binary entry point for cam-ipa-test-cli polyglot ELF.
 //!
-//! The same source compiles as:
-//!   - `ipa_test_cli` binary (runnable directly)
-//!   - `libcam_ipa_test_cli.so` shared library (dlopen-able, exposes `ipa_test_main`)
+//! Links against cam_ipa_test_cli lib (rlib) for the binary target.
+//! The lib is also built as cdylib for dlopen use.
 
 use cam_ipa_test_cli::ipa_test_main;
 
