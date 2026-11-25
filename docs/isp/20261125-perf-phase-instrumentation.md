@@ -158,14 +158,30 @@ a tweak to the stats interval:
   no prior controller state or no known target geometry means no safe prep.
 - The `camera` mutex should be held only for `next_frame()`, not across prep;
   worker B can prep while worker A waits for its sensor buffer.
+- **Buffer ownership (implementation-stage refinement).** The strongest form of
+  prep is to allocate/initialize the inference input buffer first and hand that
+  same pointer/AHB to camera2 as the capture target. The camera then fills the
+  buffer while prep and the previous frame's work happen; when it signals
+  ready, the engine only binds the already-known pointer and enters inference.
+  That makes the critical path "buffer ready → `runSession`", not "frame arrives
+  → copy/prepare → `runSession`". The exact AHB/ImageReader/GraphicBufferProducer
+  ownership, usage bits, fence/sync, and lifetime rules must be settled at
+  implementation time; this idea must not weaken the zero-copy contract or
+  reuse a buffer while the GPU still reads it. It is dependent on the P2b AHB
+  work (camera reader currently lacks GPU usage bits, `AImage` is deleted before
+  inference, and no output AHB is obtainable from `ANativeWindow`).
 
 **Estimated payoff.** Device means were `setup 47.6 ms`, `tensor_assign 10.3
 ms`, `input 46.9 ms`, `infer 112.2 ms`, `stats 79.3 ms`, total `314.0 ms`.
 Overlapping prep with camera wait and stats with presentation can hide roughly
 `58 ms` of pre-inference tensor work and `79 ms` of readback from the visible
-frame path; inference remains the hard floor. Throughput is still bounded by
-MNN inference and camera cadence, so this is a latency/responsiveness win, not
-a way to make the GPU faster.
+frame path. With camera2 filling the pre-bound input buffer, the input wait and
+copy leave the inference path too; `runSession` itself remains the hard floor.
+Throughput is still bounded by MNN inference and camera cadence, so this is a
+latency/responsiveness win, not a way to make the GPU faster. The design goal
+is explicit: keep only genuinely critical work between "buffer ready" and
+"frame displayed", and move everything else into the camera-fill, presentation,
+or next-worker window.
 
 **Impact on the current plan:** none for this commit. The A-on/B-off split is
 still the correct first fix and removes one of the two readbacks per frame

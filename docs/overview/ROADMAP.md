@@ -253,9 +253,18 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   `next_frame()`, and fall back to today's inline `process()` on first frame or
   geometry change. Existing `IspAuxOutput::calibration_stats` callers must keep
   the current behaviour by default.
+- **Buffer ownership refinement (implementation stage):** allocate and bind the
+  inference input buffer/AHB before capture and hand the same pointer to camera2
+  as the capture target. Camera fill then overlaps prep and the previous frame;
+  "buffer ready → `runSession`" is the critical path, with no input copy. Exact
+  AHB/ImageReader ownership, usage bits, fences, and lifetime are to be decided
+  at implementation time and depend on P2b. Never reuse a buffer the GPU still
+  reads.
 - **Estimate:** can hide roughly 58 ms of pre-inference tensor work and 79 ms
-  of GPU→CPU stats readback from the visible frame path; inference (~112 ms)
-  remains the floor. It is a latency win, not an inference-speed change.
+  of GPU→CPU stats readback from the visible frame path; camera2 filling a
+  pre-bound buffer also removes the input wait/copy from the inference path.
+  `runSession` (~112 ms) remains the floor. It is a latency win, not an
+  inference-speed change.
 - **Status:** not implemented. This is a larger API-surface follow-up than the
   A-on/B-off stats split and is documented in
   `docs/isp/20261125-perf-phase-instrumentation.md`.
