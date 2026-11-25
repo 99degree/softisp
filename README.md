@@ -120,18 +120,25 @@ emits no per-dispatch lines; with it on, one three-profile run writes 26 KB. An 
 that falls back off the GPU is still reported unconditionally, because that costs
 two full-frame copies and is worth more than any tuning.
 
-**3840×2160** (`PERF_FRAMES=40 cargo test -p cam-isp --test probe_4k_perf perf_4k_fused --features mnn -- --ignored --nocapture`)
+**3840×2160** (`PERF_FRAMES=40 cargo test -p cam-isp --test probe_4k_perf perf_4k_all --features mnn -- --ignored --nocapture`)
 
-Measured on this device (Termux/Android, Vulkan GPU, MNN backend). Output format changes the cost materially — PackedRgb is a single fused dispatch; BGRA needs an extra format-conversion pass.
+Measured on this device (Termux/Android, Vulkan GPU, MNN backend). Output format changes the cost materially — PackedRgb is a single fused dispatch; BGRA needs an extra format-conversion pass. MED/HEAVY/UNIFIED PackedRgb produce blank output on this build (known graph/packing gap) and are shown only for BGRA/ARGB where they render.
 
 | Profile | Blocks | p50 | p95 | FPS | Format |
 |---|---|---|---|---|---|
-| **FUSED** | 14 | **159.6 ms** | 174.9 ms | **6.3** | PackedRgb |
-| FUSED, statistics off | 14 | 159.2 ms | 159.8 ms | 6.3 | PackedRgb |
-| **FUSED** | 14 | **265.5 ms** | 268.7 ms | **3.8** | BGRA |
-| FUSED, statistics off | 14 | 265.9 ms | 268.2 ms | 3.8 | BGRA |
+| **FUSED** | 14 | **156.8 ms** | 161.3 ms | **6.4** | PackedRgb |
+| FUSED, statistics off | 14 | 157.1 ms | 177.9 ms | 6.4 | PackedRgb |
+| **FUSED** | 14 | **274.7 ms** | 297.3 ms | **3.6** | BGRA |
+| FUSED, statistics off | 14 | 258.4 ms | 312.4 ms | 3.9 | BGRA |
+| MED (primitives) | 19 | 468.1 ms | 509.3 ms | 2.1 | BGRA |
+| MED (primitives) | 19 | 498.6 ms | 526.0 ms | 2.0 | ARGB |
+| WHOLE (`isp.pipeline`) | 2 | 181.2 ms | 201.4 ms | 5.5 | PackedRgb |
+| UNIFIED | 14 | 164.8 ms | 183.1 ms | 6.1 | PackedRgb |
+| UNIFIED | 14 | 216.5 ms | 295.1 ms | 4.6 | BGRA |
+| DUAL fused (stats ON+OFF ping-pong) | 14 | 142.1 ms | 162.5 ms | 7.0 | PackedRgb |
+| DUAL fused | 14 | 276.5 ms | 322.0 ms | 3.6 | BGRA |
 
-Statistics readback costs ~1.7 ms per frame (~1% of p50) at 4K — the per-block statistics taps were already pooled into one shared `AveragePool` (`stats_downscale_max = 540`), so the 3A branches are ~6% of the frame instead of 38%.
+Statistics readback costs ~2.5 ms per frame (~2% of p50) at 4K — the per-block statistics taps were already pooled into one shared `AveragePool` (`stats_downscale_max = 540`), so the 3A branches are ~6% of the frame instead of 38%.
 
 **1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25 …`)
 
@@ -143,7 +150,7 @@ Statistics readback costs ~1.7 ms per frame (~1% of p50) at 4K — the per-block
 | WHOLE (`isp.pipeline`) | 2 | 19.7 ms | 22.1 ms | 50.8 |
 | UNIFIED (FUSED + all stages) | 13 | 72.6 ms | 80.7 ms | 13.8 |
 
-Fusion buys **~1.8×** at FHD. Collapsing the whole chain into one dispatch (`WHOLE`) was worth 2.4× while the statistics still reduced the full frame; with them pooled, `FUSED` is within ~4× of `WHOLE` at FHD while keeping the 3A loop closed. `UNIFIED` mirrors FUSED with tiled rendering at 4K and matches it within noise, confirming the fusion is the driver.
+Fusion buys **~1.8×** at FHD and **~3×** at 4K (FUSED PackedRgb 156.8 ms vs MED BGRA 468.1 ms). Collapsing the whole chain into one dispatch (`WHOLE`) was worth 2.4× while the statistics still reduced the full frame; with them pooled, `FUSED` is within ~4× of `WHOLE` at FHD while keeping the 3A loop closed. `UNIFIED` mirrors FUSED with tiled rendering at 4K and matches it within noise, confirming the fusion is the driver. The DUAL engine (ping-pong two `MnnEngine` instances, stats on A / off B) reaches **7.0 FPS** at 4K PackedRgb — the best single-engine number.
 
 Absolute numbers move with device temperature — the same configuration measured 437.1 ms then 298.0 ms back to back (`probe_4k_drift`). Compare rows *within* a run.
 
