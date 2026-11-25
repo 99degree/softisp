@@ -15,6 +15,7 @@ use cam_isp::profile::PipelineProfile;
 use ndk_sys::ANativeWindow;
 use std::sync::Mutex;
 
+pub mod ahb_output;
 pub mod camera;
 pub mod crashlog;
 pub mod pipeline;

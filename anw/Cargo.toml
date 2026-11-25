@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 cam-ipa = { path = "../cam-rust/cam-ipa" }
 cam-isp = { path = "../cam-rust/cam-isp", features = ["rectifier"] }
 cam-types = { path = "../cam-rust/cam-types" }
-ndk-sys = { workspace = true }
+ndk-sys = { workspace = true, features = ["nativewindow"] }
 android-activity = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }

@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use cam_isp::engine::{IspEngine, PrepareParams};
 use cam_isp::mnnengine::{MnnEngine, PreparedFrame};
 
+use crate::ahb_output::{self, AhbOutputSlot, AhbView};
 use crate::app::{raw_stats, raw_to_grayscale_bgra, FrameKind, RawStats};
 use crate::camera::{CameraSession, RawFrame};
 use crate::pipeline::{FrameStager, PipelineConfig};
@@ -57,6 +58,9 @@ pub(crate) struct Done {
     /// is consumed so later frames are not held behind a failed one.
     pub(crate) error: Option<String>,
     pub(crate) data: Vec<u8>,
+    /// Presenter-facing view of an AHB-backed output. When `Some`, `data` is
+    /// empty and the pixels live in this view's mapping.
+    pub(crate) ahb: Option<AhbView>,
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) kind: FrameKind,
@@ -109,6 +113,7 @@ impl PipelineRunner {
         config: PipelineConfig,
         show_raw: Arc<AtomicBool>,
     ) -> Self {
+        ahb_output::log_switch_state();
         let camera = Arc::new(Mutex::new(camera));
         let handle = PipelineHandle::new(Arc::new(AtomicBool::new(false)));
         let seq = Arc::new(AtomicU64::new(0));
@@ -228,14 +233,41 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
     let mnn = engine.as_any().downcast_ref::<MnnEngine>();
     let mut geometry: Option<(u32, u32)> = None;
     let mut prepared: Option<PreparedFrame<'_>> = None;
+    let mut ahb_slot: Option<AhbOutputSlot> = None;
 
     while !stop.load(Ordering::Acquire) {
+        // One AHB per worker, allocated once the geometry is known and reused
+        // for the session lifetime. Rebinding would leave MNN's imported
+        // VkBuffer pointing at the old buffer, so a size change drops and
+        // recreates the slot (and invalidates any staged prepare).
+        if ahb_output::output_ahb_enabled() && mnn.is_some() {
+            if let Some((w, h)) = geometry {
+                let stale = ahb_slot
+                    .as_ref()
+                    .is_none_or(|s| s.width() != w || s.height() != h);
+                if stale {
+                    match AhbOutputSlot::new(w, h, 0) {
+                        Ok(slot) => {
+                            ahb_slot = Some(slot);
+                            prepared = None;
+                        }
+                        Err(e) => log::warn!("AHB output slot unavailable: {e}"),
+                    }
+                }
+            }
+        }
+
         // Prep the next frame while the camera is still filling its buffer.
         // The controller already holds the values this frame will consume, so
         // no sensor pixels are needed for the tensor uploads or session resize.
         if prepared.is_none() {
             if let (Some(mnn), Some((w, h))) = (mnn, geometry) {
-                let prepare_params = config.params(w, h, &[], 0);
+                let mut prepare_params = config.params(w, h, &[], 0);
+                if let Some(slot) = ahb_slot.as_ref() {
+                    let (binding, buf) = slot.buffers();
+                    prepare_params.output_buffer = Some(buf);
+                    prepare_params.output_ahb = Some(binding);
+                }
                 prepared = mnn.prepare(&prepare_params).ok();
             }
         }
@@ -295,7 +327,17 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                 None,
             )
         } else {
-            let params = config.params(frame.width, frame.height, staged, frame.timestamp_ns);
+            let mut params = config.params(frame.width, frame.height, staged, frame.timestamp_ns);
+            if let Some(slot) = ahb_slot.as_ref() {
+                // Wait only for this worker's presenter handoff; the other
+                // engine keeps running. Marking busy here prevents the GPU
+                // from overwriting pixels the surface may still be reading.
+                slot.wait_free();
+                slot.mark_busy();
+                let (binding, buf) = slot.buffers();
+                params.output_buffer = Some(buf);
+                params.output_ahb = Some(binding);
+            }
             let isp_t0 = Instant::now();
             let expected = PrepareParams::from(&params);
             let staged_result = match (mnn, prepared.take()) {
@@ -323,6 +365,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                         isp,
                         error: None,
                         data: out.data,
+                        ahb: ahb_slot.as_ref().map(|s| s.view()),
                         width: out.width,
                         height: out.height,
                         kind,
@@ -331,6 +374,11 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                     if let Some(mnn) = mnn {
                         let _ = mnn.finish(pending);
                     }
+                    if !ok {
+                        if let Some(slot) = ahb_slot.as_ref() {
+                            slot.mark_free();
+                        }
+                    }
                     if !ok || stop.load(Ordering::Acquire) {
                         break;
                     }
@@ -338,6 +386,9 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                 }
                 Some(Err(e)) => {
                     let isp = isp_t0.elapsed();
+                    if let Some(slot) = ahb_slot.as_ref() {
+                        slot.mark_free();
+                    }
                     (
                         Vec::new(),
                         frame.width,
@@ -381,6 +432,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             isp,
             error,
             data,
+            ahb: None,
             width,
             height,
             kind,
@@ -572,6 +624,7 @@ mod tests {
                 isp: Duration::ZERO,
                 error: None,
                 data: produced.data.clone(),
+                ahb: None,
                 width: produced.width,
                 height: produced.height,
                 kind: FrameKind::Bgra,

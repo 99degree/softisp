@@ -368,11 +368,16 @@ pub fn install_logger() {
 
     static LOGGER: FileLogger = FileLogger;
     if log::set_logger(&LOGGER).is_ok() {
-        // Hardcoded to Debug so ISP diagnostics (engine choice, pipeline
-        // geometry, capture format, per-frame timing) are always captured
-        // in the app log — never silently dropped by a release build's
-        // default max level.
-        log::set_max_level(log::LevelFilter::Debug);
+        // Per-frame diagnostics are verbose: keep them out of a normal run's
+        // log, and enable them with SOFTISP_VERBOSE / softisp-verbose when the
+        // AHB handoff or upload path needs tracing. INFO and above (including
+        // the one-time switch state) are always captured.
+        let max = if crate::ahb_output::verbose_enabled() {
+            log::LevelFilter::Debug
+        } else {
+            log::LevelFilter::Info
+        };
+        log::set_max_level(max);
     }
     // A second call (activity recreated) leaves the first logger installed:
     // `set_logger` fails and the existing one keeps writing.

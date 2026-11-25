@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::ahb_output::AhbView;
 use crate::camera::{take_fatal_camera_error, CameraSession, RawFrame};
 use crate::crashlog::{self, write_line};
 use crate::pipeline::PipelineConfig;
@@ -209,7 +210,11 @@ pub(crate) enum FrameKind {
 }
 
 /// The last successfully processed frame, kept to repaint the surface.
-type LastFrame = (Vec<u8>, u32, u32, FrameKind);
+///
+/// The optional view points into a worker-owned AHB. It is released after the
+/// present that stored it; a repaint skips it while the worker has marked the
+/// slot busy for the next inference.
+type LastFrame = (Vec<u8>, u32, u32, FrameKind, Option<AhbView>);
 
 /// Present a frame regardless of how it is encoded.
 fn present_frame(
@@ -607,9 +612,21 @@ impl Preview {
 
         // ISP succeeded but the surface can still reject the frame: record
         // that instead of leaving a black preview with no diagnostic.
+        //
+        // An AHB frame has no owned bytes: reading its mapping is the whole
+        // point of the zero-copy path. Release the handoff flag as soon as the
+        // blit returns, whether it succeeded or not, so the worker is never
+        // held behind a broken surface.
+        let (bytes, ahb_view) = match done.ahb.as_ref() {
+            Some(view) => (view.bytes(), Some(view.clone())),
+            None => (done.data.as_slice(), None),
+        };
         let present_t0 = Instant::now();
-        let presented = present_frame(target, &done.data, done.width, done.height, done.kind);
+        let presented = present_frame(target, bytes, done.width, done.height, done.kind);
         let t_present = present_t0.elapsed();
+        if let Some(view) = ahb_view.as_ref() {
+            view.mark_free();
+        }
         match presented {
             Ok(_) => self.last_present_error = None,
             Err(e) => {
@@ -621,7 +638,7 @@ impl Preview {
         }
 
         self.frames += 1;
-        self.last_frame = Some((done.data, done.width, done.height, done.kind));
+        self.last_frame = Some((done.data, done.width, done.height, done.kind, ahb_view));
 
         // Workers report their own stage timings; combine them with the
         // present time to keep the end-to-end budget diagnostic alive.
@@ -651,16 +668,19 @@ impl Preview {
             let content = self
                 .last_frame
                 .as_ref()
-                .map(|(data, _, _, kind)| match kind {
-                    FrameKind::Bgra => frame_stats(data),
-                    FrameKind::PlanarRgbF32 => {
-                        let floats: Vec<f32> = data
-                            .as_chunks::<4>()
-                            .0
-                            .iter()
-                            .map(|b| f32::from_le_bytes(*b))
-                            .collect();
-                        planar_rgb_stats(&floats)
+                .map(|(data, _, _, kind, ahb)| {
+                    let bytes = ahb.as_ref().map_or(data.as_slice(), |v| v.bytes());
+                    match kind {
+                        FrameKind::Bgra => frame_stats(bytes),
+                        FrameKind::PlanarRgbF32 => {
+                            let floats: Vec<f32> = bytes
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
+                                .map(|b| f32::from_le_bytes(*b))
+                                .collect();
+                            planar_rgb_stats(&floats)
+                        }
                     }
                 })
                 .unwrap_or_default();
@@ -682,8 +702,15 @@ impl Preview {
 
     /// Repaint the last good frame when no new result is ready.
     fn repaint_last(&self, target: &WindowTarget<'_>) {
-        if let Some((data, w, h, kind)) = self.last_frame.as_ref() {
-            let _ = present_frame(target, data, *w, *h, *kind);
+        if let Some((data, w, h, kind, ahb)) = self.last_frame.as_ref() {
+            // The worker marks its slot busy before the next inference. Reading
+            // it now would tear, so leave the surface showing the previous
+            // buffer until that frame is presented.
+            if ahb.as_ref().is_some_and(|v| v.is_busy()) {
+                return;
+            }
+            let bytes = ahb.as_ref().map_or(data.as_slice(), |v| v.bytes());
+            let _ = present_frame(target, bytes, *w, *h, *kind);
         }
     }
 }
