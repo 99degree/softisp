@@ -87,7 +87,8 @@ All ISP pipeline blocks implement the `IspBlock` trait and contribute ONNX graph
 | **Input** | `{prev}/out` → `[1, 4, H, W]` FLOAT |
 | **Output** | `{ns}/out` → `[1, 4, H, W]` FLOAT |
 | **ONNX ops** | `Mul(wb_gains) → Clip(0,1)` (identity passthrough when gains=[1,1,1,1]) |
-| **Params** | `gains: [f32; 4]` — per-channel (R, Gr, Gb, B) |
+| **Params** | `gains: [f32; 4]` — per-plane order TL, TR, BL, BR (sensor-pattern dependent) |
+| **Details** | See [BAYER_WB_DESIGN.md](../isp/BAYER_WB_DESIGN.md) for the controller/fusion contract. |
 
 ---
 

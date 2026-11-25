@@ -34,14 +34,21 @@ but can be overridden per-frame through the MNN engine's `set_extra_inputs()`.
 
 | Tensor Suffix | Config | Shape | Type | Default | Description |
 |---|---|---|---|---|---|
-| `gains` | rggb | [1,4,1,1] | FLOAT | [1.0, 1.0, 1.0, 1.0] | RGGB channel gains for Bayer white balance |
+| `gains` | sensor-pattern dependent | [1,4,1,1] | FLOAT | identity | Per-plane gains in TL,TR,BL,BR order |
+| `zero` | fixed | [] | FLOAT | 0.0 | Lower clip bound |
+| `one` | fixed | [] | FLOAT | 1.0 | Upper clip bound |
+
+The `gains`, `zero`, and `one` inputs are declared only when the block's
+build-time gains are non-identity. Production builds use identity gains, so the
+live controller gains are folded into the surviving demosaic/CCM sink instead;
+see [BAYER_WB_DESIGN.md](../isp/BAYER_WB_DESIGN.md).
 
 ### Input / Output Tensors
 
 | Tensor | I/O | Shape | Type | Description |
 |---|---|---|---|---|
-| `prev/frame` | Input | [1,1,-1,-1] | FLOAT | Bayer input [1,1,H,W] FLOAT |
-| `BayerWbBlock/frame` | Output | [1,1,-1,-1] | FLOAT | Bayer WB output [1,1,H,W] FLOAT |
+| `{prev}/out` | Input | [1,4,H,W] | FLOAT | CFA quad input, one plane per Bayer site |
+| `BayerWbBlock/frame` | Output | [1,4,H,W] | FLOAT | White-balanced CFA quad |
 
 ## `demosaic_ccm` — Fused demosaic + CCM
 

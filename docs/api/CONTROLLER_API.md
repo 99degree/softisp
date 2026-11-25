@@ -47,8 +47,13 @@ let mut controller = Controller::neural();
 let frame = IspFrame { ... };
 let params = controller.analyze_and_update(&frame);
 
-// Apply to pipeline blocks
-bayer_wb_block.set_gains([params.wb.r, params.wb.g, params.wb.b]);
+// Apply to pipeline blocks. BayerWbBlock takes four plane-ordered gains,
+// not three RGB gains; use gains_by_plane() for GRBG/GBRG/BGGR sensors.
+let wb_planes = cam_isp::bayer_planes::gains_by_plane(
+    &[params.wb.r, params.wb.g, params.wb.b],
+    bayer_pattern,
+);
+bayer_wb_block.set_gains(wb_planes[0], wb_planes[1], wb_planes[2], wb_planes[3]);
 ccm_block.set_matrix(&params.ccm.matrix);
 tone_block.set_contrast(params.tone.contrast);
 ```
