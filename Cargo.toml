@@ -14,7 +14,6 @@ members = [
     "cam-rust/cam-disp",
     "cam-rust/cam-ipa",
     "libcamera-ipa",
-    "jni",
     "anw",
     "cli",
     "android-app",

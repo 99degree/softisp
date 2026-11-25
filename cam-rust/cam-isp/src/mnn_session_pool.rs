@@ -187,6 +187,11 @@ impl<'a> std::ops::DerefMut for SessionGuard<'a> {
 }
 
 impl<'a> SessionGuard<'a> {
+    /// Shared interpreter behind this slot, for staged stats readback.
+    pub(crate) fn interp(&self) -> &MnnInterpreterSafe {
+        &self.pool.interp
+    }
+
     /// Re-resolve the cached extra-input tensor handles from the session.
     ///
     /// `resizeSession` re-allocates the session's tensors, so every handle

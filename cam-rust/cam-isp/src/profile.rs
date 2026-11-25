@@ -50,11 +50,12 @@ pub struct PipelineProfile {
     /// When true (default), RawInputBlock uses INT32 at half-width and
     /// UnpackBlock is injected after it. When false, uses legacy FLOAT path.
     pub use_unpack: bool,
-    /// Force the pure 16-bit raw input convention: `[1,1,H,W]` INT16 via
-    /// `RawInput16Block`, instead of the packed 2×int16-as-int32 tensor
-    /// (`[1,2,H,W/2]`, `RawInputPackedBlock`). The MNN converter upcasts the
-    /// INT16 input to FLOAT32; the engine converts the u16 buffer to f32
-    /// (RawFloat mode). Takes precedence over `use_unpack`. Default: false.
+    /// Force the pure 16-bit raw input convention: one FLOAT32 sample per
+    /// pixel via `RawFloatInputBlock`, instead of the packed 2×int16-as-int32
+    /// tensor (`[1,2,H,W/2]`, `RawInputPackedBlock`). The engine widens the
+    /// u16 sensor buffer to f32 before inference because MNN's Vulkan
+    /// backend cannot execute an INT16→FLOAT Cast inside the graph.
+    /// Takes precedence over `use_unpack`. Default: false.
     pub force_input16: bool,
     /// Enable false color suppression (FCS).
     pub use_fcs: bool,

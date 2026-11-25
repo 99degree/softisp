@@ -175,19 +175,20 @@ impl PipelineProfile {
                             .with_opset_mode(BlockOpsetMode::MnnIspMin),
                     ));
                 } else if self.force_input16 {
-                    // Pure 16-bit raw input [1,1,H,W] INT16 — no packed tensor, no
-                    // split. MNN's converter upcasts the INT16 input to FLOAT32, and
-                    // the engine converts the u16 buffer to f32 (RawFloat mode).
-                    // UnpackCfaBlock casts INT16→FLOAT32 and extracts the 4 Bayer
-                    // quadrants via a stride-2 conv → [1,4,H/2,W/2].
+                    // One FLOAT32 sample per pixel, widened by the engine from
+                    // the u16 sensor buffer before inference. MNN's Vulkan
+                    // backend cannot execute the INT16→FLOAT Cast that the
+                    // native-INT16 head would put in the graph, so the head
+                    // declares FLOAT32 and UnpackCfaBlock goes straight to
+                    // its stride-2 Conv → [1,4,H/2,W/2].
                     blocks.push(Box::new(
-                        RawInput16Block::new()
+                        RawFloatInputBlock::new()
                             .with_concrete_width(full_w)
                             .with_concrete_height(concrete_h),
                     ));
                     blocks.push(Box::new(
                         crate::blocks::UnpackCfaBlock::new()
-                            .with_mode(crate::blocks::UnpackMode::NativeInt16)
+                            .with_mode(crate::blocks::UnpackMode::NativeFloat)
                             .with_fast_unpack(true) // Conv-based extract (unpack_w/unpack_b)
                             .with_downscale(2) // stride_w=2 for proper 2×2 CFA extraction
                             .with_concrete_dims(concrete_h, full_w),
@@ -230,13 +231,13 @@ impl PipelineProfile {
                 // Default to RAW pipeline for backward compatibility
                 if self.force_input16 {
                     blocks.push(Box::new(
-                        RawInput16Block::new()
+                        RawFloatInputBlock::new()
                             .with_concrete_width(full_w)
                             .with_concrete_height(concrete_h),
                     ));
                     blocks.push(Box::new(
                         crate::blocks::UnpackCfaBlock::new()
-                            .with_mode(crate::blocks::UnpackMode::NativeInt16)
+                            .with_mode(crate::blocks::UnpackMode::NativeFloat)
                             .with_fast_unpack(true)
                             .with_downscale(2) // stride_w=2 for proper 2×2 CFA extraction
                             .with_concrete_dims(concrete_h, full_w),

@@ -4,12 +4,15 @@
 //!   Input:  INT32`[1,1,H,W/2]`    (packed: pixel_even | (pixel_odd << 16))
 //!   Uses:   integer split → Cast → Conv(2×2,stride=2) → `[1,4,H/2,W/2]`
 //!
-//! NativeInt16 mode (default):
+//! NativeInt16 mode:
 //!   Input:  INT16`[1,1,H,W]`      (raw Bayer samples)
-//!   Uses:   SpaceToDepth(blocksize=2) → `[1,4,H/2,W/2]`
-//!           When use_blc|use_wb: Cast(INT16→F32) → SpaceToDepth → F32`[1,4,H/2,W/2]`
-//!           Otherwise: SpaceToDepth → INT16`[1,4,H/2,W/2]` (1 node, no Cast)
+//!   Uses:   Cast(INT16→F32) → Conv(4ch, 2×2, stride=2) → `[1,4,H/2,W/2]`
 //!   BLC + WB are fused into DemosaicCcmBlock's Conv1×1 weights.
+//!
+//! NativeFloat mode:
+//!   Input:  FLOAT`[1,1,H,W]`      (u16 samples widened by the engine)
+//!   Uses:   Conv(4ch, 2×2, stride=2) → `[1,4,H/2,W/2]`
+//!   The Cast is avoided because MNN's Vulkan backend cannot run it.
 //!
 //! Fuses UnpackBlock + NormalizeBlock + CfaBlock (+ optionally BlcBlock, BayerWbBlock)
 //! into a single ONNX graph / MNN session. Avoids full-resolution interleave.
@@ -23,6 +26,9 @@ pub enum UnpackMode {
     PackedInt32,
     /// Raw sensor samples: one INT16 sample per pixel.
     NativeInt16,
+    /// Same samples widened by the engine to FLOAT32 before inference.
+    /// MNN's Vulkan backend cannot run an INT16→FLOAT Cast in the graph.
+    NativeFloat,
 }
 
 #[derive(Debug)]
@@ -181,6 +187,7 @@ impl IspBlock for UnpackCfaBlock {
         match self.mode {
             UnpackMode::PackedInt32 => 6, // INT32
             UnpackMode::NativeInt16 => 5, // INT16 — Cast to F32 fused by IspChainFusion
+            UnpackMode::NativeFloat => 1, // already widened by the engine
         }
     }
     fn output_elem_type(&self) -> i32 {
@@ -189,10 +196,10 @@ impl IspBlock for UnpackCfaBlock {
 
     fn input_value_info(&self) -> Option<Vec<u8>> {
         let input_w = self.concrete_w.map(|w| {
-            if self.mode == UnpackMode::NativeInt16 {
-                w
-            } else {
+            if self.mode == UnpackMode::PackedInt32 {
                 w / 2
+            } else {
+                w
             }
         });
         let dims = match (self.concrete_h, input_w) {
@@ -253,7 +260,7 @@ impl IspBlock for UnpackCfaBlock {
     }
 
     fn nodes(&self) -> Vec<Vec<u8>> {
-        if self.mode == UnpackMode::NativeInt16 {
+        if matches!(self.mode, UnpackMode::NativeInt16 | UnpackMode::NativeFloat) {
             return self.native_nodes();
         }
         self.packed_nodes()
@@ -282,7 +289,7 @@ impl IspBlock for UnpackCfaBlock {
                     inputs.push((format!("{}/shr_4", ns).to_string(), 1, vec![]));
                 }
             }
-            UnpackMode::NativeInt16 => {
+            UnpackMode::NativeInt16 | UnpackMode::NativeFloat => {
                 if self.use_fast_unpack {
                     let w_shape = vec![4i64, 1, 2, sw];
                     inputs.push((format!("{}/unpack_w", ns).to_string(), 1, w_shape));
@@ -354,7 +361,7 @@ impl IspBlock for UnpackCfaBlock {
                     ));
                 }
             }
-            UnpackMode::NativeInt16 => {
+            UnpackMode::NativeInt16 | UnpackMode::NativeFloat => {
                 if self.use_fast_unpack {
                     let w: Vec<f32> = if sw <= 1 {
                         vec![1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
@@ -584,31 +591,39 @@ impl UnpackCfaBlock {
     fn native_nodes(&self) -> Vec<Vec<u8>> {
         let ns = self.tensor_ns();
         let sw = self.stride_w;
+        let mut nodes = Vec::new();
 
-        // Cast(INT16→F32) + Conv — IspChainFusion fuses into single GPU shader
-        vec![
-            Proto::node(
+        // INT16 input needs an explicit Cast; FLOAT input is already widened
+        // by the engine, so feeding the Conv from the graph input avoids the
+        // Vulkan-hostile Cast node entirely.
+        let conv_source = if self.mode == UnpackMode::NativeInt16 {
+            let widened = format!("{}/input_f32", ns);
+            nodes.push(Proto::node(
                 "Cast",
                 &[&self.input_source],
-                &[&format!("{}/input_f32", ns)],
+                &[&widened],
                 &[Proto::attribute_int("to", 1)],
-            ),
-            Proto::node(
-                "Conv",
-                &[
-                    &format!("{}/input_f32", ns),
-                    &format!("{}/unpack_w", ns),
-                    &format!("{}/unpack_b", ns),
-                ],
-                &[&self.frame_tensor],
-                &[
-                    Proto::attribute_ints("kernel_shape", &[2, sw]),
-                    Proto::attribute_ints("strides", &[2, sw]),
-                    Proto::attribute_ints("pads", &[0, 0, 0, 0]),
-                    Proto::attribute_int("group", 1),
-                ],
-            ),
-        ]
+            ));
+            widened
+        } else {
+            self.input_source.clone()
+        };
+        nodes.push(Proto::node(
+            "Conv",
+            &[
+                &conv_source,
+                &format!("{}/unpack_w", ns),
+                &format!("{}/unpack_b", ns),
+            ],
+            &[&self.frame_tensor],
+            &[
+                Proto::attribute_ints("kernel_shape", &[2, sw]),
+                Proto::attribute_ints("strides", &[2, sw]),
+                Proto::attribute_ints("pads", &[0, 0, 0, 0]),
+                Proto::attribute_int("group", 1),
+            ],
+        ));
+        nodes
     }
 }
 
@@ -735,6 +750,29 @@ mod tests {
             3,
             "Native + BLC+WB: 3 extra inputs"
         );
+    }
+
+    #[test]
+    fn test_unpack_cfa_generates_nodes_native_float() {
+        let block = UnpackCfaBlock::new()
+            .with_mode(UnpackMode::NativeFloat)
+            .with_fast_unpack(true)
+            .with_concrete_dims(48, 64);
+        assert_eq!(
+            block.nodes().len(),
+            1,
+            "FLOAT input needs no Cast: Conv only"
+        );
+        assert_eq!(block.input_elem_type(), 1);
+        assert_eq!(block.output_elem_type(), 1);
+
+        let b1: Box<dyn IspBlock> =
+            Box::new(crate::blocks::RawFloatInputBlock::new().with_concrete_dims(48, 64));
+        let b2: Box<dyn IspBlock> = Box::new(block);
+        let mut blocks = vec![b1, b2];
+        GraphComposer::wire_blocks(&mut blocks);
+        let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+        assert!(GraphComposer::compose_from_vec(&refs, &[], 16).is_ok());
     }
 
     #[test]

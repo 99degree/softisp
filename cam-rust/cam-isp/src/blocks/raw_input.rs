@@ -5,6 +5,7 @@
 //!
 //! - [`RawInputBlock`] — raw INT32 `[1,1,H,W]` (legacy / default head).
 //! - [`RawInput16Block`] — pure 16-bit raw `[1,1,H,W]` INT16.
+//! - [`RawFloatInputBlock`] — the same samples widened to FLOAT32 on the host.
 //! - [`RawInputPackedBlock`] — packed 2×int16-as-int32 `[1,2,H,W/2]`
 //!   (channel 0 = even pixels, channel 1 = odd pixels; engine splits the
 //!   u16 pairs into lanes on the host).
@@ -22,7 +23,7 @@ use crate::onnx::proto::Proto;
 use crate::pipeline::IspBlock;
 
 /// Generates one raw-input block variant. `$elem` is the ONNX element type
-/// (5 = INT16, 6 = INT32), `$channels` the declared channel count, and
+/// (1 = FLOAT, 5 = INT16, 6 = INT32), `$channels` the declared channel count, and
 /// `$width_div` the divisor applied to the concrete width (2 for the packed
 /// half-width tensor, 1 otherwise).
 macro_rules! impl_raw_input_block {
@@ -182,6 +183,17 @@ impl_raw_input_block!(
 );
 
 impl_raw_input_block!(
+    RawFloatInputBlock,
+    "raw_float",
+    "RawFloatInputBlock",
+    "RawFloatInputBlock/frame",
+    1,
+    1,
+    1,
+    "Host-widened FLOAT32 raw `[1,1,H,W]` input for GPU paths that cannot consume INT16 tensors."
+);
+
+impl_raw_input_block!(
     RawInputPackedBlock,
     "raw_input_packed",
     "RawInputPackedBlock",
@@ -200,6 +212,7 @@ mod tests {
     fn test_raw_input_id() {
         assert_eq!(RawInputBlock::new().id(), "raw_input");
         assert_eq!(RawInput16Block::new().id(), "raw_input16");
+        assert_eq!(RawFloatInputBlock::new().id(), "raw_float");
         assert_eq!(RawInputPackedBlock::new().id(), "raw_input_packed");
     }
 
@@ -207,6 +220,10 @@ mod tests {
     fn test_raw_input_graph_input() {
         let b = RawInputBlock::new();
         assert_eq!(b.graph_input_name(), Some("RawInputBlock/frame"));
+        assert_eq!(
+            RawFloatInputBlock::new().graph_input_name(),
+            Some("RawFloatInputBlock/frame")
+        );
     }
 
     #[test]
@@ -221,6 +238,7 @@ mod tests {
         // Conventions are baked into the block variants — no options.
         assert_eq!(RawInputBlock::new().input_elem_type(), 6); // INT32
         assert_eq!(RawInput16Block::new().input_elem_type(), 5); // INT16
+        assert_eq!(RawFloatInputBlock::new().input_elem_type(), 1); // FLOAT32
         assert_eq!(RawInputPackedBlock::new().input_elem_type(), 6); // INT32
     }
 

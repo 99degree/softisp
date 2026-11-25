@@ -31,6 +31,78 @@ struct ControllerState {
     exposure_gain: f32,
 }
 
+/// Result of the deferred statistics phase.
+#[derive(Debug, Clone, Copy)]
+pub struct StagedFinish {
+    /// Calibration tensor read during `finish()`, if this frame measured stats.
+    pub calibration_stats: Option<[f32; 24]>,
+    /// Time from `prepare()` start through the end of `finish()`.
+    pub total_duration_ns: u64,
+}
+
+#[cfg(feature = "mnn")]
+pub(crate) struct PreparedMeta {
+    w: u32,
+    h: u32,
+    target_width: u32,
+    target_height: u32,
+    sensor_max: f32,
+    bayer_pattern: i32,
+    output_format: OutputFormat,
+    mode: InputMode,
+    shape: Vec<i32>,
+    output_name: String,
+    out_ptr: *mut f32,
+    max_out: i32,
+    buf_id: Option<usize>,
+    zero_copy: bool,
+    prep_setup_ns: u64,
+    prep_tensors_ns: u64,
+}
+
+/// A session reserved before the frame arrives.
+///
+/// Kept opaque: it owns a pool slot and the resolved runtime tensors, so it
+/// must be consumed by `MnnEngine::run_prepared()` on the same thread.
+#[cfg(feature = "mnn")]
+pub struct PreparedFrame<'a> {
+    pub(crate) slot: SessionGuard<'a>,
+    pub(crate) meta: PreparedMeta,
+    pub(crate) t_prep_start: Instant,
+    pub(crate) t_prep_end: Instant,
+}
+
+#[cfg(feature = "mnn")]
+impl<'a> PreparedFrame<'a> {
+    /// Geometry and format this frame was prepared for.
+    ///
+    /// Callers that prepare ahead of capture must compare this with the
+    /// arriving frame and fall back to `process()` on a mismatch.
+    pub fn prepare_params(&self) -> crate::engine::PrepareParams {
+        crate::engine::PrepareParams {
+            width: self.meta.w,
+            height: self.meta.h,
+            target_width: self.meta.target_width,
+            target_height: self.meta.target_height,
+            sensor_max: self.meta.sensor_max,
+            bayer_pattern: self.meta.bayer_pattern,
+            output_format: self.meta.output_format,
+        }
+    }
+}
+
+/// Session held open after inference so `MnnEngine::finish()` can read stats.
+///
+/// The pixel data is already owned by the returned `IspFrame`; only the 3A
+/// readback remains. Dropping this token skips the controller update.
+#[cfg(feature = "mnn")]
+pub struct PendingStats<'a> {
+    pub(crate) slot: SessionGuard<'a>,
+    pub(crate) measure_stats: bool,
+    pub(crate) bayer_pattern: i32,
+    pub(crate) t_prep_start: Instant,
+}
+
 /// Set once the graph's channel count disagrees with the requested format.
 ///
 /// The condition holds for every frame, so it is reported exactly once.
@@ -80,6 +152,8 @@ impl MnnBackend {
 
 // ── Session Pool (parallel inference) ─────────────────────────────────
 // SessionPool extracted to mnn_session_pool.rs
+#[cfg(feature = "mnn")]
+pub(crate) use crate::mnn_session_pool::SessionGuard;
 pub(crate) use crate::mnn_session_pool::SessionPool;
 
 // ── Engine ──────────────────────────────────────────────────────────────
@@ -1763,26 +1837,22 @@ impl IspEngine for MnnEngine {
     }
 
     fn process(&self, p: &ProcessParams) -> crate::error::IspResult<IspFrame> {
+        MnnEngine::process(self, p)
+    }
+}
+
+impl MnnEngine {
+    #[cfg(feature = "mnn")]
+    pub fn prepare(&self, p: &ProcessParams) -> crate::error::IspResult<PreparedFrame<'_>> {
+        let t_prep_start = Instant::now();
         let w = p.width;
         let h = p.height;
-        let buf = p.buf;
         let smax = p.sensor_max;
         let tw = p.target_width;
-        // Needed by the 3A snapshot below (per-plane gain mapping).
         let bayer_pattern = p.bayer_pattern;
 
-        // ── Close the 3A loop ──
-        //
-        // The stats phase below calls `update_channel_stats` /
-        // `update_tone_stats`, which move `awb_gains` and `smoothed_ccm` on the
-        // controller. But the graph is fed from `ProcessParams`, and no caller
-        // has to fill those in — the app passes `ccm_matrix: None`,
-        // `bayer_gains: None`, `awb_gains: None`. The controller then computes
-        // gains that nothing applies, and with a static scene the picture is
-        // byte-identical frame after frame while `awb_gains` walks.
-        //
-        // Explicit values from the caller still win; only the slots left empty
-        // are taken from the controller.
+        // Snapshot 3A before inference; holding the controller lock across the
+        // MNN call would serialise every frame against the 3A maths.
         let ctrl = self.controller.lock().ok().map(|c| ControllerState {
             awb: c.get_awb_gains(),
             ccm: c.get_ccm(),
@@ -1790,65 +1860,40 @@ impl IspEngine for MnnEngine {
             frames: c.frame_count,
             exposure_gain: c.get_effective_exposure_gain(),
         });
-
-        // Per-plane gains.
-        //
-        // The CFA stage emits planes in physical quad order (TL, TR, BL, BR), so
-        // which plane holds red depends on the sensor's Bayer pattern. Writing
-        // the controller's `[R, G, B]` straight into planes 0..3 only happens to
-        // be right for RGGB; on the GBRG sensor this device reports it puts the
-        // red gain on a *green* plane and the blue gain on red, which is a
-        // permanent colour cast no white balance can remove.
+        // CFA planes are in physical quad order, so [R,G,B] must be mapped by
+        // the sensor pattern; writing them straight would colour-cast GRBG.
         let ctrl_bayer: [f32; 4] = match &ctrl {
             Some(c) => crate::bayer_planes::gains_by_plane(&c.awb, bayer_pattern),
             None => [1.0; 4],
         };
         let bayer_src: Option<&[f32; 4]> = p.bayer_gains.as_ref().or(Some(&ctrl_bayer));
         let ccm_src: Option<&[f32; 9]> = p.ccm_matrix.as_ref().or(ctrl.as_ref().map(|c| &c.ccm));
-        // Only trust the controller's tone once it has seen frames; before that
-        // it is the untouched default.
         let tone_base: &cam_types::ToneParams = match &ctrl {
             Some(c) if c.frames > 0 => &c.tone,
             _ => &p.tone_params,
         };
-
         let awb = p.awb_gains.as_ref();
 
-        // `sensor_max` is normally applied by `NormalizeBlock` at the head of
-        // the chain, and `set_extra_inputs` feeds it the divisor. When the
-        // pipeline was instead built with the divide folded into the display,
-        // that block is absent: the graph works in raw sensor counts and the
-        // values that carry physical meaning have to be scaled here instead.
+        // Without NormalizeBlock the graph stays in raw counts, so additive
+        // brightness must be scaled here; contrast is scale-invariant.
         let input_scale = if self.normalizes_at_input || smax <= 1.0 {
             1.0
         } else {
             smax
         };
 
-        // If isp_params is available, override individual fields
-        // This allows per-frame controller params to flow through
         let mut isp_plane_gains = [1.0f32; 4];
-        let (override_ccm, override_tone, _no_flat_wb) = if let Some(ref params) = p.isp_params {
+        let (override_ccm, override_tone) = if let Some(ref params) = p.isp_params {
             let tone = cam_types::ToneParams {
                 contrast: params.tone.contrast,
                 brightness: params.tone.brightness,
                 gamma_recip: params.tone.gamma,
                 ..Default::default()
             };
-            // WB gains arrive as [R, G, B] and every consumer is plane-ordered:
-            // `isp.pipeline` indexes its gains by CFA plane, so a flat
-            // [R, G, G, B] only happens to be right for RGGB. On a GRBG sensor it
-            // puts the red gain on a green plane and the blue gain on red, which
-            // renders as a cast no downstream correction can remove.
-            //
-            // Bound outside the tuple so it lives as long as the borrow.
-            (Some(&params.ccm.matrix), Some(tone), None::<&[f32; 4]>)
+            (Some(&params.ccm.matrix), Some(tone))
         } else {
-            (None, None, None)
+            (None, None)
         };
-        // In the deferred scheme the frame is still in raw sensor counts.
-        // Brightness is additive against the frame so it scales by `smax`;
-        // contrast is multiplicative and means the same thing either way.
         let scaled_tone;
         let tone = if self.normalizes_at_input {
             override_tone.as_ref().unwrap_or(tone_base)
@@ -1862,8 +1907,6 @@ impl IspEngine for MnnEngine {
             };
             &scaled_tone
         };
-        // Map the callers [R, G, B] onto the sensors planes, which is what the
-        // blocks and the fused op both index by.
         if let Some(wb) = p.isp_params.as_ref() {
             isp_plane_gains =
                 crate::bayer_planes::gains_by_plane(&[wb.wb.r, wb.wb.g, wb.wb.b], bayer_pattern);
@@ -1877,1065 +1920,834 @@ impl IspEngine for MnnEngine {
             return Err(crate::error::IspError::Config("not init".into()));
         }
 
-        #[cfg(feature = "mnn")]
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or(crate::error::IspError::Config("no pool".into()))?;
+        let mut slot = pool.acquire();
+        let interp = &pool.interp;
+        let t_start = Instant::now();
+        let prep_setup_ns = (t_start - t_prep_start).as_nanos() as u64;
+        debug!(
+            "pipeline timer prepare_acquire={:?}",
+            t_start - t_prep_start
+        );
+
+        // Reserve the worst-case H*W*4 output capacity: the graph's real output
+        // geometry is only known after inference, and MNN silently overflows a
+        // smaller buffer.
+        let zero_copy = p.output_buffer.is_some();
+        let (out_ptr, max_out, buf_id) = if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref()
         {
-            let pool = self
-                .pool
-                .as_ref()
-                .ok_or(crate::error::IspError::Config("no pool".into()))?;
-            let t_enter = Instant::now();
-            let mut slot = pool.acquire();
-            let interp = &pool.interp;
+            let max_out = (buf_len / 4) as i32;
+            if max_out <= 0 {
+                return Err(crate::error::IspError::Config(
+                    "output_buffer too small for zero-copy inference".into(),
+                ));
+            }
+            (buf_ptr as *mut f32, max_out, None)
+        } else {
+            let needed_capacity = (tw * h * 4) as usize;
+            let mut pool = self.buf_pool.lock().unwrap();
+            let (buf_id, buf) = pool.acquire(needed_capacity);
+            (std::ptr::null_mut(), buf.len() as i32, Some(buf_id))
+        };
 
-            let t_start = Instant::now();
-            debug!("pipeline timer pool_acquire={:?}", t_start - t_enter);
+        let mode = self.input_mode.unwrap_or(InputMode::RawInt);
+        let packed_words = matches!(self.model_input_type, Some((0, 32)));
+        let shape = if matches!(
+            mode,
+            InputMode::SplitInt32 | InputMode::SplitInt16 | InputMode::SplitFloat
+        ) {
+            vec![1, 2, h as i32, (w / 2).max(1) as i32]
+        } else if packed_words {
+            vec![1, 1, h as i32, (w / 2).max(1) as i32]
+        } else {
+            vec![1, 1, h as i32, w as i32]
+        };
 
-            debug!(
-                "pipeline stage=arrive raw={}×{} bayer={}B sensor_max={}",
+        // set_shape is cheap; resizeSession is expensive on Vulkan, so only
+        // propagate shapes when this slot has not seen this geometry before.
+        let t_tensor_before = Instant::now();
+        let needs_resize = slot.resized_for != Some((w, h));
+        if needs_resize {
+            let lsc_strength = self
+                .controller
+                .lock()
+                .map(|c| c.get_lsc_strength())
+                .unwrap_or(0.0);
+            Self::write_vignetting_gain(&slot.tensor_pool, interp, &slot.sess, h, w, lsc_strength);
+            let frame_t = interp
+                .get_input(&slot.sess, self.frame_input_name.as_deref().unwrap_or(""))
+                .or_else(|| interp.get_first_input(&slot.sess));
+            if let Some(t) = frame_t {
+                let _ = t.set_shape(interp.as_ptr(), slot.sess.as_ptr(), &shape);
+            }
+            if let Err(e) = slot.sess.resize() {
+                return Err(crate::error::IspError::Mnn(format!(
+                    "session resize failed for {w}x{h} (mode={mode:?}): {e}. \
+                     The graph cannot be resized to this input geometry — check \
+                     that every shape-dependent block got concrete_h/concrete_w \
+                     at build time."
+                )));
+            }
+            slot.resized_for = Some((w, h));
+            slot.refresh_tensors(interp);
+        }
+
+        self.set_extra_inputs(
+            &slot.tensor_pool,
+            ccm,
+            tone,
+            bayer,
+            awb,
+            bayer_pattern,
+            p.isp_params.as_ref(),
+            p.warp_grid,
+            p.warp_shading,
+            input_scale,
+            smax,
+            ctrl.as_ref().map_or(1.0, |c| c.exposure_gain),
+        );
+        let prep_tensors_ns = (Instant::now() - t_tensor_before).as_nanos() as u64;
+        debug!(
+            "pipeline stage=tensor_assign needs_resize={} elapsed={:?}",
+            needs_resize,
+            std::time::Duration::from_nanos(prep_tensors_ns)
+        );
+
+        let sess = &slot.sess;
+        let output_name = if interp.get_output(sess, "DisplayBlock/frame").is_some() {
+            "DisplayBlock/frame".to_string()
+        } else {
+            match interp.output_names(sess).first() {
+                Some(n) => n.clone(),
+                None => "DisplayBlock/frame".to_string(),
+            }
+        };
+
+        let t_prep_end = Instant::now();
+        debug!(
+            "pipeline timer prepare_total={:?}",
+            t_prep_end - t_prep_start
+        );
+        Ok(PreparedFrame {
+            slot,
+            meta: PreparedMeta {
                 w,
                 h,
-                buf.len(),
-                smax
-            );
-
-            // ── Pre-allocate output buffer (zero-copy target) ──
-            //
-            // When the caller supplied `output_buffer`, MNN writes directly into
-            // it via `mnn_run_true_zero_copy` — no temporary Vec, no memcpy.
-            // Otherwise we use the pre-allocated OutputBufferPool to avoid
-            // per-frame 132 MB zero-fill at 4K.
-            let zero_copy = p.output_buffer.is_some();
-            let (out_ptr, max_out, buf_id_for_release) =
-                if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref() {
-                    // The caller's buffer must hold at least max_out f32 elements.
-                    let max_out = (buf_len / 4) as i32;
-                    if max_out <= 0 {
-                        return Err(crate::error::IspError::Config(
-                            "output_buffer too small for zero-copy inference".into(),
-                        ));
-                    }
-                    (buf_ptr as *mut f32, max_out, None)
-                } else {
-                    // Fallback: use pre-allocated OutputBufferPool to avoid per-frame
-                    // 132 MB zero-fill at 4K (H×W×4 f32 elements = 64 MB f32 = 132 MB u8).
-                    //
-                    // The element count must match what the FFI hands to MNN as
-                    // `max_out`: a 4K frame writes ~33M f32 through `out_ptr`, and a
-                    // smaller pool buffer is silently overflowed by `runSession`
-                    // (heap corruption → SIGSEGV). The graph's own output geometry
-                    // (display downscale etc.) is only known AFTER inference, so the
-                    // worst case — full sensor area × 4 channels — is the safe
-                    // ceiling; acquire() grows the pool once, lazily.
-                    let needed_capacity = (tw * h * 4) as usize;
-                    let mut pool = self.buf_pool.lock().unwrap();
-                    let (buf_id, buf) = pool.acquire(needed_capacity);
-                    // Capacity is now guaranteed >= needed_capacity f32 elements.
-                    let max_out = buf.len() as i32;
-                    (buf.as_mut_ptr(), max_out, Some(buf_id))
-                };
-            // Determine inference path based on the model's input convention
-            // (inferred at build() from the converted model's shape + type).
-            let mode = self.input_mode.unwrap_or(InputMode::RawInt);
-            let split = matches!(mode, InputMode::SplitInt32 | InputMode::SplitFloat);
-
-            // ── Pre-inference: set input shape and extra inputs ──
-            //
-            // set_shape() is cheap (just updates a shape descriptor). We
-            // always call it so that each session's input tensor has the
-            // correct dimensions even on first use after pool rotation.
-            //
-            // sess.resize() (Interpreter::resizeSession) is EXPENSIVE on
-            // Vulkan (~7ms): it propagates shapes through the graph and
-            // re-allocates GPU buffers / rebuilds descriptor sets.
-            // MNN's own mnn_run_with_output (mnn_wrapper.cpp:412) already
-            // calls resizeSession on-demand if the element count changed,
-            // so we skip our own call when the shape hasn't changed.
-            let t_tensor_before: std::time::Instant = Instant::now();
-            // The extent the FRAME input takes. It has to match what the feed
-            // below hands over, or `resize` propagates a shape twice the width of
-            // the buffer:
-            //   split lanes          [1,2,H,W/2]
-            //   packed-word RAW      [1,1,H,W/2]  (u16 samples seen as int32 words)
-            //   one sample per pixel [1,1,H,W]
-            let packed_words = matches!(self.model_input_type, Some((0, 32)));
-            let shape = if split {
-                vec![1, 2, h as i32, (w / 2).max(1) as i32]
-            } else if packed_words {
-                vec![1, 1, h as i32, (w / 2).max(1) as i32]
-            } else {
-                vec![1, 1, h as i32, w as i32]
-            };
-            // Resize decision is PER SLOT.
-            //
-            // `Tensor::set_shape` calls `Interpreter::resizeTensor`, which
-            // takes an extent change as a signal to `setNeedResize()` on the
-            // session that owns the tensor. `Session::run()` then returns
-            // COMPUTE_SIZE_ERROR until that session is resized again. Sessions
-            // are handed out round-robin, so with a single engine-wide "last
-            // shape" key only the first session was ever resized: the other
-            // three failed every time with exactly the COMPUTE_SIZE_ERROR the
-            // camera saw.
-            let needs_resize = slot.resized_for != Some((w, h));
-            if needs_resize {
-                // Vignetting gain map is a runtime extra input (not a baked
-                // initializer): resize it to the post-demosaic dims (h/2 × w/2)
-                // and fill with computed gains BEFORE resizeSession so the Mul
-                // shape check passes during propagation. A baked [1,1,H,W] gain
-                // would break resizeSession for any input size differing from
-                // the model's baked dims.
-                // The LSC strength is a controller output; ask it once per
-                // resize rather than locking again in the hot path.
-                let lsc_strength = self
-                    .controller
-                    .lock()
-                    .map(|c| c.get_lsc_strength())
-                    .unwrap_or(0.0);
-                Self::write_vignetting_gain(
-                    &slot.tensor_pool,
-                    interp,
-                    &slot.sess,
-                    h,
-                    w,
-                    lsc_strength,
-                );
-                // Resolve the frame input by NAME (never getSessionInput(
-                // nullptr), which is the alphabetically-first input in
-                // multi-input models) and give it this frame's extent.
-                let frame_t = interp
-                    .get_input(&slot.sess, self.frame_input_name.as_deref().unwrap_or(""))
-                    .or_else(|| interp.get_first_input(&slot.sess));
-                if let Some(t) = frame_t {
-                    let _ = t.set_shape(interp.as_ptr(), slot.sess.as_ptr(), &shape);
-                }
-                // Surface the real reason instead of deferring to the FFI's
-                // opaque `n=-3`: this call is where a graph that cannot take
-                // the geometry actually fails.
-                if let Err(e) = slot.sess.resize() {
-                    return Err(crate::error::IspError::Mnn(format!(
-                        "session resize failed for {w}x{h} (mode={mode:?}): {e}. \
-                         The graph cannot be resized to this input geometry — check \
-                         that every shape-dependent block got concrete_h/concrete_w \
-                         at build time."
-                    )));
-                }
-                slot.resized_for = Some((w, h));
-                // `resize()` re-allocates the session tensors, so the handles
-                // cached in the pool (and used above for the gain map) are stale
-                // for everything that follows. Re-resolve them before writing
-                // the per-frame weights, or those writes land in freed memory
-                // and the frame comes back black.
-                slot.refresh_tensors(interp);
-            }
-            let sess = &slot.sess;
-            // MNN consumes input tensors on every run; their host buffers are
-            // not guaranteed to retain the previous frame's values, so every
-            // runtime input is re-uploaded unconditionally.
-            self.set_extra_inputs(
-                &slot.tensor_pool,
-                ccm,
-                tone,
-                bayer,
-                awb,
+                target_width: tw,
+                target_height: p.target_height,
+                sensor_max: smax,
                 bayer_pattern,
-                p.isp_params.as_ref(),
-                p.warp_grid,
-                p.warp_shading,
-                input_scale,
-                smax,
-                ctrl.as_ref().map_or(1.0, |c| c.exposure_gain),
-            );
-            let t_tensor_after: std::time::Instant = Instant::now();
-            debug!(
-                "pipeline stage=tensor_assign needs_resize={} elapsed={:?}",
-                needs_resize,
-                t_tensor_after.duration_since(t_tensor_before)
-            );
-
-            debug!(
-                "MNN process: w={}, h={}, packed_w={}, mode={:?}, expected={:?}",
-                w,
-                h,
-                (w / 2).max(1),
+                output_format: p.output_format,
                 mode,
-                self.expected_input_elements
-            );
+                shape,
+                output_name,
+                out_ptr,
+                max_out,
+                buf_id,
+                zero_copy,
+                prep_setup_ns,
+                prep_tensors_ns,
+            },
+            t_prep_start,
+            t_prep_end,
+        })
+    }
 
-            // ── Engine-side input conversion ──
-            //
-            // The even/odd lane split happens on CPU, not in-graph: MNN's
-            // Vulkan backend cannot execute integer elementwise ops
-            // (Div/Mod/Sub) or INT16 casts, so extracting two u16 lanes from a
-            // packed INT32 in-graph is impossible on GPU. Splitting on the host
-            // is exact and signedness-free; the graph only needs a Vulkan-safe
-            // Cast INT32→FLOAT32 (UnpackBlock). For INT16-declared models the
-            // converter upcasts the input to FLOAT32, so the engine converts
-            // the u16 pairs to f32 lanes instead (also exact).
-            //
-            // The guards are held through inference: the FFI call reads the
-            // scratch by raw pointer, and another thread resizing the scratch
-            // would otherwise dangle it.
-            let split_scratch_i32: Option<std::sync::MutexGuard<'_, Vec<i32>>>;
-            let split_scratch_16: Option<std::sync::MutexGuard<'_, Vec<i16>>>;
-            let scratch_f32: Option<std::sync::MutexGuard<'_, Vec<f32>>>;
-            match mode {
-                InputMode::SplitInt32 => {
-                    let pairs = ((w / 2).max(1) as usize) * h as usize;
-                    let mut guard = self.split_scratch.lock().unwrap();
-                    if guard.len() != pairs * 2 {
-                        guard.resize(pairs * 2, 0);
-                    }
-                    let u16s: &[u16] = unsafe {
-                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
-                    };
-                    for i in 0..pairs {
-                        guard[i] = u16s[2 * i] as i32;
-                        guard[pairs + i] = u16s[2 * i + 1] as i32;
-                    }
-                    split_scratch_i32 = Some(guard);
-                    split_scratch_16 = None;
-                    scratch_f32 = None;
-                }
-                InputMode::SplitInt16 => {
-                    let pairs = ((w / 2).max(1) as usize) * h as usize;
-                    let mut guard = self.split_scratch_i16.lock().unwrap();
-                    if guard.len() != pairs * 2 {
-                        guard.resize(pairs * 2, 0);
-                    }
-                    let u16s: &[u16] = unsafe {
-                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
-                    };
-                    for i in 0..pairs {
-                        guard[i] = u16s[2 * i] as i16;
-                        guard[pairs + i] = u16s[2 * i + 1] as i16;
-                    }
-                    split_scratch_i32 = None;
-                    split_scratch_16 = Some(guard);
-                    scratch_f32 = None;
-                }
-                InputMode::SplitFloat => {
-                    let pairs = ((w / 2).max(1) as usize) * h as usize;
-                    let mut guard = self.scratch_f32.lock().unwrap();
-                    if guard.len() != pairs * 2 {
-                        guard.resize(pairs * 2, 0.0);
-                    }
-                    let u16s: &[u16] = unsafe {
-                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
-                    };
-                    for i in 0..pairs {
-                        guard[i] = u16s[2 * i] as f32;
-                        guard[pairs + i] = u16s[2 * i + 1] as f32;
-                    }
-                    split_scratch_i32 = None;
-                    split_scratch_16 = None;
-                    scratch_f32 = Some(guard);
-                }
-                InputMode::RawFloat => {
-                    let total = (w as usize) * (h as usize);
-                    let mut guard = self.scratch_f32.lock().unwrap();
-                    if guard.len() != total {
-                        guard.resize(total, 0.0);
-                    }
-                    let u16s: &[u16] = unsafe {
-                        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
-                    };
-                    for i in 0..total {
-                        guard[i] = u16s[i] as f32;
-                    }
-                    split_scratch_i32 = None;
-                    split_scratch_16 = None;
-                    scratch_f32 = Some(guard);
-                }
-                InputMode::RawInt => {
-                    split_scratch_i32 = None;
-                    split_scratch_16 = None;
-                    scratch_f32 = None;
-                }
+    /// Run a frame whose controller tensors are already uploaded.
+    ///
+    /// `p` must describe the same geometry/format and zero-copy buffers used
+    /// for [`Self::prepare`] and must not change the controller-derived fields
+    /// it captured; the staged path deliberately does not upload them twice.
+    /// The returned
+    /// [`PendingStats`] holds the session open for the deferred 3A readback.
+    /// Call [`Self::finish`] after the frame has been presented.
+    #[cfg(feature = "mnn")]
+    pub fn run_prepared<'a>(
+        &self,
+        prepared: PreparedFrame<'a>,
+        p: &ProcessParams,
+    ) -> crate::error::IspResult<(IspFrame, PendingStats<'a>)> {
+        let PreparedFrame {
+            slot,
+            meta,
+            t_prep_start,
+            t_prep_end,
+        } = prepared;
+        if p.width != meta.w || p.height != meta.h {
+            return Err(crate::error::IspError::Config(format!(
+                "prepared geometry {}x{} does not match frame {}x{}",
+                meta.w, meta.h, p.width, p.height
+            )));
+        }
+
+        let w = meta.w;
+        let h = meta.h;
+        let interp = slot.interp();
+        let sess = &slot.sess;
+        let mut buf_guard = self.buf_pool.lock().unwrap();
+        let out_ptr = if meta.zero_copy {
+            meta.out_ptr
+        } else {
+            let id = meta.buf_id.ok_or(crate::error::IspError::Config(
+                "prepared buffer id missing".into(),
+            ))?;
+            let buf = buf_guard.buffer_mut(id);
+            if buf.len() < meta.max_out as usize {
+                return Err(crate::error::IspError::Config(format!(
+                    "output buffer {} shrank below prepared capacity {}",
+                    id, meta.max_out
+                )));
             }
+            buf.as_mut_ptr()
+        };
+        let max_out = meta.max_out;
+        let mode = meta.mode;
 
-            // Which tensor is the result? `DisplayBlock/frame` for a full
-            // chain, the tail block's own name otherwise. Resolved once here
-            // instead of assumed, because a miss reads a null tensor and faults
-            // inside MNN with no message that names the cause.
-            let output_name = if interp.get_output(sess, "DisplayBlock/frame").is_some() {
-                "DisplayBlock/frame".to_string()
-            } else {
-                match interp.output_names(sess).first() {
-                    Some(n) => n.clone(),
-                    None => "DisplayBlock/frame".to_string(),
+        let split_scratch_i32: Option<std::sync::MutexGuard<'_, Vec<i32>>>;
+        let split_scratch_16: Option<std::sync::MutexGuard<'_, Vec<i16>>>;
+        let scratch_f32: Option<std::sync::MutexGuard<'_, Vec<f32>>>;
+        match mode {
+            InputMode::SplitInt32 => {
+                let pairs = ((w / 2).max(1) as usize) * h as usize;
+                let mut guard = self.split_scratch.lock().unwrap();
+                if guard.len() != pairs * 2 {
+                    guard.resize(pairs * 2, 0);
                 }
-            };
-            let output_name_ptr = std::ffi::CString::new(output_name.clone())
-                .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+                let u16s: &[u16] = unsafe {
+                    std::slice::from_raw_parts(p.buf.as_ptr() as *const u16, p.buf.len() / 2)
+                };
+                for i in 0..pairs {
+                    guard[i] = u16s[2 * i] as i32;
+                    guard[pairs + i] = u16s[2 * i + 1] as i32;
+                }
+                split_scratch_i32 = Some(guard);
+                split_scratch_16 = None;
+                scratch_f32 = None;
+            }
+            InputMode::SplitInt16 => {
+                let pairs = ((w / 2).max(1) as usize) * h as usize;
+                let mut guard = self.split_scratch_i16.lock().unwrap();
+                if guard.len() != pairs * 2 {
+                    guard.resize(pairs * 2, 0);
+                }
+                let u16s: &[u16] = unsafe {
+                    std::slice::from_raw_parts(p.buf.as_ptr() as *const u16, p.buf.len() / 2)
+                };
+                for i in 0..pairs {
+                    guard[i] = u16s[2 * i] as i16;
+                    guard[pairs + i] = u16s[2 * i + 1] as i16;
+                }
+                split_scratch_i32 = None;
+                split_scratch_16 = Some(guard);
+                scratch_f32 = None;
+            }
+            InputMode::SplitFloat => {
+                let pairs = ((w / 2).max(1) as usize) * h as usize;
+                let mut guard = self.scratch_f32.lock().unwrap();
+                if guard.len() != pairs * 2 {
+                    guard.resize(pairs * 2, 0.0);
+                }
+                let u16s: &[u16] = unsafe {
+                    std::slice::from_raw_parts(p.buf.as_ptr() as *const u16, p.buf.len() / 2)
+                };
+                for i in 0..pairs {
+                    guard[i] = u16s[2 * i] as f32;
+                    guard[pairs + i] = u16s[2 * i + 1] as f32;
+                }
+                split_scratch_i32 = None;
+                split_scratch_16 = None;
+                scratch_f32 = Some(guard);
+            }
+            InputMode::RawFloat => {
+                let total = (w as usize) * (h as usize);
+                let mut guard = self.scratch_f32.lock().unwrap();
+                if guard.len() != total {
+                    guard.resize(total, 0.0);
+                }
+                let u16s: &[u16] = unsafe {
+                    std::slice::from_raw_parts(p.buf.as_ptr() as *const u16, p.buf.len() / 2)
+                };
+                for i in 0..total {
+                    guard[i] = u16s[i] as f32;
+                }
+                split_scratch_i32 = None;
+                split_scratch_16 = None;
+                scratch_f32 = Some(guard);
+            }
+            InputMode::RawInt => {
+                split_scratch_i32 = None;
+                split_scratch_16 = None;
+                scratch_f32 = None;
+            }
+        }
 
-            let (buffer_ptr, buffer_type_code, buffer_type_bits, input_shape, path_str) = match mode
-            {
-                InputMode::SplitInt32 => {
-                    let v = split_scratch_i32.as_ref().unwrap();
-                    (
-                        v.as_ptr() as *const c_void,
-                        0, // INT32
-                        32,
-                        vec![1, 2, h as i32, (w / 2).max(1) as i32],
-                        "packed_split",
-                    )
-                }
-                InputMode::SplitInt16 => {
-                    let v = split_scratch_16.as_ref().unwrap();
-                    (
-                        v.as_ptr() as *const c_void,
-                        0, // halide_type_int
-                        16,
-                        vec![1, 2, h as i32, (w / 2).max(1) as i32],
-                        "packed_split_i16",
-                    )
-                }
-                InputMode::SplitFloat => {
-                    let v = scratch_f32.as_ref().unwrap();
-                    (
-                        v.as_ptr() as *const c_void,
-                        2, // FLOAT32
-                        32,
-                        vec![1, 2, h as i32, (w / 2).max(1) as i32],
-                        "split_f32",
-                    )
-                }
-                InputMode::RawFloat => {
-                    let v = scratch_f32.as_ref().unwrap();
-                    (
-                        v.as_ptr() as *const c_void,
-                        2, // FLOAT32
-                        32,
-                        vec![1, 1, h as i32, w as i32],
-                        "raw_f32",
-                    )
-                }
-                InputMode::RawInt => {
-                    // The graph head decides the wire dtype, not the enum name:
-                    //   isp.unpack16_blc_normal_cfa → INT16 input → zero-copy u16 buffer
-                    //   isp.unpack32_blc_normal_cfa → INT32 input → zero-copy u16 buffer
-                    //                                  (W/2 int32 words per row; the shader
-                    //                                   splits each word into its two int16
-                    //                                   lanes, then converts to float)
-                    // RawInt is only reached when the converter declared a single
-                    // non-packed channel, so one sample (or one packed word per two
-                    // samples) per lane.
-                    let (code, bits) = self.model_input_type.unwrap_or((0, 16));
-                    // A 32-bit integer RAW input is the packed-word form: W*H
-                    // contiguous u16 samples are W/2 int32 words per row, so the
-                    // row extent halves and the byte count stays W*H*2. Feeding
-                    // the un-halved shape declares twice the elements the buffer
-                    // holds and the resize/upload is rejected.
-                    let packed_words = code == 0 && bits == 32;
-                    let raw_shape = if packed_words {
-                        [1, 1, h as i32, (w / 2).max(1) as i32]
-                    } else {
-                        [1, 1, h as i32, w as i32]
-                    };
-                    // Zero-copy input: if the caller supplied input_buffer,
-                    // pass its pointer directly instead of p.buf.  This
-                    // eliminates the AHardwareBuffer → Vec<u8> memcpy on the
-                    // input side.
-                    let input_ptr = if let Some(&(ptr, _)) = p.input_buffer.as_ref() {
-                        ptr as *const c_void
-                    } else {
-                        buf.as_ptr() as *const c_void
-                    };
-                    (input_ptr, code, bits, raw_shape.to_vec(), "raw_zero_copy")
-                }
-            };
+        let output_name_ptr = std::ffi::CString::new(meta.output_name.clone())
+            .unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+        let (buffer_ptr, buffer_type_code, buffer_type_bits, path_str) = match mode {
+            InputMode::SplitInt32 => (
+                split_scratch_i32.as_ref().unwrap().as_ptr() as *const c_void,
+                0,
+                32,
+                "packed_split",
+            ),
+            InputMode::SplitInt16 => (
+                split_scratch_16.as_ref().unwrap().as_ptr() as *const c_void,
+                0,
+                16,
+                "packed_split_i16",
+            ),
+            InputMode::SplitFloat => (
+                scratch_f32.as_ref().unwrap().as_ptr() as *const c_void,
+                2,
+                32,
+                "split_f32",
+            ),
+            InputMode::RawFloat => (
+                scratch_f32.as_ref().unwrap().as_ptr() as *const c_void,
+                2,
+                32,
+                "raw_f32",
+            ),
+            InputMode::RawInt => {
+                let (code, bits) = self.model_input_type.unwrap_or((0, 16));
+                let input_ptr = if let Some(&(ptr, _)) = p.input_buffer.as_ref() {
+                    ptr as *const c_void
+                } else {
+                    p.buf.as_ptr() as *const c_void
+                };
+                (input_ptr, code, bits, "raw_zero_copy")
+            }
+        };
+        let input_shape = &meta.shape;
+        debug!(
+            "pipeline stage=write_input buf={}B -> mode={:?} shape=[1,{},{},{}]",
+            p.buf.len(),
+            mode,
+            input_shape[1],
+            input_shape[2],
+            input_shape[3]
+        );
 
-            debug!(
-                "pipeline stage=write_input buf={}B -> mode={:?} shape=[1,{},{},{}]",
-                buf.len(),
-                mode,
-                input_shape[1],
-                input_shape[2],
-                input_shape[3]
-            );
-
-            let path: &str = path_str;
-            let t_prep_end: std::time::Instant = Instant::now();
-            let t_infer_start: std::time::Instant = Instant::now();
-            let t_infer_end: std::time::Instant;
-            let n: i32;
-            // Frame input tensor name for the FFI call (None → nullptr for
-            // single-input models; MNN then picks its first input).
-            let frame_name_c = self
-                .frame_input_name
-                .as_deref()
-                .map(std::ffi::CString::new)
-                .transpose()
-                .ok()
-                .flatten();
-            let frame_name_ptr = frame_name_c
-                .as_ref()
-                .map_or(std::ptr::null(), |c| c.as_ptr());
-            unsafe {
-                // Choose the inference path: true zero-copy (caller's buffer)
-                // or the standard copy-in/copy-out path.
-                if zero_copy {
-                    // Import AHardwareBuffers as Vulkan device memory before
-                    // inference, so MNN's Vulkan backend reads/writes GPU
-                    // memory directly instead of host<->GPU copies. The input
-                    // name MUST be the frame input — the old code used the
-                    // output name here and silently bound the wrong tensor.
-                    let mut imported_input = false;
-                    if let Some(&(ahb_ptr, _)) = p.input_ahb.as_ref() {
-                        if !frame_name_ptr.is_null() {
-                            let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
-                                interp.as_ptr(),
-                                sess.as_ptr(),
-                                ahb_ptr as *const c_void,
-                                frame_name_ptr,
-                                1, // read_only: input tensor
-                            );
-                            if rc != 0 {
-                                warn!("AHB import for frame input failed: rc={rc}");
-                            } else {
-                                imported_input = true;
-                            }
-                        } else {
-                            warn!("AHB input import skipped: frame input name is unknown");
-                        }
-                    }
-                    let mut imported_output = false;
-                    if let Some(&(ahb_ptr, _)) = p.output_ahb.as_ref() {
+        let t_infer_start = Instant::now();
+        let t_infer_end: Instant;
+        let n: i32;
+        let frame_name_c = self
+            .frame_input_name
+            .as_deref()
+            .map(std::ffi::CString::new)
+            .transpose()
+            .ok()
+            .flatten();
+        let frame_name_ptr = frame_name_c
+            .as_ref()
+            .map_or(std::ptr::null(), |c| c.as_ptr());
+        unsafe {
+            if meta.zero_copy {
+                let mut imported_input = false;
+                if let Some(&(ahb_ptr, _)) = p.input_ahb.as_ref() {
+                    if !frame_name_ptr.is_null() {
                         let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
                             interp.as_ptr(),
                             sess.as_ptr(),
                             ahb_ptr as *const c_void,
-                            output_name_ptr.as_ptr(),
-                            0, // read_only: output tensor
-                        );
-                        if rc != 0 {
-                            warn!("AHB import for output '{output_name}' failed: rc={rc}");
-                        } else {
-                            imported_output = true;
-                        }
-                    }
-
-                    n = crate::mnn_sys::mnn_run_true_zero_copy(
-                        interp.as_ptr(),
-                        sess.as_ptr(),
-                        frame_name_ptr,
-                        output_name_ptr.as_ptr(),
-                        buffer_ptr,
-                        buffer_type_code,
-                        buffer_type_bits,
-                        input_shape.as_ptr(),
-                        input_shape.len() as i32,
-                        out_ptr,
-                        max_out,
-                    );
-
-                    // Release the AHB device-memory bindings after inference.
-                    if imported_input {
-                        let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
-                            interp.as_ptr(),
-                            sess.as_ptr(),
                             frame_name_ptr,
+                            1,
                         );
                         if rc != 0 {
-                            warn!("AHB release for frame input failed: rc={rc}");
+                            warn!("AHB import for frame input failed: rc={rc}");
+                        } else {
+                            imported_input = true;
                         }
+                    } else {
+                        warn!("AHB input import skipped: frame input name is unknown");
                     }
-                    if imported_output {
-                        let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
-                            interp.as_ptr(),
-                            sess.as_ptr(),
-                            output_name_ptr.as_ptr(),
+                }
+                let mut imported_output = false;
+                if let Some(&(ahb_ptr, _)) = p.output_ahb.as_ref() {
+                    let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        ahb_ptr as *const c_void,
+                        output_name_ptr.as_ptr(),
+                        0,
+                    );
+                    if rc != 0 {
+                        warn!(
+                            "AHB import for output '{}' failed: rc={rc}",
+                            meta.output_name
                         );
-                        if rc != 0 {
-                            warn!("AHB release for output '{output_name}' failed: rc={rc}");
-                        }
+                    } else {
+                        imported_output = true;
                     }
-                } else {
-                    n = crate::mnn_sys::mnn_run_with_output(
+                }
+                n = crate::mnn_sys::mnn_run_true_zero_copy(
+                    interp.as_ptr(),
+                    sess.as_ptr(),
+                    frame_name_ptr,
+                    output_name_ptr.as_ptr(),
+                    buffer_ptr,
+                    buffer_type_code,
+                    buffer_type_bits,
+                    input_shape.as_ptr(),
+                    input_shape.len() as i32,
+                    out_ptr,
+                    max_out,
+                );
+                if imported_input {
+                    let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
                         interp.as_ptr(),
                         sess.as_ptr(),
                         frame_name_ptr,
-                        buffer_ptr,
-                        buffer_type_code,
-                        buffer_type_bits,
-                        input_shape.as_ptr(),
-                        input_shape.len() as i32,
-                        output_name_ptr.as_ptr(),
-                        out_ptr,
-                        max_out,
                     );
-                }
-                t_infer_end = Instant::now();
-                // ------------------------------------------------------------------
-                // Optional MNN profiling dump – prints per‑node timings if the
-                // MNN session was built with profiling enabled.
-                // This is a best‑effort call; if the function is unavailable the
-                // code will compile but produce no output.
-                let info_c = crate::mnn_sys::MNN_GetSessionInfoString(sess.as_ptr());
-                if !info_c.is_null() {
-                    let info = CStr::from_ptr(info_c).to_string_lossy();
-                    debug!("MNN profiling info:\n{}", info);
-                }
-                // ------------------------------------------------------------------
-            }
-            let t_after_profiling = Instant::now();
-
-            if n <= 0 {
-                // The FFI's negative code alone cannot say *why*: -6/-7/-8 are
-                // shape problems, a negative MNN code is a backend error. The
-                // C side records the reason alongside the code.
-                let detail = unsafe {
-                    let p = crate::mnn_sys::mnn_last_error();
-                    if p.is_null() {
-                        String::new()
-                    } else {
-                        CStr::from_ptr(p).to_string_lossy().into_owned()
+                    if rc != 0 {
+                        warn!("AHB release for frame input failed: rc={rc}");
                     }
-                };
-                error!(
-                    "MNN inference failed: n={} (input={}x{}, output_name='{}', path={})",
-                    n, w, h, output_name, path
-                );
-                if detail.is_empty() {
-                    error!("  This usually means the MNN IspChainFusion pass computed wrong output dimensions.");
-                    error!(
-                        "  Check that RawInputBlock has concrete_h and concrete_w set (not -1)."
-                    );
-                } else {
-                    error!("  MNN reported: {detail}");
                 }
-                let reason = if detail.is_empty() {
-                    format!("MNN inference failed: n={n} (input={w}x{h})")
-                } else {
-                    format!("MNN inference failed: n={n} (input={w}x{h}): {detail}")
-                };
-                return Err(crate::error::IspError::Mnn(reason));
-            }
-
-            debug!(
-                "pipeline stage=infer_done path={} ({}x{} -> {} elts) infer={:?}",
-                path,
-                w,
-                h,
-                n,
-                t_infer_end - t_infer_start
-            );
-
-            // ── Determine output size and encoding from the output tensor ──
-            //
-            // The frame must be described by what the graph actually produced,
-            // not by the requested `target_width`/`target_height`: the display
-            // stage may resize, and a mismatch here makes the engine hand back
-            // a buffer whose length disagrees with `frame.width * height *
-            // channels` (silently truncating or mis-slicing the image).
-            let out_tensor = interp.get_output(sess, &output_name);
-            let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
-            let mut oh = p.target_height as usize;
-            let mut ow = tw as usize;
-            let mut graph_channels = p.output_format.channel_count();
-            if let Some(t) = &out_tensor {
-                let shape = t.shape();
-                // Trust any concrete `[1,C,H,W]` shape, including PackedRgb:
-                // the fused `isp.display_uint32_bgra` op declares one uint32
-                // per pixel (this was fixed alongside the shader's packing
-                // semantics), so its last dim is the real output width.
-                // Reporting the *requested* geometry here instead makes the
-                // caller size a full-size BGRA buffer for a half-size packed
-                // frame; `present()` then rejects it as "source frame too
-                // small" and the preview stays black.
-                if shape.len() == 4 && shape[2] > 0 && shape[3] > 0 {
-                    graph_channels = shape[1].max(1) as usize;
-                    oh = shape[2] as usize;
-                    ow = shape[3] as usize;
-
-                    // The graph's channel count and the caller's expectation
-                    // must agree: the buffer is decoded by interpreting channel
-                    // 0 as the start of the image. A `[1,4,H,W]` display Conv
-                    // fed to a `FloatRgb` caller is silently wrong — every
-                    // plane lands 8x too large in the wrong place — so say so
-                    // instead of rendering garbage.
-                    // A fused `isp.display_*` shader writes one packed BGRA
-                    // word per pixel, so its `[1,1,H,W]` shape is correct even
-                    // for a four-byte u8 format. Compare against one channel
-                    // there; the host expands the word afterwards.
-                    let packed_u8_tail = !p.output_format.is_raw_output()
-                        && !matches!(p.output_format, OutputFormat::PackedRgb)
-                        && graph_channels == 1
-                        && (out_type != 4 || self.has_fused_display);
-                    let expected = if packed_u8_tail {
-                        1
-                    } else {
-                        p.output_format.channel_count()
-                    };
-                    if graph_channels != expected
-                        && !CHANNEL_MISMATCH_REPORTED.swap(true, Ordering::Relaxed)
-                    {
-                        // A configuration error, not a frame error: it holds
-                        // for every frame, so report it exactly once.
+                if imported_output {
+                    let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        output_name_ptr.as_ptr(),
+                    );
+                    if rc != 0 {
                         warn!(
-                            "output channel mismatch: graph produced {} channels, {:?} expects {}. \
-                             The profile's `output_format` and `ProcessParams::output_format` \
-                             must agree, or every plane lands in the wrong place.",
-                            graph_channels, p.output_format, expected
+                            "AHB release for output '{}' failed: rc={rc}",
+                            meta.output_name
                         );
                     }
                 }
-            }
-            let pixels = oh * ow;
-
-            // Two encodings can come back, and only the tensor itself says
-            // which — by its element type:
-            //
-            //  * FLOAT — the plain ONNX graph. `DisplayBlock` emits
-            //    `f32 [1,C,H,W]` in `[0,255]` for every u8 format; ONNX cannot
-            //    hand a u8 consumer its bytes, so the host narrows.
-            //  * INT32/UINT32 — MNN's Vulkan fusion rewrote the display Conv
-            //    into an `isp.display_*` shader that writes one packed word
-            //    per pixel (`a<<24 | b<<16 | g<<8 | r`, i.e. R,G,B,A in
-            //    little-endian byte order — exactly the BGRA bytes consumers
-            //    read). Those words are already the answer.
-            //
-            // Inferring the encoding from the element *count* instead would
-            // misfire, because a 1×1 Conv output of `pixels/channels` lands on
-            // the same count.
-            let packed_display_by_type = !p.output_format.is_raw_output() && out_type != 4;
-
-            // `isp.display_uint32_bgra` writes one BGRA uint32 per pixel. MNN
-            // reports its element type as UINT32 (6), or INT32 (5) when the
-            // shader's unsigned bits are preserved through the Vulkan path.
-            // `is_raw_output()` alone cannot tell that from a float tail, so
-            // decide from the tensor type as well and take the packed path.
-            let packed_u32 =
-                matches!(p.output_format, OutputFormat::PackedRgb) && matches!(out_type, 5 | 6);
-
-            // Robust fallback: MNN may report FLOAT (type 4) for fused
-            // `isp.display_*` outputs even though the shader writes INT32.
-            let has_fused_display = self.has_fused_display;
-            let is_u8_format = !p.output_format.is_raw_output()
-                && !matches!(p.output_format, OutputFormat::PackedRgb);
-            let packed_display =
-                packed_u32 || packed_display_by_type || (has_fused_display && is_u8_format);
-            let t_output_meta = Instant::now();
-
-            let n_valid = n.max(0) as usize;
-            let out_elems = n_valid.min(pixels * graph_channels);
-            let graph_elem = if p.output_format.is_fp16() { 2 } else { 4 };
-            let _raw_bytes = out_elems * graph_elem;
-
-            // Narrow f32 `[0,255]` → u8 only for the graph-native float path.
-            // The graph does all colour work; this is only the type cast the
-            // ONNX graph cannot express for a u8 consumer.
-            //
-            // Only convert `out_elems` f32 values (not the whole pool buffer):
-            // for `FloatRgb` (3 channels) the valid output is `pixels*3` f32,
-            // but the pool holds `tw*h*4` f32 elements. Passing the full buffer
-            // would decode trailing garbage as u8 → near-zero mean → blank frame.
-            let valid_bytes = out_elems * graph_elem;
-            let data_out = if zero_copy {
-                // MNN wrote directly into the caller's buffer via
-                // mnn_run_true_zero_copy. Return empty data; the real
-                // pixels live in `external_data` (set below).
-                Vec::new()
-            } else if packed_u32 {
-                // Fused packed display: little-endian BGRA bytes, four per
-                // pixel. Return them verbatim — the uint32 words are already
-                // the final pixel layout.
-                let buf_id = buf_id_for_release.expect("pool buffer id");
-                let mut pool = self.buf_pool.lock().unwrap();
-                let buf = pool.buffer_mut(buf_id);
-                let buf_bytes =
-                    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, valid_bytes) };
-                buf_bytes.to_vec()
-            } else if p.output_format.is_raw_output() {
-                // Float graph output (e.g. FloatRgb): return raw bytes as-is.
-                // The graph already emits the final layout (f32 planar for
-                // FloatRgb), so no narrowing is needed — the consumer
-                // reinterprets these bytes as f32 values.
-                let buf_id = buf_id_for_release.expect("pool buffer id");
-                let mut pool = self.buf_pool.lock().unwrap();
-                let buf = pool.buffer_mut(buf_id);
-                let buf_bytes =
-                    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, valid_bytes) };
-                buf_bytes.to_vec()
-            } else if packed_display {
-                // Fused `isp.display_*` shader wrote packed INT32 words — one
-                // BGRA u8 pixel per word, little-endian. These bytes are *already*
-                // the final answer; do NOT reinterpret as f32 (that collapses
-                // every pixel to ~0 → blank frame).
-                let buf_id = buf_id_for_release.expect("pool buffer id");
-                let mut pool = self.buf_pool.lock().unwrap();
-                let buf = pool.buffer_mut(buf_id);
-                let buf_bytes =
-                    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, valid_bytes) };
-                buf_bytes.to_vec()
             } else {
-                // SplitInt32 path: read f32 from pool buffer, clamp to u8.
-                let buf_id = buf_id_for_release.expect("pool buffer id");
-                let mut pool = self.buf_pool.lock().unwrap();
-                let buf = pool.buffer_mut(buf_id);
-                let buf_bytes = unsafe {
-                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, valid_bytes)
-                };
-                Self::f32_to_u8(buf_bytes)
+                n = crate::mnn_sys::mnn_run_with_output(
+                    interp.as_ptr(),
+                    sess.as_ptr(),
+                    frame_name_ptr,
+                    buffer_ptr,
+                    buffer_type_code,
+                    buffer_type_bits,
+                    input_shape.as_ptr(),
+                    input_shape.len() as i32,
+                    output_name_ptr.as_ptr(),
+                    out_ptr,
+                    max_out,
+                );
+            }
+            t_infer_end = Instant::now();
+            let info_c = crate::mnn_sys::MNN_GetSessionInfoString(sess.as_ptr());
+            if !info_c.is_null() {
+                let info = CStr::from_ptr(info_c).to_string_lossy();
+                debug!("MNN profiling info:\n{}", info);
+            }
+        }
+
+        if n <= 0 {
+            let detail = unsafe {
+                let p = crate::mnn_sys::mnn_last_error();
+                if p.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(p).to_string_lossy().into_owned()
+                }
             };
-            let t_output_copy = Instant::now();
-
-            // Black-frame triage: an all-zero frame means either the graph
-            // tail ran on zeroed inputs or the readback branch disagreed with
-            // the tensor's real encoding. Sample (not scan) the bytes, and on
-            // a black frame compare against the session's own DisplayBlock
-            // output to tell the two apart. Allocations happen only when a
-            // black frame is already detected.
-            if !data_out.is_empty() {
-                // Odd step: an even (especially multiple-of-4) stride would
-                // always land on the zero low byte of a packed BGRA word and
-                // report an opaque-black frame as "all zero".
-                let step = (data_out.len() / 128).max(1) | 1;
-                if data_out.iter().step_by(step).all(|&b| b == 0) {
-                    let mut probe = vec![0.0f32; (oh * ow * graph_channels).max(4)];
-                    let disp_n = interp.read_output_floats(sess, "DisplayBlock/frame", &mut probe);
-                    let disp_max = probe.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-                    warn!(
-                        "black frame: bytes={} branch={} out_type={} out_elems={} graph={}x{} \
-                         needs_resize={} session_display={:?} session_max_abs={:.4}",
-                        data_out.len(),
-                        if zero_copy {
-                            "zero_copy"
-                        } else if packed_u32 {
-                            "packed_u32"
-                        } else if p.output_format.is_raw_output() {
-                            "raw"
-                        } else if packed_display {
-                            "packed"
-                        } else {
-                            "narrow"
-                        },
-                        out_type,
-                        out_elems,
-                        ow,
-                        oh,
-                        needs_resize,
-                        disp_n,
-                        disp_max
-                    );
-                }
+            error!(
+                "MNN inference failed: n={} (input={}x{}, output_name='{}', path={})",
+                n, w, h, meta.output_name, path_str
+            );
+            if detail.is_empty() {
+                error!("  This usually means the MNN IspChainFusion pass computed wrong output dimensions.");
+                error!("  Check that RawInputBlock has concrete_h and concrete_w set (not -1).");
+            } else {
+                error!("  MNN reported: {detail}");
             }
+            let reason = if detail.is_empty() {
+                format!("MNN inference failed: n={n} (input={w}x{h})")
+            } else {
+                format!("MNN inference failed: n={n} (input={w}x{h}): {detail}")
+            };
+            return Err(crate::error::IspError::Mnn(reason));
+        }
+        debug!(
+            "pipeline stage=infer_done path={} ({}x{} -> {} elts) infer={:?}",
+            path_str,
+            w,
+            h,
+            n,
+            t_infer_end - t_infer_start
+        );
 
-            // ── Read stats output tensors from MNN session and feed to controller ──
-            let mut calib_vals: Option<[f32; 24]> = None;
-            // After inference, all output tensors are available in the session.
-            // Try reading known stats output names.  If a tensor doesn't exist
-            // in the graph (block not enabled in this profile), get_output returns None.
-            // Measure the statistics on the first frame and every `n` frames
-            // after it. This is decided per frame, before any tensor is read, so a
-            // skipped frame costs no readback at all — the readback is the stall,
-            // not the reduction.
-            // Two reasons to skip, and they mean the same thing to a consumer: the
-            // switch is off, or this frame is not the one in `stats_interval`.
-            //
-            // Both are decided here, before any tensor is touched, so a skipped
-            // frame costs no readback at all — the readback (a `copyToHostTensor`
-            // that waits for the queue) is the stall, not the reduction.
-            let measure_stats = self.stats_enabled.load(Ordering::Relaxed)
-                && if self.stats_countdown.load(Ordering::Relaxed) == 0 {
-                    self.stats_countdown
-                        .store(self.stats_interval.max(1) - 1, Ordering::Relaxed);
-                    true
+        let out_tensor = interp.get_output(sess, &meta.output_name);
+        let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
+        let mut oh = meta.target_height as usize;
+        let mut ow = meta.target_width as usize;
+        let mut graph_channels = meta.output_format.channel_count();
+        if let Some(t) = &out_tensor {
+            let shape = t.shape();
+            if shape.len() == 4 && shape[2] > 0 && shape[3] > 0 {
+                graph_channels = shape[1].max(1) as usize;
+                oh = shape[2] as usize;
+                ow = shape[3] as usize;
+                let packed_u8_tail = !meta.output_format.is_raw_output()
+                    && !matches!(meta.output_format, OutputFormat::PackedRgb)
+                    && graph_channels == 1
+                    && (out_type != 4 || self.has_fused_display);
+                let expected = if packed_u8_tail {
+                    1
                 } else {
-                    self.stats_countdown.fetch_sub(1, Ordering::Relaxed);
-                    false
+                    meta.output_format.channel_count()
                 };
-
-            #[cfg(feature = "mnn")]
-            if measure_stats {
-                // ── Phase 1: Read raw stats tensors into local variables ──
-                // (Avoid borrow conflicts with ctrl write_stats() above)
-                let mut cm_vals: Option<[f32; 3]> = None;
-                let mut ts_vals: Option<[f32; 6]> = None;
-                let mut hist_vals: Option<[f32; 16]> = None;
-                let mut zone_data: Option<ZoneData> = None;
-
-                /// Read a named output tensor and reinterpret bytes as `f32`.
-                /// Returns up to `max_n` floats, or `None` if the tensor is missing.
-                /// Read a named output tensor as floats.
-                ///
-                /// Goes through `mnn_session_read_output` (`copyToHostTensor`)
-                /// rather than `host<float>()`. On Vulkan a tensor's data lives
-                /// in a device buffer and the host pointer is null, so the
-                /// direct read returned `None` for every stats tensor — which
-                /// is why 3A never received any feedback.
-                fn read_output_f32(
-                    interp: &crate::mnn_sys::MnnInterpreterSafe,
-                    sess: &crate::mnn_sys::MnnSessionSafe,
-                    name: &str,
-                    max_n: usize,
-                ) -> Option<Vec<f32>> {
-                    let mut buf = vec![0.0f32; max_n];
-                    let n = interp.read_output_floats(sess, name, &mut buf)?;
-                    let n = n.min(max_n);
-                    if n == 0 {
-                        None
-                    } else {
-                        Some(buf.into_iter().take(n).collect())
-                    }
-                }
-
-                // ChannelMeansBlock/frame → [1, 3] or [3]
-                // The stats tensors are registered as graph outputs by the
-                // composer, but the converted model does not always keep them:
-                // `oplists` shows the nodes while `get_output` returns None for
-                // the name. When that happens the controller silently sees no
-                // data and AWB/AE stop adapting, which looks like "3A does
-                // nothing" rather than a missing tensor. Say so explicitly.
-                // Report the session's actual output list once per session build
-                // prefix. `get_output(name)` returning null for a tensor that is
-                // in `oplists` is otherwise indistinguishable from "the profile
-                // did not enable that block".
+                if graph_channels != expected
+                    && !CHANNEL_MISMATCH_REPORTED.swap(true, Ordering::Relaxed)
                 {
-                    let names = interp.output_names(sess);
-                    debug!(
-                        "session exposes {} outputs: {}",
-                        names.len(),
-                        names.join(", ")
+                    warn!(
+                        "output channel mismatch: graph produced {} channels, {:?} expects {}. \
+                         The profile's `output_format` and `ProcessParams::output_format` \
+                         must agree, or every plane lands in the wrong place.",
+                        graph_channels, meta.output_format, expected
                     );
                 }
-
-                // The tap's width depends on where it sits in the chain, and
-                // both placements are legitimate:
-                //
-                //   [1, 4]  after CFA, before demosaic — one mean per Bayer
-                //           site (R, Gr, Gb, B). No white balance has been
-                //           applied yet, so these describe the sensor and the
-                //           AWB loop cannot chase its own output.
-                //   [1, 3]  after demosaic — already RGB.
-                //
-                // The tensor's own shape is the only safe way to tell them
-                // apart: guessing from the value count rejected the 4-site form
-                // outright, and assuming 3 sites silently mixed Gb in as if it
-                // were B.
-                match read_output_f32(interp, sess, "ChannelMeansBlock/frame", 8) {
-                    Some(vals) => {
-                        // Odd lengths are impossible for a reduction over a
-                        // whole channel axis; treat anything but 3 or 4 as
-                        // unusable rather than folding a truncated read.
-                        match vals.len() {
-                            4 => {
-                                // Planes are physical quad positions, so fold
-                                // through the pattern rather than assuming
-                                // plane 0 is red.
-                                let planes: [f32; 4] =
-                                    [vals[0], vals[1], vals[2], vals[3]];
-                                let rgb = crate::bayer_planes::planes_to_rgb(
-                                    &planes,
-                                    bayer_pattern,
-                                );
-                                debug!(
-                                    "stats: planes [{:.4}, {:.4}, {:.4}, {:.4}] (pattern {}) -> rgb [{:.4}, {:.4}, {:.4}]",
-                                    vals[0], vals[1], vals[2], vals[3], bayer_pattern,
-                                    rgb[0], rgb[1], rgb[2]
-                                );
-                                cm_vals = Some(rgb);
-                            }
-                            3 => {
-                                debug!(
-                                    "stats: rgb channel means [{:.4}, {:.4}, {:.4}]",
-                                    vals[0], vals[1], vals[2]
-                                );
-                                cm_vals = Some([vals[0], vals[1], vals[2]]);
-                            }
-                            n => debug!(
-                                "stats: ChannelMeansBlock/frame has {n} values; expected 3 (RGB) \
-                                 or 4 (CFA sites R,Gr,Gb,B)"
-                            ),
-                        }
-                    }
-                    None => debug!(
-                        "stats: ChannelMeansBlock/frame unreadable - the controller gets no feedback"
-                    ),
-                }
-                // ToneStatsBlock/frame → [6]
-                if let Some(vals) = read_output_f32(interp, sess, "ToneStatsBlock/frame", 6) {
-                    let mut ts = [0.0f32; 6];
-                    let n = vals.len().min(6);
-                    ts[..n].copy_from_slice(&vals[..n]);
-                    ts_vals = Some(ts);
-                }
-                // CoarseHistogramBlock/frame → [1, 16]
-                if let Some(vals) = read_output_f32(interp, sess, "CoarseHistogramBlock/frame", 16)
-                {
-                    let mut hist = [0.0f32; 16];
-                    let n = vals.len().min(16);
-                    hist[..n].copy_from_slice(&vals[..n]);
-                    hist_vals = Some(hist);
-                }
-                // CalibrationBlock/frame → [24] (quad means, vars, mins, maxs, ranges, frame stats)
-                if let Some(vals) = read_output_f32(interp, sess, "CalibrationBlock/frame", 24) {
-                    let mut cal = [0.0f32; 24];
-                    let n = vals.len().min(24);
-                    cal[..n].copy_from_slice(&vals[..n]);
-                    calib_vals = Some(cal);
-                }
-
-                // ZoneStatsBlock/frame → [1, 3, rows, cols]
-                if let Some(t) = interp.get_output(sess, "ZoneStatsBlock/frame") {
-                    if let Some(bytes) = t.as_bytes() {
-                        let floats: &[f32] = unsafe {
-                            std::slice::from_raw_parts(
-                                bytes.as_ptr() as *const f32,
-                                bytes.len() / 4,
-                            )
-                        };
-                        let shape = t.shape();
-                        if shape.len() >= 4 {
-                            let rows = shape[2] as usize;
-                            let cols = shape[3] as usize;
-                            let mut zone_rgb = vec![vec![[0.0f32; 3]; cols]; rows];
-                            for r in 0..rows {
-                                for c in 0..cols {
-                                    let idx = r * cols + c;
-                                    if idx * 3 + 2 < floats.len() {
-                                        zone_rgb[r][c][0] = floats[idx * 3];
-                                        zone_rgb[r][c][1] = floats[idx * 3 + 1];
-                                        zone_rgb[r][c][2] = floats[idx * 3 + 2];
-                                    }
-                                }
-                            }
-                            zone_data = Some((rows, cols, zone_rgb));
-                        }
-                    }
-                }
-
-                // ── Phase 2: Lock controller, write to stats slot, apply state ──
-                if let Ok(mut ctrl) = self.controller.lock() {
-                    // Check zone state before taking stats borrow
-                    let zone_init_needed = zone_data.is_some()
-                        && !ctrl.zone_stats_enabled
-                        && zone_data
-                            .as_ref()
-                            .map(|(r, c, _)| *r > 0 && *c > 0)
-                            .unwrap_or(false);
-
-                    if zone_init_needed {
-                        if let Some((rows, cols, _)) = zone_data.as_ref() {
-                            ctrl.init_zone_stats(*rows, *cols);
-                        }
-                    }
-
-                    // Write raw stats to the write slot
-                    let stats = ctrl.write_stats();
-                    if let Some(cm) = cm_vals {
-                        stats.channel_means = cm;
-                    }
-                    if let Some(ts) = ts_vals {
-                        let n = ts.len().min(6);
-                        stats.tone_stats[..n].copy_from_slice(&ts[..n]);
-                    }
-                    if let Some(hist) = hist_vals {
-                        let n = hist.len().min(16);
-                        stats.histogram[..n].copy_from_slice(&hist[..n]);
-                        stats.histogram_valid = true;
-                    }
-                    if let Some((_rows, _cols, zone_rgb)) = zone_data {
-                        stats.zone_stats = zone_rgb;
-                        stats.zone_stats_valid = true;
-                    }
-                    // drop(stats) — implicit at end of scope
-
-                    // Apply AE clipping gain from tone stats
-                    if let Some(ts) = ts_vals {
-                        if ts[3] > 0.0 && ts[5] > 1.0 {
-                            ctrl.hist_constrained_gain = 1.0 - (ts[3] / ts[5]);
-                        }
-                    }
-
-                    // ── Phase 3: Rotate triple-buffer ──
-                    ctrl.rotate_stats();
-
-                    // ── Phase 4: Process the newly-rotated process slot ──
-                    // Read values into locals to avoid borrow conflicts
-                    let ps = ctrl.process_stats();
-                    let p_cm = ps.channel_means;
-                    let p_ts = [ps.tone_stats[0], ps.tone_stats[1], ps.tone_stats[2]];
-                    let p_hist = ps.histogram;
-                    let p_hist_ok = ps.histogram_valid;
-                    // drop(ps) — implicit
-
-                    if p_cm[0] > 0.0 || p_cm[1] > 0.0 || p_cm[2] > 0.0 {
-                        ctrl.update_channel_stats(&p_cm);
-                    }
-                    if p_ts[0] > 0.0 {
-                        ctrl.update_tone_stats(&p_ts);
-                    }
-                    if p_hist_ok {
-                        let n = p_hist.len().min(16);
-                        ctrl.update_histogram(&p_hist[..n]);
-                    }
-                }
             }
-            let t_stats_done = Instant::now();
-            let t_frame_done = Instant::now();
+        }
+        let pixels = oh * ow;
+        let packed_word_tail = !meta.output_format.is_raw_output() && graph_channels == 1;
+        let packed_display_by_type = packed_word_tail && out_type != 4;
+        let packed_u32 =
+            matches!(meta.output_format, OutputFormat::PackedRgb) && matches!(out_type, 5 | 6);
+        let has_fused_display = self.has_fused_display;
+        let is_u8_format = !meta.output_format.is_raw_output()
+            && !matches!(meta.output_format, OutputFormat::PackedRgb);
+        let packed_display = packed_u32
+            || packed_display_by_type
+            || (has_fused_display && is_u8_format && packed_word_tail);
+        let t_output_meta = Instant::now();
 
-            debug!(
-                "pipeline timer path={} setup={:?} tensor_assign={:?} input={:?} infer={:?} \
-                 profiling={:?} output_meta={:?} output_copy={:?} stats={:?} frame={:?} total={:?}",
-                path,
-                t_tensor_before - t_start,
-                t_tensor_after - t_tensor_before,
-                t_prep_end - t_tensor_after,
-                t_infer_end - t_infer_start,
-                t_after_profiling - t_infer_end,
-                t_output_meta - t_after_profiling,
-                t_output_copy - t_output_meta,
-                t_stats_done - t_output_copy,
-                t_frame_done - t_stats_done,
-                t_frame_done - t_enter
-            );
-            debug!(
-                "pipeline stage=output_frame {}×{} frame={}B",
-                ow,
-                oh,
-                data_out.len()
-            );
-            let total_duration_ns = (t_frame_done - t_enter).as_nanos() as u64;
-            let mut frame = IspFrame::new(ow as u32, oh as u32, FrameFormat::Rgba8888);
-            if zero_copy {
-                // MNN wrote directly into the caller's buffer; hand back the
-                // external pointer so the consumer can display without a memcpy.
-                if let Some(&(ptr, _)) = p.output_buffer.as_ref() {
-                    frame.data = Vec::new(); // data is empty; external_data owns the pixels
-                    frame.external_data = Some(ExternalBuffer {
-                        ptr,
-                        len: out_elems * graph_elem,
-                    });
-                } else {
-                    frame.data = data_out;
-                }
+        let n_valid = n.max(0) as usize;
+        let out_elems = n_valid.min(pixels * graph_channels);
+        let graph_elem = if meta.output_format.is_fp16() { 2 } else { 4 };
+        let valid_bytes = out_elems * graph_elem;
+        let data_out = if meta.zero_copy {
+            Vec::new()
+        } else if packed_u32 || meta.output_format.is_raw_output() || packed_display {
+            let id = meta.buf_id.expect("pool buffer id");
+            let buf = buf_guard.buffer_mut(id);
+            let buf_bytes =
+                unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, valid_bytes) };
+            buf_bytes.to_vec()
+        } else {
+            let id = meta.buf_id.expect("pool buffer id");
+            let buf = buf_guard.buffer_mut(id);
+            let buf_bytes =
+                unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, valid_bytes) };
+            Self::f32_to_u8(buf_bytes)
+        };
+        let t_output_copy = Instant::now();
+
+        if !data_out.is_empty() {
+            let step = (data_out.len() / 128).max(1) | 1;
+            if data_out.iter().step_by(step).all(|&b| b == 0) {
+                let mut probe = vec![0.0f32; (oh * ow * graph_channels).max(4)];
+                let disp_n = interp.read_output_floats(sess, "DisplayBlock/frame", &mut probe);
+                let disp_max = probe.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+                warn!(
+                    "black frame: bytes={} branch={} out_type={} out_elems={} graph={}x{} \
+                     needs_resize={} session_display={:?} session_max_abs={:.4}",
+                    data_out.len(),
+                    if meta.zero_copy {
+                        "zero_copy"
+                    } else if packed_u32 {
+                        "packed_u32"
+                    } else if meta.output_format.is_raw_output() {
+                        "raw"
+                    } else if packed_display {
+                        "packed"
+                    } else {
+                        "narrow"
+                    },
+                    out_type,
+                    out_elems,
+                    ow,
+                    oh,
+                    meta.w != p.width || meta.h != p.height,
+                    disp_n,
+                    disp_max
+                );
+            }
+        }
+
+        let measure_stats = self.stats_enabled.load(Ordering::Relaxed)
+            && if self.stats_countdown.load(Ordering::Relaxed) == 0 {
+                self.stats_countdown
+                    .store(self.stats_interval.max(1) - 1, Ordering::Relaxed);
+                true
+            } else {
+                self.stats_countdown.fetch_sub(1, Ordering::Relaxed);
+                false
+            };
+
+        let t_frame_done = Instant::now();
+        debug!(
+            "pipeline timer path={} setup={:?} tensor_assign={:?} infer={:?} \
+             output_meta={:?} output_copy={:?} frame={:?} stats_deferred={}",
+            path_str,
+            std::time::Duration::from_nanos(meta.prep_setup_ns),
+            std::time::Duration::from_nanos(meta.prep_tensors_ns),
+            t_infer_end - t_infer_start,
+            t_output_meta - t_infer_end,
+            t_output_copy - t_output_meta,
+            t_frame_done - t_prep_start,
+            measure_stats
+        );
+        let mut frame = IspFrame::new(ow as u32, oh as u32, FrameFormat::Rgba8888);
+        if meta.zero_copy {
+            if let Some(&(ptr, _)) = p.output_buffer.as_ref() {
+                frame.data = Vec::new();
+                frame.external_data = Some(ExternalBuffer {
+                    ptr,
+                    len: out_elems * graph_elem,
+                });
             } else {
                 frame.data = data_out;
             }
-            // Propagate controller params from ProcessParams to output frame
-            frame.params = p.isp_params.clone().unwrap_or_default();
-            // Stats are fed into the controller above (not returned in IspAuxOutput).
-            // The controller modifies its internal state for the next frame.
-            frame.aux = Some(IspAuxOutput {
-                calibration_stats: calib_vals,
-                stats_measured: measure_stats,
-                ..Default::default()
-            });
-            frame.timestamp_ns = p.timestamp_ns;
-            // prep = everything before the MNN call (pool + setup + uploads)
-            // infer = the MNN call only; post-inference readback/controller work
-            // is excluded here and reported by `pipeline timer` at debug level.
-            // total = enter -> frame ready, including post-inference.
-            let prep_ns = (t_prep_end - t_enter).as_nanos() as u64;
-            frame.prep_duration_ns = prep_ns;
-            frame.inference_duration_ns = (t_infer_end - t_infer_start).as_nanos() as u64;
-            frame.total_duration_ns = total_duration_ns;
-            Ok(frame)
+        } else {
+            frame.data = data_out;
+        }
+        frame.params = p.isp_params.clone().unwrap_or_default();
+        frame.aux = Some(IspAuxOutput {
+            stats_measured: measure_stats,
+            ..Default::default()
+        });
+        frame.timestamp_ns = p.timestamp_ns;
+        frame.prep_duration_ns = (t_prep_end - t_prep_start).as_nanos() as u64;
+        frame.inference_duration_ns = (t_infer_end - t_infer_start).as_nanos() as u64;
+        frame.total_duration_ns = (t_frame_done - t_prep_start).as_nanos() as u64;
+
+        Ok((
+            frame,
+            PendingStats {
+                slot,
+                measure_stats,
+                bayer_pattern: meta.bayer_pattern,
+                t_prep_start,
+            },
+        ))
+    }
+
+    /// Read the deferred 3A statistics and update the controller.
+    ///
+    /// Call after the frame from [`Self::run_prepared`] has been presented. The
+    /// returned total includes this phase, so `process()` keeps its old timing
+    /// semantics while staged callers see pixels before this GPU→CPU stall.
+    #[cfg(feature = "mnn")]
+    pub fn finish(&self, pending: PendingStats<'_>) -> StagedFinish {
+        let PendingStats {
+            slot,
+            measure_stats,
+            bayer_pattern,
+            t_prep_start,
+        } = pending;
+        let t_finish_start = Instant::now();
+        let mut calib_vals: Option<[f32; 24]> = None;
+
+        if measure_stats {
+            let interp = slot.interp();
+            let sess = &slot.sess;
+            let mut cm_vals: Option<[f32; 3]> = None;
+            let mut ts_vals: Option<[f32; 6]> = None;
+            let mut hist_vals: Option<[f32; 16]> = None;
+            let mut zone_data: Option<ZoneData> = None;
+
+            fn read_output_f32(
+                interp: &crate::mnn_sys::MnnInterpreterSafe,
+                sess: &crate::mnn_sys::MnnSessionSafe,
+                name: &str,
+                max_n: usize,
+            ) -> Option<Vec<f32>> {
+                let mut buf = vec![0.0f32; max_n];
+                let n = interp.read_output_floats(sess, name, &mut buf)?;
+                let n = n.min(max_n);
+                if n == 0 {
+                    None
+                } else {
+                    Some(buf.into_iter().take(n).collect())
+                }
+            }
+
+            {
+                let names = interp.output_names(sess);
+                debug!(
+                    "session exposes {} outputs: {}",
+                    names.len(),
+                    names.join(", ")
+                );
+            }
+
+            match read_output_f32(interp, sess, "ChannelMeansBlock/frame", 8) {
+                Some(vals) => match vals.len() {
+                    4 => {
+                        let planes: [f32; 4] = [vals[0], vals[1], vals[2], vals[3]];
+                        let rgb = crate::bayer_planes::planes_to_rgb(&planes, bayer_pattern);
+                        debug!(
+                            "stats: planes [{:.4}, {:.4}, {:.4}, {:.4}] (pattern {}) -> rgb [{:.4}, {:.4}, {:.4}]",
+                            vals[0], vals[1], vals[2], vals[3], bayer_pattern,
+                            rgb[0], rgb[1], rgb[2]
+                        );
+                        cm_vals = Some(rgb);
+                    }
+                    3 => {
+                        debug!(
+                            "stats: rgb channel means [{:.4}, {:.4}, {:.4}]",
+                            vals[0], vals[1], vals[2]
+                        );
+                        cm_vals = Some([vals[0], vals[1], vals[2]]);
+                    }
+                    n => debug!(
+                        "stats: ChannelMeansBlock/frame has {n} values; expected 3 (RGB) \
+                         or 4 (CFA sites R,Gr,Gb,B)"
+                    ),
+                },
+                None => debug!(
+                    "stats: ChannelMeansBlock/frame unreadable - the controller gets no feedback"
+                ),
+            }
+            if let Some(vals) = read_output_f32(interp, sess, "ToneStatsBlock/frame", 6) {
+                let mut ts = [0.0f32; 6];
+                let n = vals.len().min(6);
+                ts[..n].copy_from_slice(&vals[..n]);
+                ts_vals = Some(ts);
+            }
+            if let Some(vals) = read_output_f32(interp, sess, "CoarseHistogramBlock/frame", 16) {
+                let mut hist = [0.0f32; 16];
+                let n = vals.len().min(16);
+                hist[..n].copy_from_slice(&vals[..n]);
+                hist_vals = Some(hist);
+            }
+            if let Some(vals) = read_output_f32(interp, sess, "CalibrationBlock/frame", 24) {
+                let mut cal = [0.0f32; 24];
+                let n = vals.len().min(24);
+                cal[..n].copy_from_slice(&vals[..n]);
+                calib_vals = Some(cal);
+            }
+            if let Some(t) = interp.get_output(sess, "ZoneStatsBlock/frame") {
+                if let Some(bytes) = t.as_bytes() {
+                    let floats: &[f32] = unsafe {
+                        std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+                    };
+                    let shape = t.shape();
+                    if shape.len() >= 4 {
+                        let rows = shape[2] as usize;
+                        let cols = shape[3] as usize;
+                        let mut zone_rgb = vec![vec![[0.0f32; 3]; cols]; rows];
+                        for r in 0..rows {
+                            for c in 0..cols {
+                                let idx = r * cols + c;
+                                if idx * 3 + 2 < floats.len() {
+                                    zone_rgb[r][c][0] = floats[idx * 3];
+                                    zone_rgb[r][c][1] = floats[idx * 3 + 1];
+                                    zone_rgb[r][c][2] = floats[idx * 3 + 2];
+                                }
+                            }
+                        }
+                        zone_data = Some((rows, cols, zone_rgb));
+                    }
+                }
+            }
+
+            if let Ok(mut ctrl) = self.controller.lock() {
+                let zone_init_needed = zone_data.is_some()
+                    && !ctrl.zone_stats_enabled
+                    && zone_data
+                        .as_ref()
+                        .map(|(r, c, _)| *r > 0 && *c > 0)
+                        .unwrap_or(false);
+                if zone_init_needed {
+                    if let Some((rows, cols, _)) = zone_data.as_ref() {
+                        ctrl.init_zone_stats(*rows, *cols);
+                    }
+                }
+                let stats = ctrl.write_stats();
+                if let Some(cm) = cm_vals {
+                    stats.channel_means = cm;
+                }
+                if let Some(ts) = ts_vals {
+                    let n = ts.len().min(6);
+                    stats.tone_stats[..n].copy_from_slice(&ts[..n]);
+                }
+                if let Some(hist) = hist_vals {
+                    let n = hist.len().min(16);
+                    stats.histogram[..n].copy_from_slice(&hist[..n]);
+                    stats.histogram_valid = true;
+                }
+                if let Some((_rows, _cols, zone_rgb)) = zone_data {
+                    stats.zone_stats = zone_rgb;
+                    stats.zone_stats_valid = true;
+                }
+                if let Some(ts) = ts_vals {
+                    if ts[3] > 0.0 && ts[5] > 1.0 {
+                        ctrl.hist_constrained_gain = 1.0 - (ts[3] / ts[5]);
+                    }
+                }
+                ctrl.rotate_stats();
+                let ps = ctrl.process_stats();
+                let p_cm = ps.channel_means;
+                let p_ts = [ps.tone_stats[0], ps.tone_stats[1], ps.tone_stats[2]];
+                let p_hist = ps.histogram;
+                let p_hist_ok = ps.histogram_valid;
+                if p_cm[0] > 0.0 || p_cm[1] > 0.0 || p_cm[2] > 0.0 {
+                    ctrl.update_channel_stats(&p_cm);
+                }
+                if p_ts[0] > 0.0 {
+                    ctrl.update_tone_stats(&p_ts);
+                }
+                if p_hist_ok {
+                    let n = p_hist.len().min(16);
+                    ctrl.update_histogram(&p_hist[..n]);
+                }
+            }
+        }
+
+        let t_finish_end = Instant::now();
+        debug!(
+            "pipeline timer finish measured={} elapsed={:?} total={:?}",
+            measure_stats,
+            t_finish_end - t_finish_start,
+            t_finish_end - t_prep_start
+        );
+        StagedFinish {
+            calibration_stats: calib_vals,
+            total_duration_ns: (t_finish_end - t_prep_start).as_nanos() as u64,
+        }
+    }
+
+    /// Prepare, run and finish in one call.
+    ///
+    /// The frame is returned only after the 3A readback, preserving the old
+    /// `process()` contract. Camera loops that need lower latency should call
+    /// [`Self::prepare`], [`Self::run_prepared`] and [`Self::finish`] directly.
+    #[cfg(feature = "mnn")]
+    pub fn process_staged(
+        &self,
+        p: &ProcessParams,
+    ) -> crate::error::IspResult<(IspFrame, PendingStats<'_>)> {
+        let prepared = self.prepare(p)?;
+        self.run_prepared(prepared, p)
+    }
+
+    fn process(&self, p: &ProcessParams) -> crate::error::IspResult<IspFrame> {
+        #[cfg(feature = "mnn")]
+        {
+            let (mut frame, pending) = self.process_staged(p)?;
+            let finished = self.finish(pending);
+            if let Some(aux) = frame.aux.as_mut() {
+                aux.calibration_stats = finished.calibration_stats;
+            }
+            frame.total_duration_ns = finished.total_duration_ns;
+            return Ok(frame);
         }
 
         #[cfg(not(feature = "mnn"))]
         {
-            let mut frame = IspFrame::new(tw, h, FrameFormat::Rgba8888);
+            let mut frame = IspFrame::new(p.target_width, p.height, FrameFormat::Rgba8888);
             frame.data.fill(128);
             Ok(frame)
         }

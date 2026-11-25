@@ -131,7 +131,7 @@ pub use passthrough::PassthroughBlock;
 pub use pipeline_all::{PipelineAllBlock, PipelineStages};
 pub use plugin::PluginBlock;
 pub use pyramid::PyramidBlock;
-pub use raw_input::{RawInput16Block, RawInputBlock, RawInputPackedBlock};
+pub use raw_input::{RawFloatInputBlock, RawInput16Block, RawInputBlock, RawInputPackedBlock};
 pub use resize::ResizeBlock;
 pub use rgb_downscale::RgbDownscaleBlock;
 pub use runtime_warp::RuntimeWarpBlock;

@@ -26,7 +26,29 @@
   engine A keeps stats on, and engine B calls `set_stats_enabled(false)` before
   workers start. `DualGpuEngine` delegates `controller()` to engine A instead of
   carrying a second unused instance. Unit tests cover shared handles and the
-  stats switch; two unrelated `cam-isp --lib` failures remain unchanged.
+  stats switch. Both unrelated `cam-isp --lib` failures are now fixed: the
+  forced-input16 head uses a Vulkan-safe FLOAT32 input, and packed-display
+  decoding requires a one-channel output tensor. See
+  `docs/isp/20261125-cam-isp-lib-failures.md`; the MNN lib suite is now
+  856 passed, 0 failed, 2 ignored after rebasing onto the current `master`.
+- **Staged frame phases** (this session): `MnnEngine` gained opt-in
+  `prepare()` / `run_prepared()` / `finish()` with opaque session tokens, and
+  both camera workers now prep before capture, present before deferred stats,
+  and fall back on first frame or geometry change. `process()` keeps its old
+  single-call contract. See `docs/isp/20261125-staged-frame-phases.md`.
+- **External cancellation requested** (this session): a way for outside code
+  to stop the pipeline and release camera/MNN/buffer resources cleanly is
+  recorded as P2d below; it is not implemented yet.
+- **APK build unblocked** (this session): the stale `jni` workspace member was
+  removed because no such crate exists in the repository, and the inert
+  per-package profile sections in `cli/Cargo.toml` were dropped. `./build-apk.sh`
+  now completes cleanly and produces `target/debug/apk/softisp-camera.apk`.
+  See `docs/build/20261125-build-apk-workspace-repair.md`.
+- **Force-update recovery** (this session): `master` was rewritten upstream
+  with a combined IPA/CLI history that no longer contained the earlier
+  forced-input16, packed-output, and workspace/build fixes. The rebase restored
+  those patches and the two graduated build/ISP analysis docs, so the staged
+  work sits on top of a verified baseline rather than a regressed one.
 - **HEAVY MNN test repaired** (this session): `test_mnn_engine` now fills the
   new zero-copy `ProcessParams` fields via `ProcessParams::new()`, passes the
   profile's real head block for pre-converted models, uses the real sensor
@@ -241,7 +263,7 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   Vulkan `onAcquire` limitation is unchanged. In-repo correctness bugs were fixed;
   the APK is deliberately left on the working copy-in/copy-out path.
 
-### P2c — Staged prep / infer / post frame phases (TODO)
+### P2c — Staged prep / infer / post frame phases ✅ (implemented 2026-11-25)
 
 - **User idea recorded 2026-11-25.** Present the output frame as soon as
   inference finishes, then perform 3A stats readback on the worker; also do the
@@ -265,9 +287,32 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   pre-bound buffer also removes the input wait/copy from the inference path.
   `runSession` (~112 ms) remains the floor. It is a latency win, not an
   inference-speed change.
-- **Status:** not implemented. This is a larger API-surface follow-up than the
-  A-on/B-off stats split and is documented in
-  `docs/isp/20261125-perf-phase-instrumentation.md`.
+- **Status:** implemented for the engine API and camera workers. Default
+  `process()` remains unchanged; the real-MNN staged streaming test passes.
+  Production preview latency has not yet been re-measured with a fresh APK, and
+  the pre-bound camera input-buffer refinement remains dependent on P2b. See
+  `docs/isp/20261125-staged-frame-phases.md`.
+
+### P2d — External pipeline cancellation and clean shutdown (TODO)
+
+- **User request recorded 2026-11-25.** Add a mechanism that lets code outside
+  the camera/ISP workers issue a stop request to the running pipeline and have
+  every worker wind down deterministically, releasing camera, MNN session,
+  buffer-pool and staged-frame resources cleanly.
+- **Surface:** an idempotent shared handle (e.g. `PipelineHandle::cancel()` or
+  a `CancellationToken`) exposed through the app/service/JNI boundary. It must
+  not depend on dropping the worker threads or killing the process.
+- **Worker contract:** observe cancellation at safe points (before preparing a
+  frame, immediately after capture, after handing a finished frame to the
+  presenter and after deferred stats finish). Stop taking new frames, drain or
+  finish in-flight work, and join workers without leaving poisoned mutexes.
+- **Staged-path constraint:** a cancel request must not drop a live
+  `PreparedFrame` or `PendingStats` session guard while MNN/Vulkan may still
+  read its buffers. Either let the in-flight frame finish, or add an explicit
+  await-release path before tearing down the engine.
+- **Verification:** hermetic tests for idempotent cancel, worker exit, and no
+  leaked session/buffer reservations; on-device check that a cancel followed
+  by restart leaves no stale camera device or Vulkan buffers.
 
 ### P4 — Multi-Frontend IPA Plugin Architecture ✅ (implemented 2026-11-25)
 

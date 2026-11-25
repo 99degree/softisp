@@ -147,6 +147,60 @@ fn test_mnn_engine_streaming() {
     eprintln!("PASSED: 5 streaming frames");
 }
 
+/// Exercise the staged prep / run / finish path with the real MNN backend.
+#[cfg(feature = "mnn")]
+#[test]
+#[ignore] // requires libMNN.so + MNNConvert
+fn test_mnn_engine_staged_streaming() {
+    use cam_isp::engine::{IspEngine, PrepareParams, ProcessParams};
+    use cam_isp::mnnengine::{MnnBackend, MnnEngine};
+
+    let mnn = build_test_mnn(".mnn_test_staged").expect("model build + convert");
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
+    engine.set_model_path(&mnn);
+    let head = profile_head(cam_isp::profile::PipelineProfile::TEST, 48, 64);
+    engine.build(head, vec![], None, 21).expect("build");
+
+    let w = 48u32;
+    let h = 64u32;
+    let tw = 64u32;
+    let th = 64u32;
+    let smax = 1024.0f32;
+    let empty = [];
+
+    for frame_idx in 0..3 {
+        let mut prep_params = ProcessParams::new(w, h, &empty);
+        prep_params.target_width = tw;
+        prep_params.target_height = th;
+        prep_params.sensor_max = smax;
+
+        let prepared = engine.prepare(&prep_params).expect("prepare");
+        assert_eq!(prepared.prepare_params(), PrepareParams::from(&prep_params));
+
+        let mut buf = vec![0u8; (w * h * 2) as usize];
+        for (i, chunk) in buf.chunks_exact_mut(2).enumerate() {
+            let v = ((i ^ frame_idx as usize) & 0xFF) as u16;
+            chunk[0] = v as u8;
+            chunk[1] = (v >> 8) as u8;
+        }
+        let mut params = ProcessParams::new(w, h, &buf);
+        params.target_width = tw;
+        params.target_height = th;
+        params.sensor_max = smax;
+        assert_eq!(prepared.prepare_params(), PrepareParams::from(&params));
+
+        let (frame, pending) = engine
+            .run_prepared(prepared, &params)
+            .expect("run_prepared");
+        assert!(frame.data.len() >= expected_frame_bytes(&frame));
+        let finished = engine.finish(pending);
+        assert!(finished.total_duration_ns > 0);
+    }
+
+    let _ = std::fs::remove_file(&mnn);
+    eprintln!("PASSED: 3 staged frames");
+}
+
 /// Verify that frames change when input changes (not just cached output).
 #[cfg(feature = "mnn")]
 #[test]

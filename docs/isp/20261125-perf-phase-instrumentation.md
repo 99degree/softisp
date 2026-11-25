@@ -188,6 +188,14 @@ still the correct first fix and removes one of the two readbacks per frame
 pair. The staged prep/infer/post refactor is a separate P2 follow-up with a
 larger API surface, so it is recorded here rather than folded into the
 controller-sharing change.
+
+**Status update (2026-11-25):** P2c is implemented. `MnnEngine` now exposes
+`prepare()` / `run_prepared()` / `finish()` with opaque session tokens,
+`process()` delegates to the same three phases for compatibility, and both
+camera workers prep before `next_frame()` and defer stats until after `Done`
+is sent. The real-MNN staged streaming test passes; production preview timings
+still need a fresh APK measurement. Details and ownership notes are in
+`docs/isp/20261125-staged-frame-phases.md`.
 - **Fresh APK log hygiene:** 0 `default for ... has no tensor`, 0
   `output channel mismatch`, 0 `present failed`, 0 `black frame`. The preview
   was non-black 100% of sampled frames at 800x600 with mean RGB around

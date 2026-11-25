@@ -16,7 +16,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use cam_isp::engine::IspEngine;
+use cam_isp::engine::{IspEngine, PrepareParams};
+use cam_isp::mnnengine::{MnnEngine, PreparedFrame};
 
 use crate::camera::{CameraSession, RawFrame};
 use crate::pipeline::{FrameStager, PipelineConfig};
@@ -185,8 +186,21 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         tx,
     } = shared;
     let mut stager = FrameStager::new();
+    let mnn = engine.as_any().downcast_ref::<MnnEngine>();
+    let mut geometry: Option<(u32, u32)> = None;
+    let mut prepared: Option<PreparedFrame<'_>> = None;
 
     while !stop.load(Ordering::Relaxed) {
+        // Prep the next frame while the camera is still filling its buffer.
+        // The controller already holds the values this frame will consume, so
+        // no sensor pixels are needed for the tensor uploads or session resize.
+        if prepared.is_none() {
+            if let (Some(mnn), Some((w, h))) = (mnn, geometry) {
+                let prepare_params = config.params(w, h, &[], 0);
+                prepared = mnn.prepare(&prepare_params).ok();
+            }
+        }
+
         let capture_t0 = Instant::now();
         let captured = {
             let guard = camera.lock().unwrap();
@@ -208,6 +222,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                 continue;
             }
         };
+        geometry = Some((frame.width, frame.height));
 
         // Assigned under the camera lock above, so sequence order == capture
         // order even though the two workers finish in either order.
@@ -219,6 +234,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         let stage = stage_t0.elapsed();
 
         let (data, width, height, kind, isp, error) = if show_raw.load(Ordering::Relaxed) {
+            prepared = None;
             (
                 raw_to_grayscale_bgra(&frame),
                 frame.width,
@@ -230,25 +246,78 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         } else {
             let params = config.params(frame.width, frame.height, staged, frame.timestamp_ns);
             let isp_t0 = Instant::now();
-            let result = engine.process(&params);
-            let isp = isp_t0.elapsed();
-            match result {
-                Ok(out) => {
+            let expected = PrepareParams::from(&params);
+            let staged_result = match (mnn, prepared.take()) {
+                (Some(mnn), Some(prep)) if prep.prepare_params() == expected => {
+                    Some(mnn.run_prepared(prep, &params))
+                }
+                (Some(mnn), Some(_)) => Some(mnn.process_staged(&params)),
+                (Some(mnn), None) => Some(mnn.process_staged(&params)),
+                (None, _) => None,
+            };
+            match staged_result {
+                Some(Ok((out, pending))) => {
+                    let isp = isp_t0.elapsed();
                     let kind = if config.float_output() {
                         FrameKind::PlanarRgbF32
                     } else {
                         FrameKind::Bgra
                     };
-                    (out.data, out.width, out.height, kind, isp, None)
+                    let done = Done {
+                        seq: s,
+                        worker,
+                        raw,
+                        capture,
+                        stage,
+                        isp,
+                        error: None,
+                        data: out.data,
+                        width: out.width,
+                        height: out.height,
+                        kind,
+                    };
+                    let ok = tx.send(done).is_ok();
+                    if let Some(mnn) = mnn {
+                        let _ = mnn.finish(pending);
+                    }
+                    if !ok {
+                        break;
+                    }
+                    continue;
                 }
-                Err(e) => (
-                    Vec::new(),
-                    frame.width,
-                    frame.height,
-                    FrameKind::Bgra,
-                    isp,
-                    Some(e.to_string()),
-                ),
+                Some(Err(e)) => {
+                    let isp = isp_t0.elapsed();
+                    (
+                        Vec::new(),
+                        frame.width,
+                        frame.height,
+                        FrameKind::Bgra,
+                        isp,
+                        Some(e.to_string()),
+                    )
+                }
+                None => {
+                    let result = engine.process(&params);
+                    let isp = isp_t0.elapsed();
+                    match result {
+                        Ok(out) => {
+                            let kind = if config.float_output() {
+                                FrameKind::PlanarRgbF32
+                            } else {
+                                FrameKind::Bgra
+                            };
+                            (out.data, out.width, out.height, kind, isp, None)
+                        }
+                        Err(e) => (
+                            Vec::new(),
+                            frame.width,
+                            frame.height,
+                            FrameKind::Bgra,
+                            isp,
+                            Some(e.to_string()),
+                        ),
+                    }
+                }
             }
         };
 

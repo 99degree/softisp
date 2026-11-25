@@ -1153,10 +1153,11 @@ mod tests {
         assert!(!frame.data.is_empty(), "output data should not be empty");
     }
 
-    /// Forced pure 16-bit raw input: `[1,1,H,W]` INT16 via `RawInput16Block`
-    /// (no packed 2×int16-as-int32 tensor). The MNN converter upcasts the
-    /// input to FLOAT32; the engine converts the whole u16 buffer to f32
-    /// (RawFloat mode) and UnpackCfaBlock extracts the 4 Bayer quadrants.
+    /// Forced pure 16-bit raw input: `[1,1,H,W]` FLOAT32 via
+    /// `RawFloatInputBlock` (no packed 2×int16-as-int32 tensor). The engine
+    /// widens the u16 sensor buffer to f32 (RawFloat mode); UnpackCfaBlock
+    /// extracts the 4 Bayer quadrants with a Vulkan-safe Conv, without an
+    /// INT16→FLOAT Cast in the graph.
     #[test]
     fn test_unified_force_input16() {
         crate::init();

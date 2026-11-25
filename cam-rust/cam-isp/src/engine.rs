@@ -264,6 +264,36 @@ impl<'a> ProcessParams<'a> {
     }
 }
 
+/// Geometry and format needed to prepare a frame before its pixels arrive.
+///
+/// `MnnEngine::prepare()` writes the controller's current 3A tensors and
+/// resizes/reserves a session. None of those values depend on the sensor
+/// buffer, so a camera loop can call it while waiting for the next capture.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PrepareParams {
+    pub width: u32,
+    pub height: u32,
+    pub target_width: u32,
+    pub target_height: u32,
+    pub sensor_max: f32,
+    pub bayer_pattern: i32,
+    pub output_format: OutputFormat,
+}
+
+impl<'a> From<&ProcessParams<'a>> for PrepareParams {
+    fn from(p: &ProcessParams<'a>) -> Self {
+        Self {
+            width: p.width,
+            height: p.height,
+            target_width: p.target_width,
+            target_height: p.target_height,
+            sensor_max: p.sensor_max,
+            bayer_pattern: p.bayer_pattern,
+            output_format: p.output_format,
+        }
+    }
+}
+
 /// Runtime capabilities of a backend engine.
 /// Queried before building pipelines to select optimal input mode.
 #[derive(Debug, Clone)]
@@ -586,6 +616,36 @@ mod tests {
         assert_eq!(p.width, 8);
         assert_eq!(p.height, 8);
         assert_eq!(p.buf.len(), 64);
+    }
+
+    #[test]
+    fn test_prepare_params_from_process_params() {
+        let data = vec![0u8; 64];
+        let mut p = ProcessParams::new(8, 8, &data);
+        p.target_width = 4;
+        p.target_height = 2;
+        p.sensor_max = 4095.0;
+        p.bayer_pattern = 2;
+        p.output_format = OutputFormat::PackedRgb;
+
+        let prep = PrepareParams::from(&p);
+        assert_eq!(prep.width, 8);
+        assert_eq!(prep.height, 8);
+        assert_eq!(prep.target_width, 4);
+        assert_eq!(prep.target_height, 2);
+        assert_eq!(prep.sensor_max, 4095.0);
+        assert_eq!(prep.bayer_pattern, 2);
+        assert_eq!(prep.output_format, OutputFormat::PackedRgb);
+    }
+
+    #[test]
+    fn test_prepare_params_detects_geometry_change() {
+        let data = vec![0u8; 64];
+        let p = ProcessParams::new(8, 8, &data);
+        let prep = PrepareParams::from(&p);
+        let mut changed = p;
+        changed.height = 9;
+        assert_ne!(prep, PrepareParams::from(&changed));
     }
 
     #[test]
