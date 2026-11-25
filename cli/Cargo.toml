@@ -1,8 +1,8 @@
 [package]
-name = "cam-ipa-test-cli"
+name = "cam-ipa-sk"
 version = "0.1.0"
 edition = "2021"
-description = "Polyglot IPA test CLI — executable directly and dlopen-able as shared library"
+description = "cam-ipa Swiss Army Knife — softisp IPA toolkit (polyglot ELF)"
 
 [dependencies]
 cam-ipa = { path = "../cam-rust/cam-ipa" }
@@ -10,22 +10,22 @@ cam-isp = { path = "../cam-rust/cam-isp" }
 env_logger = "0.10"
 log = "0.4"
 clap = { version = "4", features = ["derive"] }
+serde_json = "1"
 
 # Optional V4L2 capture via cam-hal-linux
 cam-hal-linux = { path = "../cam-rust/cam-hal-linux", optional = true }
-cam-hal = { path = "../cam-rust/cam-hal", optional = true }
 
 [features]
 # Enable V4L2 frame capture (requires cam-hal-linux v4l2 feature + rscam)
-v4l2 = ["cam-hal-linux/v4l2", "cam-hal"]
+v4l2 = ["cam-hal-linux/v4l2"]
 
 [lib]
-name = "cam_ipa_test_cli"
+name = "cam_ipa_sk"
 path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [[bin]]
-name = "ipa_test_cli"
+name = "ipa_sk"
 path = "src/main.rs"
 
 [profile.release]

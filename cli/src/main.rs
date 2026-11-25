@@ -1,10 +1,10 @@
-//! Binary entry point for cam-ipa-test-cli polyglot ELF.
+//! Binary entry point for cam-ipa-sk polyglot ELF.
 //!
-//! Links against cam_ipa_test_cli lib (rlib) for the binary target.
+//! Links against cam_ipa_sk lib (rlib) for the binary target.
 //! The lib is also built as cdylib for dlopen use.
 
-use cam_ipa_test_cli::ipa_test_main;
+use cam_ipa_sk::ipa_sk_main;
 
 fn main() {
-    std::process::exit(ipa_test_main());
+    std::process::exit(ipa_sk_main());
 }

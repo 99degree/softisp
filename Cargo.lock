@@ -370,16 +370,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "cam-ipa-test-cli"
+name = "cam-ipa-sk"
 version = "0.1.0"
 dependencies = [
- "cam-hal",
  "cam-hal-linux",
  "cam-ipa",
  "cam-isp",
  "clap",
  "env_logger 0.10.2",
  "log",
+ "serde_json",
 ]
 
 [[package]]

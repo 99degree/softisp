@@ -1,39 +1,52 @@
-//! Shared logic for cam-ipa-test-cli polyglot ELF.
+//! cam-ipa Swiss Army Knife CLI — polyglot ELF for softisp
 //!
-//! Capabilities:
-//!   - Generate synthetic 4K test frames (always available)
-//!   - Capture real frames via V4L2 / cam-hal-linux (feature `v4l2`)
-//!   - Process frames through cam-ipa IPA pipeline (MnnEngine Vulkan)
-//!   - Selectable pipeline profile (LITE, MED, FUSED, HEAVY, PRO, TEST, UNIFIED, HDR, YUV)
-//!   - Compiled as:
-//!     - cdylib (libcam_ipa_test_cli.so) — exports `ipa_test_main` for dlopen,
-//!       and `my_entry` as ELF entry point for direct execution.
-//!     - included by src/main.rs for the `ipa_test_cli` binary.
+//! One binary that does most of the softisp IPA jobs:
+//!   - `generate`   — synthetic test frame generator (Bayer 16-bit, configurable res)
+//!   - `capture`    — V4L2 frame capture via cam-hal-linux (feature `v4l2`)
+//!   - `process`    — run a frame through the full ISP pipeline (3A + neural)
+//!   - `bench`      — FPS/latency benchmark over N frames
+//!   - `stats`      — collect per-frame stats for CMOS sensor characterization
+//!   - `zerocopy`   — test memfd/dmabuf zero-copy buffer path
+//!   - `probe`      — probe profile capabilities and engine info
+//!
+//! Compiled as:
+//!   - cdylib (libcam_ipa_sk.so) — exports `ipa_sk_main` for dlopen,
+//!     and `my_entry` as ELF entry point for direct execution.
+//!   - included by src/main.rs for the `ipa_sk` binary.
 //!
 //! Build:
-//!   cargo build -p cam-ipa-test-cli              # synthetic frames only
-//!   cargo build -p cam-ipa-test-cli --features v4l2  # + V4L2 capture
+//!   cargo build -p cam-ipa-sk                    # synthetic only
+//!   cargo build -p cam-ipa-sk --features v4l2    # + V4L2 capture
 //!
 //! Run:
-//!   ./target/debug/libcam_ipa_test_cli.so          # direct execution
-//!   # or dlopen and call ipa_test_main()
-//!   ./target/debug/ipa_test_cli --profile HEAVY --width 3840 --height 2160
+//!   ./target/debug/libcam_ipa_sk.so --help       # direct execution (polyglot)
+//!   ./target/debug/ipa_sk --help                 # binary wrapper
+//!   ./target/debug/ipa_sk generate --width 3840 --height 2160 --profile FUSED
 
 use cam_ipa::{
     IpaConfig, IpaSettings, IpaSensorInfo, IpaFormat, IpaCallbacks,
-    ControlList, MemBuffer, IpaContext,
-    Size, Rectangle, Buffer, EngineBackend,
+    ControlList, MemBuffer, IpaContext, Buffer, EngineBackend,
+    Size, Rectangle,
 };
 use cam_isp::profile::PipelineProfile;
-use clap::Parser;
+use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
+use std::time::Instant;
 
 #[cfg(feature = "v4l2")]
-use cam_hal_linux::{create_v4l2_adapter, list_v4l2_devices, capture_single_v4l2_frame};
+use cam_hal_linux::{list_v4l2_devices, capture_single_v4l2_frame};
 
-/// CLI argument parser for the IPA test tool
+/// Top-level CLI argument parser
 #[derive(Parser, Debug)]
-#[command(author, version, about = "cam-ipa test CLI — 4K frame generator + ISP pipeline")]
+#[command(author, version, about = "cam-ipa Swiss Army Knife — softisp IPA toolkit")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+/// All subcommands share these common options via a helper struct
+#[derive(Parser, Debug, Clone)]
+struct CommonOpts {
     /// Pipeline profile preset
     #[arg(long, default_value = "fused", value_enum)]
     profile: ProfileArg,
@@ -51,7 +64,7 @@ struct Args {
     format: FormatArg,
 
     /// Backend engine
-    #[arg(long, default_value = "mnn_vulkan", value_enum)]
+    #[arg(long, default_value = "mnn-vulkan", value_enum)]
     backend: BackendArg,
 
     /// Enable neural controller (isp-rectifier)
@@ -63,22 +76,116 @@ struct Args {
     model_dir: Option<String>,
 }
 
-/// Profile argument enum for clap
-#[derive(clap::ValueEnum, Clone, Debug)]
+/// Subcommands
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate synthetic test frames and process through ISP
+    Generate {
+        /// Number of frames to generate
+        #[arg(short, long, default_value_t = 1)]
+        count: u32,
+        /// Write output frame to file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        common: CommonOpts,
+    },
+    /// Capture real frames from V4L2 device and process
+    Capture {
+        /// V4L2 device path (e.g., /dev/video0)
+        #[arg(long, default_value = "/dev/video0")]
+        device: String,
+        /// Number of frames to capture
+        #[arg(short, long, default_value_t = 1)]
+        count: u32,
+        /// Write output frame to file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        common: CommonOpts,
+    },
+    /// Benchmark FPS/latency over N frames
+    Bench {
+        /// Number of frames
+        #[arg(short, long, default_value_t = 30)]
+        count: u32,
+        /// Warmup frames (not timed)
+        #[arg(long, default_value_t = 5)]
+        warmup: u32,
+        #[command(flatten)]
+        common: CommonOpts,
+    },
+    /// Collect per-frame stats for CMOS sensor characterization
+    Stats {
+        /// Number of frames
+        #[arg(short, long, default_value_t = 100)]
+        count: u32,
+        /// Write stats to JSON file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        common: CommonOpts,
+    },
+    /// Test zero-copy buffer path (memfd on Linux, dmabuf on Android)
+    Zerocopy {
+        /// Buffer size in bytes
+        #[arg(long, default_value_t = 1048576)]
+        size: usize,
+        /// Number of write/read iterations
+        #[arg(long, default_value_t = 1000)]
+        iterations: u32,
+    },
+    /// Probe profile capabilities and engine info
+    Probe,
+}
+
+/// Profile argument enum
+#[derive(ValueEnum, Clone, Debug, Copy)]
 enum ProfileArg {
     Lite, Med, Fused, Heavy, Pro, Test, Unified, Hdr, Yuv,
 }
 
-/// Format argument enum for clap
-#[derive(clap::ValueEnum, Clone, Debug)]
+/// Format argument enum
+#[derive(ValueEnum, Clone, Debug, Copy)]
 enum FormatArg {
     Rgb, Rgba, Bgra, Argb, Abgr, Yuv, Nv12, P010,
 }
 
-/// Backend argument enum for clap
-#[derive(clap::ValueEnum, Clone, Debug)]
+/// Backend argument enum
+#[derive(ValueEnum, Clone, Debug, Copy)]
 enum BackendArg {
     MnnVulkan, Cpu, OnnxRuntime,
+}
+
+impl From<ProfileArg> for PipelineProfile {
+    fn from(arg: ProfileArg) -> Self {
+        match arg {
+            ProfileArg::Lite => PipelineProfile::LITE,
+            ProfileArg::Med => PipelineProfile::MED,
+            ProfileArg::Fused => PipelineProfile::FUSED,
+            ProfileArg::Heavy => PipelineProfile::HEAVY,
+            ProfileArg::Pro => PipelineProfile::PRO,
+            ProfileArg::Test => PipelineProfile::TEST,
+            ProfileArg::Unified => PipelineProfile::UNIFIED,
+            ProfileArg::Hdr => PipelineProfile::HDR,
+            ProfileArg::Yuv => PipelineProfile::YUV,
+        }
+    }
+}
+
+impl From<FormatArg> for IpaFormat {
+    fn from(arg: FormatArg) -> Self {
+        match arg {
+            FormatArg::Rgb => IpaFormat::RGB,
+            FormatArg::Rgba => IpaFormat::RGBA,
+            FormatArg::Bgra => IpaFormat::BGRA,
+            FormatArg::Argb => IpaFormat::ARGB,
+            FormatArg::Abgr => IpaFormat::ABGR,
+            FormatArg::Yuv => IpaFormat::YUV,
+            FormatArg::Nv12 => IpaFormat::NV12,
+            FormatArg::P010 => IpaFormat::P010,
+        }
+    }
 }
 
 impl From<BackendArg> for EngineBackend {
@@ -91,48 +198,9 @@ impl From<BackendArg> for EngineBackend {
     }
 }
 
-/// Library entry point — callable via dlopen
-#[no_mangle]
-pub extern "C" fn ipa_test_main() -> i32 {
-    run_cli()
-}
-
-/// ELF entry point — allows the cdylib to be executed directly.
-/// Called by the dynamic linker when the .so is run as ./libcam_ipa_test_cli.so
-#[no_mangle]
-pub extern "C" fn my_entry() -> ! {
-    std::process::exit(run_cli())
-}
-
-fn run_cli() -> i32 {
-    let args = Args::parse();
-    env_logger::init();
-
-    println!("=== cam-ipa Test CLI (polyglot ELF) ===");
-    println!("Features: {}", feature_list());
-    println!("Profile: {:?} ({:?})", args.profile, std::any::type_name::<PipelineProfile>());
-    println!("Resolution: {}x{}", args.width, args.height);
-    println!("Format: {:?}", args.format);
-    println!("Backend: {:?}", args.backend);
-    println!("Neural: {}", args.neural);
-    if let Some(dir) = &args.model_dir {
-        println!("Model dir: {}", dir);
-    }
-
-    // 1. Create config with selected profile
-    let profile = match args.profile {
-        ProfileArg::Lite => PipelineProfile::LITE,
-        ProfileArg::Med => PipelineProfile::MED,
-        ProfileArg::Fused => PipelineProfile::FUSED,
-        ProfileArg::Heavy => PipelineProfile::HEAVY,
-        ProfileArg::Pro => PipelineProfile::PRO,
-        ProfileArg::Test => PipelineProfile::TEST,
-        ProfileArg::Unified => PipelineProfile::UNIFIED,
-        ProfileArg::Hdr => PipelineProfile::HDR,
-        ProfileArg::Yuv => PipelineProfile::YUV,
-    };
-
-    let config = IpaConfig {
+/// Build an IpaConfig from CLI args
+fn build_config(args: &Args) -> IpaConfig {
+    IpaConfig {
         image_width: args.width,
         image_height: args.height,
         format: match args.format {
@@ -151,52 +219,117 @@ fn run_cli() -> i32 {
             BackendArg::Cpu => EngineBackend::Cpu,
             BackendArg::OnnxRuntime => EngineBackend::OnnxRuntime,
         },
-        profile,
+        profile: args.profile.into(),
         neural_enabled: args.neural,
-        model_dir: args.model_dir.clone().map(std::path::PathBuf::from),
+        model_dir: args.model_dir.clone().map(PathBuf::from),
+        ..IpaConfig::default()
+    }
+}
+
+/// Library entry point — callable via dlopen
+#[no_mangle]
+pub extern "C" fn ipa_sk_main() -> i32 {
+    run_cli()
+}
+
+/// ELF entry point — allows the cdylib to be executed directly
+#[no_mangle]
+pub extern "C" fn my_entry() -> ! {
+    std::process::exit(run_cli())
+}
+
+fn run_cli() -> i32 {
+    let args = Args::parse();
+    env_logger::init();
+
+    // Extract common config fields before consuming args.command
+    let profile = args.profile;
+    let width = args.width;
+    let height = args.height;
+    let format = args.format;
+    let backend = args.backend;
+    let neural = args.neural;
+    let model_dir = args.model_dir.clone();
+    let command = args.command;
+
+    println!("=== cam-ipa Swiss Army Knife ===");
+    println!("Command: {:?}", command);
+    println!("Profile: {:?}  Res: {}x{}  Format: {:?}  Backend: {:?}  Neural: {}",
+        profile, width, height, format, backend, neural);
+    if let Some(dir) = &model_dir {
+        println!("Model dir: {}", dir);
+    }
+
+    let config = IpaConfig {
+        image_width: width,
+        image_height: height,
+        format: match format {
+            FormatArg::Rgb => IpaFormat::RGB,
+            FormatArg::Rgba => IpaFormat::RGBA,
+            FormatArg::Bgra => IpaFormat::BGRA,
+            FormatArg::Argb => IpaFormat::ARGB,
+            FormatArg::Abgr => IpaFormat::ABGR,
+            FormatArg::Yuv => IpaFormat::YUV,
+            FormatArg::Nv12 => IpaFormat::NV12,
+            FormatArg::P010 => IpaFormat::P010,
+        },
+        num_output_buffers: 2,
+        backend: match backend {
+            BackendArg::MnnVulkan => EngineBackend::MnnVulkan,
+            BackendArg::Cpu => EngineBackend::Cpu,
+            BackendArg::OnnxRuntime => EngineBackend::OnnxRuntime,
+        },
+        profile: profile.into(),
+        neural_enabled: neural,
+        model_dir: model_dir.map(PathBuf::from),
         ..IpaConfig::default()
     };
-    let config_for_acquire = config.clone();
-    println!("Config: {}x{} {:?}", config.image_width, config.image_height, config.format);
 
-    // 2. Create IPA context
-    let mut ctx = match IpaContext::new(config) {
+    match command {
+        None => {
+            println!("No subcommand given. Run 'ipa_sk --help' for usage.");
+            cmd_probe()
+        }
+        Some(Commands::Generate { count, output }) => {
+            cmd_generate(&config, count, output)
+        }
+        Some(Commands::Capture { device, count, output }) => {
+            cmd_capture(&config, device, count, output)
+        }
+        Some(Commands::Bench { count, warmup }) => {
+            cmd_bench(&config, count, warmup)
+        }
+        Some(Commands::Stats { count, output }) => {
+            cmd_stats(&config, count, output)
+        }
+        Some(Commands::Zerocopy { size, iterations }) => {
+            cmd_zerocopy(size, iterations)
+        }
+        Some(Commands::Probe) => {
+            cmd_probe()
+        }
+    }
+}
+
+/// cmd_generate — synthetic frame generation + ISP processing
+fn cmd_generate(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 {
+    println!("\n--- Generate mode: {} synthetic frames ---", count);
+
+    let mut ctx = match IpaContext::new(config.clone()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to create IPA context: {}", e);
             return 1;
         }
     };
-    println!("IPA context created");
 
-    // 3. Set up callbacks
-    let callbacks = IpaCallbacks {
-        metadata_ready: Some(Box::new(|frame, metadata| {
-            println!("[callback] metadata_ready: frame={} keys={:?}",
-                frame, metadata.data.keys().collect::<Vec<_>>());
-        })),
-        frame_done: Some(Box::new(|frame, buffer_id| {
-            println!("[callback] frame_done: frame={} buffer_id={}", frame, buffer_id);
-        })),
-        set_sensor_controls: Some(Box::new(|controls| {
-            println!("[callback] set_sensor_controls: keys={:?}",
-                controls.data.keys().collect::<Vec<_>>());
-        })),
-        set_isp_params: Some(Box::new(|| {
-            println!("[callback] set_isp_params");
-        })),
-    };
-    ctx.set_callbacks(callbacks);
-    println!("Callbacks registered");
-
-    // 4. Create sensor info
     let sensor_info = IpaSensorInfo {
-        model: "test_sensor".to_string(),
+        model: "synthetic_sensor".to_string(),
         bits_per_pixel: 10,
         cfa_pattern: 0,
-        active_area_size: Size { width: args.width, height: args.height },
-        analog_crop: Rectangle { x: 0, y: 0, width: args.width, height: args.height },
-        output_size: Size { width: args.width, height: args.height },
+        active_area_size: Size { width: config.image_width, height: config.image_height },
+        analog_crop: Rectangle { x: 0, y: 0, width: config.image_width, height: config.image_height },
+        output_size: Size { width: config.image_width, height: config.image_height },
         pixel_rate: 0,
         min_line_length: 0,
         max_line_length: 0,
@@ -204,139 +337,495 @@ fn run_cli() -> i32 {
         max_frame_length: 0,
     };
 
-    // 5. Initialize
     let settings = IpaSettings {
         config_file: None,
-        sensor_model: "test_sensor".to_string(),
+        sensor_model: "synthetic_sensor".to_string(),
     };
-    match ctx.init(&settings, &sensor_info) {
-        Ok(init_result) => {
-            println!("IPA init OK: ccm_enabled={}", init_result.ccm_enabled);
+    if let Err(e) = ctx.init(&settings, &sensor_info) {
+        eprintln!("IPA init failed: {}", e);
+        return 1;
+    }
+    if let Err(e) = ctx.start() {
+        eprintln!("IPA start failed: {}", e);
+        return 1;
+    }
+
+    let w = config.image_width;
+    let h = config.image_height;
+    let input_size = (w * h * 2) as usize;
+
+    for frame in 1..=count {
+        // Generate synthetic Bayer frame
+        let mut input_data = vec![0u8; input_size];
+        for (i, chunk) in input_data.chunks_mut(2).enumerate() {
+            let val = (i as u16).wrapping_add((frame as u16).wrapping_mul(7));
+            chunk[0] = val as u8;
+            chunk[1] = (val >> 8) as u8;
         }
-        Err(e) => {
+
+        let mut input_buf = MemBuffer::new(input_data.len());
+        input_buf.data.copy_from_slice(&input_data);
+
+        let output_size = (w * h * 4) as usize;
+        let mut output_buf = MemBuffer::new(output_size);
+
+        let mut controls = ControlList::new();
+        controls.set_f32("AnalogueGain", 2.0);
+        controls.set_i32("ExposureTime", 2000);
+        controls.set_f32_array("ColourGains", &[1.5, 1.2]);
+
+        if let Err(e) = ctx.queue_request(frame, &controls) {
+            eprintln!("queue_request(frame {}) failed: {}", frame, e);
+            continue;
+        }
+        if let Err(e) = ctx.compute_params(frame) {
+            eprintln!("compute_params(frame {}) failed: {}", frame, e);
+            continue;
+        }
+
+        let stats_buf = MemBuffer::new(((w / 4) * (h / 4) * 4) as usize);
+        if let Err(e) = ctx.process_stats(frame, frame, &stats_buf) {
+            eprintln!("process_stats(frame {}) failed: {}", frame, e);
+            continue;
+        }
+
+        if let Err(e) = ctx.process_frame(
+            frame, frame,
+            &mut input_buf, &mut output_buf,
+            0, 0, w, h, &controls,
+        ) {
+            eprintln!("process_frame(frame {}) failed: {}", frame, e);
+            continue;
+        }
+
+        if let Some(ref path) = output {
+            if let Err(e) = std::fs::write(path, &output_buf.data) {
+                eprintln!("Failed to write output frame: {}", e);
+            } else {
+                println!("Frame {} written to {} ({} bytes)", frame, path.display(), output_buf.data.len());
+            }
+        } else {
+            println!("Frame {} processed: {} bytes output", frame, output_buf.len());
+        }
+    }
+
+    ctx.stop();
+    println!("Generate complete");
+    0
+}
+
+/// cmd_capture — V4L2 capture + ISP processing
+fn cmd_capture(config: &IpaConfig, device: String, count: u32, output: Option<PathBuf>) -> i32 {
+    println!("\n--- Capture mode: {} frames from {} ---", count, device);
+
+    #[cfg(feature = "v4l2")]
+    {
+        let devices = cam_hal_linux::list_v4l2_devices();
+        if !devices.iter().any(|d| d == &device) {
+            eprintln!("V4L2 device {} not found. Available: {:?}", device, devices);
+            return 1;
+        }
+
+        let mut ctx = match IpaContext::new(config.clone()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to create IPA context: {}", e);
+                return 1;
+            }
+        };
+
+        let sensor_info = IpaSensorInfo {
+            model: "v4l2_sensor".to_string(),
+            bits_per_pixel: 10,
+            cfa_pattern: 0,
+            active_area_size: Size { width: config.image_width, height: config.image_height },
+            analog_crop: Rectangle { x: 0, y: 0, width: config.image_width, height: config.image_height },
+            output_size: Size { width: config.image_width, height: config.image_height },
+            pixel_rate: 0,
+            min_line_length: 0,
+            max_line_length: 0,
+            min_frame_length: 0,
+            max_frame_length: 0,
+        };
+
+        let settings = IpaSettings {
+            config_file: None,
+            sensor_model: "v4l2_sensor".to_string(),
+        };
+        if let Err(e) = ctx.init(&settings, &sensor_info) {
             eprintln!("IPA init failed: {}", e);
             return 1;
         }
-    }
-    println!("Initialized: {}", ctx.is_initialized());
-
-    // 6. Start
-    match ctx.start() {
-        Ok(()) => println!("IPA started"),
-        Err(e) => {
+        if let Err(e) = ctx.start() {
             eprintln!("IPA start failed: {}", e);
             return 1;
         }
+
+        let w = config.image_width;
+        let h = config.image_height;
+
+        for frame in 1..=count {
+            match cam_hal_linux::capture_single_v4l2_frame(&device, w, h) {
+                Ok((cw, ch, data)) => {
+                    println!("Captured {}x{} frame {} ({} bytes)", cw, ch, frame, data.len());
+
+                    let mut input_buf = MemBuffer::new(data.len());
+                    input_buf.data.copy_from_slice(&data);
+
+                    let output_size = (cw * ch * 4) as usize;
+                    let mut output_buf = MemBuffer::new(output_size);
+
+                    let mut controls = ControlList::new();
+                    controls.set_f32("AnalogueGain", 2.0);
+                    controls.set_i32("ExposureTime", 2000);
+
+                    if let Err(e) = ctx.queue_request(frame, &controls) {
+                        eprintln!("queue_request(frame {}) failed: {}", frame, e);
+                        continue;
+                    }
+                    if let Err(e) = ctx.process_frame(
+                        frame, frame,
+                        &mut input_buf, &mut output_buf,
+                        0, 0, cw, ch, &controls,
+                    ) {
+                        eprintln!("process_frame(frame {}) failed: {}", frame, e);
+                        continue;
+                    }
+
+                    if let Some(ref path) = output {
+                        let fname = format!("{}_{}.bgra", path.display(), frame);
+                        if let Err(e) = std::fs::write(&fname, &output_buf.data) {
+                            eprintln!("Failed to write {}: {}", fname, e);
+                        } else {
+                            println!("Frame {} written to {} ({} bytes)", frame, fname, output_buf.data.len());
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("V4L2 capture frame {} failed: {}", frame, e);
+                }
+            }
+        }
+
+        ctx.stop();
+        println!("Capture complete");
+        0
     }
-    println!("Started: {}", ctx.is_started());
+    #[cfg(not(feature = "v4l2"))]
+    {
+        eprintln!("V4L2 feature not enabled. Rebuild with: cargo build -p cam-ipa-sk --features v4l2");
+        1
+    }
+}
 
-    // 7. Acquire frame input — V4L2 if available, otherwise synthetic
-    let (width, height, input_data) = acquire_frame(&config_for_acquire);
-    let mut input_buf = MemBuffer::new(input_data.len());
-    input_buf.data.copy_from_slice(&input_data);
+/// cmd_bench — FPS/latency benchmark
+fn cmd_bench(config: &IpaConfig, count: u32, warmup: u32) -> i32 {
+    println!("\n--- Bench mode: {} frames ({} warmup) ---", count, warmup);
 
-    let output_size = (width * height * 4) as usize; // BGRA
+    let mut ctx = match IpaContext::new(config.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to create IPA context: {}", e);
+            return 1;
+        }
+    };
+
+    let sensor_info = IpaSensorInfo {
+        model: "bench_sensor".to_string(),
+        bits_per_pixel: 10,
+        cfa_pattern: 0,
+        active_area_size: Size { width: config.image_width, height: config.image_height },
+        analog_crop: Rectangle { x: 0, y: 0, width: config.image_width, height: config.image_height },
+        output_size: Size { width: config.image_width, height: config.image_height },
+        pixel_rate: 0,
+        min_line_length: 0,
+        max_line_length: 0,
+        min_frame_length: 0,
+        max_frame_length: 0,
+    };
+
+    let settings = IpaSettings {
+        config_file: None,
+        sensor_model: "bench_sensor".to_string(),
+    };
+    if let Err(e) = ctx.init(&settings, &sensor_info) {
+        eprintln!("IPA init failed: {}", e);
+        return 1;
+    }
+    if let Err(e) = ctx.start() {
+        eprintln!("IPA start failed: {}", e);
+        return 1;
+    }
+
+    let w = config.image_width;
+    let h = config.image_height;
+    let input_size = (w * h * 2) as usize;
+    let output_size = (w * h * 4) as usize;
+
+    // Pre-allocate buffers
+    let mut input_buf = MemBuffer::new(input_size);
+    for (i, b) in input_buf.data.iter_mut().enumerate() {
+        *b = (i % 256) as u8;
+    }
     let mut output_buf = MemBuffer::new(output_size);
 
-    // 8. Queue request
     let mut controls = ControlList::new();
     controls.set_f32("AnalogueGain", 2.0);
     controls.set_i32("ExposureTime", 2000);
     controls.set_f32_array("ColourGains", &[1.5, 1.2]);
 
-    match ctx.queue_request(1, &controls) {
-        Ok(()) => println!("queue_request(1) OK"),
-        Err(e) => eprintln!("queue_request failed: {}", e),
-    }
+    let mut latencies: Vec<u64> = Vec::new();
+    let total_start = Instant::now();
 
-    // 9. Compute params
-    match ctx.compute_params(1) {
-        Ok(()) => println!("compute_params(1) OK"),
-        Err(e) => eprintln!("compute_params failed: {}", e),
-    }
+    for frame in 1..=(warmup + count) {
+        let frame_start = Instant::now();
 
-    // 10. Process stats
-    let stats_buf = MemBuffer::new(((width / 4) * (height / 4) * 4) as usize);
-    match ctx.process_stats(1, 100, &stats_buf) {
-        Ok(metadata) => {
-            println!("process_stats OK: keys={:?}",
-                metadata.data.keys().collect::<Vec<_>>());
+        if let Err(e) = ctx.process_frame(
+            frame, frame,
+            &mut input_buf, &mut output_buf,
+            0, 0, w, h, &controls,
+        ) {
+            eprintln!("process_frame(frame {}) failed: {}", frame, e);
+            continue;
         }
-        Err(e) => eprintln!("process_stats failed: {}", e),
-    }
 
-    // 11. Process frame through full ISP pipeline
-    match ctx.process_frame(
-        1, 100,
-        &mut input_buf, &mut output_buf,
-        0, 0,
-        width, height,
-        &controls,
-    ) {
-        Ok(()) => {
-            println!("process_frame(1) OK — output {} bytes", output_buf.len());
-            // Write output to file for inspection
-            if let Err(e) = std::fs::write("/data/data/com.termux/files/home/softisp/output_frame.bgra", &output_buf.data) {
-                eprintln!("Failed to write output frame: {}", e);
-            } else {
-                println!("Output frame written to output_frame.bgra ({} bytes)", output_buf.data.len());
-            }
+        let frame_elapsed = frame_start.elapsed().as_micros() as u64;
+        if frame > warmup {
+            latencies.push(frame_elapsed);
         }
-        Err(e) => eprintln!("process_frame failed: {}", e),
+
+        if frame == warmup {
+            println!("Warmup complete, starting timed run...");
+        }
+        if frame % 10 == 0 || frame <= warmup + 5 {
+            println!("Frame {}: {} us", frame, frame_elapsed);
+        }
     }
 
-    // 12. Configure frame backend
-    match ctx.configure_frame_backend(IpaFormat::RGBA, 3) {
-        Ok(()) => println!("configure_frame_backend(RGBA, 3) OK"),
-        Err(e) => eprintln!("configure_frame_backend failed: {}", e),
+    let total_elapsed = total_start.elapsed();
+    let timed_count = latencies.len() as u64;
+
+    if timed_count > 0 {
+        let avg_us: u64 = latencies.iter().sum::<u64>() / timed_count;
+        let max_us = latencies.iter().max().copied().unwrap_or(0);
+        let min_us = latencies.iter().min().copied().unwrap_or(0);
+        let fps = (timed_count as f64) / (total_elapsed.as_secs_f64() - (warmup as f64 * avg_us as f64 / 1_000_000.0));
+
+        println!("\n--- Bench results ---");
+        println!("Timed frames: {}", timed_count);
+        println!("Avg latency: {} us", avg_us);
+        println!("Min latency: {} us", min_us);
+        println!("Max latency: {} us", max_us);
+        println!("Approx FPS: {:.2}", fps);
+        println!("Resolution: {}x{}", w, h);
+        println!("Profile: {:?}", config.profile);
     }
 
-    // 13. Stop
     ctx.stop();
-    println!("Stopped");
-
-    println!("=== cam-ipa Test CLI Complete ===");
     0
 }
 
-/// Acquire a frame: V4L2 if feature enabled and device available, otherwise synthetic.
-fn acquire_frame(config: &IpaConfig) -> (u32, u32, Vec<u8>) {
-    #[cfg(feature = "v4l2")]
-    {
-        // Try V4L2 first
-        let devices = list_v4l2_devices();
-        if let Some(dev) = devices.first() {
-            println!("V4L2 device found: {}", dev);
-            match capture_single_v4l2_frame(dev, config.image_width, config.image_height) {
-                Ok((w, h, data)) => {
-                    println!("Captured {}x{} frame from V4L2 ({} bytes)", w, h, data.len());
-                    return (w, h, data);
-                }
-                Err(e) => {
-                    println!("V4L2 capture failed: {}, falling back to synthetic", e);
-                }
-            }
-        } else {
-            println!("No V4L2 device found, using synthetic frame");
+/// cmd_stats — collect per-frame stats for CMOS characterization
+fn cmd_stats(config: &IpaConfig, count: u32, output: Option<PathBuf>) -> i32 {
+    println!("\n--- Stats mode: {} frames ---", count);
+
+    let mut ctx = match IpaContext::new(config.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to create IPA context: {}", e);
+            return 1;
         }
+    };
+
+    let sensor_info = IpaSensorInfo {
+        model: "stats_sensor".to_string(),
+        bits_per_pixel: 10,
+        cfa_pattern: 0,
+        active_area_size: Size { width: config.image_width, height: config.image_height },
+        analog_crop: Rectangle { x: 0, y: 0, width: config.image_width, height: config.image_height },
+        output_size: Size { width: config.image_width, height: config.image_height },
+        pixel_rate: 0,
+        min_line_length: 0,
+        max_line_length: 0,
+        min_frame_length: 0,
+        max_frame_length: 0,
+    };
+
+    let settings = IpaSettings {
+        config_file: None,
+        sensor_model: "stats_sensor".to_string(),
+    };
+    if let Err(e) = ctx.init(&settings, &sensor_info) {
+        eprintln!("IPA init failed: {}", e);
+        return 1;
     }
-    #[cfg(not(feature = "v4l2"))]
-    {
-        println!("V4L2 feature not enabled, using synthetic frame");
+    if let Err(e) = ctx.start() {
+        eprintln!("IPA start failed: {}", e);
+        return 1;
     }
 
-    // Synthetic 4K Bayer-like pattern
     let w = config.image_width;
     let h = config.image_height;
-    let size = (w * h * 2) as usize; // 16-bit Bayer
-    let mut data = vec![0u8; size];
-    for (i, chunk) in data.chunks_mut(2).enumerate() {
-        let val = (i as u16) ^ ((i >> 11) as u16); // spatial pattern
-        chunk[0] = val as u8;
-        chunk[1] = (val >> 8) as u8;
+    let input_size = (w * h * 2) as usize;
+
+    let mut all_stats: Vec<serde_json::Value> = Vec::new();
+
+    for frame in 1..=count {
+        let mut input_data = vec![0u8; input_size];
+        for (i, chunk) in input_data.chunks_mut(2).enumerate() {
+            let val = (i as u16).wrapping_add((frame as u16).wrapping_mul(13));
+            chunk[0] = val as u8;
+            chunk[1] = (val >> 8) as u8;
+        }
+
+        let mut input_buf = MemBuffer::new(input_data.len());
+        input_buf.data.copy_from_slice(&input_data);
+
+        let mut output_buf = MemBuffer::new((w * h * 4) as usize);
+
+        let mut controls = ControlList::new();
+        controls.set_f32("AnalogueGain", 2.0);
+        controls.set_i32("ExposureTime", 2000);
+        controls.set_f32_array("ColourGains", &[1.5, 1.2]);
+
+        if let Err(e) = ctx.queue_request(frame, &controls) {
+            eprintln!("queue_request(frame {}) failed: {}", frame, e);
+            continue;
+        }
+        if let Err(e) = ctx.compute_params(frame) {
+            eprintln!("compute_params(frame {}) failed: {}", frame, e);
+            continue;
+        }
+
+        let stats_buf = MemBuffer::new(((w / 4) * (h / 4) * 4) as usize);
+        match ctx.process_stats(frame, frame, &stats_buf) {
+            Ok(metadata) => {
+                let stats_entry = serde_json::json!({
+                    "frame": frame,
+                    "width": w,
+                    "height": h,
+                    "metadata": metadata.data,
+                });
+                all_stats.push(stats_entry);
+                if frame % 10 == 0 {
+                    println!("Frame {} stats collected", frame);
+                }
+            }
+            Err(e) => {
+                eprintln!("process_stats(frame {}) failed: {}", frame, e);
+            }
+        }
     }
-    println!("Generated synthetic {}x{} 16-bit Bayer frame ({} bytes)", w, h, data.len());
-    (w, h, data)
+
+    ctx.stop();
+
+    if let Some(ref path) = output {
+        let json = serde_json::to_string_pretty(&all_stats).unwrap_or_default();
+        if let Err(e) = std::fs::write(path, &json) {
+            eprintln!("Failed to write stats to {}: {}", path.display(), e);
+            return 1;
+        }
+        println!("Stats written to {} ({} frames)", path.display(), all_stats.len());
+    } else {
+        println!("Collected stats from {} frames", all_stats.len());
+    }
+
+    println!("Stats complete");
+    0
+}
+
+/// cmd_zerocopy — test memfd/dmabuf zero-copy buffer path
+fn cmd_zerocopy(size: usize, iterations: u32) -> i32 {
+    println!("\n--- Zerocopy mode: {} iterations, {} bytes ---", iterations, size);
+
+    #[cfg(not(target_os = "android"))]
+    {
+        use cam_ipa::buffer::create_memfd_dmabuf;
+        use std::os::fd::AsRawFd;
+
+        let (fd, mut buf) = match create_memfd_dmabuf(size) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("Failed to create memfd dmabuf: {}", e);
+                return 1;
+            }
+        };
+        println!("Created memfd dmabuf: fd={} size={} ptr={:?}", fd, buf.len(), buf.as_ptr());
+
+        let mut write_sum: u8 = 0;
+        let start = Instant::now();
+
+        for i in 0..iterations {
+            // Write pattern through mmap'd pointer
+            let val = (i % 256) as u8;
+            for chunk in buf.data.chunks_mut(8) {
+                for b in chunk.iter_mut() {
+                    *b = val;
+                }
+            }
+            write_sum = write_sum.wrapping_add(val);
+
+            // Read back
+            let read_val = unsafe { buf.as_ptr().read() };
+            if read_val != val {
+                eprintln!("Zerocopy mismatch at iter {}: wrote {} read {}", i, val, read_val);
+                return 1;
+            }
+        }
+
+        let elapsed = start.elapsed();
+        let per_iter = elapsed.as_nanos() / iterations as u128;
+
+        println!("Zerocopy test: {} iterations in {:?}", iterations, elapsed);
+        println!("Per iteration: {} ns", per_iter);
+        println!("Write sum: {}", write_sum);
+        println!("Memfd fd: {}", fd);
+        println!("Zerocopy test PASSED");
+        0
+    }
+    #[cfg(target_os = "android")]
+    {
+        eprintln!("Zerocopy memfd test not available on Android (use dmabuf path instead)");
+        // Test MemBuffer as fallback
+        let mut buf = MemBuffer::new(size);
+        let start = Instant::now();
+        for i in 0..iterations {
+            let val = (i % 256) as u8;
+            for b in buf.data.iter_mut() {
+                *b = val;
+            }
+        }
+        let elapsed = start.elapsed();
+        println!("MemBuffer fallback: {} iterations in {:?}", iterations, elapsed);
+        0
+    }
+}
+
+/// cmd_probe — probe profile capabilities and engine info
+fn cmd_probe() -> i32 {
+    println!("\n--- Probe mode ---");
+
+    println!("\nAvailable profiles:");
+    for p in cam_isp::profile::PipelineProfile::ALL.iter() {
+        println!("  {:?}: level={:?} input={} unpack={} fused_stages={:?}",
+            p.label, p.level, p.input_type, p.use_unpack, p.fuse_stages);
+    }
+
+    println!("\nEngine backends:");
+    println!("  MnnVulkan (priority 99)");
+    println!("  Cpu (not yet implemented)");
+    println!("  OnnxRuntime (not yet implemented)");
+
+    println!("\nBuffer types:");
+    println!("  DmaBufBuffer (Linux memfd/dmabuf mmap + Android SharedFD)");
+    println!("  AhwBuffer (Android AHardwareBuffer, Vulkan input_ahb/output_ahb)");
+    println!("  MemBuffer (host memory, testing)");
+
+    println!("\ncam-ipa features:");
+    println!("  neural_enabled: opt-in NeuralController (isp-rectifier)");
+    println!("  zero-copy: memfd_create + mmap on Linux, SharedFD on Android");
+
+    0
 }
 
 /// Return a comma-separated list of active features for the banner.
