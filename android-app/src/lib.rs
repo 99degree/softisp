@@ -666,6 +666,23 @@ impl Preview {
 
 /// Convert a raw u16 Bayer frame to grayscale BGRA for the debug preview.
 pub(crate) fn raw_to_grayscale_bgra(frame: &RawFrame) -> Vec<u8> {
+    // This is a debug-only preview path, never the production APK flow: the
+    // real path runs the fused ISP and presents packed BGRA. A line here makes
+    // an accidental `set_show_raw(true)` visible instead of silently showing a
+    // grayscale frame that looks like a broken ISP.
+    log::info!(
+        "DEBUG raw_to_grayscale_bgra: showing raw {}x{} grayscale (production path is packed ISP BGRA)",
+        frame.width,
+        frame.height
+    );
+    write_line(
+        "INFO",
+        "debug",
+        &format!(
+            "raw_to_grayscale_bgra DEBUG path active ({}x{}), production uses packed ISP BGRA",
+            frame.width, frame.height
+        ),
+    );
     let w = frame.width as usize;
     let h = frame.height as usize;
     let mut bgra = vec![0u8; w * h * 4];
