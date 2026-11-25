@@ -471,6 +471,7 @@ impl Preview {
         };
         let runner =
             PipelineRunner::new(session, [engine_a, engine_b], config, Arc::clone(&show_raw));
+        crate::set_pipeline_handle(runner.handle());
 
         log::info!(
             "pipeline built: profile {} at {}x{}px{} (two ISP workers)",
@@ -497,6 +498,12 @@ impl Preview {
     fn set_show_raw(&self, value: bool) {
         self.show_raw.store(value, Ordering::Relaxed);
         self.runner.set_show_raw(value);
+    }
+
+    /// Stop workers and release camera/engine resources before the runner drops.
+    fn cancel(&mut self) {
+        self.runner.cancel();
+        crate::clear_pipeline_handle();
     }
 
     /// Open the camera on first use, and remember what the sensor reported.
@@ -681,6 +688,12 @@ impl Preview {
     }
 }
 
+impl Drop for Preview {
+    fn drop(&mut self) {
+        crate::clear_pipeline_handle();
+    }
+}
+
 /// Convert a raw u16 Bayer frame to grayscale BGRA for the debug preview.
 pub(crate) fn raw_to_grayscale_bgra(frame: &RawFrame) -> Vec<u8> {
     // This is a debug-only preview path, never the production APK flow: the
@@ -814,6 +827,24 @@ fn android_main(app: AndroidApp) {
                 _ => {}
             }
         });
+
+        if crate::pipeline_cancel_requested() {
+            write_line(
+                "INFO",
+                "pipeline",
+                "external cancellation: joining workers, releasing camera and exiting",
+            );
+            if let Some(preview) = preview.as_mut() {
+                preview.cancel();
+            } else {
+                crate::clear_pipeline_handle();
+            }
+            preview = None;
+            target = None;
+            window = None;
+            release_native_window();
+            exit = true;
+        }
 
         if exit {
             break;

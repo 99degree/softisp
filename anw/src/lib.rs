@@ -24,6 +24,7 @@ pub mod storage;
 
 pub(crate) mod app;
 
+use pipeline_runner::PipelineHandle;
 use presentation::WindowTarget;
 
 // Thread-safe storage for IPA contexts.
@@ -34,6 +35,26 @@ unsafe impl Send for AnwIpACtx {}
 unsafe impl Sync for AnwIpACtx {}
 
 static ANW_CTX: Mutex<Option<AnwIpACtx>> = Mutex::new(None);
+
+// Cancellation handle for the NativeActivity preview pipeline. Separate from
+// ANW_CTX: that one owns the IPA/CLI context, this one owns the camera workers.
+static PIPELINE_HANDLE: Mutex<Option<PipelineHandle>> = Mutex::new(None);
+
+pub(crate) fn set_pipeline_handle(handle: PipelineHandle) {
+    *PIPELINE_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+}
+
+pub(crate) fn clear_pipeline_handle() {
+    *PIPELINE_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+pub(crate) fn pipeline_cancel_requested() -> bool {
+    PIPELINE_HANDLE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(PipelineHandle::is_cancelled)
+}
 
 #[no_mangle]
 pub extern "C" fn softisp_anw_init(window: *mut ANativeWindow) -> i32 {
@@ -84,6 +105,24 @@ pub extern "C" fn softisp_anw_stop() {
             drop(ctx);
         }
     }
+}
+
+/// Request clean shutdown of the NativeActivity camera/ISP pipeline.
+///
+/// The activity loop observes the request, joins its workers, releases the
+/// camera session and exits. Repeated calls are harmless.
+#[no_mangle]
+pub extern "C" fn softisp_anw_cancel_pipeline() {
+    let guard = PIPELINE_HANDLE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(handle) = guard.as_ref() {
+        handle.cancel();
+    }
+}
+
+/// Whether a pipeline cancellation is currently pending.
+#[no_mangle]
+pub extern "C" fn softisp_anw_pipeline_cancelled() -> i32 {
+    i32::from(pipeline_cancel_requested())
 }
 
 /// Present an RGBA buffer to the ANativeWindow.

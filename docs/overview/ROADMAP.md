@@ -36,9 +36,12 @@
   both camera workers now prep before capture, present before deferred stats,
   and fall back on first frame or geometry change. `process()` keeps its old
   single-call contract. See `docs/isp/20261125-staged-frame-phases.md`.
-- **External cancellation requested** (this session): a way for outside code
-  to stop the pipeline and release camera/MNN/buffer resources cleanly is
-  recorded as P2d below; it is not implemented yet.
+- **External cancellation implemented** (2026-11-26): `PipelineHandle` is a
+  cloneable, idempotent stop signal exposed through the `anw` C ABI; the activity
+  loop joins workers, clears camera/reorder state, releases the surface and
+  exits. Hermetic `softisp-anw` tests are 49/49 and `cam-isp rectifier` is
+  831 passed/2 ignored on the current tree. See P2d and
+  `docs/isp/20261126-p2d-cancellation.md`.
 - **APK build unblocked** (this session): the stale `jni` workspace member was
   removed because no such crate exists in the repository, and the inert
   per-package profile sections in `cli/Cargo.toml` were dropped. `./build-apk.sh`
@@ -317,26 +320,33 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   the pre-bound camera input-buffer refinement remains dependent on P2b. See
   `docs/isp/20261125-staged-frame-phases.md`.
 
-### P2d — External pipeline cancellation and clean shutdown (TODO)
+### P2d — External pipeline cancellation and clean shutdown ✅
 
 - **User request recorded 2026-11-25.** Add a mechanism that lets code outside
   the camera/ISP workers issue a stop request to the running pipeline and have
   every worker wind down deterministically, releasing camera, MNN session,
   buffer-pool and staged-frame resources cleanly.
-- **Surface:** an idempotent shared handle (e.g. `PipelineHandle::cancel()` or
-  a `CancellationToken`) exposed through the app/service/JNI boundary. It must
-  not depend on dropping the worker threads or killing the process.
-- **Worker contract:** observe cancellation at safe points (before preparing a
-  frame, immediately after capture, after handing a finished frame to the
-  presenter and after deferred stats finish). Stop taking new frames, drain or
-  finish in-flight work, and join workers without leaving poisoned mutexes.
-- **Staged-path constraint:** a cancel request must not drop a live
-  `PreparedFrame` or `PendingStats` session guard while MNN/Vulkan may still
-  read its buffers. Either let the in-flight frame finish, or add an explicit
-  await-release path before tearing down the engine.
-- **Verification:** hermetic tests for idempotent cancel, worker exit, and no
-  leaked session/buffer reservations; on-device check that a cancel followed
-  by restart leaves no stale camera device or Vulkan buffers.
+- **Implemented 2026-11-26.** `PipelineHandle` is a cloneable `Arc<AtomicBool>`
+  signal with idempotent `cancel()` and `is_cancelled()`. `PipelineRunner`
+  exposes `handle()` and `cancel()`; cancellation sets the flag, joins both
+  workers exactly once, drains the reorder queue, and clears the camera session.
+  `Drop` routes through the same path.
+- **Surface:** registered in an `anw` crate-level handle registry with C ABI
+  `softisp_anw_cancel_pipeline()` and `softisp_anw_pipeline_cancelled()`. The
+  `android_main` loop polls this registry (10 ms timeout), so cancellation is
+  handled on the activity thread and never touches `ANativeWindow` from a worker.
+- **Worker contract:** safe points now sit after prepare, immediately after
+  capture (before staging/ISP), after handing a finished frame to the presenter
+  and `finish()` consumes `PendingStats`, and before idle sleeps. A frame
+  already in flight finishes its stats readback; no new work starts.
+- **Staged-path constraint:** a cancel request never drops a live
+  `PreparedFrame` or `PendingStats` guard. The worker owns both guards, calls
+  `finish()` before checking the stop flag, and its engine drops only after the
+  join. See `docs/isp/20261126-p2d-cancellation.md`.
+- **Verification:** hermetic tests cover idempotent cancel, worker exit, engine
+  `Drop` after join, camera/reorder cleanup, and the C ABI registry state. The
+  on-device cancel/restart check remains a user-side APK check; the assistant
+  only reads logs.
 
 ### P2e — APK step 3 shipped the previous app library (resolved by P2g)
 

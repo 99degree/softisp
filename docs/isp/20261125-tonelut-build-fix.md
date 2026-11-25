@@ -103,7 +103,8 @@ Run from the workspace root after `cargo fetch --locked`:
   ignored.
 - Real MNN lib tests — `cam-isp --features "rectifier mnn"` passes 864 tests
   with 2 ignored.
-- `git diff --check` — clean; no `build_vk` references remain in tracked files.
+- `git diff --check` — clean; no alternative MNN build directory is referenced
+  in tracked files.
 
 `cargo test --workspace --doc --all-features` cannot complete on the Termux
 Android host: `--all-features` activates `rscam` (Linux/FreeBSD-only;

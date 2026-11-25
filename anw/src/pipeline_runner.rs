@@ -23,6 +23,28 @@ use crate::app::{raw_stats, raw_to_grayscale_bgra, FrameKind, RawStats};
 use crate::camera::{CameraSession, RawFrame};
 use crate::pipeline::{FrameStager, PipelineConfig};
 
+/// Cloneable cancellation signal shared with code outside the workers.
+#[derive(Clone, Debug)]
+pub struct PipelineHandle {
+    stop: Arc<AtomicBool>,
+}
+
+impl PipelineHandle {
+    pub(crate) fn new(stop: Arc<AtomicBool>) -> Self {
+        Self { stop }
+    }
+
+    /// Request cancellation. Repeated calls have no additional effect.
+    pub fn cancel(&self) {
+        self.stop.store(true, Ordering::Release);
+    }
+
+    /// Whether cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+}
+
 /// One finished frame, handed back to the presenting thread.
 pub(crate) struct Done {
     pub(crate) seq: u64,
@@ -46,7 +68,7 @@ pub(crate) struct Done {
 /// never torn down while a `process()` call is in flight.
 pub(crate) struct PipelineRunner {
     camera: Arc<Mutex<Option<CameraSession>>>,
-    stop: Arc<AtomicBool>,
+    handle: PipelineHandle,
     show_raw: Arc<AtomicBool>,
     rx: Receiver<Done>,
     workers: Vec<JoinHandle<()>>,
@@ -88,12 +110,12 @@ impl PipelineRunner {
         show_raw: Arc<AtomicBool>,
     ) -> Self {
         let camera = Arc::new(Mutex::new(camera));
-        let stop = Arc::new(AtomicBool::new(false));
+        let handle = PipelineHandle::new(Arc::new(AtomicBool::new(false)));
         let seq = Arc::new(AtomicU64::new(0));
         let (tx, rx) = mpsc::channel();
         let shared = WorkerShared {
             camera: Arc::clone(&camera),
-            stop: Arc::clone(&stop),
+            stop: Arc::clone(&handle.stop),
             seq,
             show_raw: Arc::clone(&show_raw),
             config,
@@ -114,7 +136,7 @@ impl PipelineRunner {
 
         Self {
             camera,
-            stop,
+            handle,
             show_raw,
             rx,
             workers,
@@ -147,6 +169,26 @@ impl PipelineRunner {
         self.show_raw.store(value, Ordering::Relaxed);
     }
 
+    /// Return a cloneable handle for external cancellation.
+    pub(crate) fn handle(&self) -> PipelineHandle {
+        self.handle.clone()
+    }
+
+    /// Stop the pipeline and release camera/engine/frame resources.
+    ///
+    /// Workers finish the frame already in flight, then exit. Joining drops the
+    /// engine (and any staged tensor guards) on the worker thread before the
+    /// camera session is cleared here. Repeated calls are harmless.
+    pub(crate) fn cancel(&mut self) {
+        self.handle.cancel();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+        while self.rx.try_recv().is_ok() {}
+        self.pending.clear();
+        *self.camera.lock().unwrap() = None;
+    }
+
     /// Return the next completed frame in capture order, if one is ready.
     ///
     /// A worker that finishes second is buffered until its predecessor
@@ -167,10 +209,7 @@ impl PipelineRunner {
 
 impl Drop for PipelineRunner {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        for worker in self.workers.drain(..) {
-            let _ = worker.join();
-        }
+        self.cancel();
     }
 }
 
@@ -190,7 +229,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
     let mut geometry: Option<(u32, u32)> = None;
     let mut prepared: Option<PreparedFrame<'_>> = None;
 
-    while !stop.load(Ordering::Relaxed) {
+    while !stop.load(Ordering::Acquire) {
         // Prep the next frame while the camera is still filling its buffer.
         // The controller already holds the values this frame will consume, so
         // no sensor pixels are needed for the tensor uploads or session resize.
@@ -199,6 +238,9 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                 let prepare_params = config.params(w, h, &[], 0);
                 prepared = mnn.prepare(&prepare_params).ok();
             }
+        }
+        if stop.load(Ordering::Acquire) {
+            break;
         }
 
         let capture_t0 = Instant::now();
@@ -210,14 +252,23 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             }
         };
         let capture = capture_t0.elapsed();
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
 
         let frame: RawFrame = match captured {
             Ok(Some(frame)) => frame,
             Ok(None) => {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
                 thread::sleep(Duration::from_millis(2));
                 continue;
             }
             Err(_) => {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
                 thread::sleep(Duration::from_millis(5));
                 continue;
             }
@@ -280,7 +331,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                     if let Some(mnn) = mnn {
                         let _ = mnn.finish(pending);
                     }
-                    if !ok {
+                    if !ok || stop.load(Ordering::Acquire) {
                         break;
                     }
                     continue;
@@ -334,8 +385,134 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             height,
             kind,
         };
-        if tx.send(done).is_err() {
+        if tx.send(done).is_err() || stop.load(Ordering::Acquire) {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cam_isp::controller::IspController;
+    use cam_isp::engine::{IspEngine, ProcessParams};
+    use cam_isp::error::{IspError, IspResult};
+    use cam_isp::pipeline::{IspBlock, IspFrame};
+    use std::any::Any;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    struct TrackedEngine {
+        drops: Arc<AtomicUsize>,
+        controller: Mutex<IspController>,
+    }
+
+    impl Drop for TrackedEngine {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+    }
+
+    impl IspEngine for TrackedEngine {
+        fn backend_name(&self) -> &'static str {
+            "tracked"
+        }
+
+        fn priority(&self) -> i32 {
+            1
+        }
+
+        fn is_loaded(&self) -> bool {
+            false
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+
+        fn build(
+            &mut self,
+            _pipeline_head: Box<dyn IspBlock>,
+            _aux_blocks: Vec<Box<dyn IspBlock>>,
+            _warp_block: Option<Box<dyn IspBlock>>,
+            _opset_version: i64,
+        ) -> IspResult<()> {
+            Ok(())
+        }
+
+        fn controller(&self) -> &Mutex<IspController> {
+            &self.controller
+        }
+
+        fn process(&self, _params: &ProcessParams<'_>) -> IspResult<IspFrame> {
+            Err(IspError::Unsupported("tracked test engine".into()))
+        }
+    }
+
+    #[test]
+    fn handle_cancel_is_idempotent_and_shared_by_clones() {
+        let handle = PipelineHandle::new(Arc::new(AtomicBool::new(false)));
+        let clone = handle.clone();
+        assert!(!handle.is_cancelled());
+        assert!(!clone.is_cancelled());
+        handle.cancel();
+        handle.cancel();
+        clone.cancel();
+        assert!(handle.is_cancelled());
+        assert!(clone.is_cancelled());
+    }
+
+    #[test]
+    fn cancel_joins_workers_and_releases_engine_and_camera() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let make_engine = || -> Box<dyn IspEngine> {
+            Box::new(TrackedEngine {
+                drops: Arc::clone(&drops),
+                controller: Mutex::new(IspController::new()),
+            })
+        };
+        let mut runner = PipelineRunner::new(
+            None,
+            [make_engine(), make_engine()],
+            PipelineConfig {
+                sensor_max: 1023.0,
+                bayer_pattern: 0,
+            },
+            Arc::new(AtomicBool::new(false)),
+        );
+        let handle = runner.handle();
+        assert!(!handle.is_cancelled());
+        handle.cancel();
+        handle.cancel();
+        assert!(handle.is_cancelled());
+
+        runner.cancel();
+        assert!(runner.workers.is_empty());
+        assert!(runner.pending.is_empty());
+        assert!(runner.poll().is_none());
+        assert!(!runner.has_camera());
+        assert_eq!(drops.load(AtomicOrdering::SeqCst), 2);
+    }
+
+    #[test]
+    fn pipeline_handle_registry_tracks_cancellation() {
+        assert!(!crate::pipeline_cancel_requested());
+        assert_eq!(crate::softisp_anw_pipeline_cancelled(), 0);
+        crate::softisp_anw_cancel_pipeline();
+        assert_eq!(crate::softisp_anw_pipeline_cancelled(), 0);
+
+        let handle = PipelineHandle::new(Arc::new(AtomicBool::new(false)));
+        crate::set_pipeline_handle(handle.clone());
+        crate::softisp_anw_cancel_pipeline();
+        crate::softisp_anw_cancel_pipeline();
+        assert!(crate::pipeline_cancel_requested());
+        assert_eq!(crate::softisp_anw_pipeline_cancelled(), 1);
+        assert!(handle.is_cancelled());
+
+        crate::clear_pipeline_handle();
+        assert_eq!(crate::softisp_anw_pipeline_cancelled(), 0);
     }
 }
