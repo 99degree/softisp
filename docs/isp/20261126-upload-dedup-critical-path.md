@@ -14,10 +14,13 @@ do not change between frames of the same session geometry.
 ## Root cause
 
 `set_extra_inputs()` queues writes by tensor name (so the final value wins),
-then unconditionally uploads all of them. `copyFromHostTensor` persists in the
-session's backend buffer until the tensor is rewritten or the session is
-resized, so re-uploading an identical value buys nothing and puts a separate
-host→device transfer on the visible path before `runSession`.
+then unconditionally uploads all of them. The working hypothesis was that
+`copyFromHostTensor` persists in the session's backend buffer until the tensor
+is rewritten or the session is resized, so re-uploading an identical value buys
+nothing and puts a separate host→device transfer on the visible path before
+`runSession`. That persistence premise has already failed once on device (see
+the prior incident below), so the dedup remains a hypothesis until the marker
+A/B confirms it on reused slots.
 
 ## Fix
 
@@ -100,9 +103,61 @@ Evidence from the log:
 Conclusion: the log confirms the cache is skipping uploads and shows no failed
 or rejected write, but it does not record skipped tensor names/values, so it
 cannot by itself prove or disprove a stale-upload colour cast. A targeted A/B
-run is required: add a `debug!` on each cache hit (name + value bits), or force
-`needs_*` to return `true` for one rebuild, and compare colour at the same
-frame. Do not revert the cache on log evidence alone.
+run is required; do not revert the cache on log evidence alone.
+
+### Prior incident report (2026-11-25, closest match)
+
+The repository already contains a near-identical incident:
+`docs/isp/20261125-ahb-buffer-pool-and-zero-copy-analysis.md` (§"What the log
+actually shows", lines 173–211), introduced by `310995dc`
+(`feat(isp): add delta tracking to extra-input uploads (roadmap item 6)`) and
+removed by `9c48011e` (`fix(isp): re-upload runtime tensors and use packed
+display output`).
+
+- Symptom: visible preview went black after the early frames. Slot 0's first
+  frame was bright; slots 1–3's first frames were exactly zero; later frames
+  recovered as 3A values drifted and changed keys were re-uploaded.
+- First diagnosis: `extra_input_cache` was engine-wide while each session had
+  independent tensors. It was moved into `SessionSlot` and cleared on resize.
+- Device recheck **failed**: reused sessions with unchanged runtime tensors
+  still produced zero output (`session_max_abs=0.0000`, `needs_resize=false`).
+  The recorded conclusion was that after a session runs, its input tensors
+  cannot be assumed to still hold the previous host values.
+- Fix then: delete the delta cache entirely and always upload. Device pass:
+  65 frames at 800×600, `non-black 100.0%`, mean ≈ `[160,158,159]`.
+
+Differences now: the complaint is a blue/color cast rather than black frames,
+the current cache is per-slot and clears on resize, and a recoverable camera
+device error falls in the same window. This is not proof for today's frame, but
+it is the strongest prior: it directly falsifies the persistence premise and
+identifies reused sessions as the dangerous case. The decisive A/B sample is
+therefore the **second and later use of each slot with `needs_resize=false`**.
+
+### A/B instrumentation (landed 2026-11-26)
+
+`upload_cache.rs` reads two opt-in switches once, from the environment on the
+host and from marker files in the public Download directory on the device:
+
+| Switch | Host env | Device marker | Effect |
+|--------|----------|---------------|--------|
+| trace | `SOFTISP_CACHE_TRACE` | `/sdcard/download/softisp-cache-trace` | one `tensor cache frame [...]` debug line per `set_extra_inputs()` showing the colour-critical tensors as `name(upload\|hit)=value` |
+| force | `SOFTISP_CACHE_OFF` | `/sdcard/download/softisp-cache-off` | `needs_scalar/f32/bytes` always return `true`, so every queued value is uploaded again |
+
+Both default to off, so normal builds keep the dedup fast path. Trace covers
+only the fused demosaic/CCM weight, WB gains, CCM matrix, saturation, tone scalars,
+FCS gain and `isp_pipeline` colour inputs; one compact line per frame avoids
+rotating the crash log away.
+
+Device procedure with a single APK: launch once to get the cached (possibly
+blue) baseline, then `touch /sdcard/download/softisp-cache-off` and relaunch.
+Compare `DEMOSAICCCMBLOCK/W` and `BAYERWBBLOCK/BAYER_GAINS` values in the trace
+lines against the `CcmGuard` controller lines. Add the trace marker alone first
+if only the last-uploaded values are needed while dedup stays active. Look for
+`name(hit)` on a reused slot with `needs_resize=false` while the picture is
+wrong; that is the signature of the 2026-11-25 regression. A single stale name
+can be invalidated narrowly, but a reused-slot hit that tracks the colour fault
+means the whole device-residency premise is unsafe again — use the force marker
+until a fence-backed proof replaces it. Remove both markers afterwards.
 
 ## Remaining work
 
@@ -110,6 +165,7 @@ frame. Do not revert the cache on log evidence alone.
   P2b for an output AHB).
 - Confirm on device that upload phase shrinks while inference stays the floor,
   and that the first frame after a geometry change re-uploads everything.
-- Run the cache-hit A/B above to resolve the blue-frame report; if a specific
-  tensor is proven stale, invalidate only that name instead of disabling the
-  whole cache.
+- Run the marker-file A/B above, sampling reused slots with
+  `needs_resize=false` as in the 2026-11-25 incident. If one tensor is proven
+  stale, invalidate only that name; if reused-slot hits track the colour fault,
+  keep the force marker until device residency is proven with fences.

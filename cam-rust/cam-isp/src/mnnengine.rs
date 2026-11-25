@@ -122,7 +122,7 @@ use crate::controller::IspController;
 use crate::engine::{IspEngine, OutputFormat, ProcessParams};
 use crate::pipeline::{ExternalBuffer, FramePhaseTimings, IspAuxOutput, IspBlock, IspFrame};
 use crate::tensor_names;
-use crate::upload_cache::UploadCache;
+use crate::upload_cache::{trace_enabled, UploadCache};
 use cam_types::{FrameFormat, ToneParams};
 
 #[cfg(feature = "mnn")]
@@ -974,6 +974,29 @@ impl MnnEngine {
             pending.insert(name.to_owned(), PendingWrite::Raw(buf));
         }
 
+        // Colour-critical tensors only: one compact line per frame keeps the
+        // on-device log readable while showing which value the GPU actually got.
+        const TRACE_NAMES: &[&str] = &[
+            "DEMOSAICCCMBLOCK/W",
+            "BAYERWBBLOCK/BAYER_GAINS",
+            "BayerWbBlock/gains",
+            "CCMBLOCK/CCM_MATRIX",
+            "CcmBlock_ccm/matrix",
+            "saturation/scale",
+            "ToneBlock/exposure",
+            "ToneBlock/contrast",
+            "ToneBlock/brightness",
+            "ToneBlock/inv_gamma",
+            "FcsBlock/gain",
+            "isp_pipeline/wb",
+            "isp_pipeline/ccm",
+            "isp_pipeline/gamma",
+            "DisplayBlock/gamma",
+        ];
+        fn trace_name(name: &str) -> bool {
+            TRACE_NAMES.contains(&name)
+        }
+
         let mut pending: Pending = HashMap::new();
 
         // ── Block-provided defaults (formerly baked Const initializers) ──
@@ -1460,6 +1483,8 @@ impl MnnEngine {
         // Most queued values are build-time defaults and never change, so skip
         // any whose exact bytes are already resident in this session.
         let mut missing = Vec::new();
+        let trace = trace_enabled();
+        let mut trace_lines = Vec::new();
         for (name, value) in pending {
             let Some(t) = find(pool, &name) else {
                 missing.push(name.clone());
@@ -1472,12 +1497,28 @@ impl MnnEngine {
             };
             match value {
                 PendingWrite::Scalar(val) => {
-                    if cache.needs_scalar(&name, val) && t.upload_f32_shaped(&[1], &[val]) {
+                    let needed = cache.needs_scalar(&name, val);
+                    if trace && trace_name(&name) {
+                        let action = if needed { "upload" } else { "hit" };
+                        trace_lines.push(format!("{name}({action})= {val:.4}"));
+                    }
+                    if needed && t.upload_f32_shaped(&[1], &[val]) {
                         cache.record_scalar(&name, val);
                     }
                 }
                 PendingWrite::Array(vals) => {
-                    if !cache.needs_f32(&name, &vals) {
+                    let needed = cache.needs_f32(&name, &vals);
+                    if trace && trace_name(&name) {
+                        let action = if needed { "upload" } else { "hit" };
+                        let shown = vals
+                            .iter()
+                            .take(6)
+                            .map(|v| format!("{v:.4}"))
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        trace_lines.push(format!("{name}({action})= [{shown}]"));
+                    }
+                    if !needed {
                         cache.put_f32(name, vals);
                         continue;
                     }
@@ -1495,7 +1536,18 @@ impl MnnEngine {
                     cache.put_f32(name, vals);
                 }
                 PendingWrite::Raw(data) => {
-                    if !cache.needs_bytes(&name, &data) {
+                    let needed = cache.needs_bytes(&name, &data);
+                    if trace && trace_name(&name) {
+                        let action = if needed { "upload" } else { "hit" };
+                        let shown = data
+                            .iter()
+                            .take(8)
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<Vec<_>>()
+                            .join("");
+                        trace_lines.push(format!("{name}({action})= {}B:{shown}", data.len()));
+                    }
+                    if !needed {
                         cache.put_raw(name, data);
                         continue;
                     }
@@ -1507,6 +1559,9 @@ impl MnnEngine {
                     cache.put_raw(name, data);
                 }
             }
+        }
+        if trace && !trace_lines.is_empty() {
+            debug!("tensor cache frame [{}]", trace_lines.join(" "));
         }
         if !missing.is_empty() {
             let mut reported = self.missing_inputs_reported.lock().unwrap();

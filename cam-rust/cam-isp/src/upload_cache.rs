@@ -11,6 +11,52 @@
 //! coefficient tensors.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+
+// On-device A/B switches for the colour-cast investigation. The marker files
+// live in the public Download directory so the APK can be toggled without a
+// rebuild; host probes use the equivalent env vars. Both default to off.
+const TRACE_ENV: &str = "SOFTISP_CACHE_TRACE";
+const FORCE_ENV: &str = "SOFTISP_CACHE_OFF";
+#[cfg(target_os = "android")]
+const TRACE_MARKER: &str = "/sdcard/download/softisp-cache-trace";
+#[cfg(target_os = "android")]
+const FORCE_MARKER: &str = "/sdcard/download/softisp-cache-off";
+
+static TRACE: AtomicBool = AtomicBool::new(false);
+static FORCE: AtomicBool = AtomicBool::new(false);
+static SWITCHES: OnceLock<()> = OnceLock::new();
+
+fn init_switches() {
+    SWITCHES.get_or_init(|| {
+        if std::env::var_os(TRACE_ENV).is_some() {
+            TRACE.store(true, Ordering::Relaxed);
+        }
+        if std::env::var_os(FORCE_ENV).is_some() {
+            FORCE.store(true, Ordering::Relaxed);
+        }
+        #[cfg(target_os = "android")]
+        {
+            if std::path::Path::new(TRACE_MARKER).exists() {
+                TRACE.store(true, Ordering::Relaxed);
+            }
+            if std::path::Path::new(FORCE_MARKER).exists() {
+                FORCE.store(true, Ordering::Relaxed);
+            }
+        }
+    });
+}
+
+pub(crate) fn trace_enabled() -> bool {
+    init_switches();
+    TRACE.load(Ordering::Relaxed)
+}
+
+pub(crate) fn force_upload() -> bool {
+    init_switches();
+    FORCE.load(Ordering::Relaxed)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Value {
@@ -29,11 +75,15 @@ pub(crate) struct UploadCache {
 impl UploadCache {
     /// Whether a rank-0 scalar still needs to be uploaded.
     pub(crate) fn needs_scalar(&self, name: &str, val: f32) -> bool {
-        !matches!(self.values.get(name), Some(Value::Scalar(bits)) if *bits == val.to_bits())
+        force_upload()
+            || !matches!(self.values.get(name), Some(Value::Scalar(bits)) if *bits == val.to_bits())
     }
 
     /// Whether an f32 array still needs to be uploaded.
     pub(crate) fn needs_f32(&self, name: &str, vals: &[f32]) -> bool {
+        if force_upload() {
+            return true;
+        }
         match self.values.get(name) {
             Some(Value::F32(bits)) => {
                 bits.len() != vals.len()
@@ -48,7 +98,8 @@ impl UploadCache {
 
     /// Whether raw serialized tensor bytes still need to be uploaded.
     pub(crate) fn needs_bytes(&self, name: &str, data: &[u8]) -> bool {
-        !matches!(self.values.get(name), Some(Value::Bytes(old)) if old.as_slice() == data)
+        force_upload()
+            || !matches!(self.values.get(name), Some(Value::Bytes(old)) if old.as_slice() == data)
     }
 
     pub(crate) fn record_scalar(&mut self, name: &str, val: f32) {
