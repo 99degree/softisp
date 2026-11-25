@@ -8,12 +8,13 @@
 //! Build: cargo build --release -p softisp_anw (for Android target)
 //! APK:   cargo apk2 build -p softisp_anw
 
-use cam_ipa::{Buffer, IpaConfig, IpaContext, IpaFormat, IpaSettings, IpaSensorInfo, MemBuffer, Size};
+use android_activity::ndk::native_window::NativeWindow;
+use cam_ipa::{IpaConfig, IpaContext, IpaFormat, MemBuffer};
 use cam_isp::profile::PipelineProfile;
-use ndk_sys::{ANativeWindow, ANativeWindow_Buffer};
+use ndk_sys::ANativeWindow;
 use std::sync::Mutex;
 
-mod presentation;
+pub mod presentation;
 use presentation::WindowTarget;
 
 // Thread-safe storage for IPA contexts.
@@ -78,11 +79,16 @@ pub extern "C" fn softisp_anw_stop() {
 
 /// Present an RGBA buffer to the ANativeWindow.
 ///
+/// # Safety
+///
+/// `window` must be a valid `ANativeWindow`, and `src` must point to at least
+/// `src_w * src_h * 4` readable bytes for the duration of this call.
+///
 /// Called from the Android NativeActivity loop when a new frame is ready to
 /// display. Wraps the ANativeWindow in a WindowTarget and blits the BGRA
 /// RGBA data into it with aspect-preserving letterboxing.
 #[no_mangle]
-pub extern "C" fn softisp_anw_present(
+pub unsafe extern "C" fn softisp_anw_present(
     window: *mut ANativeWindow,
     src: *const u8,
     src_w: u32,
@@ -97,22 +103,24 @@ pub extern "C" fn softisp_anw_present(
         Err(_) => return -1,
     };
 
-    let Some(AnwIpACtx(ctx_ptr)) = guard.as_mut() else {
+    let Some(AnwIpACtx(_)) = guard.as_mut() else {
         return -1;
     };
 
-    let ctx = unsafe { &mut **ctx_ptr };
-
-    // Create a window target for the ANativeWindow
-    // Safety: window pointer is valid for the duration of this call
-    let window_ref = unsafe { &*window };
-    let window_target = match WindowTarget::new(window_ref, src_w as i32, src_h as i32) {
+    // Clone the caller's window reference so `NativeWindow::drop` releases only
+    // the reference we acquired, not the caller's own.
+    let Some(window_ptr) = std::ptr::NonNull::new(window) else {
+        return -1;
+    };
+    let native_window = unsafe { NativeWindow::clone_from_ptr(window_ptr) };
+    let window_target = match WindowTarget::new(&native_window, src_w as i32, src_h as i32) {
         Ok(wt) => wt,
         Err(_) => return -1,
     };
 
-    // Present the BGRA frame into the window
-    match window_target.present(src, src_w, src_h) {
+    let src_len = (src_w as usize) * (src_h as usize) * 4;
+    let src_data = unsafe { std::slice::from_raw_parts(src, src_len) };
+    match window_target.present(src_data, src_w, src_h) {
         Ok(_) => 0,
         Err(_) => -1,
     }
@@ -123,8 +131,13 @@ pub extern "C" fn softisp_anw_present(
 /// This is the main entry point for the camera capture -> ISP -> display flow.
 /// Takes a raw Bayer (u16) input buffer, processes it through the IPA pipeline
 /// (3A + neural + ISP blocks), and displays the BGRA output on the ANativeWindow.
+///
+/// # Safety
+///
+/// `window` must be a valid `ANativeWindow`, and `input` must point to at least
+/// `input_w * input_h * 2` readable bytes for the duration of this call.
 #[no_mangle]
-pub extern "C" fn softisp_anw_process_and_present(
+pub unsafe extern "C" fn softisp_anw_process_and_present(
     window: *mut ANativeWindow,
     input: *const u8,
     input_w: u32,
@@ -176,17 +189,19 @@ pub extern "C" fn softisp_anw_process_and_present(
         return -1;
     }
 
-    if ctx.process_frame(
-        1, 1,
-        &mut input_buf, &mut output_buf,
-        0, 0, w, h, &controls,
-    ).is_err() {
+    if ctx
+        .process_frame(1, 1, &mut input_buf, &mut output_buf, 0, 0, w, h, &controls)
+        .is_err()
+    {
         return -1;
     }
 
-    // Present the BGRA output to the ANativeWindow
-    let window_ref = unsafe { &*window };
-    let window_target = match WindowTarget::new(window_ref, w as i32, h as i32) {
+    // Present the BGRA output to the ANativeWindow.
+    let Some(window_ptr) = std::ptr::NonNull::new(window) else {
+        return -1;
+    };
+    let native_window = unsafe { NativeWindow::clone_from_ptr(window_ptr) };
+    let window_target = match WindowTarget::new(&native_window, w as i32, h as i32) {
         Ok(wt) => wt,
         Err(_) => return -1,
     };

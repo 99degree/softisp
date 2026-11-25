@@ -204,8 +204,7 @@ impl<'a> WindowTarget<'a> {
         if src.len() < needed {
             return Err(format!(
                 "source frame too small: {} bytes for {src_w}x{src_h} BGRA, need {needed}",
-                src.len(),
-                needed
+                src.len()
             ));
         }
 
@@ -323,6 +322,43 @@ mod tests {
     fn geometry_accepts_positive_edges() {
         assert!(WindowTarget::geometry_check(1, 1).is_ok());
         assert!(WindowTarget::geometry_check(1920, 1080).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::Viewport;
+
+    #[test]
+    fn landscape_frame_on_portrait_surface_bars_top_and_bottom() {
+        // The device case: 1296x970 into 1080x2264. Aspect must be preserved,
+        // so the frame keeps full width and is centred vertically. Filling the
+        // surface instead is the 2.8x vertical stretch this fixes.
+        let v = Viewport::fit(1080, 2264, 1296, 970);
+        assert_eq!(v.left, 0, "full width, no side bars");
+        assert_eq!(v.width, 1080);
+        assert_eq!(v.height, 1080 * 970 / 1296);
+        assert_eq!(v.top, (2264 - v.height) / 2);
+        assert_eq!(v.right(), 1080);
+        assert_eq!(v.bottom(), v.top + v.height);
+    }
+
+    #[test]
+    fn aspect_ratio_is_preserved() {
+        for (dw, dh, sw, sh) in [
+            (1080usize, 2264usize, 1296usize, 970usize),
+            (1920, 1080, 1296, 970),
+            (1000, 1000, 4000, 3000),
+            (640, 480, 640, 480),
+        ] {
+            let v = Viewport::fit(dw, dh, sw, sh);
+            let src = sw as f64 / sh as f64;
+            let dst = v.width as f64 / v.height as f64;
+            assert!(
+                (src - dst).abs() < 0.01,
+                "{sw}x{sh} into {dw}x{dh}: aspect {src:.3} became {dst:.3}"
+            );
+        }
     }
 
     #[test]
