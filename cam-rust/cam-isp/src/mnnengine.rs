@@ -81,6 +81,9 @@ pub(crate) struct PreparedMeta {
     max_out: i32,
     buf_id: Option<usize>,
     zero_copy: bool,
+    /// The output tensor was bound to a caller-owned AHB before `resizeSession`,
+    /// so inference must skip `copyToHostTensor` and read from the AHB mapping.
+    output_ahb: bool,
     input_generation: u64,
     output_generation: u64,
     prep_setup_ns: u64,
@@ -2173,6 +2176,13 @@ impl MnnEngine {
         // geometry is only known after inference, and MNN silently overflows a
         // smaller buffer.
         let zero_copy = p.output_buffer.is_some();
+        // An AHB output must be bound to the output tensor *before* the first
+        // resize: MNN's Vulkan backend imports the AHB in `onAcquire`, which
+        // only runs while the session tensors have no backing memory. Binding
+        // it later leaves a normal device buffer in place and the CPU mapping
+        // stays black. The same binding is reused for every frame on this
+        // worker, so the two engines never contend for an output slot.
+        let output_ahb = zero_copy && p.output_ahb.is_some();
         let (out_ptr, max_out, buf_id) = if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref()
         {
             let max_out = (buf_len / 4) as i32;
@@ -2202,11 +2212,43 @@ impl MnnEngine {
             vec![1, 1, h as i32, w as i32]
         };
 
+        let output_name = if interp
+            .get_output(&slot.sess, "DisplayBlock/frame")
+            .is_some()
+        {
+            "DisplayBlock/frame".to_string()
+        } else {
+            match interp.output_names(&slot.sess).first() {
+                Some(n) => n.clone(),
+                None => "DisplayBlock/frame".to_string(),
+            }
+        };
+        let output_name_c =
+            CString::new(output_name.as_str()).unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
+
         // set_shape is cheap; resizeSession is expensive on Vulkan, so only
         // propagate shapes when this slot has not seen this geometry before.
         let t_tensor_before = Instant::now();
         let needs_resize = slot.resized_for != Some((w, h));
         if needs_resize {
+            if output_ahb {
+                let binding = p.output_ahb.as_ref().expect("AHB output binding");
+                let rc = unsafe {
+                    crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                        interp.as_ptr(),
+                        slot.sess.as_ptr(),
+                        binding.ptr,
+                        output_name_c.as_ptr(),
+                        0,
+                    )
+                };
+                if rc != 0 {
+                    warn!(
+                        "AHB output import for '{}' failed: rc={rc}; using host copy fallback",
+                        output_name
+                    );
+                }
+            }
             let lsc_strength = self
                 .controller
                 .lock()
@@ -2254,16 +2296,7 @@ impl MnnEngine {
             std::time::Duration::from_nanos(prep_tensors_ns)
         );
 
-        let sess = &slot.sess;
-        let output_name = if interp.get_output(sess, "DisplayBlock/frame").is_some() {
-            "DisplayBlock/frame".to_string()
-        } else {
-            match interp.output_names(sess).first() {
-                Some(n) => n.clone(),
-                None => "DisplayBlock/frame".to_string(),
-            }
-        };
-        let out_tensor = interp.get_output(sess, &output_name);
+        let out_tensor = interp.get_output(&slot.sess, &output_name);
         let out_type = out_tensor.as_ref().map_or(4, |t| t.data_type());
         let out_shape = out_tensor.as_ref().map(|t| t.shape()).unwrap_or_default();
         let layout = Self::derive_output_layout(
@@ -2284,9 +2317,6 @@ impl MnnEngine {
                 p.output_format.channel_count()
             );
         }
-        let output_name_c =
-            CString::new(output_name.as_str()).unwrap_or_else(|_| c"DisplayBlock/frame".to_owned());
-
         let t_prep_end = Instant::now();
         debug!(
             "pipeline timer prepare_total={:?}",
@@ -2311,6 +2341,7 @@ impl MnnEngine {
                 max_out,
                 buf_id,
                 zero_copy,
+                output_ahb,
                 input_generation: p.input_ahb.map_or(0, |binding| binding.fences.generation),
                 output_generation: p.output_ahb.map_or(0, |binding| binding.fences.generation),
                 prep_setup_ns,
@@ -2369,6 +2400,24 @@ impl MnnEngine {
                 return Err(crate::error::IspError::Config(format!(
                     "prepared output AHB generation {} does not match frame generation {}",
                     meta.output_generation, generation
+                )));
+            }
+        }
+        if meta.zero_copy {
+            let (ptr, len) = p.output_buffer.ok_or(crate::error::IspError::Config(
+                "prepared zero-copy frame lost its output buffer".into(),
+            ))?;
+            if ptr as *mut f32 != meta.out_ptr {
+                return Err(crate::error::IspError::Config(format!(
+                    "prepared output pointer {:p} does not match frame pointer {:p}",
+                    meta.out_ptr, ptr
+                )));
+            }
+            if (len / 4) as i32 != meta.max_out {
+                return Err(crate::error::IspError::Config(format!(
+                    "output buffer {}B does not match prepared capacity {}B",
+                    len,
+                    meta.max_out.saturating_mul(4)
                 )));
             }
         }
@@ -2522,7 +2571,7 @@ impl MnnEngine {
 
         let t_infer_start = Instant::now();
         let t_infer_end: Instant;
-        let n: i32;
+        let mut n: i32;
         let frame_name_ptr = self
             .frame_input_c
             .as_ref()
@@ -2549,36 +2598,77 @@ impl MnnEngine {
                     }
                 }
                 let mut imported_output = false;
-                if let Some(binding) = p.output_ahb.as_ref() {
-                    let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
-                        interp.as_ptr(),
-                        sess.as_ptr(),
-                        binding.ptr as *const c_void,
-                        output_name_ptr.as_ptr(),
-                        0,
-                    );
-                    if rc != 0 {
-                        warn!(
-                            "AHB import for output '{}' failed: rc={rc}",
-                            meta.output_name
+                if !meta.output_ahb {
+                    // Without the prepared AHB binding the output tensor owns
+                    // its device memory; import per call and copy back below.
+                    if let Some(binding) = p.output_ahb.as_ref() {
+                        let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                            interp.as_ptr(),
+                            sess.as_ptr(),
+                            binding.ptr as *const c_void,
+                            output_name_ptr.as_ptr(),
+                            0,
                         );
-                    } else {
-                        imported_output = true;
+                        if rc != 0 {
+                            warn!(
+                                "AHB import for output '{}' failed: rc={rc}",
+                                meta.output_name
+                            );
+                        } else {
+                            imported_output = true;
+                        }
                     }
                 }
-                n = crate::mnn_sys::mnn_run_true_zero_copy(
-                    interp.as_ptr(),
-                    sess.as_ptr(),
-                    frame_name_ptr,
-                    output_name_ptr.as_ptr(),
-                    buffer_ptr,
-                    buffer_type_code,
-                    buffer_type_bits,
-                    input_shape.as_ptr(),
-                    input_shape.len() as i32,
-                    out_ptr,
-                    max_out,
-                );
+                if meta.output_ahb {
+                    // No copyToHostTensor: the GPU wrote into the caller's AHB.
+                    n = crate::mnn_sys::mnn_run_ahb_output(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        frame_name_ptr,
+                        output_name_ptr.as_ptr(),
+                        buffer_ptr,
+                        buffer_type_code,
+                        buffer_type_bits,
+                        input_shape.as_ptr(),
+                        input_shape.len() as i32,
+                        max_out,
+                    );
+                    if n == -10 {
+                        // Import did not survive resize: fall back to a copy
+                        // into the same AHB mapping rather than drop the frame.
+                        warn!(
+                            "AHB output binding lost on '{}'; falling back to host copy",
+                            meta.output_name
+                        );
+                        n = crate::mnn_sys::mnn_run_true_zero_copy(
+                            interp.as_ptr(),
+                            sess.as_ptr(),
+                            frame_name_ptr,
+                            output_name_ptr.as_ptr(),
+                            buffer_ptr,
+                            buffer_type_code,
+                            buffer_type_bits,
+                            input_shape.as_ptr(),
+                            input_shape.len() as i32,
+                            out_ptr,
+                            max_out,
+                        );
+                    }
+                } else {
+                    n = crate::mnn_sys::mnn_run_true_zero_copy(
+                        interp.as_ptr(),
+                        sess.as_ptr(),
+                        frame_name_ptr,
+                        output_name_ptr.as_ptr(),
+                        buffer_ptr,
+                        buffer_type_code,
+                        buffer_type_bits,
+                        input_shape.as_ptr(),
+                        input_shape.len() as i32,
+                        out_ptr,
+                        max_out,
+                    );
+                }
                 if imported_input {
                     let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
                         interp.as_ptr(),
@@ -2743,10 +2833,13 @@ impl MnnEngine {
             t_frame_done - t_prep_start,
             measure_stats
         );
-        let mut frame = IspFrame::new(ow as u32, oh as u32, FrameFormat::Rgba8888);
+        let mut frame = if meta.zero_copy && p.output_buffer.is_some() {
+            IspFrame::new_external(ow as u32, oh as u32, FrameFormat::Rgba8888)
+        } else {
+            IspFrame::new(ow as u32, oh as u32, FrameFormat::Rgba8888)
+        };
         if meta.zero_copy {
             if let Some(&(ptr, _)) = p.output_buffer.as_ref() {
-                frame.data = Vec::new();
                 frame.external_data = Some(ExternalBuffer {
                     ptr,
                     len: out_elems * graph_elem,

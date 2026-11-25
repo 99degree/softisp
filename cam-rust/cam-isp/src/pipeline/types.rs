@@ -247,6 +247,28 @@ impl IspFrame {
             external_data: None,
         }
     }
+
+    /// Build a frame whose pixels live in caller-owned memory.
+    ///
+    /// `new()` would allocate `width * height * 4` bytes that the zero-copy
+    /// branch immediately discards; at 4K that is a pointless ~33 MB resident
+    /// allocation per frame. The caller sets `external_data` afterwards.
+    pub fn new_external(width: u32, height: u32, format: FrameFormat) -> Self {
+        Self {
+            data: Vec::new(),
+            width,
+            height,
+            format,
+            float_data: None,
+            aux: None,
+            params: IspParams::default(),
+            timestamp_ns: 0,
+            prep_duration_ns: 0,
+            inference_duration_ns: 0,
+            total_duration_ns: 0,
+            external_data: None,
+        }
+    }
 }
 
 /// ISP block that contributes ONNX graph fragments to a fused pipeline.
@@ -1569,6 +1591,16 @@ mod tests {
         assert_eq!(FramePhaseTimings::default().visible_ns(), 0);
         assert_eq!(FramePhaseTimings::default().total_ns(), 0);
         assert!(IspAuxOutput::default().timing.is_none());
+    }
+
+    #[test]
+    fn external_frame_does_not_allocate_pixels() {
+        let frame = IspFrame::new_external(3840, 2160, FrameFormat::Rgba8888);
+        assert!(frame.data.is_empty());
+        assert!(frame.external_data.is_none());
+        assert_eq!(frame.width, 3840);
+        assert_eq!(frame.height, 2160);
+        assert_eq!(frame.format, FrameFormat::Rgba8888);
     }
 
     #[test]
