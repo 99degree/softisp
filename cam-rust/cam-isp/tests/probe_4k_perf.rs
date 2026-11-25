@@ -13,7 +13,9 @@
 //!   cargo test -p cam-isp --test probe_4k_perf perf_4k_heavy --features mnn -- --nocapture --ignored
 //!
 //! `perf_4k` is kept as an alias for the FUSED breakage check. Use `perf_4k_all`
-//! only when the complete matrix is wanted.
+//! only when the complete matrix is wanted. `perf_critical_path` is the focused
+//! P2h probe: it splits the visible path into prefill + inference + output and
+//! reports the deferred 3A readback separately.
 //!
 //! Overrides:
 //!   PERF_W / PERF_H   frame size (default 3840x2160)
@@ -24,6 +26,7 @@
 use cam_isp::dual_engine::DualGpuEngine;
 use cam_isp::engine::{IspEngine, OutputFormat, ProcessParams};
 use cam_isp::mnnengine::{MnnBackend, MnnEngine};
+use cam_isp::pipeline::IspFrame;
 use cam_isp::profile::PipelineProfile;
 
 fn env_usize(key: &str, default: usize) -> usize {
@@ -48,6 +51,7 @@ struct Timing {
     prep: PhaseStats,
     infer: PhaseStats,
     post: PhaseStats,
+    phases: Phases,
     fps: f64,
 }
 
@@ -67,6 +71,130 @@ fn phase_stats(mut samples: Vec<f64>, sum: f64) -> PhaseStats {
 
 fn ms(ns: u64) -> f64 {
     ns as f64 / 1e6
+}
+
+/// Engine-owned phase split, reported by `MnnEngine` through `IspFrame::aux`.
+///
+/// Camera fill and display handoff remain outside the engine; these are the
+/// phases a staged caller can actually move off the visible path.
+#[derive(Clone, Copy, Default)]
+struct Phases {
+    setup: PhaseStats,
+    upload: PhaseStats,
+    inference: PhaseStats,
+    output_meta: PhaseStats,
+    output_copy: PhaseStats,
+    readback: PhaseStats,
+    visible: PhaseStats,
+}
+
+#[derive(Default)]
+struct PhaseSamples {
+    total: Vec<f64>,
+    total_sum: f64,
+    prep: Vec<f64>,
+    prep_sum: f64,
+    infer: Vec<f64>,
+    infer_sum: f64,
+    post: Vec<f64>,
+    post_sum: f64,
+    setup: Vec<f64>,
+    setup_sum: f64,
+    upload: Vec<f64>,
+    upload_sum: f64,
+    output_meta: Vec<f64>,
+    output_meta_sum: f64,
+    output_copy: Vec<f64>,
+    output_copy_sum: f64,
+    readback: Vec<f64>,
+    readback_sum: f64,
+    visible: Vec<f64>,
+    visible_sum: f64,
+}
+
+fn sample(into: &mut Vec<f64>, sum: &mut f64, value: f64) {
+    into.push(value);
+    *sum += value;
+}
+
+impl PhaseSamples {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            total: Vec::with_capacity(capacity),
+            prep: Vec::with_capacity(capacity),
+            infer: Vec::with_capacity(capacity),
+            post: Vec::with_capacity(capacity),
+            setup: Vec::with_capacity(capacity),
+            upload: Vec::with_capacity(capacity),
+            output_meta: Vec::with_capacity(capacity),
+            output_copy: Vec::with_capacity(capacity),
+            readback: Vec::with_capacity(capacity),
+            visible: Vec::with_capacity(capacity),
+            ..Default::default()
+        }
+    }
+
+    fn push(&mut self, f: &IspFrame) {
+        let total_ms = ms(f.total_duration_ns);
+        let prep_ms = ms(f.prep_duration_ns);
+        let infer_ms = ms(f.inference_duration_ns);
+        let post_ms = ms(f
+            .total_duration_ns
+            .saturating_sub(f.prep_duration_ns.saturating_add(f.inference_duration_ns)));
+        sample(&mut self.total, &mut self.total_sum, total_ms);
+        sample(&mut self.prep, &mut self.prep_sum, prep_ms);
+        sample(&mut self.infer, &mut self.infer_sum, infer_ms);
+        sample(&mut self.post, &mut self.post_sum, post_ms);
+
+        if let Some(t) = f.aux.as_ref().and_then(|a| a.timing) {
+            sample(&mut self.setup, &mut self.setup_sum, ms(t.setup_ns));
+            sample(
+                &mut self.upload,
+                &mut self.upload_sum,
+                ms(t.tensor_upload_ns),
+            );
+            sample(
+                &mut self.inference,
+                &mut self.inference_sum,
+                ms(t.inference_ns),
+            );
+            sample(
+                &mut self.output_meta,
+                &mut self.output_meta_sum,
+                ms(t.output_meta_ns),
+            );
+            sample(
+                &mut self.output_copy,
+                &mut self.output_copy_sum,
+                ms(t.output_copy_ns),
+            );
+            sample(
+                &mut self.readback,
+                &mut self.readback_sum,
+                ms(t.readback_ns),
+            );
+            sample(&mut self.visible, &mut self.visible_sum, ms(t.visible_ns()));
+        }
+    }
+
+    fn finish(self) -> (PhaseStats, PhaseStats, PhaseStats, PhaseStats, Phases) {
+        let phases = Phases {
+            setup: phase_stats(self.setup, self.setup_sum),
+            upload: phase_stats(self.upload, self.upload_sum),
+            inference: phase_stats(self.infer, self.infer_sum),
+            output_meta: phase_stats(self.output_meta, self.output_meta_sum),
+            output_copy: phase_stats(self.output_copy, self.output_copy_sum),
+            readback: phase_stats(self.readback, self.readback_sum),
+            visible: phase_stats(self.visible, self.visible_sum),
+        };
+        (
+            phase_stats(self.total, self.total_sum),
+            phase_stats(self.prep, self.prep_sum),
+            phase_stats(self.infer, self.infer_sum),
+            phase_stats(self.post, self.post_sum),
+            phases,
+        )
+    }
 }
 
 fn run_single(
@@ -145,31 +273,12 @@ fn run_single(
         }
     }
 
-    let (mut total, mut prep, mut infer, mut post) = (
-        Vec::with_capacity(frames),
-        Vec::with_capacity(frames),
-        Vec::with_capacity(frames),
-        Vec::with_capacity(frames),
-    );
-    let (mut total_sum, mut prep_sum, mut infer_sum, mut post_sum) = (0.0, 0.0, 0.0, 0.0);
+    let mut samples = PhaseSamples::with_capacity(frames);
     let mut picture = false;
     for _ in 0..frames {
         match engine.process(&params) {
             Ok(f) => {
-                let total_ms = ms(f.total_duration_ns);
-                let prep_ms = ms(f.prep_duration_ns);
-                let infer_ms = ms(f.inference_duration_ns);
-                let post_ms = ms(f
-                    .total_duration_ns
-                    .saturating_sub(f.prep_duration_ns.saturating_add(f.inference_duration_ns)));
-                total.push(total_ms);
-                prep.push(prep_ms);
-                infer.push(infer_ms);
-                post.push(post_ms);
-                total_sum += total_ms;
-                prep_sum += prep_ms;
-                infer_sum += infer_ms;
-                post_sum += post_ms;
+                samples.push(&f);
                 if !picture {
                     // Packed output is BGRA bytes in a u32 word, not four f32
                     // bytes. Interpret it as floats only made every frame look
@@ -183,10 +292,7 @@ fn run_single(
             }
         }
     }
-    let total = phase_stats(total, total_sum);
-    let prep = phase_stats(prep, prep_sum);
-    let infer = phase_stats(infer, infer_sum);
-    let post = phase_stats(post, post_sum);
+    let (total, prep, infer, post, phases) = samples.finish();
     if !picture {
         eprintln!("{label:<28} produced a blank frame");
         return None;
@@ -199,6 +305,7 @@ fn run_single(
         prep,
         infer,
         post,
+        phases,
     })
 }
 
@@ -293,31 +400,12 @@ fn run_dual(
         }
     }
 
-    let (mut total, mut prep, mut infer, mut post) = (
-        Vec::with_capacity(frames),
-        Vec::with_capacity(frames),
-        Vec::with_capacity(frames),
-        Vec::with_capacity(frames),
-    );
-    let (mut total_sum, mut prep_sum, mut infer_sum, mut post_sum) = (0.0, 0.0, 0.0, 0.0);
+    let mut samples = PhaseSamples::with_capacity(frames);
     let mut picture = false;
     for _ in 0..frames {
         match dual.next().process(&params) {
             Ok(f) => {
-                let total_ms = ms(f.total_duration_ns);
-                let prep_ms = ms(f.prep_duration_ns);
-                let infer_ms = ms(f.inference_duration_ns);
-                let post_ms = ms(f
-                    .total_duration_ns
-                    .saturating_sub(f.prep_duration_ns.saturating_add(f.inference_duration_ns)));
-                total.push(total_ms);
-                prep.push(prep_ms);
-                infer.push(infer_ms);
-                post.push(post_ms);
-                total_sum += total_ms;
-                prep_sum += prep_ms;
-                infer_sum += infer_ms;
-                post_sum += post_ms;
+                samples.push(&f);
                 if !picture {
                     // Packed output is BGRA bytes in a u32 word, not four f32
                     // bytes. Interpret it as floats only made every frame look
@@ -331,10 +419,7 @@ fn run_dual(
             }
         }
     }
-    let total = phase_stats(total, total_sum);
-    let prep = phase_stats(prep, prep_sum);
-    let infer = phase_stats(infer, infer_sum);
-    let post = phase_stats(post, post_sum);
+    let (total, prep, infer, post, phases) = samples.finish();
     if !picture {
         eprintln!("{label:<28} produced a blank frame");
         return None;
@@ -347,6 +432,7 @@ fn run_dual(
         prep,
         infer,
         post,
+        phases,
     })
 }
 
@@ -387,6 +473,24 @@ fn print_timing(t: &Timing, fmt_name: &str) {
         t.fps,
         fmt_name
     );
+    if t.phases.visible.mean > 0.0 {
+        let p = &t.phases;
+        eprintln!(
+            "{:<30} critical {:.2} ms = prefill {:.2} (setup {:.2} + upload {:.2}) \
+             + infer {:.2} + output {:.2} (meta {:.2} + copy {:.2}); \
+             deferred readback {:.2}",
+            "",
+            p.visible.mean,
+            p.setup.mean + p.upload.mean,
+            p.setup.mean,
+            p.upload.mean,
+            p.inference.mean,
+            p.output_meta.mean + p.output_copy.mean,
+            p.output_meta.mean,
+            p.output_copy.mean,
+            p.readback.mean
+        );
+    }
 }
 
 fn build_profile(
@@ -459,10 +563,11 @@ fn run_single_profile_case(label: &str, profile: PipelineProfile, include_stats_
             rows.iter().find(|r| r.label == "FUSED"),
             rows.iter().find(|r| r.label.ends_with("stats off")),
         ) {
+            let saved = (on.phases.readback.mean - off.phases.readback.mean).max(0.0);
             eprintln!(
                 "statistics readback: {:.1} ms per frame ({:.0}% of the p50)",
-                on.post.mean - off.post.mean,
-                100.0 * (on.post.mean - off.post.mean) / on.total.p50.max(0.01)
+                saved,
+                100.0 * saved / on.total.p50.max(0.01)
             );
         }
     }
@@ -498,6 +603,45 @@ fn run_dual_fused_case() {
             "\nDUAL engine: engine A stats ON + engine B stats OFF, mean {:.1} ms \
              (prep {:.1}, infer {:.1}, post {:.1})",
             fused_r.total.mean, fused_r.prep.mean, fused_r.infer.mean, fused_r.post.mean
+        );
+    }
+}
+
+/// Focused critical-path run: FUSED/PackedRgb with stats on and off, printed as
+/// prefill + inference + output versus deferred readback. This is the probe for
+/// the P2h goal of shrinking the visible path toward `runSession` alone.
+fn run_critical_path_case() {
+    init_probe();
+    let w = env_usize("PERF_W", 3840) as u32;
+    let h = env_usize("PERF_H", 2160) as u32;
+    let frames = env_usize("PERF_FRAMES", 40);
+
+    eprintln!("\n== critical path: FUSED / PackedRgb, {w}x{h}, {frames} frames ==");
+    let on = run_single(
+        "FUSED stats on",
+        w,
+        h,
+        frames,
+        true,
+        OutputFormat::PackedRgb,
+        build_profile(PipelineProfile::FUSED, OutputFormat::PackedRgb),
+    );
+    let off = run_single(
+        "FUSED stats off",
+        w,
+        h,
+        frames,
+        false,
+        OutputFormat::PackedRgb,
+        build_profile(PipelineProfile::FUSED, OutputFormat::PackedRgb),
+    );
+    if let (Some(on), Some(off)) = (on, off) {
+        print_timing(&on, "PackedRgb");
+        print_timing(&off, "PackedRgb");
+        eprintln!(
+            "\nvisible critical path: {:.2} ms with stats, {:.2} ms without; \
+             deferred readback {:.2} ms",
+            on.phases.visible.mean, off.phases.visible.mean, on.phases.readback.mean
         );
     }
 }
@@ -543,6 +687,12 @@ fn perf_4k_unified() {
 #[ignore]
 fn perf_4k_dual() {
     run_dual_fused_case();
+}
+
+#[test]
+#[ignore]
+fn perf_critical_path() {
+    run_critical_path_case();
 }
 
 /// Explicit opt-in for the full matrix. Individual profile tests above are the

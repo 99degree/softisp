@@ -20,6 +20,56 @@ use std::collections::{HashMap, HashSet};
 use crate::isp_params::IspParams;
 use crate::onnx::proto::Proto;
 
+/// Fine-grained engine phase durations (nanoseconds) for one frame.
+///
+/// `IspFrame::prep_duration_ns` / `inference_duration_ns` are the coarse
+/// contract. This struct splits them so the visible path can be separated from
+/// work that is deliberately deferred: camera fill and 3A readback are not in
+/// here because they live outside the engine, but every phase the engine owns
+/// is, so a caller can see how much of the frame is actually `runSession`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FramePhaseTimings {
+    /// Controller snapshot and session/slot selection before tensor upload.
+    pub setup_ns: u64,
+    /// Runtime metadata tensor uploads (`copyFromHostTensor` flushes).
+    pub tensor_upload_ns: u64,
+    /// MNN `runSession` — the GPU dispatch itself.
+    pub inference_ns: u64,
+    /// Output tensor shape/format resolution after inference.
+    pub output_meta_ns: u64,
+    /// Output pixel copy (or external-buffer handoff) to the returned frame.
+    pub output_copy_ns: u64,
+    /// Deferred 3A statistics readback, filled in by `MnnEngine::process` /
+    /// reportable from `StagedFinish` for staged callers.
+    pub readback_ns: u64,
+}
+
+impl FramePhaseTimings {
+    /// Everything done before the frame is ready for inference.
+    pub fn prefill_ns(&self) -> u64 {
+        self.setup_ns.saturating_add(self.tensor_upload_ns)
+    }
+
+    /// Output handling on the visible path (before presentation).
+    pub fn output_ns(&self) -> u64 {
+        self.output_meta_ns.saturating_add(self.output_copy_ns)
+    }
+
+    /// Phases that sit on the visible critical path.
+    ///
+    /// Readback is excluded: staged callers present the frame before paying it.
+    pub fn visible_ns(&self) -> u64 {
+        self.prefill_ns()
+            .saturating_add(self.inference_ns)
+            .saturating_add(self.output_ns())
+    }
+
+    /// All engine-owned phases, including deferred readback.
+    pub fn total_ns(&self) -> u64 {
+        self.visible_ns().saturating_add(self.readback_ns)
+    }
+}
+
 /// Auxiliary outputs from ISP processing.
 ///
 /// Contains statistics and metadata extracted during pipeline processing.
@@ -73,6 +123,10 @@ pub struct IspAuxOutput {
     /// Defaults to `true` so a frame from a chain that always measures (and any
     /// caller-built frame) keeps its old meaning.
     pub stats_measured: bool,
+    /// Fine-grained engine timing, when the engine reports it.
+    ///
+    /// `None` for engines that only fill the coarse `IspFrame` durations.
+    pub timing: Option<FramePhaseTimings>,
 }
 
 /// ISP frame carrying pixel data.
@@ -170,6 +224,7 @@ impl Default for IspAuxOutput {
             vcm_position: None,
             eis_compensation: None,
             stats_measured: true,
+            timing: None,
         }
     }
 }
@@ -1492,6 +1547,29 @@ impl GraphComposer {
 mod tests {
     use super::*;
     use crate::blocks::*;
+
+    #[test]
+    fn test_frame_phase_timings_split_visible_and_deferred() {
+        let t = FramePhaseTimings {
+            setup_ns: 1_000_000,
+            tensor_upload_ns: 2_000_000,
+            inference_ns: 10_000_000,
+            output_meta_ns: 500_000,
+            output_copy_ns: 1_500_000,
+            readback_ns: 4_000_000,
+        };
+        assert_eq!(t.prefill_ns(), 3_000_000);
+        assert_eq!(t.output_ns(), 2_000_000);
+        assert_eq!(t.visible_ns(), 15_000_000);
+        assert_eq!(t.total_ns(), 19_000_000);
+    }
+
+    #[test]
+    fn test_frame_phase_timings_default_is_identity() {
+        assert_eq!(FramePhaseTimings::default().visible_ns(), 0);
+        assert_eq!(FramePhaseTimings::default().total_ns(), 0);
+        assert!(IspAuxOutput::default().timing.is_none());
+    }
 
     #[test]
     fn test_default_pipeline_composition() {

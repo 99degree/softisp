@@ -38,6 +38,9 @@ pub struct StagedFinish {
     pub calibration_stats: Option<[f32; 24]>,
     /// Time from `prepare()` start through the end of `finish()`.
     pub total_duration_ns: u64,
+    /// Time spent inside `finish()` itself — the deferred readback cost, which
+    /// staged callers pay after the frame has already been presented.
+    pub readback_ns: u64,
 }
 
 #[cfg(feature = "mnn")]
@@ -117,7 +120,7 @@ type ZoneData = (usize, usize, Vec<Vec<[f32; 3]>>);
 
 use crate::controller::IspController;
 use crate::engine::{IspEngine, OutputFormat, ProcessParams};
-use crate::pipeline::{ExternalBuffer, IspAuxOutput, IspBlock, IspFrame};
+use crate::pipeline::{ExternalBuffer, FramePhaseTimings, IspAuxOutput, IspBlock, IspFrame};
 use cam_types::{FrameFormat, ToneParams};
 
 #[cfg(feature = "mnn")]
@@ -2574,6 +2577,14 @@ impl MnnEngine {
         frame.params = p.isp_params.clone().unwrap_or_default();
         frame.aux = Some(IspAuxOutput {
             stats_measured: measure_stats,
+            timing: Some(FramePhaseTimings {
+                setup_ns: meta.prep_setup_ns,
+                tensor_upload_ns: meta.prep_tensors_ns,
+                inference_ns: (t_infer_end - t_infer_start).as_nanos() as u64,
+                output_meta_ns: (t_output_meta - t_infer_end).as_nanos() as u64,
+                output_copy_ns: (t_output_copy - t_output_meta).as_nanos() as u64,
+                readback_ns: 0,
+            }),
             ..Default::default()
         });
         frame.timestamp_ns = p.timestamp_ns;
@@ -2775,6 +2786,7 @@ impl MnnEngine {
         StagedFinish {
             calibration_stats: calib_vals,
             total_duration_ns: (t_finish_end - t_prep_start).as_nanos() as u64,
+            readback_ns: (t_finish_end - t_finish_start).as_nanos() as u64,
         }
     }
 
@@ -2799,6 +2811,9 @@ impl MnnEngine {
             let finished = self.finish(pending);
             if let Some(aux) = frame.aux.as_mut() {
                 aux.calibration_stats = finished.calibration_stats;
+                if let Some(timing) = aux.timing.as_mut() {
+                    timing.readback_ns = finished.readback_ns;
+                }
             }
             frame.total_duration_ns = finished.total_duration_ns;
             return Ok(frame);
