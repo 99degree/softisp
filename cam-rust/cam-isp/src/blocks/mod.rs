@@ -107,7 +107,7 @@ pub use cfa::{CfaBlock, CfaBlockPacked};
 pub use chromatic_aberration::ChromaticAberrationBlock;
 pub use colorspace::{ColorSpace, ColorSpaceBlock};
 pub use demosaic::DemosaicBlock;
-pub use demosaic_ccm::DemosaicCcmBlock;
+pub use demosaic_ccm::{DemosaicCcmBlock, FUSED_WEIGHT_INPUT, WB_LOGICAL_INPUT};
 pub use demosaic_interp::DemosaicInterpBlock;
 pub use display::DisplayBlock;
 pub use dyn_resize::DynResizeBlock;

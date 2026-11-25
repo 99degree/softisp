@@ -399,7 +399,7 @@ extern "C" int mnn_tensor_upload(
     auto* host = MNN::Tensor::create(
         host_shape, host_type, const_cast<void*>(data), MNN::Tensor::CAFFE);
     if (!host) return -2;
-    if (host->elementSize() != expected) {
+    if (static_cast<size_t>(host->elementSize()) != expected) {
         delete host;
         return -3;
     }
@@ -864,7 +864,7 @@ extern "C" int mnn_run_with_output(
     // the frame was silently dropped and the graph inferred on zeros.
     // `copyFromHostTensor` is the supported upload — it does the host→device
     // transfer for whichever backend the session runs on.
-    if (in_tensor->elementSize() != (size_t)total) {
+    if (static_cast<size_t>(in_tensor->elementSize()) != static_cast<size_t>(total)) {
         set_last_error("input element mismatch before resize: model=%zu requested=%d, resizing",
                        in_tensor->elementSize(), total);
         // Set the new shape on the input tensor, then propagate it through the
@@ -888,7 +888,7 @@ extern "C" int mnn_run_with_output(
             set_last_error("frame input vanished after tryResizeSession");
             return -7;
         }
-        if (in_tensor->elementSize() != (size_t)total) {
+        if (static_cast<size_t>(in_tensor->elementSize()) != static_cast<size_t>(total)) {
             auto s = in_tensor->shape();
             char shapebuf[128] = {0};
             size_t off = 0;
@@ -1043,6 +1043,7 @@ extern "C" int mnn_benchmark_sync(
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);
     if (!net || !sess || !out_costs_ms || loops <= 0) return -1;
+    (void)precision; // Kept in the ABI for callers that request a precision hint.
 
     auto* input  = net->getSessionInput(sess, NULL);
     auto* output = net->getSessionOutput(sess, NULL);

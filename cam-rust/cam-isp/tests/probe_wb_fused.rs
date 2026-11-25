@@ -26,7 +26,14 @@ fn render(wb_fused: bool) -> Option<(Vec<f32>, f64)> {
             ..FuseStages::ALL
         }
     } else {
-        FuseStages::ALL
+        // Keep demosaic+CCM fused, but restore the *separate* BayerWbBlock.
+        // Using `FuseStages::ALL` here would set `wb_into_demosaic: true` too,
+        // so both arms rendered the same graph and the probe compared a frame
+        // with itself.
+        FuseStages {
+            wb_into_demosaic: false,
+            ..FuseStages::ALL
+        }
     };
 
     let mut blocks = profile.build_blocks(W, H, 2);
@@ -39,30 +46,14 @@ fn render(wb_fused: bool) -> Option<(Vec<f32>, f64)> {
 
     // A patterned frame: a flat field is neutral, so a WB mix-up is invisible.
     let raw = cam_isp::synth_bayer::bayer_color_diffuse(W, H);
-    let params = ProcessParams {
-        width: W,
-        height: H,
-        stride_width: W,
-        buf: &raw,
-        sensor_max: 1023.0,
-        target_width: W,
-        target_height: H,
-        ccm_matrix: None,
-        tone_params: cam_isp::engine::default_tone_params(),
-        // A deliberately non-neutral balance, so a lost or misordered gain shows.
-        bayer_gains: None,
-        awb_gains: None,
-        bayer_pattern: 2, // GRBG
-        analog_gain: 1.0,
-        scene_change: 0.0,
-        lsc_gains: None,
-        blc_values: None,
-        warp_grid: None,
-        warp_shading: None,
-        output_format: OutputFormat::FloatRgb,
-        timestamp_ns: 0,
-        isp_params: None,
-    };
+    let mut params = ProcessParams::new(W, H, &raw);
+    params.sensor_max = 1023.0;
+    params.target_width = W;
+    params.target_height = H;
+    params.tone_params = cam_isp::engine::default_tone_params();
+    // A deliberately non-neutral balance, so a lost or misordered gain shows.
+    params.bayer_pattern = 2; // GRBG
+    params.output_format = OutputFormat::FloatRgb;
 
     for _ in 0..5 {
         engine.process(&params).ok()?;
