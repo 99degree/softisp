@@ -189,6 +189,7 @@ impl PipelineProfile {
                         crate::blocks::UnpackCfaBlock::new()
                             .with_mode(crate::blocks::UnpackMode::NativeInt16)
                             .with_fast_unpack(true) // Conv-based extract (unpack_w/unpack_b)
+                            .with_downscale(2) // stride_w=2 for proper 2×2 CFA extraction
                             .with_concrete_dims(concrete_h, full_w),
                     ));
                 } else if self.use_unpack {
@@ -237,6 +238,7 @@ impl PipelineProfile {
                         crate::blocks::UnpackCfaBlock::new()
                             .with_mode(crate::blocks::UnpackMode::NativeInt16)
                             .with_fast_unpack(true)
+                            .with_downscale(2) // stride_w=2 for proper 2×2 CFA extraction
                             .with_concrete_dims(concrete_h, full_w),
                     ));
                 } else if self.use_unpack {
@@ -360,15 +362,23 @@ impl PipelineProfile {
             .allows(self.opset_mode, self.fuse_stages.demosaic_ccm)
         {
             info!("  demosaic+ccm: DemosaicCcmBlock (fused isp.demosaic_ccm)");
+            // UnpackCfaBlock halves both edges, so its output is H/2 × W/2.
+            // DemosaicCcmBlock does 4→3 channels at the SAME spatial resolution.
+            let cfa_h = (concrete_h / 2).max(1);
+            let cfa_w = (full_w / 2).max(1);
             blocks.push(Box::new(
                 DemosaicCcmBlock::new(bayer_pattern)
-                    // Demosaic halves both edges, so the block is told the
-                    // *input* geometry and derives the output itself.
-                    .with_concrete_dims(concrete_h, full_w)
+                    .with_concrete_dims(cfa_h, cfa_w)
                     .with_opset_mode(BlockOpsetMode::MnnIspMin),
             ));
         } else {
-            blocks.push(Box::new(DemosaicBlock::new(bayer_pattern)));
+            // UnpackCfaBlock (or CfaBlockPacked/CfaBlock) halves both edges.
+            // DemosaicBlock does 4→3 channels at the SAME spatial resolution.
+            let cfa_h = (concrete_h / 2).max(1);
+            let cfa_w = (full_w / 2).max(1);
+            blocks.push(Box::new(
+                DemosaicBlock::new(bayer_pattern).with_concrete_dims(cfa_h, cfa_w),
+            ));
             // Unique instance names: multiple CcmBlocks share the default
             // "CcmBlock/applied|frame" tensors, which alias in the ONNX→MNN
             // converter and silently drop the demosaic chain.

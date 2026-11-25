@@ -26,9 +26,9 @@ cd "$(dirname "$0")"
 # 1. Build MNN Vulkan libs and copy all .so into cam-rust/lib/aarch64-v8a/
 ./scripts/build_mnn_libs.sh arm64-v8a
 
-# 2. Build the Rust app library so we can patch its libc++ NEEDED entry
-#    before cargo-apk2 bundles it into the APK.
-cargo build -p cam-camera-app --target aarch64-linux-android
+# 2. No separate cargo build here: `cargo apk2 build` in step 4 compiles the
+#    Rust app library itself. The patchelf step below retunes the .so from the
+#    previous build, which cam-isp's build.rs links against as it rebuilds.
 
 # 3. Patch every bundled .so's libc++_shared.so dependency to point at our
 #    uniquely-named libsoftisp_cpp_shared.so instead of the stale system one.
@@ -58,6 +58,6 @@ if command -v patchelf >/dev/null 2>&1; then
     done
 fi
 
-# 4. Build the APK with cargo-apk2 (default debug profile).
-#    cargo-apk2 will use the already-built libcam_camera_app.so from step 2.
+# 4. Build the APK with cargo-apk2 (default debug profile), which also builds
+#    the Rust app library against the retuned .so above.
 cargo apk2 build -p cam-camera-app
