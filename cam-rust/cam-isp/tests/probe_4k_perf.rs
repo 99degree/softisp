@@ -8,8 +8,12 @@
 //! statistics switch on and off, and the same stage set built from primitives so the
 //! fusion's effect is visible at this size rather than extrapolated.
 //!
-//! Run:
-//!   cargo test -p cam-isp --test probe_4k_perf --features mnn -- --nocapture --ignored
+//! Run one profile at a time:
+//!   cargo test -p cam-isp --test probe_4k_perf perf_4k_fused --features mnn -- --nocapture --ignored
+//!   cargo test -p cam-isp --test probe_4k_perf perf_4k_heavy --features mnn -- --nocapture --ignored
+//!
+//! `perf_4k` is kept as an alias for the FUSED breakage check. Use `perf_4k_all`
+//! only when the complete matrix is wanted.
 //!
 //! Overrides:
 //!   PERF_W / PERF_H   frame size (default 3840x2160)
@@ -346,43 +350,14 @@ fn run_dual(
     })
 }
 
-#[test]
-#[ignore]
-fn perf_4k() {
-    let _ = env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
-        .is_test(false)
-        .try_init();
-    cam_isp::init();
+const PERF_FORMATS: &[(&str, OutputFormat)] = &[
+    ("PackedRgb", OutputFormat::PackedRgb),
+    ("Bgra", OutputFormat::Bgra),
+    ("Argb", OutputFormat::Argb),
+];
 
-    let w = env_usize("PERF_W", 3840) as u32;
-    let h = env_usize("PERF_H", 2160) as u32;
-    let frames = env_usize("PERF_FRAMES", 40);
-
-    let fused = || PipelineProfile::FUSED;
-    let med = || PipelineProfile::MED;
-    let whole = || PipelineProfile::WHOLE;
-    let unified = || PipelineProfile::UNIFIED;
-
-    let build = |p: PipelineProfile, fmt: OutputFormat| {
-        move |w: u32, h: u32| {
-            let mut p = p;
-            p.output_format = fmt;
-            let mut blocks = p.build_blocks(w, h, 2);
-            let head = blocks.remove(0);
-            let aux = p.build_aux_blocks(h as i64, w as i64);
-            blocks.extend(aux);
-            (head, blocks)
-        }
-    };
-
-    let formats = [
-        ("PackedRgb", OutputFormat::PackedRgb),
-        ("Bgra", OutputFormat::Bgra),
-        ("Argb", OutputFormat::Argb),
-    ];
-
-    eprintln!("\n== {w}x{h}, {frames} frames after warmup (single GPU engine) ==");
+fn print_perf_header(title: &str) {
+    eprintln!("\n== {title} ==");
     eprintln!(
         "{:<30} {:>7} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>8} {:<10}",
         "profile",
@@ -396,126 +371,125 @@ fn perf_4k() {
         "FPS",
         "format"
     );
+}
 
-    let mut rows: Vec<Timing> = Vec::new();
-    for (fmt_name, fmt) in formats {
-        for (label, p) in [
-            ("MED (primitives)", med()),
-            ("FUSED", fused()),
-            ("FUSED, stats off", fused()),
-            ("WHOLE", whole()),
-            ("UNIFIED", unified()),
-        ] {
-            let stats_on = !label.ends_with("stats off");
-            if let Some(t) = run_single(label, w, h, frames, stats_on, fmt, build(p, fmt)) {
-                eprintln!(
-                    "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
-                    format!("{} ({})", t.label, fmt_name),
-                    t.blocks,
-                    t.prep.mean,
-                    t.infer.mean,
-                    t.post.mean,
-                    t.total.p50,
-                    t.total.p95,
-                    t.total.max,
-                    t.fps,
-                    fmt_name
-                );
-                rows.push(t);
-            }
-        }
-    }
+fn print_timing(t: &Timing, fmt_name: &str) {
+    eprintln!(
+        "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
+        format!("{} ({})", t.label, fmt_name),
+        t.blocks,
+        t.prep.mean,
+        t.infer.mean,
+        t.post.mean,
+        t.total.p50,
+        t.total.p95,
+        t.total.max,
+        t.fps,
+        fmt_name
+    );
+}
 
-    if let (Some(med_r), Some(fused_r)) = (
-        rows.iter().find(|r| r.label.starts_with("MED")),
-        rows.iter().find(|r| r.label == "FUSED"),
-    ) {
-        eprintln!(
-            "\nfusion: {:.2}x at p50, mean {:.1} -> {:.1} ms",
-            med_r.total.p50 / fused_r.total.p50.max(0.001),
-            med_r.total.mean,
-            fused_r.total.mean
-        );
-    }
-    if let (Some(on), Some(off)) = (
-        rows.iter().find(|r| r.label == "FUSED"),
-        rows.iter().find(|r| r.label.ends_with("stats off")),
-    ) {
-        eprintln!(
-            "statistics readback: {:.1} ms per frame ({:.0}% of the p50)",
-            on.post.mean - off.post.mean,
-            100.0 * (on.post.mean - off.post.mean) / on.total.p50.max(0.01)
-        );
+fn build_profile(
+    profile: PipelineProfile,
+    fmt: OutputFormat,
+) -> impl Fn(
+    u32,
+    u32,
+) -> (
+    Box<dyn cam_isp::pipeline::IspBlock>,
+    Vec<Box<dyn cam_isp::pipeline::IspBlock>>,
+) {
+    move |w: u32, h: u32| {
+        let mut p = profile;
+        p.output_format = fmt;
+        let mut blocks = p.build_blocks(w, h, 2);
+        let head = blocks.remove(0);
+        let aux = p.build_aux_blocks(h as i64, w as i64);
+        blocks.extend(aux);
+        (head, blocks)
     }
 }
 
-#[test]
-#[ignore]
-fn perf_4k_dual() {
+fn init_probe() {
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Warn)
         .is_test(false)
         .try_init();
     cam_isp::init();
+}
 
+/// One profile, all output formats, single engine. `include_stats_off` adds the
+/// FUSED stats-disabled arm so the readback cost stays measurable, but it is
+/// not repeated for every profile.
+fn run_single_profile_case(label: &str, profile: PipelineProfile, include_stats_off: bool) {
+    init_probe();
     let w = env_usize("PERF_W", 3840) as u32;
     let h = env_usize("PERF_H", 2160) as u32;
     let frames = env_usize("PERF_FRAMES", 40);
 
-    let fused = || PipelineProfile::FUSED;
-
-    let build = |p: PipelineProfile, fmt: OutputFormat| {
-        move |w: u32, h: u32| {
-            let mut p = p;
-            p.output_format = fmt;
-            let mut blocks = p.build_blocks(w, h, 2);
-            let head = blocks.remove(0);
-            let aux = p.build_aux_blocks(h as i64, w as i64);
-            blocks.extend(aux);
-            (head, blocks)
-        }
-    };
-
-    let formats = [
-        ("PackedRgb", OutputFormat::PackedRgb),
-        ("Bgra", OutputFormat::Bgra),
-        ("Argb", OutputFormat::Argb),
-    ];
-
-    eprintln!("\n== {w}x{h}, {frames} frames after warmup (DUAL GPU engine) ==");
-    eprintln!(
-        "{:<30} {:>7} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>8} {:<10}",
-        "profile",
-        "blocks",
-        "prep ms",
-        "infer ms",
-        "post ms",
-        "p50 ms",
-        "p95 ms",
-        "max ms",
-        "FPS",
-        "format"
-    );
+    print_perf_header(&format!(
+        "{w}x{h}, {frames} frames after warmup (single GPU engine)"
+    ));
 
     let mut rows: Vec<Timing> = Vec::new();
-    for (fmt_name, fmt) in formats {
-        for (label, p) in [("DUAL fused", fused())] {
-            if let Some(t) = run_dual(label, w, h, frames, fmt, build(p, fmt)) {
-                eprintln!(
-                    "{:<30} {:>7} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>8.1} {:<10}",
-                    format!("{} ({})", t.label, fmt_name),
-                    t.blocks,
-                    t.prep.mean,
-                    t.infer.mean,
-                    t.post.mean,
-                    t.total.p50,
-                    t.total.p95,
-                    t.total.max,
-                    t.fps,
-                    fmt_name
-                );
+    for (fmt_name, fmt) in PERF_FORMATS {
+        let cases: [(&str, PipelineProfile, bool); 2] =
+            [(label, profile, true), ("FUSED, stats off", profile, false)];
+        for (case_label, p, stats_on) in cases {
+            if !stats_on && !(include_stats_off && label == "FUSED") {
+                continue;
+            }
+            if let Some(t) = run_single(
+                case_label,
+                w,
+                h,
+                frames,
+                stats_on,
+                *fmt,
+                build_profile(p, *fmt),
+            ) {
+                print_timing(&t, fmt_name);
                 rows.push(t);
             }
+        }
+    }
+
+    if include_stats_off && label == "FUSED" {
+        if let (Some(on), Some(off)) = (
+            rows.iter().find(|r| r.label == "FUSED"),
+            rows.iter().find(|r| r.label.ends_with("stats off")),
+        ) {
+            eprintln!(
+                "statistics readback: {:.1} ms per frame ({:.0}% of the p50)",
+                on.post.mean - off.post.mean,
+                100.0 * (on.post.mean - off.post.mean) / on.total.p50.max(0.01)
+            );
+        }
+    }
+}
+
+fn run_dual_fused_case() {
+    init_probe();
+    let w = env_usize("PERF_W", 3840) as u32;
+    let h = env_usize("PERF_H", 2160) as u32;
+    let frames = env_usize("PERF_FRAMES", 40);
+
+    print_perf_header(&format!(
+        "{w}x{h}, {frames} frames after warmup (DUAL GPU engine)"
+    ));
+
+    let mut rows: Vec<Timing> = Vec::new();
+    for (fmt_name, fmt) in PERF_FORMATS {
+        if let Some(t) = run_dual(
+            "DUAL fused",
+            w,
+            h,
+            frames,
+            *fmt,
+            build_profile(PipelineProfile::FUSED, *fmt),
+        ) {
+            print_timing(&t, fmt_name);
+            rows.push(t);
         }
     }
 
@@ -526,4 +500,60 @@ fn perf_4k_dual() {
             fused_r.total.mean, fused_r.prep.mean, fused_r.infer.mean, fused_r.post.mean
         );
     }
+}
+
+/// Backward-compatible name: the usual breakage check only runs FUSED.
+#[test]
+#[ignore]
+fn perf_4k() {
+    run_single_profile_case("FUSED", PipelineProfile::FUSED, true);
+}
+
+#[test]
+#[ignore]
+fn perf_4k_fused() {
+    run_single_profile_case("FUSED", PipelineProfile::FUSED, true);
+}
+
+#[test]
+#[ignore]
+fn perf_4k_med() {
+    run_single_profile_case("MED (primitives)", PipelineProfile::MED, false);
+}
+
+#[test]
+#[ignore]
+fn perf_4k_heavy() {
+    run_single_profile_case("HEAVY", PipelineProfile::HEAVY, false);
+}
+
+#[test]
+#[ignore]
+fn perf_4k_whole() {
+    run_single_profile_case("WHOLE", PipelineProfile::WHOLE, false);
+}
+
+#[test]
+#[ignore]
+fn perf_4k_unified() {
+    run_single_profile_case("UNIFIED", PipelineProfile::UNIFIED, false);
+}
+
+#[test]
+#[ignore]
+fn perf_4k_dual() {
+    run_dual_fused_case();
+}
+
+/// Explicit opt-in for the full matrix. Individual profile tests above are the
+/// default way to check a change without paying for every profile.
+#[test]
+#[ignore]
+fn perf_4k_all() {
+    run_single_profile_case("MED (primitives)", PipelineProfile::MED, false);
+    run_single_profile_case("FUSED", PipelineProfile::FUSED, true);
+    run_single_profile_case("HEAVY", PipelineProfile::HEAVY, false);
+    run_single_profile_case("WHOLE", PipelineProfile::WHOLE, false);
+    run_single_profile_case("UNIFIED", PipelineProfile::UNIFIED, false);
+    run_dual_fused_case();
 }

@@ -21,7 +21,7 @@ fn build_test_mnn(prefix: &str) -> Result<String, String> {
     use cam_isp::profile::PipelineProfile;
     use std::path::Path;
 
-    let blocks = PipelineProfile::TEST.build_blocks(64, 0, 0);
+    let blocks = PipelineProfile::TEST.build_blocks(64, 64, 0);
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let model =
         GraphComposer::compose_from_vec(&refs, &[], 16).map_err(|e| format!("compose: {}", e))?;
@@ -39,6 +39,28 @@ fn build_test_mnn(prefix: &str) -> Result<String, String> {
     Ok(mnn_path)
 }
 
+/// The head block is more than a placeholder when a pre-converted `.mnn` is
+/// loaded: `MnnEngine::build()` takes its `graph_input_name()` as the frame
+/// input tensor name. A dummy `RawInputBlock` against a profile that starts at
+/// `RawInputPackedBlock` makes every inference fail with "frame input not
+/// found", so always hand the engine the profile's real head.
+#[cfg(feature = "mnn")]
+fn profile_head(profile: cam_isp::profile::PipelineProfile, w: u32, h: u32) -> Box<dyn IspBlock> {
+    let mut blocks = profile.build_blocks(w, h, 0);
+    blocks.remove(0)
+}
+
+fn expected_frame_bytes(frame: &cam_isp::pipeline::IspFrame) -> usize {
+    use cam_types::FrameFormat;
+    let bpp = match frame.format {
+        FrameFormat::Rgb888 => 3,
+        FrameFormat::Yuv420888 => 1,
+        FrameFormat::RawSensor | FrameFormat::Raw10 | FrameFormat::Raw12 => 2,
+        _ => 4,
+    };
+    frame.width as usize * frame.height as usize * bpp
+}
+
 /// Stream 5 frames through the engine, verifying session reuse.
 #[cfg(feature = "mnn")]
 #[test]
@@ -54,8 +76,7 @@ fn test_mnn_engine_streaming() {
     let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
 
-    // Provide a dummy head block (ignored when model_path is set)
-    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    let head = profile_head(cam_isp::profile::PipelineProfile::TEST, 48, 64);
     engine.build(head, vec![], None, 16).expect("build");
 
     let w = 48u32;
@@ -97,6 +118,7 @@ fn test_mnn_engine_streaming() {
             output_format: cam_isp::engine::OutputFormat::default(),
             timestamp_ns: 0,
             isp_params: None,
+            ..cam_isp::engine::ProcessParams::new(w, h, &buf)
         });
 
         match &result {
@@ -110,7 +132,7 @@ fn test_mnn_engine_streaming() {
                     frame.data.len()
                 );
                 assert!(
-                    frame.data.len() >= (64 * h as usize * 3),
+                    frame.data.len() >= expected_frame_bytes(frame),
                     "frame {} too small",
                     frame_idx
                 );
@@ -139,7 +161,7 @@ fn test_mnn_engine_frame_difference() {
 
     let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
-    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    let head = profile_head(cam_isp::profile::PipelineProfile::TEST, 48, 64);
     engine.build(head, vec![], None, 16).expect("build");
 
     let params = cam_isp::engine::default_tone_params();
@@ -170,6 +192,7 @@ fn test_mnn_engine_frame_difference() {
             output_format: cam_isp::engine::OutputFormat::default(),
             timestamp_ns: 0,
             isp_params: None,
+            ..cam_isp::engine::ProcessParams::new(48, 64, &buf0)
         })
         .expect("frame 0");
     outputs.push(f0.data);
@@ -199,6 +222,7 @@ fn test_mnn_engine_frame_difference() {
             output_format: cam_isp::engine::OutputFormat::default(),
             timestamp_ns: 0,
             isp_params: None,
+            ..cam_isp::engine::ProcessParams::new(48, 64, &buf1)
         })
         .expect("frame 1");
     outputs.push(f1.data);
@@ -233,6 +257,7 @@ fn test_mnn_engine_frame_difference() {
             output_format: cam_isp::engine::OutputFormat::default(),
             timestamp_ns: 0,
             isp_params: None,
+            ..cam_isp::engine::ProcessParams::new(48, 64, &buf2)
         })
         .expect("frame 2");
     outputs.push(f2.data);
@@ -263,7 +288,7 @@ fn test_mnn_engine_lite_profile() {
     use std::path::Path;
 
     // Build LITE profile ONNX model
-    let blocks = PipelineProfile::LITE.build_blocks(64, 0, 0);
+    let blocks = PipelineProfile::LITE.build_blocks(64, 64, 0);
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let model = GraphComposer::compose_from_vec(&refs, &[], 16).expect("LITE compose");
 
@@ -280,7 +305,7 @@ fn test_mnn_engine_lite_profile() {
 
     let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
-    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    let head = profile_head(cam_isp::profile::PipelineProfile::LITE, 48, 64);
     engine.build(head, vec![], None, 16).expect("build");
 
     let w = 48u32;
@@ -320,6 +345,7 @@ fn test_mnn_engine_lite_profile() {
             output_format: cam_isp::engine::OutputFormat::default(),
             timestamp_ns: 0,
             isp_params: None,
+            ..cam_isp::engine::ProcessParams::new(w, h, &buf)
         });
         match &result {
             Ok(frame) => {
@@ -332,7 +358,7 @@ fn test_mnn_engine_lite_profile() {
                     frame.data.len()
                 );
                 assert!(
-                    frame.data.len() >= (64 * h as usize * 3),
+                    frame.data.len() >= expected_frame_bytes(frame),
                     "frame {} too small",
                     frame_idx
                 );
@@ -352,13 +378,13 @@ fn build_profile_mnn(
     profile: &cam_isp::profile::PipelineProfile,
     tag: &str,
     target_width: u32,
-    _target_height: u32,
+    target_height: u32,
 ) -> Result<String, String> {
     use cam_isp::mnn_converter::convert_onnx_to_mnn;
     use cam_isp::pipeline::GraphComposer;
     use std::path::Path;
 
-    let blocks = profile.build_blocks(target_width, 0, 0);
+    let blocks = profile.build_blocks(target_width, target_height, 0);
     let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
     let model = GraphComposer::compose_from_vec(&refs, &[], 16)?;
 
@@ -390,7 +416,7 @@ fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
 
     let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
-    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    let head = profile_head(profile, 48, 64);
     engine.build(head, vec![], None, 16).expect("build");
 
     let w = 48u32;
@@ -418,6 +444,7 @@ fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
         output_format: cam_isp::engine::OutputFormat::default(),
         timestamp_ns: 0,
         isp_params: None,
+        ..cam_isp::engine::ProcessParams::new(w, h, &buf)
     });
     match &result {
         Ok(frame) => {
@@ -430,7 +457,7 @@ fn run_mnn_profile_test(tag: &str, profile: cam_isp::profile::PipelineProfile) {
                 frame.data.len()
             );
             assert!(
-                frame.data.len() >= (64 * h as usize * 3),
+                frame.data.len() >= expected_frame_bytes(frame),
                 "{} frame too small",
                 tag
             );
@@ -454,6 +481,16 @@ fn test_mnn_all_profiles() {
     eprintln!("ALL 4 profiles passed via MNN");
 }
 
+/// Standalone HEAVY check. This is the profile to run when validating the
+/// primitive chain without paying for the other profiles.
+#[cfg(feature = "mnn")]
+#[test]
+#[ignore]
+fn test_mnn_heavy_profile() {
+    use cam_isp::profile::PipelineProfile;
+    run_mnn_profile_test("HEAVY", PipelineProfile::HEAVY);
+}
+
 /// Stream at target resolution through MNN and report FPS.
 #[cfg(feature = "mnn")]
 fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
@@ -466,7 +503,7 @@ fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
 
     let mut engine = MnnEngine::new(MnnBackend::Vulkan);
     engine.set_model_path(&mnn);
-    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    let head = profile_head(cam_isp::profile::PipelineProfile::LITE, w, h);
     engine.build(head, vec![], None, 16).expect("build");
 
     let params = cam_isp::engine::default_tone_params();
@@ -505,13 +542,14 @@ fn stream_mnn_profile(w: u32, h: u32, n_frames: u32, profile_tag: &str) -> f64 {
             output_format: cam_isp::engine::OutputFormat::default(),
             timestamp_ns: 0,
             isp_params: None,
+            ..cam_isp::engine::ProcessParams::new(w, h, &buf)
         });
         let elapsed = t_start.elapsed();
         total_duration += elapsed;
 
         match &result {
             Ok(frame) => {
-                let expected = (w * h * 4) as usize;
+                let expected = expected_frame_bytes(frame);
                 assert_eq!(
                     frame.data.len(),
                     expected,
@@ -598,7 +636,7 @@ fn stream_mnn_backend(w: u32, h: u32, n_frames: u32, backend: &str) -> Result<f6
 
     let mut engine = MnnEngine::new(be);
     engine.set_model_path(&mnn);
-    let head: Box<dyn IspBlock> = Box::new(cam_isp::blocks::RawInputBlock::new());
+    let head = profile_head(cam_isp::profile::PipelineProfile::LITE, w, h);
     engine
         .build(head, vec![], None, 16)
         .map_err(|e| format!("build: {}", e))?;
@@ -639,13 +677,14 @@ fn stream_mnn_backend(w: u32, h: u32, n_frames: u32, backend: &str) -> Result<f6
             output_format: cam_isp::engine::OutputFormat::default(),
             timestamp_ns: 0,
             isp_params: None,
+            ..cam_isp::engine::ProcessParams::new(w, h, &buf)
         });
         let elapsed = t_start.elapsed();
         total_duration += elapsed;
 
         match &result {
             Ok(frame) => {
-                let expected = (w * h * 4) as usize;
+                let expected = expected_frame_bytes(frame);
                 if frame.data.len() != expected {
                     let _ = std::fs::remove_file(&mnn);
                     return Err(format!(
@@ -775,6 +814,7 @@ fn test_mnn_packed_pipeline() {
         output_format: cam_isp::engine::OutputFormat::PackedRgb,
         timestamp_ns: 0,
         isp_params: None,
+        ..cam_isp::engine::ProcessParams::new(w as u32, h as u32, buf)
     });
 
     match &result {
@@ -834,6 +874,7 @@ fn test_mnn_engine_uninitialized() {
             output_format: cam_isp::engine::OutputFormat::default(),
             timestamp_ns: 0,
             isp_params: None,
+            ..cam_isp::engine::ProcessParams::new(48, 64, &[0u8; 48 * 64 * 2])
         });
         assert!(result.is_err(), "uninitialized should fail");
         eprintln!("Uninitialized check OK: {:?}", result.err().unwrap());
