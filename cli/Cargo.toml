@@ -1,0 +1,19 @@
+[package]
+name = "cam-ipa-test-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Test CLI for cam-ipa stable IPA API"
+
+[dependencies]
+cam-ipa = { path = "../cam-rust/cam-ipa" }
+env_logger = "0.10"
+log = "0.4"
+
+[[bin]]
+name = "ipa_test_cli"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 2
+debug = 1
+overflow-checks = false

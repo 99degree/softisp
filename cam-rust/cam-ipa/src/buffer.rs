@@ -128,7 +128,7 @@ impl Buffer for AhwBuffer {
 
 /// In-memory buffer for testing
 pub struct MemBuffer {
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl MemBuffer {
