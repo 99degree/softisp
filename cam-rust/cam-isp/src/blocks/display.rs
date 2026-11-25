@@ -297,9 +297,10 @@ impl DisplayBlock {
     /// conversion and packing. Gamma is encoded by the tone stage; the shader
     /// receives `gamma=1.0` so its own encode is an identity.
     fn emit_mnn_isp_min_nodes(&self) -> Vec<Vec<u8>> {
-        let _ns = self.tensor_ns();
+        let ns = self.tensor_ns();
         let inp = self.effective_input();
-        let final_output = &self.frame_tensor;
+        let final_output = self.frame_tensor.clone();
+        let display_output = format!("{ns}/display");
 
         // Map OutputFormat to the correct isp.display_* op type.
         // MNN's VulkanFuse selects shaders by exact op type name (e.g.,
@@ -309,8 +310,11 @@ impl DisplayBlock {
         // Build attributes for the isp.display shader
         let mut attrs = Vec::new();
 
-        // Rotation attributes
-        attrs.push(Proto::attribute_int("rotate_mode", self.rotate_mode as i64));
+        // The fork's display shaders do not read `rotate_mode`. Keep the
+        // attribute at zero and apply the transform as ordinary graph nodes
+        // below; passing the mode here would double-rotate if the shader ever
+        // gains rotation support.
+        attrs.push(Proto::attribute_int("rotate_mode", 0i64));
 
         // Packing attribute: the fused shader writes one BGRA uint32 per pixel.
         attrs.push(Proto::attribute_int(
@@ -349,15 +353,83 @@ impl DisplayBlock {
         // engine writes, not a `const` attribute. The attribute form broke
         // `resizeSession` with COMPUTE_SIZE_ERROR, and leaving gamma unwritten
         // made `pow(x, 0)` a constant 1.0 (a white frame).
-        let gamma = format!("{}/gamma", self.tensor_ns());
-
-        vec![Proto::node_with_domain(
+        let gamma = format!("{ns}/gamma");
+        let transformed = self.swaps_dims() || self.needs_hflip() || self.needs_vflip();
+        let display_target = if transformed {
+            display_output.clone()
+        } else {
+            final_output.clone()
+        };
+        let mut nodes = vec![Proto::node_with_domain(
             op_type,
             "isp",
             &[&inp, &gamma],
-            &[final_output],
+            &[&display_target],
             &attrs,
-        )]
+        )];
+
+        if !transformed {
+            return nodes;
+        }
+        let mut prev = display_output;
+        let mut temporaries: Vec<String> = Vec::new();
+
+        // 90°/270°: transpose the packed words so the display geometry becomes
+        // H×W. The primitive path already does this; the fused shader cannot.
+        if self.swaps_dims() {
+            let transposed = format!("{ns}/transposed");
+            nodes.push(Proto::node(
+                "Transpose",
+                &[&prev],
+                &[&transposed],
+                &[Proto::attribute_ints("perm", &[0, 1, 3, 2])],
+            ));
+            temporaries.push(transposed);
+            prev = temporaries.last().unwrap().clone();
+        }
+
+        if self.needs_hflip() {
+            let hflipped = if self.needs_vflip() {
+                format!("{ns}/hflipped")
+            } else {
+                final_output.clone()
+            };
+            let starts = format!("{ns}/hflip_starts");
+            let ends = format!("{ns}/hflip_ends");
+            let axes = format!("{ns}/hflip_axes");
+            let steps = format!("{ns}/hflip_steps");
+            nodes.push(Proto::node(
+                "Slice",
+                &[&prev, &starts, &ends, &axes, &steps],
+                &[&hflipped],
+                &[],
+            ));
+            if self.needs_vflip() {
+                temporaries.push(hflipped);
+                prev = temporaries.last().unwrap().clone();
+            } else {
+                return nodes;
+            }
+        }
+
+        if self.needs_vflip() {
+            let starts = format!("{ns}/vflip_starts");
+            let ends = format!("{ns}/vflip_ends");
+            let axes = format!("{ns}/vflip_axes");
+            let steps = format!("{ns}/vflip_steps");
+            nodes.push(Proto::node(
+                "Slice",
+                &[&prev, &starts, &ends, &axes, &steps],
+                &[&final_output],
+                &[],
+            ));
+            return nodes;
+        }
+
+        if prev != final_output {
+            nodes.push(Proto::node("Identity", &[&prev], &[&final_output], &[]));
+        }
+        nodes
     }
 }
 
@@ -945,6 +1017,54 @@ mod tests {
         // The primitive path still packs two pixels per INT32 word.
         let primitive = DisplayBlock::new(640).with_output_format(OutputFormat::PackedRgb);
         assert_eq!(primitive.packed_output_width(640), 320);
+    }
+
+    fn op_type(node: &[u8]) -> &str {
+        assert_eq!(node[0], 0x22, "NodeProto.op_type must be field 4");
+        let mut i = 1;
+        let mut len = 0usize;
+        let mut shift = 0;
+        loop {
+            let b = node[i];
+            i += 1;
+            len |= ((b & 0x7f) as usize) << shift;
+            if b & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+        }
+        std::str::from_utf8(&node[i..i + len]).unwrap()
+    }
+
+    #[test]
+    fn fused_display_without_rotation_has_no_extra_nodes() {
+        let block = DisplayBlock::new(640)
+            .with_output_format(OutputFormat::PackedRgb)
+            .with_opset_mode(2)
+            .with_concrete_dims(480, 640);
+        let nodes = block.nodes();
+        assert_eq!(nodes.len(), 1);
+        assert!(op_type(&nodes[0]).starts_with("isp.display_"));
+    }
+
+    #[test]
+    fn fused_display_applies_rotation_as_graph_nodes() {
+        for (mode, expected) in [
+            (1, vec!["Transpose", "Slice"]),
+            (2, vec!["Slice", "Slice"]),
+            (3, vec!["Transpose", "Slice"]),
+            (4, vec!["Slice"]),
+            (5, vec!["Slice"]),
+        ] {
+            let block = DisplayBlock::new(640)
+                .with_output_format(OutputFormat::PackedRgb)
+                .with_opset_mode(2)
+                .with_rotate(mode)
+                .with_concrete_dims(480, 640);
+            let nodes = block.nodes();
+            let actual: Vec<&str> = nodes.iter().skip(1).map(|n| op_type(n)).collect();
+            assert_eq!(actual, expected, "rotate_mode {mode}");
+        }
     }
 
     #[test]
