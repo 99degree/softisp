@@ -128,6 +128,15 @@ impl PipelineRunner {
         *self.camera.lock().unwrap() = Some(camera);
     }
 
+    /// Drop the current session after a fatal camera callback.
+    ///
+    /// Workers hold the mutex only for the duration of `next_frame()`, so this
+    /// waits for an in-flight capture to finish and then leaves both workers
+    /// idle until `set_camera()` installs a fresh device.
+    pub(crate) fn clear_camera(&self) {
+        *self.camera.lock().unwrap() = None;
+    }
+
     pub(crate) fn has_camera(&self) -> bool {
         self.camera.lock().unwrap().is_some()
     }

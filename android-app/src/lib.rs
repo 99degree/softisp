@@ -552,6 +552,17 @@ impl Preview {
     /// method never blocks on the camera and never touches the surface from a
     /// worker thread.
     fn render_once(&mut self, target: &WindowTarget<'_>) {
+        // `ERROR_CAMERA_DEVICE` and disconnects arrive on a binder thread. They
+        // cannot close the session there; dropping it here makes `ensure_camera`
+        // open a fresh device on the next call instead of polling a dead one.
+        if camera::take_fatal_camera_error() {
+            write_line(
+                "ERROR",
+                "camera",
+                "fatal camera callback: closing session and reopening",
+            );
+            self.runner.clear_camera();
+        }
         self.ensure_camera();
         let Some(done) = self.runner.poll() else {
             self.repaint_last(target);

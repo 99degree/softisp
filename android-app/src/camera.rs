@@ -9,8 +9,21 @@
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ndk_sys as sys;
+
+/// Set by the framework camera callbacks and consumed by the app loop.
+///
+/// The callbacks run on binder threads, so they cannot close the device or
+/// touch `CameraSession`; they only raise this flag. `ERROR_CAMERA_DEVICE`
+/// (4) is fatal — the device must be closed and reopened or capture stays dead.
+static FATAL_CAMERA_ERROR: AtomicBool = AtomicBool::new(false);
+
+/// Consume a pending fatal camera callback.
+pub fn take_fatal_camera_error() -> bool {
+    FATAL_CAMERA_ERROR.swap(false, Ordering::AcqRel)
+}
 
 /// Longest capture edge accepted. Larger sensors are downscaled at capture
 /// time to bound ISP latency and per-frame memory.
@@ -917,11 +930,23 @@ fn media_check(status: sys::media_status_t, what: &str) -> CamResult<()> {
 }
 
 // ── NDK callbacks ───────────────────────────────────────────────────────
-// These fire on framework-owned threads and only log, so they touch no state
-// shared with the app loop and need no locking.
+// These fire on framework-owned threads and only log + raise a flag, so they
+// touch no state shared with the app loop and need no locking.
+
+fn camera_error_name(error: i32) -> &'static str {
+    match error {
+        1 => "ERROR_CAMERA_IN_USE",
+        2 => "ERROR_MAX_CAMERAS_IN_USE",
+        3 => "ERROR_CAMERA_DISABLED",
+        4 => "ERROR_CAMERA_DEVICE",
+        5 => "ERROR_CAMERA_SERVICE",
+        _ => "ERROR_UNKNOWN",
+    }
+}
 
 unsafe extern "C" fn on_device_disconnected(_ctx: *mut c_void, _device: *mut sys::ACameraDevice) {
     log::warn!("ACameraDevice: disconnected");
+    FATAL_CAMERA_ERROR.store(true, Ordering::Release);
 }
 
 unsafe extern "C" fn on_device_error(
@@ -929,7 +954,12 @@ unsafe extern "C" fn on_device_error(
     _device: *mut sys::ACameraDevice,
     error: i32,
 ) {
-    log::error!("ACameraDevice: error {error}");
+    log::error!(
+        "ACameraDevice: error {} ({})",
+        error,
+        camera_error_name(error)
+    );
+    FATAL_CAMERA_ERROR.store(true, Ordering::Release);
 }
 
 unsafe extern "C" fn on_session_closed(_ctx: *mut c_void, _s: *mut sys::ACameraCaptureSession) {
