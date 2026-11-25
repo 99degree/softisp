@@ -156,56 +156,69 @@ Custom SPIR-V shaders for ISP operations:
 > **wrong** custom shader — producing **incorrect output with no diagnostic**.
 > Always validate a new block's MNN/GPU result numerically against `CpuEngine`.
 
-## Neural Controller
+## Neural Controller (isp-rectifier)
 
-### Model Architecture
+### Purpose
+
+The Neural Controller predicts ISP *parameters* (WB gains, CCM matrix, tone curve,
+digital zoom) from small frame-metadata tensors. It is a **separate inference path**
+from the pixel pipeline — it does **not** run on MNN/Vulkan and does **not** go
+through ONNX→MNN conversion.
 
 ```
-Input: histogram[256] + metadata[11] = 267 dims
-        │
-        ▼
-    ┌───┴───┐
-    │  MLP  │ (256 → 128 → 64 → 20)
-    └───┬───┘
-        │
-        ▼
-Output: wb[3] + ccm[9] + tone[7] + zoom[1] = 20 dims
+Raw Bayer frame
+     │
+     ▼
+NeuralController::analyze_and_update(&frame)
+     │
+     ├─ extract_metadata()                                          │
+     │   ├─ compute_histogram()  → 256-bin luminance histogram      │
+     │   ├─ brightness/contrast  → from histogram moments           │
+     │   ├─ cct                  → estimated from histogram balance │
+     │   └─ noise_level          → from adjacent-bin variation      │
+     │
+     ├─ FrameMetadata::to_feature_vector()                          │
+     │     → hist [f32; 256] (sum-normalized to 10,000)             │
+     │     → meta [f32; 52]   (CCT, WB, exposure, ISO, AF, …)       │
+     │
+     ├─ rectifier.optimize(&metadata)                               │
+     │   ├─ tract-onnx loads fusedispcontroller_light_int8.onnx     │
+     │   ├─ inputs: hist [1,256] F32 + meta [1,52] F32              │
+     │   ├─ outputs: wb [1,3], ccm [1,9], tone [1,7], zoom [1,1]   │
+     │   └─ clamp to RegisterLimits                                 │
+     │
+     └─ → IspParams (wb, ccm, tone.curve_lut, zoom, …)
 ```
 
-### Model Variants
+### Interface (verified on pre-trained models)
 
-| Model | Size | Latency | Use Case |
-|-------|------|---------|----------|
-| Light INT8 | 490 KB | 11ms | Production |
-| Medium FP32 | 1.3 MB | 20ms | Development |
-| Full FP32 | 5.6 MB | 23ms | Accuracy |
+| Input | Shape | Dtype |
+|-------|-------|-------|
+| `hist` | [1, 256] | F32 |
+| `meta` | [1, 52] | F32 |
 
-### Teacher Models
+| Output | Shape | Semantics |
+|--------|-------|-----------|
+| `wb` | [1, 3] | WB gains [R, G, B] |
+| `ccm` | [1, 9] | CCM matrix (row-major) |
+| `tone` | [1, 7] | Tone curve LUT |
+| `zoom` | [1, 1] | Digital zoom factor [1.0, 4.0] |
 
-Distilled from:
-- **CCMNet** - Color correction
-- **Time-Aware AWB** - White balance
-- **Neural ISP Tuning** - Tone mapping
+The model file (`isp-rectifier/models/fusedispcontroller_light*.onnx`) is a
+pre-trained ONNX loaded directly by `tract-onnx` — no `convert_onnx_buffer`,
+no MNN session, no Vulkan. The tiny metadata tensors make CPU inference (~1 ms)
+negligible versus the full-frame pixel pipeline.
 
-**License:** CC BY-NC 4.0 (non-commercial)
+### Fallback
 
-## Performance
+If the model fails to load or inference fails, `NeuralController` silently falls
+back to `IspController` (rule-based AE/AWB/tone/denoise). The pipeline never stalls.
 
-### Vulkan GPU (Snapdragon 8 Gen 2)
+### Connection to the pixel pipeline
 
-| Resolution | HEAVY | LITE |
-|------------|-------|------|
-| HD | 1.0ms | 4.9ms |
-| FHD | 2.0ms | 8.0ms |
-| 4K | 8.0ms | 24ms |
-
-### Neural Controller
-
-| Model | FPS (Tract) |
-|-------|-------------|
-| Light INT8 | 93 |
-| Medium FP32 | 55 |
-| Full FP32 | 43 |
+`NeuralController` output (`IspParams`) is fed into `ProcessParams.isp_params` in
+`UnifiedPipeline::process()`, and `MnnEngine` writes WB/CCM/tone as graph
+extra-inputs so the pixel blocks use the neural model's predictions.
 
 ## Module Structure
 
@@ -213,12 +226,42 @@ Distilled from:
 cam-isp/src/
 ├── blocks/           # ISP processing blocks
 ├── pipeline/         # Pipeline composition
-├── mnn/             # MNN backend
-├── simd/            # SIMD optimizations
-├── isp_params.rs    # Controller parameters
-├── isp_controller.rs # Rule-based controller
-├── neural_controller.rs # Neural controller
-├── controller_api.rs # Unified controller trait
-├── engine.rs        # Engine abstraction
-└── unified_pipeline.rs # Main pipeline
+├── mnnengine.rs      # MnnEngine (Vulkan session, process())
+├── mnn_converter.rs  # convert_onnx_buffer() ONNX→.mnn
+├── mnn_sys.rs        # FFI to libmnn_wrapper.so / libMNN.so
+├── engine.rs         # IspEngine trait, ProcessParams
+├── isp_params.rs     # Controller parameters
+├── isp_controller.rs # Rule-based controller (IspController)
+├── neural_controller.rs # NeuralController (tract ONNX + fallback)
+├── controller_api.rs # ControllerApi trait + Controller enum
+├── rectifier_model.rs # Mock ONNX generator (hist[256]+meta[52])
+└── unified_pipeline.rs # Wires controller → ProcessParams.isp_params
+
+isp-rectifier/  (separate crate, rectifier feature)
+├── src/types.rs       # FrameMetadata, to_feature_vector() (52-dim meta)
+├── src/inference.rs   # OptimizedInference, tract-onnx runner
+├── src/register_injector.rs  # ISPOptimizedParams → ISPRegisters
+└── models/fusedispcontroller_light*.onnx  # Pre-trained models
 ```
+
+### Data flow — controller → pipeline
+
+```
+Neural Controller (tract ONNX, CPU)        ISP Pipeline (MNN/Vulkan, GPU)
+─────────────────────                      ─────────────────────────────
+frame → extract_metadata()                 ProcessParams {
+   → to_feature_vector()  hist[256]+meta[52]   buf, width, height,
+   → tract-onnx optimize()   → IspParams       isp_params: Some(IspParams),
+   → IspParams {wb,ccm,tone,zoom}             ccm_matrix, awb_gains, …
+                                                          │
+                                                          ▼
+                                                    engine.process(&params)
+                                                    MNN Vulkan session
+                                                    (ONNX→MNN converted graph)
+                                                    → IspFrame (display image)
+```
+
+The controller runs first (~1 ms on CPU), producing `IspParams`. Those params are
+injected into `ProcessParams` and reach the pixel pipeline via `MnnEngine`'s
+`set_extra_inputs()` as graph input tensors, so `BayerWbBlock`, `DemosaicCcmBlock`,
+and `ToneBlock` use the neural model's predictions.
