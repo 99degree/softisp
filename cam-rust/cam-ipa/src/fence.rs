@@ -235,6 +235,47 @@ mod tests {
     }
 
     #[test]
+    fn cancel_drain_is_idempotent_for_single_and_pair_tokens() {
+        let (acquire, acquire_w) = pipe_fds();
+        let (release, release_w) = pipe_fds();
+        let mut state = AhbFenceState::default();
+        let generation = state.begin(acquire).expect("begin");
+        state.complete(release).expect("complete");
+
+        let pair = state.tokens();
+        let single: SyncFenceToken = pair.acquire;
+        assert!(single.is_valid());
+        assert!(single.matches(generation));
+        assert!(pair.matches(generation));
+        state.validate(pair).expect("live pair");
+
+        let taken = state.take_release().expect("release fence");
+        assert_eq!(taken.as_raw_fd(), release);
+        assert!(state.take_release().is_none());
+        let drained = state.tokens();
+        assert!(!drained.release.is_valid());
+        assert!(state.validate(pair).is_err());
+
+        let release_fd = taken.into_raw_fd();
+        assert!(fd_is_open(release_fd));
+        unsafe { libc::close(release_fd) };
+        assert!(!fd_is_open(release_fd));
+        unsafe {
+            libc::close(acquire_w);
+            libc::close(release_w);
+        }
+
+        let (next_acquire, next_acquire_w) = pipe_fds();
+        assert_eq!(
+            state.begin(next_acquire).expect("re-acquire"),
+            generation + 1
+        );
+        assert!(!single.matches(generation + 1));
+        assert!(!pair.matches(generation + 1));
+        unsafe { libc::close(next_acquire_w) };
+    }
+
+    #[test]
     fn zero_policy_defaults_to_safe_clear() {
         assert!(ZeroPolicy::default().needs_zero());
         assert!(!ZeroPolicy::FullOverwrite.needs_zero());

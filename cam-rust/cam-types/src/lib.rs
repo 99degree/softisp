@@ -439,4 +439,21 @@ mod tests {
         assert!(!tokens.matches(8));
         assert_eq!(SyncFenceToken::NONE.fd, INVALID_SYNC_FD);
     }
+
+    #[test]
+    fn single_and_pair_fence_tokens_keep_independent_generations() {
+        let single = SyncFenceToken::new(11, 3);
+        let pair = AhbFenceTokens::new(12, -1, 9);
+
+        assert!(single.is_valid());
+        assert!(single.matches(3));
+        assert!(!single.matches(9));
+
+        assert!(pair.acquire.is_valid());
+        assert!(!pair.release.is_valid());
+        assert!(pair.matches(9));
+        assert!(!pair.matches(3));
+        assert!(pair.acquire.matches(9));
+        assert!(!pair.acquire.matches(3));
+    }
 }

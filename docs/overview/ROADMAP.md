@@ -105,8 +105,8 @@
   `AHardwareBuffer_lock` and captures release fds from
   `AHardwareBuffer_unlock`. `run_prepared()` rejects cross-generation AHB
   bindings. The non-Android dmabuf/sync_fd equivalent is a separate TODO below.
-  Verified with fmt, workspace check, canonical clippy, 1 `cam-types` / 3
-  `cam-hal` / 2 `cam-onnx` / 6 `cam-motion` / 9 `cam-ipa` / 840 `cam-isp` /
+  Verified with fmt, workspace check, canonical clippy, 2 `cam-types` / 3
+  `cam-hal` / 2 `cam-onnx` / 6 `cam-motion` / 10 `cam-ipa` / 840 `cam-isp` /
   49 `softisp-anw` hermetic tests and 875 real MNN tests. On-device logs after
   the P2h APK showed no fatal/panic/kill; one recoverable camera error 4 was
   followed by session-ready and continued frames.
@@ -498,7 +498,8 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
 - **Verification:** hermetic tests now cover metadata/frame generation matching
   in `PrepareParams`, fence ownership/close-on-consumer, no reuse before the
   release fence is taken, the zeroing policy and full-overwrite host allocation.
-  Still TODO: idempotent cancel with both AHB token types and extending the
+  Idempotent cancel/drain with both token shapes is now covered by hermetic
+  `cam-types` and `cam-ipa` tests. Still TODO: extending the
   per-phase perf probe
   to separate capture-fill,
   prefill, inference, display handoff and readback. Add an ignored on-device

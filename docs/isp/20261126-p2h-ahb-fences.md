@@ -82,7 +82,7 @@ and slot generation are part of the runtime contract.
 - Canonical per-crate clippy loop with `-D warnings`, including `softisp-anw`:
   clean.
 - Hermetic tests: `cam-types` 1 passed, `cam-hal` 3 passed, `cam-core` 0 passed,
-  `cam-onnx` 2 passed, `cam-motion` 6 passed, `cam-ipa` 9 passed,
+  `cam-onnx` 2 passed, `cam-motion` 6 passed, `cam-ipa` 10 passed,
   `cam-isp --features rectifier` 840 passed / 2 ignored, `softisp-anw` 49 passed.
 - Real MNN suite `cam-isp --features "rectifier mnn"`: 875 passed / 2 ignored.
 - On-device log check after the P2h APK (2026-11-26): 5434 lines across the
