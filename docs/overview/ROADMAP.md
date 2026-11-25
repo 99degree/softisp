@@ -97,8 +97,8 @@
   staged phases so camera DMA fills a pre-bound input AHB while the next frame's
   metadata tensors are prefilled, and hand the output AHB to Android for display
   while stats readback updates the next controller state. Also audit buffer
-  zeroing as a warm-up cost. Tracked as TODO below; depends on P2b and on-device
-  fence/lifetime validation.
+  zeroing as a warm-up cost and add explicit AHB fence tokens. Tracked as TODO
+  below; depends on P2b and on-device fence/lifetime validation.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
@@ -448,6 +448,15 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   The output AHB may not be recycled until both the display release fence and
   `finish()` have completed; track this with the existing staged token plus an
   explicit display-release token.
+- **AHB fence plumbing (explicit TODO):** Android `AHardwareBuffer` has no fence
+  field of its own; the sync fd travels with the BufferQueue/capture slot.
+  `AhwBuffer` currently carries only handle, dimensions, format and strides, and
+  `ProcessParams::{input_ahb, output_ahb}` carry only `(ptr, size)`. Add a
+  generation-tagged fence pair per AHB slot: camera acquire fence → Vulkan wait
+  semaphore before `run_prepared()`, GPU completion → display release fence
+  after inference, and wait for both display release and `finish()` before
+  recycling. Define fd/semaphore ownership and close-on-consumer rules explicitly;
+  never assume implicit driver ordering.
 - **Zeroing audit:** measure before changing. `MemBuffer::new()` zeroes with
   `vec![0u8; size]`, scratch vectors use `resize(..., 0)`, and
   `AHardwareBuffer_allocate` zeroing is allocator/driver-dependent. Skip the
@@ -466,8 +475,9 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   the output surface. Do not bypass P2b with a host-pointer bind the Vulkan
   backend ignores.
 - **Verification:** hermetic tests for metadata/frame generation matching,
-  idempotent cancel with both token types, no reuse before release, and the
-  zeroing policy; extend the per-phase perf probe to separate capture-fill,
+  idempotent cancel with both token types, fence ownership/close-on-consumer,
+  no reuse before release, and the zeroing policy; extend the per-phase perf
+  probe to separate capture-fill,
   prefill, inference, display handoff and readback. Add an ignored on-device
   test that checks warm-up allocation time and confirms no stale/blank frames
   after cancel + restart.
