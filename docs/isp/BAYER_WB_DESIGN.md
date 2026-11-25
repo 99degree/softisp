@@ -134,9 +134,10 @@ fused_b[i]   = -Σ_j fused_w[i,j] * blc[j]      (when BLC is still in raw counts
 
 Here `i` is the output RGB channel, `k` is the demosaic source channel, and `j`
 is the CFA plane. `DemosaicCcmBlock::fuse_weights_ext()` implements this
-algebra, and `profile_builder.rs` omits `BayerWbBlock` when
-`fuse_stages.wb_into_demosaic` is allowed with the MNN ISP opset. On the actual
-production chain the fused RAW head has already divided by `sensor_max` and
+algebra, and `profile_builder.rs` omits `BayerWbBlock` whenever the fused
+demosaic+CCM op is enabled. `wb_into_demosaic` is kept only for compatibility;
+it no longer decides block presence. On the actual production chain the fused
+RAW head has already divided by `sensor_max` and
 subtracted BLC, so `MnnEngine::set_extra_inputs()` writes the
 already-normalized form without dividing again.
 

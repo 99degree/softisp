@@ -105,22 +105,24 @@ special case, and its fused-sink algebra is now in
 
 The fused `DemosaicCcmBlock` already has runtime extra inputs `/w` and `/b`.
 `/w` is the whole `CCM × demosaic × WB` matrix, so WB is a column scale on it,
-not a second dispatch. `FuseStages::wb_into_demosaic` makes `profile_builder`
-omit `BayerWbBlock` entirely on the production FUSED chain; the primitive chain
-keeps the separate block. `DemosaicCcmBlock::fuse_weights_ext()` is the explicit
+not a second dispatch. `profile_builder` now omits `BayerWbBlock` whenever the
+fused demosaic+CCM op is enabled; `wb_into_demosaic` is kept as a compatibility
+field but no longer controls block presence. The primitive chain keeps the
+separate block. `DemosaicCcmBlock::fuse_weights_ext()` is the explicit
 implementation of the algebra, and `set_extra_inputs()` writes the
 already-normalized form because the fused RAW head has divided by `sensor_max`.
 
 The name `w` is intentionally generic because it is not a WB gain vector. The
 logical 3A name remains `BayerWbBlock/gains`; the engine always attempts that
-write first and falls back to the fused sink, logging the mapping once. A
-repository-wide rename (`BayerWbBlock/wb_gain`, unified suffixes for demosaic,
-CCM, tone, and shader bindings) is recorded as a P3 follow-up in
-`docs/overview/ROADMAP.md`. Doing it here would change every converter binding
-and model dependency for a cosmetic gain.
+write first and falls back to the fused sink. A repository-wide rename
+(`BayerWbBlock/wb_gain`, unified suffixes for demosaic, CCM, tone, and shader
+bindings) is recorded as a P3 follow-up in `docs/overview/ROADMAP.md`. Shared
+Rust constants for the current names were tried and removed: the strings are
+simple, and the rename belongs in the coordinated follow-up.
 
 The ignored `probe_wb_fused` test previously set `wb_into_demosaic: true` on
-both arms, so it compared a frame with itself. It now disables the fold on the
-"separate WB" arm and uses `ProcessParams::new()` so new zero-copy fields do not
-break compilation. The probe still needs a device/MNN run to validate that the
-two spellings are pixel-equivalent.
+both arms, so it compared a frame with itself. It now disables `demosaic_ccm`
+on the "separate WB" arm (clearing only `wb_into_demosaic` would still omit the
+block under the new rule) and uses `ProcessParams::new()` so new zero-copy
+fields do not break compilation. The probe still needs a device/MNN run to
+validate that the two spellings are pixel-equivalent.
