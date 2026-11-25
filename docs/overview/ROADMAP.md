@@ -110,6 +110,11 @@
   49 `softisp-anw` hermetic tests and 875 real MNN tests. On-device logs after
   the P2h APK showed no fatal/panic/kill; one recoverable camera error 4 was
   followed by session-ready and continued frames.
+- **Critical-path phase instrumentation** (2026-11-26): `IspFrame::aux.timing`
+  now carries setup, tensor-upload, inference, output and deferred-readback
+  durations, and `probe_4k_perf` prints the visible split with a focused
+  `perf_critical_path` case. See
+  `docs/isp/20261126-critical-path-instrumentation.md`.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
