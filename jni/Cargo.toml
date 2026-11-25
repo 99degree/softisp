@@ -1,5 +1,5 @@
 [package]
-name = "softisp_jni"
+name = "softisp-jni"
 version = "0.1.0"
 edition = "2021"
 description = "JNI bridge for softisp IPA on Android"
