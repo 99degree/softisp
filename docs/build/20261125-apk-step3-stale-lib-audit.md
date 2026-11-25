@@ -61,3 +61,19 @@ unzip -p target/debug/apk/softisp-camera.apk \
 
 All three hashes must match. This remains unimplemented; it is recorded as
 TODO P2e in `docs/overview/ROADMAP.md`.
+
+## Is `anw/` a replacement for `libcam_camera_app.so`?
+
+No. `anw/` is a separate experimental crate (`com.softisp.anw`, library
+`softisp_anw`) intended to become its own APK later
+(`docs/ipa/ANW_SPLIT_PLAN.md`). The shipped APK is `com.softisp.camera`, whose
+NativeActivity loads `cam_camera_app` (`android-app/Cargo.toml`), and
+`./build-apk.sh` still builds `-p cam-camera-app`.
+
+`anw/` has presentation plus a `cam-ipa` processing entry point, but it does
+not have an `android_main` or camera-capture code (`ACameraManager`). Its
+cargo-apk2 metadata references `AndroidManifest.xml` and `Sources/res`, but
+neither exists in the tree. Its C ABI expects the caller to hand it raw frames
+(`softisp_anw_process_and_present`). Switching to an anw APK would require those
+missing pieces and a build-script change; until then the stale
+`libcam_camera_app.so` is the active application binary.
