@@ -85,6 +85,12 @@ and slot generation are part of the runtime contract.
   `cam-onnx` 2 passed, `cam-motion` 6 passed, `cam-ipa` 9 passed,
   `cam-isp --features rectifier` 840 passed / 2 ignored, `softisp-anw` 49 passed.
 - Real MNN suite `cam-isp --features "rectifier mnn"`: 875 passed / 2 ignored.
+- On-device log check after the P2h APK (2026-11-26): 5434 lines across the
+  current and rotated app logs; no fatal signal, Rust panic, tombstone, or app
+  process kill. One recoverable `ACameraDevice: error 4` at 31.3 s was followed
+  by `ACameraCaptureSession: ready` and continued frames through 31.9 s. Frame
+  times stayed in the existing ~300–500 ms range. `HardwareBuffer.close`/release
+  warnings came from SystemUI PID 26501, not the app process.
 - `cargo test --workspace --doc --all-features` remains unavailable on
   Android/Termux because `--all-features` activates platform-specific crates;
   this is a local environment limitation, not a tree regression.

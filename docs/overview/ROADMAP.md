@@ -107,7 +107,9 @@
   bindings. The non-Android dmabuf/sync_fd equivalent is a separate TODO below.
   Verified with fmt, workspace check, canonical clippy, 1 `cam-types` / 3
   `cam-hal` / 2 `cam-onnx` / 6 `cam-motion` / 9 `cam-ipa` / 840 `cam-isp` /
-  49 `softisp-anw` hermetic tests and 875 real MNN tests.
+  49 `softisp-anw` hermetic tests and 875 real MNN tests. On-device logs after
+  the P2h APK showed no fatal/panic/kill; one recoverable camera error 4 was
+  followed by session-ready and continued frames.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
