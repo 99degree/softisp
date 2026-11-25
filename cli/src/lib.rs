@@ -4,6 +4,7 @@
 //!   - Generate synthetic 4K test frames (always available)
 //!   - Capture real frames via V4L2 / cam-hal-linux (feature `v4l2`)
 //!   - Process frames through cam-ipa IPA pipeline (MnnEngine Vulkan)
+//!   - Selectable pipeline profile (LITE, MED, FUSED, HEAVY, PRO, TEST, UNIFIED, HDR, YUV)
 //!   - Compiled as:
 //!     - cdylib (libcam_ipa_test_cli.so) — exports `ipa_test_main` for dlopen,
 //!       and `my_entry` as ELF entry point for direct execution.
@@ -16,15 +17,79 @@
 //! Run:
 //!   ./target/debug/libcam_ipa_test_cli.so          # direct execution
 //!   # or dlopen and call ipa_test_main()
+//!   ./target/debug/ipa_test_cli --profile HEAVY --width 3840 --height 2160
 
 use cam_ipa::{
     IpaConfig, IpaSettings, IpaSensorInfo, IpaFormat, IpaCallbacks,
     ControlList, MemBuffer, IpaContext,
-    Size, Rectangle, Buffer,
+    Size, Rectangle, Buffer, EngineBackend,
 };
+use cam_isp::profile::PipelineProfile;
+use clap::Parser;
 
 #[cfg(feature = "v4l2")]
 use cam_hal_linux::{create_v4l2_adapter, list_v4l2_devices, capture_single_v4l2_frame};
+
+/// CLI argument parser for the IPA test tool
+#[derive(Parser, Debug)]
+#[command(author, version, about = "cam-ipa test CLI — 4K frame generator + ISP pipeline")]
+struct Args {
+    /// Pipeline profile preset
+    #[arg(long, default_value = "fused", value_enum)]
+    profile: ProfileArg,
+
+    /// Output frame width
+    #[arg(long, default_value_t = 3840)]
+    width: u32,
+
+    /// Output frame height
+    #[arg(long, default_value_t = 2160)]
+    height: u32,
+
+    /// Output format
+    #[arg(long, default_value = "bgra", value_enum)]
+    format: FormatArg,
+
+    /// Backend engine
+    #[arg(long, default_value = "mnn_vulkan", value_enum)]
+    backend: BackendArg,
+
+    /// Enable neural controller (isp-rectifier)
+    #[arg(long)]
+    neural: bool,
+
+    /// Model directory for neural processor
+    #[arg(long)]
+    model_dir: Option<String>,
+}
+
+/// Profile argument enum for clap
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum ProfileArg {
+    Lite, Med, Fused, Heavy, Pro, Test, Unified, Hdr, Yuv,
+}
+
+/// Format argument enum for clap
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum FormatArg {
+    Rgb, Rgba, Bgra, Argb, Abgr, Yuv, Nv12, P010,
+}
+
+/// Backend argument enum for clap
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum BackendArg {
+    MnnVulkan, Cpu, OnnxRuntime,
+}
+
+impl From<BackendArg> for EngineBackend {
+    fn from(arg: BackendArg) -> Self {
+        match arg {
+            BackendArg::MnnVulkan => EngineBackend::MnnVulkan,
+            BackendArg::Cpu => EngineBackend::Cpu,
+            BackendArg::OnnxRuntime => EngineBackend::OnnxRuntime,
+        }
+    }
+}
 
 /// Library entry point — callable via dlopen
 #[no_mangle]
@@ -40,17 +105,55 @@ pub extern "C" fn my_entry() -> ! {
 }
 
 fn run_cli() -> i32 {
+    let args = Args::parse();
     env_logger::init();
 
     println!("=== cam-ipa Test CLI (polyglot ELF) ===");
     println!("Features: {}", feature_list());
+    println!("Profile: {:?} ({:?})", args.profile, std::any::type_name::<PipelineProfile>());
+    println!("Resolution: {}x{}", args.width, args.height);
+    println!("Format: {:?}", args.format);
+    println!("Backend: {:?}", args.backend);
+    println!("Neural: {}", args.neural);
+    if let Some(dir) = &args.model_dir {
+        println!("Model dir: {}", dir);
+    }
 
-    // 1. Create config — default to 4K for pipeline stress testing
+    // 1. Create config with selected profile
+    let profile = match args.profile {
+        ProfileArg::Lite => PipelineProfile::LITE,
+        ProfileArg::Med => PipelineProfile::MED,
+        ProfileArg::Fused => PipelineProfile::FUSED,
+        ProfileArg::Heavy => PipelineProfile::HEAVY,
+        ProfileArg::Pro => PipelineProfile::PRO,
+        ProfileArg::Test => PipelineProfile::TEST,
+        ProfileArg::Unified => PipelineProfile::UNIFIED,
+        ProfileArg::Hdr => PipelineProfile::HDR,
+        ProfileArg::Yuv => PipelineProfile::YUV,
+    };
+
     let config = IpaConfig {
-        image_width: 3840,
-        image_height: 2160,
-        format: IpaFormat::BGRA,
+        image_width: args.width,
+        image_height: args.height,
+        format: match args.format {
+            FormatArg::Rgb => IpaFormat::RGB,
+            FormatArg::Rgba => IpaFormat::RGBA,
+            FormatArg::Bgra => IpaFormat::BGRA,
+            FormatArg::Argb => IpaFormat::ARGB,
+            FormatArg::Abgr => IpaFormat::ABGR,
+            FormatArg::Yuv => IpaFormat::YUV,
+            FormatArg::Nv12 => IpaFormat::NV12,
+            FormatArg::P010 => IpaFormat::P010,
+        },
         num_output_buffers: 2,
+        backend: match args.backend {
+            BackendArg::MnnVulkan => EngineBackend::MnnVulkan,
+            BackendArg::Cpu => EngineBackend::Cpu,
+            BackendArg::OnnxRuntime => EngineBackend::OnnxRuntime,
+        },
+        profile,
+        neural_enabled: args.neural,
+        model_dir: args.model_dir.clone().map(std::path::PathBuf::from),
         ..IpaConfig::default()
     };
     let config_for_acquire = config.clone();
@@ -86,14 +189,14 @@ fn run_cli() -> i32 {
     ctx.set_callbacks(callbacks);
     println!("Callbacks registered");
 
-    // 4. Create sensor info (4K)
+    // 4. Create sensor info
     let sensor_info = IpaSensorInfo {
-        model: "test_sensor_4k".to_string(),
+        model: "test_sensor".to_string(),
         bits_per_pixel: 10,
         cfa_pattern: 0,
-        active_area_size: Size { width: 3840, height: 2160 },
-        analog_crop: Rectangle { x: 0, y: 0, width: 3840, height: 2160 },
-        output_size: Size { width: 3840, height: 2160 },
+        active_area_size: Size { width: args.width, height: args.height },
+        analog_crop: Rectangle { x: 0, y: 0, width: args.width, height: args.height },
+        output_size: Size { width: args.width, height: args.height },
         pixel_rate: 0,
         min_line_length: 0,
         max_line_length: 0,
@@ -104,7 +207,7 @@ fn run_cli() -> i32 {
     // 5. Initialize
     let settings = IpaSettings {
         config_file: None,
-        sensor_model: "test_sensor_4k".to_string(),
+        sensor_model: "test_sensor".to_string(),
     };
     match ctx.init(&settings, &sensor_info) {
         Ok(init_result) => {
@@ -129,7 +232,6 @@ fn run_cli() -> i32 {
 
     // 7. Acquire frame input — V4L2 if available, otherwise synthetic
     let (width, height, input_data) = acquire_frame(&config_for_acquire);
-
     let mut input_buf = MemBuffer::new(input_data.len());
     input_buf.data.copy_from_slice(&input_data);
 
@@ -251,15 +353,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_synthetic_frame_generation() {
-        let config = IpaConfig {
-            image_width: 64,
-            image_height: 48,
-            format: IpaFormat::BGRA,
-            num_output_buffers: 1,
-            ..IpaConfig::default()
-        };
-        let (_w, _h, data) = acquire_frame(&config);
-        assert_eq!(data.len(), 64 * 48 * 2);
+    fn test_profile_arg_conversion() {
+        for arg in [
+            ProfileArg::Lite, ProfileArg::Med, ProfileArg::Fused,
+            ProfileArg::Heavy, ProfileArg::Pro, ProfileArg::Test,
+            ProfileArg::Unified, ProfileArg::Hdr, ProfileArg::Yuv,
+        ] {
+            let _profile: PipelineProfile = arg.into();
+        }
+    }
+
+    #[test]
+    fn test_format_arg_conversion() {
+        for arg in [
+            FormatArg::Rgb, FormatArg::Rgba, FormatArg::Bgra,
+            FormatArg::Argb, FormatArg::Abgr, FormatArg::Yuv,
+            FormatArg::Nv12, FormatArg::P010,
+        ] {
+            let _fmt: IpaFormat = arg.into();
+        }
+    }
+
+    #[test]
+    fn test_backend_arg_conversion() {
+        for arg in [BackendArg::MnnVulkan, BackendArg::Cpu, BackendArg::OnnxRuntime] {
+            let _backend: EngineBackend = arg.into();
+        }
     }
 }

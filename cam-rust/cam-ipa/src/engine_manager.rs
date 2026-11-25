@@ -3,9 +3,10 @@
 use cam_isp::{
     engine::{IspEngine, OutputFormat, ProcessParams, BackendCapabilities},
     mnnengine::{MnnEngine, MnnBackend},
-    blocks::{UnpackBlock, DemosaicCcmBlock, ToneBlock, TemporalDenoiseBlock, DisplayBlock},
+    profile::PipelineProfile,
     controller::IspController,
     pipeline::IspBlock,
+    blocks::*,
 };
 use std::sync::{Arc, Mutex};
 use crate::{IpaConfig, IpaResult, IpaError, IpaFormat, EngineBackend};
@@ -16,6 +17,7 @@ pub struct EngineManager {
     config: IpaConfig,
     controller: Arc<Mutex<IspController>>,
     is_built: bool,
+    profile: PipelineProfile,
 }
 
 impl EngineManager {
@@ -37,33 +39,39 @@ impl EngineManager {
         let controller = Arc::new(Mutex::new(IspController::new()));
         engine.controller = controller.clone();
         
+        let profile = config.profile;
+        
         Ok(Self {
             engine: Box::new(engine),
             config,
             controller,
             is_built: false,
+            profile,
         })
     }
     
-    /// Build the pipeline from blocks
+    /// Build the pipeline from blocks using the selected PipelineProfile
     pub fn build(&mut self) -> IpaResult<()> {
-        // Build the standard softisp pipeline blocks
         let width = self.config.image_width;
         let height = self.config.image_height;
         
-        let head: Box<dyn IspBlock> = Box::new(UnpackBlock::new());
-        let aux_blocks: Vec<Box<dyn IspBlock>> = vec![
-            Box::new(DemosaicCcmBlock::new(2)), // MHC demosaic
-            Box::new(ToneBlock::new()),
-            Box::new(TemporalDenoiseBlock::new().with_threshold(0.03)),
-        ];
+        // Build the main pipeline blocks from the profile
+        let main_blocks = self.profile.build_blocks(width, height, 0);
         
-        // Output format for display block
-        let _output_format = self.ipa_format_to_output_format(self.config.format);
-        let display = DisplayBlock::new(width);
-        let _ = display;
+        if main_blocks.is_empty() {
+            return Err(IpaError::InvalidConfig("Profile produced no blocks".into()));
+        }
         
-        self.engine.build(head, aux_blocks, None, 18)?;
+        // Split into head and aux
+        let mut main_blocks = main_blocks;
+        let head = main_blocks.remove(0);
+        let aux_blocks: Vec<Box<dyn IspBlock>> = main_blocks;
+        
+        // Build aux stats blocks
+        let stats_aux = self.profile.build_aux_blocks(height as i64, width as i64);
+        let all_aux: Vec<Box<dyn IspBlock>> = aux_blocks.into_iter().chain(stats_aux).collect();
+        
+        self.engine.build(head, all_aux, None, 18)?;
         
         self.is_built = true;
         Ok(())
@@ -110,5 +118,10 @@ impl EngineManager {
     /// Get capabilities
     pub fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities::probe(self.engine.backend_name())
+    }
+    
+    /// Get the active profile
+    pub fn profile(&self) -> PipelineProfile {
+        self.profile
     }
 }

@@ -3,9 +3,10 @@
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use std::os::fd::RawFd;
+use cam_isp::profile::PipelineProfile;
 
 /// Configuration for IPA context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IpaConfig {
     /// Directory containing model files (algo.mnn, applier.mnn)
     pub model_dir: Option<PathBuf>,
@@ -23,6 +24,10 @@ pub struct IpaConfig {
     pub enable_dual_gpu: bool,
     /// Stats inference interval (1 = every frame)
     pub stats_interval: u32,
+    /// Pipeline profile preset (LITE, MED, FUSED, HEAVY, PRO, TEST, UNIFIED, HDR, YUV)
+    pub profile: PipelineProfile,
+    /// Enable NeuralController (isp-rectifier) instead of rule-based IspController
+    pub neural_enabled: bool,
 }
 
 impl Default for IpaConfig {
@@ -36,6 +41,8 @@ impl Default for IpaConfig {
             backend: EngineBackend::MnnVulkan,
             enable_dual_gpu: false,
             stats_interval: 1,
+            profile: PipelineProfile::FUSED,
+            neural_enabled: false,
         }
     }
 }

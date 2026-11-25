@@ -376,6 +376,8 @@ dependencies = [
  "cam-hal",
  "cam-hal-linux",
  "cam-ipa",
+ "cam-isp",
+ "clap",
  "env_logger 0.10.2",
  "log",
 ]

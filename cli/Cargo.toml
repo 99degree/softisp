@@ -6,8 +6,10 @@ description = "Polyglot IPA test CLI — executable directly and dlopen-able as 
 
 [dependencies]
 cam-ipa = { path = "../cam-rust/cam-ipa" }
+cam-isp = { path = "../cam-rust/cam-isp" }
 env_logger = "0.10"
 log = "0.4"
+clap = { version = "4", features = ["derive"] }
 
 # Optional V4L2 capture via cam-hal-linux
 cam-hal-linux = { path = "../cam-rust/cam-hal-linux", optional = true }
