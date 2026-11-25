@@ -1,5 +1,5 @@
 [package]
-name = "softisp_anw"
+name = "softisp-anw"
 version = "0.1.0"
 edition = "2021"
 description = "ANativeWindow consumer for softisp IPA on Android"
@@ -7,11 +7,54 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 cam-ipa = { path = "../cam-rust/cam-ipa" }
-ndk-sys = { version = "0.6", features = ["nativewindow"] }
+cam-isp = { path = "../cam-rust/cam-isp" }
+ndk-sys = { version = "0.6", features = ["media"] }
+android-activity = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = { workspace = true }
 
 [lib]
 name = "softisp_anw"
 path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
+
+# ── APK packaging (cargo-apk2) ───────────────────────────────────────────
+
+[package.metadata.android]
+apk_name = "softisp-anw"
+package = "com.softisp.anw"
+manifest_override = "AndroidManifest.xml"
+resources = "Sources/res"
+
+[package.metadata.android.sdk]
+min_sdk_version = 24
+target_sdk_version = 34
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.camera"
+required = true
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.CAMERA"
+
+[[package.metadata.android.application]]
+label = "SoftISP ANW"
+has_code = true
+debuggable = true
+theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+
+[[package.metadata.android.application.activity]]
+name = "android.app.NativeActivity"
+exported = true
+config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection"
+
+[[package.metadata.android.application.activity.meta_data]]
+name = "android.app.lib_name"
+value = "softisp_anw"
+
+[[package.metadata.android.application.activity.intent_filter]]
+actions = ["android.intent.action.MAIN"]
+categories = ["android.intent.category.LAUNCHER"]

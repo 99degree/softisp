@@ -2186,21 +2186,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 
 [[package]]
-name = "softisp_anw"
+name = "softisp-jni"
 version = "0.1.0"
 dependencies = [
  "cam-ipa",
+ "jni 0.21.1",
  "log",
  "ndk-sys",
  "thiserror 2.0.21",
 ]
 
 [[package]]
-name = "softisp_jni"
+name = "softisp_anw"
 version = "0.1.0"
 dependencies = [
  "cam-ipa",
- "jni 0.21.1",
  "log",
  "ndk-sys",
  "thiserror 2.0.21",
