@@ -243,7 +243,7 @@ impl NeuralController {
                 Ok(meta) => match rectifier.optimize(&meta) {
                     Ok(optimized) => {
                         info!("NeuralController: neural model succeeded");
-                        self.params_from_optimized(&optimized)
+                        self.params_from_optimized(frame, &optimized)
                     }
                     Err(e) => {
                         warn!(
@@ -392,42 +392,41 @@ impl NeuralController {
     }
 
     #[cfg(feature = "rectifier")]
-    fn params_from_optimized(&self, optimized: &isp_rectifier::ISPOptimizedParams) -> IspParams {
-        IspParams {
-            blc: BlcParams::default(),
-            wb: WbParams {
-                r: optimized.wb_r_gain,
-                g: optimized.wb_g_gain,
-                b: optimized.wb_b_gain,
-            },
-            ccm: CcmParams {
-                matrix: {
-                    let mut m = [0.0f32; 9];
-                    for i in 0..3 {
-                        for j in 0..3 {
-                            m[i * 3 + j] = optimized.ccm[i][j];
-                        }
-                    }
-                    m
-                },
-            },
-            tone: ToneParams {
-                contrast: 1.0,
-                brightness: 0.0,
-                gamma: 1.0,
-                black_crush: 0.0,
-                white_clip: 1.0,
-                curve_lut: optimized.tone_curve_lut.clone(),
-            },
-            saturation: SaturationParams::default(),
-            sharpen: SharpenParams::default(),
-            denoise: DenoiseParams::off(),
-            lens: LensParams::default(),
-            display: DisplayParams::default(),
-            zoom: optimized.zoom_factor,
-            vcm_position: 0.0, // VCM from AF engine, not neural model
-            custom: std::collections::HashMap::new(),
-        }
+    fn params_from_optimized(&mut self, frame: &IspFrame, optimized: &isp_rectifier::ISPOptimizedParams) -> IspParams {
+        // Neural model predicts WB gains, CCM matrix, tone curve LUT, and zoom.
+        // Ask the rule-based controller to compute the remaining fields
+        // (BLC, denoise, sharpen, saturation, parametric tone contrast/brightness/
+        // gamma, lens) while SKIPPING white-balance and tone — those would be
+        // recomputed by IspController only to be immediately overwritten by the
+        // neural values below. This avoids wasted compute on coefficients that get
+        // dropped.
+        let mut params = self.fallback.analyze_and_update_partial(frame, true, true).clone();
+
+        // Neural model outputs override the rule-based defaults:
+        params.wb.r = optimized.wb_r_gain;
+        params.wb.g = optimized.wb_g_gain;
+        params.wb.b = optimized.wb_b_gain;
+
+        params.ccm.matrix = {
+            let mut m = [0.0f32; 9];
+            for i in 0..3 {
+                for j in 0..3 {
+                    m[i * 3 + j] = optimized.ccm[i][j];
+                }
+            }
+            m
+        };
+
+        params.tone.contrast = 1.0;
+        params.tone.brightness = 0.0;
+        params.tone.gamma = 1.0;
+        params.tone.black_crush = 0.0;
+        params.tone.white_clip = 1.0;
+        params.tone.curve_lut = optimized.tone_curve_lut.clone();
+
+        params.zoom = optimized.zoom_factor;
+
+        params
     }
 
     fn smooth_params(old: &IspParams, new: &IspParams, alpha: f32) -> IspParams {

@@ -43,25 +43,50 @@ impl IspController {
 
     /// Analyze frame and update parameters.
     pub fn analyze_and_update(&mut self, frame: &IspFrame) -> &IspParams {
-        // 1. Compute frame statistics
+        self.analyze_and_update_partial(frame, false, false)
+    }
+
+    /// Analyze frame and update parameters, optionally skipping the white-balance
+    /// and tone-mapping steps.
+    ///
+    /// This is used by the hybrid `NeuralController`: when the neural model has
+    /// already produced WB gains, CCM matrix, tone curve LUT, and zoom, the
+    /// rule-based controller only needs to compute the remaining fields (BLC,
+    /// denoise, sharpen, saturation, lens, parametric tone) — skipping WB and
+    /// tone avoids recomputing coefficients that would be overwritten/dropped.
+    ///
+    /// - `skip_wb`: skip `update_white_balance` (WB gains left at defaults).
+    /// - `skip_tone`: skip `update_tone` (contrast/brightness/gamma left at defaults).
+    pub fn analyze_and_update_partial(
+        &mut self,
+        frame: &IspFrame,
+        skip_wb: bool,
+        skip_tone: bool,
+    ) -> &IspParams {
+        // 1. Compute frame statistics (always needed).
         let stats = self.compute_stats(frame);
 
-        // 2. Update auto-exposure (brightness)
+        // 2. Update auto-exposure (brightness) — not covered by neural model.
         self.update_exposure(&stats);
 
-        // 3. Update auto-white-balance
-        self.update_white_balance(&stats);
+        // 3. Update auto-white-balance — covered by neural model; may be skipped.
+        if !skip_wb {
+            self.update_white_balance(&stats);
+        }
 
-        // 4. Update denoise based on noise level
+        // 4. Update denoise based on noise level — not covered by neural model.
         self.update_denoise(&stats);
 
-        // 5. Update sharpening based on scene
+        // 5. Update sharpening based on scene — not covered by neural model.
         self.update_sharpen(&stats);
 
-        // 6. Update tone mapping based on histogram
-        self.update_tone(&stats);
+        // 6. Update tone mapping based on histogram — covered by neural model
+        // (curve LUT); may be skipped.
+        if !skip_tone {
+            self.update_tone(&stats);
+        }
 
-        // 7. Update saturation based on scene
+        // 7. Update saturation based on scene — not covered by neural model.
         self.update_saturation(&stats);
 
         // Store stats for next frame
