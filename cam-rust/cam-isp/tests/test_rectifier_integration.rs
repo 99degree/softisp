@@ -19,6 +19,7 @@ fn create_test_frame() -> IspFrame {
         prep_duration_ns: 0,
         inference_duration_ns: 0,
         total_duration_ns: 0,
+        external_data: None,
     }
 }
 

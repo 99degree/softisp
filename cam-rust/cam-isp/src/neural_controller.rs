@@ -181,9 +181,72 @@ impl NeuralController {
     fn extract_metadata(&self, frame: &IspFrame) -> IspResult<isp_rectifier::FrameMetadata> {
         let histogram = self.compute_histogram(frame)?;
 
+        // Compute basic statistics from histogram
+        let total: u32 = histogram.iter().sum();
+        let brightness = if total > 0 {
+            let mean: f32 = histogram
+                .iter()
+                .enumerate()
+                .map(|(i, &count)| i as f32 * count as f32)
+                .sum::<f32>()
+                / total as f32
+                / 255.0;
+            mean.clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+
+        // Contrast: standard deviation of luminance, normalized
+        let contrast = if total > 0 {
+            let mean: f32 = histogram
+                .iter()
+                .enumerate()
+                .map(|(i, &count)| i as f32 * count as f32)
+                .sum::<f32>()
+                / total as f32;
+            let var: f32 = histogram
+                .iter()
+                .enumerate()
+                .map(|(i, &count)| {
+                    let diff = i as f32 - mean;
+                    diff * diff * count as f32
+                })
+                .sum::<f32>()
+                / total as f32;
+            (var.sqrt() / 255.0).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+
+        // Estimate color temperature from histogram balance:
+        // weight low bins as warmer, high bins as cooler
+        let cct = if total > 0 {
+            let warm: u32 = histogram[..64].iter().sum();
+            let cool: u32 = histogram[192..].iter().sum();
+            let ratio = if warm + cool > 0 {
+                cool as f32 / (warm + cool) as f32
+            } else {
+                0.5
+            };
+            2000.0 + ratio * 8000.0 // 2000K (warm) → 10000K (cool)
+        } else {
+            5500.0
+        };
+
+        // Noise level: estimate from high-frequency histogram variation
+        let noise_level = if total > 0 {
+            let mut adjacent_diff: f32 = 0.0;
+            for i in 1..256 {
+                adjacent_diff += (histogram[i] as i32 - histogram[i - 1] as i32).abs() as f32;
+            }
+            (adjacent_diff / total as f32 / 2.0).clamp(0.0, 0.3)
+        } else {
+            0.1
+        };
+
         Ok(isp_rectifier::FrameMetadata {
             histogram,
-            cct: 5500.0,
+            cct,
             wb_gains: [1.0, 1.0, 1.0],
             ae: isp_rectifier::AutoExposure {
                 exposure_time: 0.033,
@@ -198,9 +261,9 @@ impl NeuralController {
                 gains: [1.0, 1.0, 1.0],
                 confidence: 0.5,
             },
-            brightness: 0.5,
-            contrast: 0.5,
-            noise_level: 0.1,
+            brightness,
+            contrast,
+            noise_level,
             timestamp: frame.timestamp_ns,
         })
     }

@@ -4,60 +4,102 @@
 //! input/output interface (267→20) using simple operations.
 //!
 //! The model performs:
-//! - Input: histogram\[256\] + metadata\[11\] = 267 dims
-//! - Simple linear transformation
-//! - Output: wb\[3\] + ccm\[9\] + tone\[7\] + zoom\[1\] = 20 dims
+//! - Input 1: "hist" [1, 256] FLOAT  (histogram)
+//! - Input 2: "meta" [1, 11] FLOAT   (metadata)
+//! - Output 1: "wb" [1, 3] FLOAT     (white balance gains)
+//! - Output 2: "ccm" [1, 9] FLOAT    (color correction matrix)
+//! - Output 3: "tone" [1, 7] FLOAT   (tone curve LUT)
+//! - Output 4: "zoom" [1, 1] FLOAT   (digital zoom factor)
+//!
+//! Operations: separate MatMul+Add per head, each head reading from
+//! the appropriate input (hist for wb/ccm/tone, meta for zoom).
 
 use crate::onnx::proto::Proto;
 
 /// Generate a mock rectifier ONNX model.
 ///
 /// Returns ONNX ModelProto bytes with:
-/// - Input: "input" [1, 267] FLOAT
-/// - Output: "output" [1, 20] FLOAT
-/// - Operations: Reshape → MatMul → Add → Reshape
+/// - Input: "hist" [1, 256] FLOAT
+/// - Input: "meta" [1, 11] FLOAT
+/// - Output: "wb" [1, 3] FLOAT
+/// - Output: "ccm" [1, 9] FLOAT
+/// - Output: "tone" [1, 7] FLOAT
+/// - Output: "zoom" [1, 1] FLOAT
+/// - Operations: per-head MatMul + Add
 pub fn generate_rectifier_model() -> Vec<u8> {
-    // Weight matrix: 267 → 20 (identity-like transformation)
-    // For simplicity, we use a fixed weight that produces reasonable defaults
-    let weights = create_weight_matrix();
-    let bias = create_bias_vector();
+    let weights_wb = create_wb_weights();
+    let bias_wb = create_wb_bias();
+    let weights_ccm = create_ccm_weights();
+    let bias_ccm = create_ccm_bias();
+    let weights_tone = create_tone_weights();
+    let bias_tone = create_tone_bias();
+    let weights_zoom = create_zoom_weights();
+    let bias_zoom = create_zoom_bias();
 
-    // ONNX nodes
+    // ONNX nodes — one MatMul+Add pair per output head
     let nodes = vec![
-        // Reshape input to [267]
-        Proto::node("Reshape", &["input", "reshape_shape"], &["input_flat"], &[]),
-        // MatMul: input_flat × weights
-        Proto::node("MatMul", &["input_flat", "weights"], &["hidden"], &[]),
-        // Add bias
-        Proto::node("Add", &["hidden", "bias"], &["output_raw"], &[]),
-        // Reshape output to [1, 20]
-        Proto::node("Reshape", &["output_raw", "output_shape"], &["output"], &[]),
+        // WB head: hist × W_wb + b_wb → wb
+        Proto::node("MatMul", &["hist", "weights_wb"], &["wb_raw"], &[]),
+        Proto::node("Add", &["wb_raw", "bias_wb"], &["wb"], &[]),
+        // CCM head: hist × W_ccm + b_ccm → ccm
+        Proto::node("MatMul", &["hist", "weights_ccm"], &["ccm_raw"], &[]),
+        Proto::node("Add", &["ccm_raw", "bias_ccm"], &["ccm"], &[]),
+        // Tone head: hist × W_tone + b_tone → tone
+        Proto::node("MatMul", &["hist", "weights_tone"], &["tone_raw"], &[]),
+        Proto::node("Add", &["tone_raw", "bias_tone"], &["tone"], &[]),
+        // Zoom head: meta × W_zoom + b_zoom → zoom
+        Proto::node("MatMul", &["meta", "weights_zoom"], &["zoom_raw"], &[]),
+        Proto::node("Add", &["zoom_raw", "bias_zoom"], &["zoom"], &[]),
     ];
 
-    // Initializers (weights and constants)
+    // Initializers (weights and biases)
     let initializers = vec![
-        // reshape_shape: [267]
-        Proto::tensor_proto_int64("reshape_shape", &[267i64]),
-        // weights: [267, 20]
-        Proto::tensor_proto_float("weights", &[267, 20], &weights),
-        // bias: [20]
-        Proto::tensor_proto_float("bias", &[20], &bias),
-        // output_shape: [1, 20]
-        Proto::tensor_proto_int64("output_shape", &[1i64, 20i64]),
+        Proto::tensor_proto_float("weights_wb", &[256, 3], &weights_wb),
+        Proto::tensor_proto_float("bias_wb", &[3], &bias_wb),
+        Proto::tensor_proto_float("weights_ccm", &[256, 9], &weights_ccm),
+        Proto::tensor_proto_float("bias_ccm", &[9], &bias_ccm),
+        Proto::tensor_proto_float("weights_tone", &[256, 7], &weights_tone),
+        Proto::tensor_proto_float("bias_tone", &[7], &bias_tone),
+        Proto::tensor_proto_float("weights_zoom", &[11, 1], &weights_zoom),
+        Proto::tensor_proto_float("bias_zoom", &[1], &bias_zoom),
     ];
 
     // Input/Output specs
-    let inputs = vec![Proto::value_info(
-        "input",
-        &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(267)],
-        1,
-    )];
+    let inputs = vec![
+        Proto::value_info(
+            "hist",
+            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(256)],
+            1,
+        ),
+        Proto::value_info(
+            "meta",
+            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(11)],
+            1,
+        ),
+    ];
 
-    let outputs = vec![Proto::value_info(
-        "output",
-        &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(20)],
-        1,
-    )];
+    let outputs = vec![
+        Proto::value_info(
+            "wb",
+            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(3)],
+            1,
+        ),
+        Proto::value_info(
+            "ccm",
+            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(9)],
+            1,
+        ),
+        Proto::value_info(
+            "tone",
+            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(7)],
+            1,
+        ),
+        Proto::value_info(
+            "zoom",
+            &[Proto::tensor_dim_value(1), Proto::tensor_dim_value(1)],
+            1,
+        ),
+    ];
 
     // Build graph
     let graph = Proto::graph(
@@ -75,76 +117,70 @@ pub fn generate_rectifier_model() -> Vec<u8> {
     Proto::model(11, &opset, "cam_rust_rectifier", &graph)
 }
 
-/// Create weight matrix for 267→20 transformation.
-///
-/// This is a simple linear model that maps:
-/// - histogram[0:256] → wb[0:3] (weighted sum)
-/// - histogram[0:256] → ccm[3:12] (identity matrix)
-/// - histogram[0:256] → tone[12:19] (linear ramp)
-/// - metadata[256:267] → zoom[19] (weighted sum)
-fn create_weight_matrix() -> Vec<f32> {
-    let mut weights = vec![0.0f32; 267 * 20];
-
-    // WB gains: weighted average of histogram
-    // R channel: weight first 1/3 of histogram
+/// WB weights: 256→3. Each output channel is a weighted sum of the histogram.
+fn create_wb_weights() -> Vec<f32> {
+    let mut w = vec![0.0f32; 256 * 3];
+    // R: weight first third of histogram
     for i in 0..85 {
-        weights[i * 20] = 1.0 / 85.0; // WB R
+        w[i * 3] = 1.0 / 85.0;
     }
-    // G channel: weight middle 1/3
+    // G: weight middle third
     for i in 85..170 {
-        weights[i * 20 + 1] = 1.0 / 85.0; // WB G
+        w[i * 3 + 1] = 1.0 / 85.0;
     }
-    // B channel: weight last 1/3
+    // B: weight last third
     for i in 170..256 {
-        weights[i * 20 + 2] = 1.0 / 86.0; // WB B
+        w[i * 3 + 2] = 1.0 / 86.0;
     }
+    w
+}
 
-    // CCM: identity matrix (diagonal = 1.0)
-    // Row 0: R→R
-    weights[3] = 1.0;
-    // Row 1: G→G
-    weights[20 + 4] = 1.0;
-    // Row 2: B→B
-    weights[2 * 20 + 5] = 1.0;
+/// WB bias: default gains of 1.0
+fn create_wb_bias() -> Vec<f32> {
+    vec![1.0f32, 1.0, 1.0]
+}
 
-    // Tone curve: linear ramp [0, 1/6, 2/6, ..., 1]
+/// CCM weights: 256→9. Identity-like matrix.
+fn create_ccm_weights() -> Vec<f32> {
+    let mut w = vec![0.0f32; 256 * 9];
+    // Diagonal elements from histogram bins
+    w[0] = 1.0; // R→R
+    w[9 + 4] = 1.0; // G→G
+    w[2 * 9 + 8] = 1.0; // B→B
+    w
+}
+
+/// CCM bias: identity matrix diagonal
+fn create_ccm_bias() -> Vec<f32> {
+    vec![1.0f32, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+}
+
+/// Tone weights: 256→7. Linear ramp.
+fn create_tone_weights() -> Vec<f32> {
+    let mut w = vec![0.0f32; 256 * 7];
     for i in 0..256 {
         let hist_val = i as f32 / 256.0;
         for j in 0..7 {
             let target = j as f32 / 6.0;
-            weights[i * 20 + 12 + j] = (1.0 - (hist_val - target).abs()) / 7.0;
+            w[i * 7 + j] = (1.0 - (hist_val - target).abs()) / 7.0;
         }
     }
-
-    // Zoom: use metadata[0] (CCT) as input
-    weights[256 * 20 + 19] = 0.0; // Will be overridden by bias
-
-    weights
+    w
 }
 
-/// Create bias vector for 20-dim output.
-fn create_bias_vector() -> Vec<f32> {
-    let mut bias = vec![0.0f32; 20];
+/// Tone bias: linear ramp [0, 1/6, ..., 1]
+fn create_tone_bias() -> Vec<f32> {
+    (0..7).map(|i| i as f32 / 6.0).collect()
+}
 
-    // WB gains: default to 1.0
-    bias[0] = 1.0; // R
-    bias[1] = 1.0; // G
-    bias[2] = 1.0; // B
+/// Zoom weights: 11→1. Uses metadata[0] (CCT).
+fn create_zoom_weights() -> Vec<f32> {
+    vec![0.0f32; 11]
+}
 
-    // CCM: identity matrix diagonal
-    bias[3] = 1.0; // R→R
-    bias[4] = 1.0; // G→G
-    bias[5] = 1.0; // B→B
-
-    // Tone curve: linear [0, 1/6, 2/6, ..., 1]
-    for i in 0..7 {
-        bias[12 + i] = i as f32 / 6.0;
-    }
-
-    // Zoom: default 1.0
-    bias[19] = 1.0;
-
-    bias
+/// Zoom bias: default 1.0
+fn create_zoom_bias() -> Vec<f32> {
+    vec![1.0f32]
 }
 
 /// Save model to file.
@@ -172,15 +208,35 @@ mod tests {
     }
 
     #[test]
-    fn test_weight_matrix_size() {
-        let weights = create_weight_matrix();
-        assert_eq!(weights.len(), 267 * 20);
+    fn test_wb_weights_size() {
+        let weights = create_wb_weights();
+        assert_eq!(weights.len(), 256 * 3);
     }
 
     #[test]
-    fn test_bias_vector_size() {
-        let bias = create_bias_vector();
-        assert_eq!(bias.len(), 20);
+    fn test_ccm_weights_size() {
+        let weights = create_ccm_weights();
+        assert_eq!(weights.len(), 256 * 9);
+    }
+
+    #[test]
+    fn test_tone_weights_size() {
+        let weights = create_tone_weights();
+        assert_eq!(weights.len(), 256 * 7);
+    }
+
+    #[test]
+    fn test_zoom_weights_size() {
+        let weights = create_zoom_weights();
+        assert_eq!(weights.len(), 11);
+    }
+
+    #[test]
+    fn test_bias_sizes() {
+        assert_eq!(create_wb_bias().len(), 3);
+        assert_eq!(create_ccm_bias().len(), 9);
+        assert_eq!(create_tone_bias().len(), 7);
+        assert_eq!(create_zoom_bias().len(), 1);
     }
 
     #[test]

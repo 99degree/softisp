@@ -251,7 +251,16 @@ impl UnifiedPipeline {
             None
         };
 
-        let controller: Box<dyn ControllerApi> = Box::new(IspController::new());
+        let controller: Box<dyn ControllerApi> = {
+            #[cfg(feature = "rectifier")]
+            {
+                Box::new(crate::neural_controller::NeuralController::with_mock_model())
+            }
+            #[cfg(not(feature = "rectifier"))]
+            {
+                Box::new(IspController::new())
+            }
+        };
 
         Ok(Self {
             engine,
