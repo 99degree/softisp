@@ -4,6 +4,15 @@
 
 ## Status (2026-11-25) — packed-preview perf work
 
+- **Output AHB zero-copy path landed, off by default** (2026-11-26). Each ISP
+  worker owns one large, permanently mapped `AHardwareBuffer` bound to the
+  session output tensor before resize; `mnn_run_ahb_output()` waits for the GPU
+  write and returns with no `copyToHostTensor`. `IspFrame::new_external()`
+  removes the per-frame `width * height * 4` host allocation. Enable with
+  `SOFTISP_OUTPUT_AHB` / `/sdcard/download/softisp-output-ahb`;
+  `SOFTISP_VERBOSE` / `/sdcard/download/softisp-verbose` adds per-frame slot
+  traces. No cross-engine wait: a worker only waits for its own presenter
+  handoff. On-device validation is still pending.
 - **Runtime tensor uploads de-duplicated** (`d378a372`). `set_extra_inputs()`
   queued ~60 writes/frame through `copyFromHostTensor`; ~18 of them were
   defaults immediately overwritten by explicit values. Writes are now buffered
@@ -83,16 +92,16 @@
   HEAVY converts 91 ops, runs, and returns a valid frame; a standalone ignored
   `test_mnn_heavy_profile` was added. PRO still fails conversion on unsupported
   ops and is tracked separately.
-- **P2b re-verified against the current MNN tree:** the AHB `setDevicePtr`
-  surface in cam-isp is a stub — Vulkan `onAcquire` ignores the flag and
-  `mnn_run_true_zero_copy` binds host pointers Vulkan also ignores. The
-  in-repo correctness bugs (input tensor name, discarded FFI returns) are
-  fixed; the APK is deliberately **not** wired to it. Full end-to-end remains
-  blocked on camera AHB lifetime + an output-surface AHB design (see P2b).
-  The MNN Vulkan backend no longer uses a process-wide published AHB: AHB
-  import is per-tensor via `setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)` and
-  `TensorUtils::sharedMem`, so two workers can bind different buffers without
-  serialization. Rebuilt via `scripts/build_mnn_libs.sh arm64-v8a`.
+- **P2b re-verified against the current MNN tree:** the fork's Vulkan backend
+  imports per-tensor AHBs via `setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)`
+  and `VulkanBufferFromAHB`, so two workers can bind different buffers without
+  serialization. Rebuilt via `scripts/build_mnn_libs.sh arm64-v8a`. The older
+  claim that Vulkan ignores the flag applied to the vendored headers-only tree,
+  not the linked fork. The APK is now wired to an **opt-in** output AHB slot
+  (`SOFTISP_OUTPUT_AHB` / `/sdcard/download/softisp-output-ahb`, off by
+  default); the host-copy path remains the default until on-device fence and
+  display handoff are validated. See
+  `docs/isp/20261126-output-copy-zero-copy-audit.md`.
 - **P2h overlap / allocation fast path recorded** (2026-11-26): extend the
   staged phases so camera DMA fills a pre-bound input AHB while the next frame's
   metadata tensors are prefilled, and hand the output AHB to Android for display
@@ -174,9 +183,10 @@ Analysis lives in `docs/isp/20261126-upload-dedup-critical-path.md`,
 `docs/isp/20261126-critical-path-instrumentation.md`. Validate every change with
 the ignored `perf_critical_path` probe (`PERF_FRAMES=40`, `--features mnn`) and
 compare the prefill, inference and output columns. Hermetic gate at this point:
-fmt, canonical clippy, 853 passed / 2 ignored
-`cam-isp --lib --features rectifier` tests, 891 passed / 2 ignored with real
-MNN, and `cargo check --features "rectifier mnn"`.
+fmt, canonical clippy, 854 passed / 2 ignored
+`cam-isp --lib --features rectifier` tests, 892 passed / 2 ignored with real
+MNN, `cargo check --features "rectifier mnn"`, and
+`./build-apk.sh` (signed APK with the opt-in AHB output path).
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
