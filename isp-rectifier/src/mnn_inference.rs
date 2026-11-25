@@ -38,8 +38,8 @@ const INPUT_META: &str = "meta";
 /// The model is loaded once (ONNX → MNN conversion + session creation) and
 /// reused for every frame. Inputs/outputs are uploaded/read back per frame.
 pub struct MnnInference {
-    interp: MnnInterpreter,
     sess: MnnSession,
+    interp: MnnInterpreter,
     clamp: bool,
 }
 
@@ -84,10 +84,10 @@ impl MnnInference {
         let interp = MnnInterpreter::from_buffer(&mnn_bytes)
             .ok_or_else(|| "Failed to create MNN interpreter from buffer".to_string())?;
 
-        // Step 3: Create a Vulkan session.
+        // Step 3: Create a CPU session.
         let sess = interp
-            .create_session(MnnBackendType::Vulkan, 4, false)
-            .ok_or_else(|| "Failed to create MNN Vulkan session".to_string())?;
+            .create_session(MnnBackendType::Cpu, 4, false)
+            .ok_or_else(|| "Failed to create MNN CPU session".to_string())?;
 
         // Resize session for the declared input shapes so MNN allocates
         // device buffers up front.

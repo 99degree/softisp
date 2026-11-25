@@ -38,6 +38,7 @@ pub struct MnnTensor {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MnnBackendType {
+    Cpu = 0,
     Vulkan = 7,
 }
 
