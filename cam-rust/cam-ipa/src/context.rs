@@ -58,7 +58,7 @@ impl IpaContext {
     }
     
     /// Initialize the IPA with settings and sensor info
-    pub fn init(&mut self, settings: &IpaSettings, sensor_info: &IpaSensorInfo) -> IpaResult<IpaInitResult> {
+    pub fn init(&mut self, _settings: &IpaSettings, sensor_info: &IpaSensorInfo) -> IpaResult<IpaInitResult> {
         if self.initialized {
             return Err(IpaError::AlreadyInitialized.into());
         }

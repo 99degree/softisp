@@ -35,7 +35,7 @@ impl EngineManager {
         
         // Share controller with engine
         let controller = Arc::new(Mutex::new(IspController::new()));
-        engine.controller = Mutex::new(IspController::new());
+        engine.controller = controller.clone();
         
         Ok(Self {
             engine: Box::new(engine),
