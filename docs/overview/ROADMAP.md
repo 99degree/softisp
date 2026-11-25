@@ -115,10 +115,56 @@
   durations, and `probe_4k_perf` prints the visible split with a focused
   `perf_critical_path` case. See
   `docs/isp/20261126-critical-path-instrumentation.md`.
+- **Upload path shortened** (2026-11-26): `20dbcfe1` caches the last successful
+  value per session slot so unchanged tensor writes stop paying a host→device
+  barrier, and `09c95a62` recycles per-slot host scratch buffers so fixed-shape
+  coefficients (warp grid/LUT) are not reallocated each frame. Hermetic gate:
+  853 `cam-isp --lib --features rectifier` tests, fmt and canonical clippy.
+  See the critical-duration backlog below.
 - **P3 WB/CCM tensor names normalized** (2026-11-26): canonical registry names
   are emitted by the WB/CCM blocks, with legacy aliases accepted by `MnnEngine`.
   Verified with 851 rectifier / 886 real-MNN tests and three ignored MNN probes;
   see `docs/isp/20261126-p3-runtime-tensor-names.md`.
+
+## Critical-duration optimization backlog (2026-11-26)
+
+`perf_critical_path` defines the visible frame as
+`camera fill → prepare/upload → runSession → output handoff`, with 3A readback
+deferred onto the worker. `runSession` is the irreducible floor; everything
+around it can be overlapped, deduplicated or removed. Ranked by expected payoff
+at 4K:
+
+| # | Change | Phase attacked | Status |
+|---|--------|----------------|--------|
+| 1 | Hand the finished frame to the compositor through `ProcessParams::output_buffer` / AHB import instead of `buf_bytes.to_vec()` | ~33 MB host copy plus present blit on the visible path | TODO — largest non-inference phase; see P2h below (needs Vulkan AHB import) |
+| 2 | Extend stats gating from "engine A only" to a 2nd/4th-frame cadence | deferred GPU `_finish()` sync | TODO — 3A does not need fresh stats every frame |
+| 3 | Bake unchanged `default_inputs` into the graph as ONNX/MNN initializers | the single upload per slot on first use | TODO — needs fused-Vulkan conversion validation; never make the warp grid/LUT constant (see the 2026-07-21 DCE regression) |
+| 4 | Cache `get_output()` shape/type/channel derivation and `CString` names in `PreparedMeta` | per-frame metadata reconstruction | TODO — low risk |
+| 5 | Release the buffer-pool guard before `runSession`; reacquire only for the output copy | lock contention between workers | TODO — helps concurrency, not single-frame latency |
+| 6 | Resize/warm every session slot once at startup | first-frame stalls after a geometry change | TODO |
+| 7 | Bind the camera buffer directly instead of `FrameStager`'s CPU copy | input staging | TODO — P2b; the `RawInt` path is already zero-copy from `p.input_buffer` |
+| 8 | Lower preview resolution, fp16 storage, or a lighter profile (`MED`/`LITE`) | `runSession` itself | TODO — algorithmic, not plumbing |
+| 9 | Raise the session pool above two slots | `acquire()` blocking when more than two frames are in flight | Deferred — one-frame-ahead prep is already covered; extra slots cost Vulkan memory and a first-frame resize (four slots at 5 Mpx previously got the process killed) |
+| 10 | Copy the stats output into the next metadata input device-to-device | host round-trip | Rejected as stated — MNN tensor roles are fixed by the graph; output→host→input costs two copies plus a sync, and Vulkan `onCopyBuffer` still calls `_finish()` |
+| 11 | Ping-pong the output AHB of frame N into the input of frame N+2 behind fences | both copies on GPU | Blocked — needs the P2b/P2h fence lifecycle; the acquire fd is not yet waited by the Vulkan path |
+
+Landed in this window:
+
+- **Per-slot last-value upload dedup** (`20dbcfe1`): unchanged scalars, arrays
+  and raw bytes are not re-uploaded; pooled sessions stay independent and
+  `resizeSession` clears the cache.
+- **Per-slot host scratch pool** (`09c95a62`): `WarpGrid/grid` and the other
+  fixed-shape coefficients are built in a recycled `Vec`, so steady-state
+  frames allocate no host buffer for them.
+- **Phase instrumentation** (`6dd6cf4e`, `fb8cd119`) and one-frame-ahead
+  `prepare()` already hide upload work while the sensor fills the next buffer.
+
+Analysis lives in `docs/isp/20261126-upload-dedup-critical-path.md` and
+`docs/isp/20261126-critical-path-instrumentation.md`. Validate every change with
+the ignored `perf_critical_path` probe (`PERF_FRAMES=40`, `--features mnn`) and
+compare the prefill, inference and output columns. Hermetic gate at this point:
+fmt, canonical clippy, 853 `cam-isp --lib --features rectifier` tests and
+`cargo check --features "rectifier mnn"`.
 
 ## Status (2026-07-21) — MNN Dead-Code Elimination Fixed
 
