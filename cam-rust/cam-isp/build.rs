@@ -50,6 +50,22 @@ fn main() {
     // No JNI library is linked: the app has no Java layer, and the crate
     // exposes only the C ABI in `cabi.rs` plus the Rust entry points.
 
+    // Runtime search paths cover every environment this crate is built for:
+    //   $ORIGIN      APK nativeLibraryDir (install-specific private app storage)
+    //   <repo>/lib   Termux / source-tree build
+    //   /system,/vendor,APEX  Android platform libs
+    //   /usr/lib*    generic Linux libs
+    // Order matters: the APK's own bundled libs must win over system copies.
+    let abi_dir = abi_dir();
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/system/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/vendor/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/apex/com.android.runtime/lib64/bionic");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/lib");
+
     // Emit NDK linker flags for Android targets
     #[cfg(target_os = "android")]
     {
@@ -59,11 +75,6 @@ fn main() {
         {
             setup_ndk_linker();
         }
-        // Embed rpath so binary finds libraries at runtime - our lib dir FIRST
-        let abi_dir = abi_dir();
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
-        // Also add the standard Android library paths as fallback
-        println!("cargo:rustc-link-arg=-Wl,-rpath,/apex/com.android.runtime/lib64/bionic");
     }
 }
 
