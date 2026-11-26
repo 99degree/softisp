@@ -24,9 +24,20 @@ fn main() {
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "android" {
+        eprintln!(
+            "[softisp-anw] build: non-Android target ({target_os}), skipping native lib rpath"
+        );
         return;
     }
+    eprintln!("[softisp-anw] build: main entry for Android native lib (libsoftisp.so)");
     println!("cargo:rustc-link-lib=dylib=camera2ndk");
+    // Add rpath for MNN libraries when building tests
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/data/data/com.termux/files/home/softisp/cam-rust/lib/aarch64-v8a");
+    // Also the alternate arm64-v8a name that build-apk.sh copies to.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/data/data/com.termux/files/home/softisp/cam-rust/lib/arm64-v8a");
+    // Device system libraries (libvulkan.so lives here on Android)
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/system/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/apex/com.android.runtime/lib64/bionic");
     // The prebuilt MNN shared objects reference versioned platform symbols
     // (`__android_log_print@LIBLOG`), while the NDK sysroot ships an
     // unversioned liblog stub — so lld refuses to leave them unresolved when

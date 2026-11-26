@@ -93,15 +93,64 @@ extern "C" const char* mnn_last_error(void) {
 // a static initializer (gResistor) that calls MNNInsertExtraRuntimeCreator(),
 // but this only fires when the .so is dlopen'd into the process. libMNN.so
 // does NOT auto-dlopen backend plugins — the caller must do it.
+//
+// libMNN_Vulkan.so is bundled alongside the app's native libraries, so we
+// locate it relative to this wrapper's own path rather than relying on a
+// bare-name dlopen (which would only work if LD_LIBRARY_PATH/rpath happens
+// to include the app's native lib dir on the device).
+static std::string own_lib_dir() {
+    Dl_info info;
+    if (dladdr((void*)&own_lib_dir, &info) && info.dli_fname) {
+        std::string path = info.dli_fname;
+        size_t pos = path.find_last_of('/');
+        if (pos != std::string::npos) {
+            return path.substr(0, pos + 1);
+        }
+    }
+    return "";
+}
+
 static std::once_flag g_vulkan_load_flag;
 static void ensure_vulkan_loaded() {
     std::call_once(g_vulkan_load_flag, []() {
+        MNN_PRINT("[mnn_wrapper] probing Vulkan backend availability\n");
+        // 1. Bare name — works if LD_LIBRARY_PATH or rpath is set
         void* h = dlopen("libMNN_Vulkan.so", RTLD_NOW | RTLD_LOCAL);
-        if (!h) {
-            MNN_PRINT("[mnn_wrapper] dlopen(libMNN_Vulkan.so) failed: %s\n", dlerror());
-        } else {
-            MNN_PRINT("[mnn_wrapper] libMNN_Vulkan.so loaded OK\n");
+        if (h) {
+            MNN_PRINT("[mnn_wrapper] libMNN_Vulkan.so loaded OK (bare name)\n");
+            return;
         }
+        MNN_PRINT("[mnn_wrapper] dlopen(libMNN_Vulkan.so) failed: %s\n", dlerror());
+
+        // 2. Alongside our own shared library (bundled with the APK)
+        std::string dir = own_lib_dir();
+        if (!dir.empty()) {
+            std::string path = dir + "libMNN_Vulkan.so";
+            MNN_PRINT("[mnn_wrapper] trying bundled path: %s\n", path.c_str());
+            h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+            if (h) {
+                MNN_PRINT("[mnn_wrapper] libMNN_Vulkan.so loaded OK from %s\n", path.c_str());
+                return;
+            }
+            MNN_PRINT("[mnn_wrapper] dlopen(%s) failed: %s\n", path.c_str(), dlerror());
+        }
+
+        // 3. System fallback paths
+        const char* system_paths[] = {
+            "/system/lib64/libMNN_Vulkan.so",
+            "/vendor/lib64/libMNN_Vulkan.so",
+            nullptr,
+        };
+        for (int i = 0; system_paths[i]; ++i) {
+            MNN_PRINT("[mnn_wrapper] trying system path: %s\n", system_paths[i]);
+            h = dlopen(system_paths[i], RTLD_NOW | RTLD_LOCAL);
+            if (h) {
+                MNN_PRINT("[mnn_wrapper] libMNN_Vulkan.so loaded OK from %s\n", system_paths[i]);
+                return;
+            }
+        }
+
+        MNN_PRINT("[mnn_wrapper] ALL attempts to load libMNN_Vulkan.so failed\n");
     });
 }
 
@@ -185,6 +234,15 @@ MnnSession mnn_session_create(MnnInterpreter interpreter, MnnBackendType backend
     net->setSessionMode(MNN::Interpreter::Session_Memory_Cache);
 
     auto* session = net->createSession(config);
+    if (!session) {
+        set_last_error(
+            "createSession failed: backend=%d (%s), num_threads=%d, fp16=%d",
+            (int)backend,
+            backend == MNN_BACKEND_VULKAN ? "Vulkan" : "other",
+            num_threads,
+            precision);
+        MNN_PRINT("[mnn_wrapper] createSession returned null for Vulkan backend\n");
+    }
     return reinterpret_cast<MnnSession>(session);
 }
 

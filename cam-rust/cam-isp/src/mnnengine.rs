@@ -1935,9 +1935,22 @@ impl IspEngine for MnnEngine {
             // Use first session to probe model input type (before building pool)
             let probe_sess = interp
                 .create_session(self.backend.to_sys(), 4, self.fp16_storage)
-                .ok_or(crate::error::IspError::Mnn(
-                    "probe session create fail (Vulkan backend unavailable)".into(),
-                ))?;
+                .ok_or_else(|| {
+                    let last_err = unsafe { crate::mnn_sys::mnn_last_error() };
+                    let last_err_str = if last_err.is_null() {
+                        String::new()
+                    } else {
+                        unsafe { std::ffi::CStr::from_ptr(last_err) }
+                            .to_string_lossy()
+                            .into_owned()
+                    };
+                    error!(
+                        "probe session create fail (Vulkan backend unavailable). last_error={last_err_str}"
+                    );
+                    crate::error::IspError::Mnn(format!(
+                        "probe session create fail (Vulkan backend unavailable): {last_err_str}"
+                    ))
+                })?;
             // Resolve the frame input by NAME: getSessionInput(nullptr) returns
             // the alphabetically-first input, which is a runtime-fed weight
             // tensor in multi-input models (e.g. CCMBLOCK/CCM_MATRIX <

@@ -37,6 +37,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=MNN_LIB_DIR");
     println!("cargo:rerun-if-env-changed=MNN_CONVERT_DIR");
     println!("cargo:rerun-if-env-changed=ANDROID_NDK_HOME");
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    eprintln!("[cam-isp] build: main entry for ISP engine (target={target_os})");
 
     #[cfg(feature = "ort")]
     link_onnxruntime();

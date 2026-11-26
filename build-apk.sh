@@ -29,20 +29,25 @@ APK="target/debug/apk/softisp-camera.apk"
 # 1. Build MNN Vulkan libs and copy all .so into cam-rust/lib/aarch64-v8a/.
 ./scripts/build_mnn_libs.sh arm64-v8a
 
-# Strip debug symbols from the MNN shared objects before packaging.
-# --strip-unneeded keeps .dynsym (MNN::Cli::convertModel and the Vulkan entry
-# points must stay exported for the FFI/convert paths) but drops the full
-# symtab and debug info — roughly 180 MiB -> 10 MiB across the bundled libs.
-STRIP="$(command -v llvm-strip || true)"
+# 1b. Strip MNN shared libraries to reduce APK size. llvm-strip is preferred
+#     (clang/NDK-friendly ELF handling), with strip as fallback.
+if command -v llvm-strip >/dev/null 2>&1; then
+    STRIP=llvm-strip
+elif command -v strip >/dev/null 2>&1; then
+    STRIP=strip
+else
+    STRIP=""
+fi
 if [ -n "$STRIP" ]; then
     for DIST in cam-rust/lib/arm64-v8a cam-rust/lib/aarch64-v8a; do
         for so in "$DIST"/libMNN*.so; do
             [ -f "$so" ] || continue
-            "$STRIP" --strip-unneeded "$so"
+            $STRIP --strip-unneeded "$so"
+            echo "  stripped: $so ($STRIP --strip-unneeded)"
         done
     done
 else
-    echo "  WARN: llvm-strip not found; bundling unstripped MNN libs" >&2
+    echo "  WARN: neither llvm-strip nor strip found; MNN libs shipped unstripped"
 fi
 
 # 2. Drop the retired app library from the runtime lib dirs. cargo-apk2 takes

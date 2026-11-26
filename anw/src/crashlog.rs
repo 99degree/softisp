@@ -192,6 +192,9 @@ pub fn install(fallback_dir: Option<&Path>) {
     let candidates = candidate_paths(fallback_dir);
     match resolve_log_path(&candidates) {
         Some(path) => {
+            // Start each launch with a clean log so stale entries from a
+            // previous run cannot be mistaken for a current failure.
+            let _ = std::fs::File::create(&path).map(|f| f.set_len(0));
             let _ = ACTIVE_PATH.set(path.clone());
             let ver = env!("CARGO_PKG_VERSION");
             write_line("INFO", "boot", &format!("log file: {}", path.display()));
