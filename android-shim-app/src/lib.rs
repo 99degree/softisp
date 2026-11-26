@@ -243,7 +243,7 @@ fn init_logcat() {
 /// In-memory log ring: holds up to [`LOG_MEM_CAP_BYTES`] of formatted lines.
 /// On overflow the oldest entries are dropped. Flushed to disk only on the
 /// `softisp_cmd=log` control intent.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct ShimLog {
     /// Ring of formatted lines, newest at the back.
     buffer: Mutex<VecDeque<String>>,
@@ -295,6 +295,15 @@ impl ShimLog {
         let mut bytes = self.bytes.lock().unwrap();
         *bytes = 0;
         Ok(total)
+    }
+
+    /// Drop every buffered line without writing it anywhere. Used before a
+    /// reload so the next `log` flush only contains the fresh session.
+    fn clear(&self) {
+        let mut guard = self.buffer.lock().unwrap();
+        guard.clear();
+        let mut bytes = self.bytes.lock().unwrap();
+        *bytes = 0;
     }
 }
 
@@ -719,14 +728,12 @@ fn intent_reader(app: &AndroidApp, log: &ShimLog) -> Option<Box<IntentReader>> {
 /// force-stop permission is needed.
 #[cfg(target_os = "android")]
 fn spawn_control_watcher(
-    app: &AndroidApp,
+    app: AndroidApp,
+    read_command: Box<IntentReader>,
     log: ShimLog,
     core_handle: *mut c_void,
     legacy_dir: Option<PathBuf>,
 ) {
-    let Some(read_command) = intent_reader(app, &log) else {
-        return;
-    };
     log.line(
         "INFO",
         "shim",
@@ -750,6 +757,7 @@ fn spawn_control_watcher(
         let command = command.trim().to_ascii_lowercase();
         match command.as_str() {
             "clean" => {
+                log.clear();
                 log.line("INFO", "shim", "control intent: clean legacy staged libs");
                 remove_legacy_staged_libs(legacy_dir.as_deref(), &log);
             }
@@ -782,7 +790,7 @@ fn spawn_control_watcher(
                     "shim",
                     "control intent: flush in-memory log to file",
                 );
-                let path = resolve_public_path(app, "softisp-app.log");
+                let path = resolve_public_path(&app, "softisp-app.log");
                 match OpenOptions::new().create(true).append(true).open(&path) {
                     Ok(mut file) => match log.drain_into(&mut file) {
                         Ok(n) => {
@@ -929,16 +937,22 @@ fn android_main(app: AndroidApp) {
     loaded.push(core);
 
     #[cfg(target_os = "android")]
-    spawn_control_watcher(
-        &app,
-        Arc::try_unwrap(log).unwrap_or(ShimLog::default()),
-        core_handle,
-        app.internal_data_path(),
-    );
+    {
+        let read_command = intent_reader(&app, &log).expect("intent reader must be available");
+        let legacy_dir = app.internal_data_path();
+        spawn_control_watcher(
+            app.clone(),
+            read_command,
+            Arc::try_unwrap(log).expect("log Arc must have single owner"),
+            core_handle,
+            legacy_dir,
+        );
+    }
     #[cfg(not(target_os = "android"))]
     let _ = core_handle;
 
     std::env::set_var("SOFTISP_SHIM_CHAINED", "1");
+    let log = Arc::new(ShimLog::default());
     log.line(
         "INFO",
         "shim",
