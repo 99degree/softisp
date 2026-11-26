@@ -6,6 +6,10 @@ fn main() {
     // $ORIGIN is the APK's install-specific nativeLibraryDir, where MNN's
     // bundled .so files live; it must come before any system path.
     println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+    // Relative to the private nativeLibraryDir: cover both ABI directory names
+    // in case a future APK keeps libs in an ABI subdir instead of flat.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/arm64-v8a");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/aarch64-v8a");
     // Termux / source-tree development build.
     println!("cargo:rustc-link-arg=-Wl,-rpath,/data/data/com.termux/files/home/softisp/cam-rust/lib/aarch64-v8a");
     // Android platform fallbacks: system/vendor for liblog/libandroid/

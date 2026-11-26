@@ -58,6 +58,10 @@ fn main() {
     // Order matters: the APK's own bundled libs must win over system copies.
     let abi_dir = abi_dir();
     println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+    // Relative to the private nativeLibraryDir: cover both ABI directory names
+    // in case a future APK keeps libs in an ABI subdir instead of flat.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/arm64-v8a");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/aarch64-v8a");
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abi_dir.display());
     println!("cargo:rustc-link-arg=-Wl,-rpath,/system/lib64");
     println!("cargo:rustc-link-arg=-Wl,-rpath,/vendor/lib64");
