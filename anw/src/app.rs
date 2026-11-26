@@ -667,11 +667,11 @@ impl Preview {
 
         // Per-stage timing diagnostic (all ns → ms). Everything came from the
         // worker via `Done` except `t_present` measured here.
-        let pipeline_ms = (done.media_ndk_capture_ns
-            + done.stager_ns
-            + done.mnn_prepare_ns
-            + done.mnn_inference_ns
-            + done.mnn_output_ns
+        let pipeline_ms = (done.t_capture_ns
+            + done.t_stage_ns
+            + done.t_mnn_prepare_ns
+            + done.t_mnn_inference_ns
+            + done.t_mnn_output_ns
             + t_present.as_nanos() as u64) as f64
             / 1_000_000.0;
         if pipeline_ms > FRAME_BUDGET.as_secs_f64() * 1000.0 {
@@ -681,11 +681,11 @@ impl Preview {
                 &format!(
                     "frame took {:.1} ms (media_ndk_capture {:.1} / stager {:.1} / mnn_prepare {:.1} / mnn_inference {:.1} / mnn_output {:.1} / present {:.1} ms)",
                     pipeline_ms,
-                    done.media_ndk_capture_ns as f64 / 1_000_000.0,
-                    done.stager_ns as f64 / 1_000_000.0,
-                    done.mnn_prepare_ns as f64 / 1_000_000.0,
-                    done.mnn_inference_ns as f64 / 1_000_000.0,
-                    done.mnn_output_ns as f64 / 1_000_000.0,
+                    done.t_capture_ns as f64 / 1_000_000.0,
+                    done.t_stage_ns as f64 / 1_000_000.0,
+                    done.t_mnn_prepare_ns as f64 / 1_000_000.0,
+                    done.t_mnn_inference_ns as f64 / 1_000_000.0,
+                    done.t_mnn_output_ns as f64 / 1_000_000.0,
                     t_present.as_nanos() as f64 / 1_000_000.0,
                 ),
             );
