@@ -293,6 +293,50 @@ impl DisplayBlock {
         self.with_output_format(OutputFormat::Abgr)
     }
 
+    /// `Slice` shape inference runs during `createSession`, before the engine
+    /// can write runtime inputs. Bake the flip parameters as initializers so
+    /// an interpreter session can be created at all — the runtime-input form
+    /// fails with "shape compute need input content" on device.
+    fn flip_initializers(&self) -> Vec<Vec<u8>> {
+        let (Some(h), Some(w)) = (self.in_h, self.in_w) else {
+            return vec![];
+        };
+        let ns = self.tensor_ns();
+        let (flip_h, flip_w) = if self.swaps_dims() { (w, h) } else { (h, w) };
+        let mut out = Vec::new();
+        if self.needs_hflip() && flip_w > 0 {
+            out.push(Proto::tensor_proto_int64(
+                &format!("{ns}/hflip_starts"),
+                &[flip_w - 1],
+            ));
+            out.push(Proto::tensor_proto_int64(
+                &format!("{ns}/hflip_ends"),
+                &[-1],
+            ));
+            out.push(Proto::tensor_proto_int64(&format!("{ns}/hflip_axes"), &[3]));
+            out.push(Proto::tensor_proto_int64(
+                &format!("{ns}/hflip_steps"),
+                &[-1],
+            ));
+        }
+        if self.needs_vflip() && flip_h > 0 {
+            out.push(Proto::tensor_proto_int64(
+                &format!("{ns}/vflip_starts"),
+                &[flip_h - 1],
+            ));
+            out.push(Proto::tensor_proto_int64(
+                &format!("{ns}/vflip_ends"),
+                &[-1],
+            ));
+            out.push(Proto::tensor_proto_int64(&format!("{ns}/vflip_axes"), &[2]));
+            out.push(Proto::tensor_proto_int64(
+                &format!("{ns}/vflip_steps"),
+                &[-1],
+            ));
+        }
+        out
+    }
+
     /// Emit MNN ISP min opset nodes — one `isp.display_*` dispatch for format
     /// conversion and packing. Gamma is encoded by the tone stage; the shader
     /// receives `gamma=1.0` so its own encode is an identity.
@@ -769,18 +813,26 @@ impl IspBlock for DisplayBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
+        let mut out = self.flip_initializers();
         // The Conv(1×1) permutation must be a constant: MNN's Vulkan backend
         // reads kernels from the operator, and zero-fills when they are absent
         // (see `conv_weights`). Baked here they also survive constant folding.
         let Some((weights, bias)) = self.conv_weights() else {
-            return vec![];
+            return out;
         };
         let ns = self.tensor_ns();
         let oc = self.output_format.channel_count() as i64;
-        vec![
-            Proto::tensor_proto_float(&format!("{}/conv_w", ns), &[oc, 3, 1, 1], &weights),
-            Proto::tensor_proto_float(&format!("{}/conv_b", ns), &[oc], &bias),
-        ]
+        out.push(Proto::tensor_proto_float(
+            &format!("{}/conv_w", ns),
+            &[oc, 3, 1, 1],
+            &weights,
+        ));
+        out.push(Proto::tensor_proto_float(
+            &format!("{}/conv_b", ns),
+            &[oc],
+            &bias,
+        ));
+        out
     }
 
     fn extra_inputs(&self) -> Vec<(String, i64, Vec<i64>)> {
@@ -822,23 +874,6 @@ impl IspBlock for DisplayBlock {
             // are initializers, not graph inputs — see `initializers`.
             fmt @ (FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr) => {
                 let _ = fmt;
-            }
-        }
-        if !self.is_identity() {
-            if let (Some(h), Some(w)) = (self.in_h, self.in_w) {
-                let (flip_h, flip_w) = if self.swaps_dims() { (w, h) } else { (h, w) };
-                if self.needs_hflip() && flip_w > 0 {
-                    inputs.push((format!("{}/hflip_starts", ns).to_string(), 6, vec![1]));
-                    inputs.push((format!("{}/hflip_ends", ns).to_string(), 6, vec![1]));
-                    inputs.push((format!("{}/hflip_axes", ns).to_string(), 6, vec![1]));
-                    inputs.push((format!("{}/hflip_steps", ns).to_string(), 6, vec![1]));
-                }
-                if self.needs_vflip() && flip_h > 0 {
-                    inputs.push((format!("{}/vflip_starts", ns).to_string(), 6, vec![1]));
-                    inputs.push((format!("{}/vflip_ends", ns).to_string(), 6, vec![1]));
-                    inputs.push((format!("{}/vflip_axes", ns).to_string(), 6, vec![1]));
-                    inputs.push((format!("{}/vflip_steps", ns).to_string(), 6, vec![1]));
-                }
             }
         }
         if self.postprocess_output.is_some() {
@@ -901,47 +936,6 @@ impl IspBlock for DisplayBlock {
             // Weights are initializers now (see `initializers`), so there is
             // nothing to upload per frame.
             FloatBgra | Float16Bgra | Bgra | Rgba | Argb | Abgr | Rgb | Bgr => {}
-        }
-        if !self.is_identity() {
-            if let (Some(h), Some(w)) = (self.in_h, self.in_w) {
-                let (flip_h, flip_w) = if self.swaps_dims() { (w, h) } else { (h, w) };
-                if self.needs_hflip() && flip_w > 0 {
-                    defaults.push((
-                        format!("{}/hflip_starts", ns).to_string(),
-                        (flip_w - 1).to_ne_bytes().to_vec(),
-                    ));
-                    defaults.push((
-                        format!("{}/hflip_ends", ns).to_string(),
-                        [(-1i64)].iter().flat_map(|v| v.to_ne_bytes()).collect(),
-                    ));
-                    defaults.push((
-                        format!("{}/hflip_axes", ns).to_string(),
-                        [3i64].iter().flat_map(|v| v.to_ne_bytes()).collect(),
-                    ));
-                    defaults.push((
-                        format!("{}/hflip_steps", ns).to_string(),
-                        [(-1i64)].iter().flat_map(|v| v.to_ne_bytes()).collect(),
-                    ));
-                }
-                if self.needs_vflip() && flip_h > 0 {
-                    defaults.push((
-                        format!("{}/vflip_starts", ns).to_string(),
-                        (flip_h - 1).to_ne_bytes().to_vec(),
-                    ));
-                    defaults.push((
-                        format!("{}/vflip_ends", ns).to_string(),
-                        [(-1i64)].iter().flat_map(|v| v.to_ne_bytes()).collect(),
-                    ));
-                    defaults.push((
-                        format!("{}/vflip_axes", ns).to_string(),
-                        [2i64].iter().flat_map(|v| v.to_ne_bytes()).collect(),
-                    ));
-                    defaults.push((
-                        format!("{}/vflip_steps", ns).to_string(),
-                        [(-1i64)].iter().flat_map(|v| v.to_ne_bytes()).collect(),
-                    ));
-                }
-            }
         }
         if self.postprocess_output.is_some() {
             defaults.push((
@@ -1064,6 +1058,40 @@ mod tests {
             let nodes = block.nodes();
             let actual: Vec<&str> = nodes.iter().skip(1).map(|n| op_type(n)).collect();
             assert_eq!(actual, expected, "rotate_mode {mode}");
+        }
+    }
+
+    #[test]
+    fn rotation_slice_params_are_initializers_not_runtime_inputs() {
+        for (mode, expected_initializers) in [(1, 4), (2, 8), (3, 4), (4, 4), (5, 4)] {
+            let block = DisplayBlock::new(640)
+                .with_output_format(OutputFormat::PackedRgb)
+                .with_opset_mode(2)
+                .with_rotate(mode)
+                .with_concrete_dims(480, 640);
+            let extra_inputs = block.extra_inputs();
+            let defaults_bytes = block.extra_input_defaults();
+            let extras: Vec<&str> = extra_inputs
+                .iter()
+                .map(|(name, _, _)| name.as_str())
+                .collect();
+            let defaults: Vec<&str> = defaults_bytes
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect();
+            assert!(
+                !extras.iter().any(|n| n.contains("flip_")),
+                "rotate_mode {mode}: {extras:?}"
+            );
+            assert!(
+                !defaults.iter().any(|n| n.contains("flip_")),
+                "rotate_mode {mode}: {defaults:?}"
+            );
+            assert_eq!(
+                block.initializers().len(),
+                expected_initializers,
+                "rotate_mode {mode}"
+            );
         }
     }
 
