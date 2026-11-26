@@ -63,12 +63,13 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 ## Prebuilt APK
 
 A debug build of the camera app is checked in at
-[`releases/softisp-camera-debug.apk`](releases/softisp-camera-debug.apk) — 37 MB,
+[`release/softisp-camera-debug.apk`](release/softisp-camera-debug.apk) — ~13 MB,
 arm64-v8a, package `com.softisp.camera`, signed with the standard debug keystore.
 
-```bash
-adb install -r releases/softisp-camera-debug.apk
-```
+**The user installs it directly — no `adb install`, `pm install`, or
+`install-apk.sh` from Termux** (AGENTS.md §1.7). Transfer the APK to the device
+and let the user install it through the normal Android flow, then launch from
+the app drawer ("SoftISP Camera").
 
 It ships the whole fused stack: `libMNN.so`, the `libMNN_Vulkan.so` plugin with the
 `isp.*` shaders embedded, and `libMNNConvertDeps.so` for the same-process ONNX→MNN
@@ -83,6 +84,32 @@ Building it yourself:
 
 `anw/` owns the NativeActivity code and produces `libsoftisp.so`;
 `android-app/` holds only the manifest and resources.
+
+## Debugging without reinstalling the APK (shim fast-debug)
+
+For ISP/MNN code changes, you do not need to repack or reinstall the APK. Build
+the shim-only test APK once, then push only the core library to the device:
+
+```bash
+# One-time: build the shim-only APK and push libs
+./build-test-apk.sh        # -> target/debug/apk/softisp-test.apk
+# user installs target/debug/apk/softisp-test.apk
+./push-test-libs.sh        # copies core + MNN libs to /sdcard/download/
+
+# Daily loop: rebuild core, stop app, relaunch, verify
+./shim-debug.sh core       # cargo apk2 -- build -p softisp-anw + push
+./shim-debug.sh stop       # control intent (no shell force-stop)
+./shim-debug.sh launch     # am start ShimActivity
+./shim-debug.sh verify     # MD5 fingerprint comparison
+./shim-debug.sh logs       # tail /sdcard/download/softisp-app.log
+# or all at once: WAIT_SECS=12 ./shim-debug.sh cycle
+```
+
+The test APK contains only `libsoftisp_shim.so` (no MNN, no core) — the shim
+`dlopen`s a separately pushed `libsoftisp.so` from `/sdcard/download/`. See
+[`docs/build/SHIM_DEBUG_WORKFLOW.md`](docs/build/SHIM_DEBUG_WORKFLOW.md) for
+the full workflow, including §9 on debugging the MNN Vulkan backend
+("probe session create fail").
 
 ## Quick Start
 
