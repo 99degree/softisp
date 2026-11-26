@@ -1022,6 +1022,7 @@ impl MnnEngine {
         warp_shading: Option<&[f32]>,
         input_scale: f32,
         white_level: f32,
+        blc_values: Option<&[f32; 4]>,
         exposure_gain: f32,
     ) {
         /// Look up a cached tensor handle by name prefix (fast — no CString alloc).
@@ -1285,6 +1286,19 @@ impl MnnEngine {
                 }
                 .max(1.0),
             );
+            // Black level per Bayer channel `[R, Gr, Gb, B]` — subtracted by the
+            // fused RAW head / BlcBlock before any downstream stage sees the frame.
+            // `p.blc_values` (from sensor `ACAMERA_SENSOR_BLACK_LEVEL_PATTERN`)
+            // takes precedence; falls back to the block constructor default (zeros)
+            // when the sensor does not report one.
+            if let Some(blc) = blc_values {
+                write_f32_array(
+                    &mut pending,
+                    cache,
+                    &format!("{ns}/blc_vals"),
+                    blc,
+                );
+            }
         }
 
         // DisplayBlock/gamma — every `isp.display*` shader applies `pow(x,
@@ -2376,6 +2390,7 @@ impl MnnEngine {
             p.warp_shading,
             input_scale,
             smax,
+            p.blc_values.as_ref(),
             ctrl.as_ref().map_or(1.0, |c| c.exposure_gain),
         );
         let prep_tensors_ns = (Instant::now() - t_tensor_before).as_nanos() as u64;

@@ -73,6 +73,9 @@ pub const BGGR: i32 = 3;
 /// the common case among phones that omit `SENSOR_INFO_WHITE_LEVEL`.
 const DEFAULT_WHITE_LEVEL: i32 = 1023;
 
+/// Black level assumed when the sensor does not report one.
+const DEFAULT_BLACK_LEVEL: f32 = 0.0;
+
 /// Sensor properties that shape how frames must be interpreted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SensorInfo {
@@ -88,6 +91,8 @@ pub struct SensorInfo {
     pub sensor_orientation: i32,
     /// Full-well capacity: the sample value the sensor saturates at.
     pub sensor_max: f32,
+    /// Black level per Bayer channel `[R, Gr, Gb, B]` in raw sensor counts.
+    pub black_level: [f32; 4],
     /// `true` when the camera advertises the RAW capability.
     pub raw_supported: bool,
     /// Stream geometry to create the reader at, chosen from the camera's own
@@ -127,6 +132,7 @@ pub struct CameraSession {
     output_container: *mut sys::ACaptureSessionOutputContainer,
     bayer_pattern: i32,
     sensor_max: f32,
+    black_level: [f32; 4],
     raw: bool,
     sensor_width: u32,
     sensor_height: u32,
@@ -156,6 +162,7 @@ impl CameraSession {
             output_container: null_mut(),
             bayer_pattern: BGGR,
             sensor_max: DEFAULT_WHITE_LEVEL as f32,
+            black_level: [DEFAULT_BLACK_LEVEL; 4],
             raw: true,
             sensor_width: 0,
             sensor_height: 0,
@@ -325,6 +332,7 @@ impl CameraSession {
                         self.raw = true;
                         self.bayer_pattern = info.bayer_pattern;
                         self.sensor_max = info.sensor_max;
+                        self.black_level = info.black_level;
                         // Record the *capture* geometry, not the sensor's
                         // active array: the reader is created at this size, so
                         // frames arrive at these dimensions and the ISP chain
@@ -404,6 +412,16 @@ impl CameraSession {
         let white_level = entry_i32(chars, white_tag)
             .and_then(|v| v.first().copied())
             .unwrap_or(DEFAULT_WHITE_LEVEL);
+        // `ACAMERA_SENSOR_BLACK_LEVEL_PATTERN` is `[4]` i32 per Bayer channel
+        // `[R, Gr, Gb, B]` in raw sensor counts; `ACAMERA_SENSOR_DYNAMIC_BLACK_LEVEL`
+        // is a single scalar fallback if the pattern is absent.
+        let black_level = match entry_i32(chars, sys::acamera_metadata_tag::ACAMERA_SENSOR_BLACK_LEVEL_PATTERN.0) {
+            Some(v) if v.len() >= 4 => [v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32],
+            _ => match entry_i32(chars, sys::acamera_metadata_tag::ACAMERA_SENSOR_DYNAMIC_BLACK_LEVEL.0) {
+                Some(v) if !v.is_empty() => [v[0] as f32; 4],
+                _ => [DEFAULT_BLACK_LEVEL; 4],
+            },
+        };
         let raw_supported = has_raw_capability(chars);
         // Resolve the stream geometry while the metadata is still alive: the
         // configuration list is the only authority on which reader sizes the
@@ -418,6 +436,7 @@ impl CameraSession {
             bayer_pattern,
             sensor_orientation,
             sensor_max: white_level.max(1) as f32,
+            black_level,
             raw_supported,
             capture: sizes[0],
             sizes,
@@ -528,6 +547,12 @@ impl CameraSession {
     /// Full-well capacity the sensor reported, or the 10-bit default.
     pub fn sensor_max(&self) -> f32 {
         self.sensor_max
+    }
+
+    /// Black level per Bayer channel `[R, Gr, Gb, B]` reported by the sensor,
+    /// or zeros when the sensor does not report one.
+    pub fn black_level(&self) -> [f32; 4] {
+        self.black_level
     }
 
     /// Active array width of the sensor.

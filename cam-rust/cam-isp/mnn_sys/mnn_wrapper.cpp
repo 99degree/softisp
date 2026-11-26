@@ -850,10 +850,12 @@ extern "C" int mnn_run_ahb_output(
 
     // The output must be the AHB we imported; a normal backend-owned tensor
     // would leave the caller's mapping untouched and look like a black frame.
-    // A memfd can be adopted after MNN allocates it; an AHB cannot, so the
-    // caller's buffer must be a real AHardwareBuffer and large enough before
-    // it is bound. Never rebind over a normal MNN device buffer — only restore
-    // the binding when MNN cleared the flags but left our pointer in place.
+    // MNN's Vulkan backend re-allocates output device memory on every
+    // runSession/onAcquire and clears MNN_MEMORY_AHARDWAREBUFFER, so the
+    // binding installed in prepare() does not survive. Re-bind whenever the
+    // tensor is not already AHB-backed and the caller's buffer fits; this is
+    // the import-before-every-run step that keeps the zero-copy path alive
+    // across frames without a session resize.
     size_t ahb_bytes = 0;
     bool ahb_ok = ahb_capacity_bytes(output_ahb, &ahb_bytes);
     const int out_elems = (int)output->elementSize();
@@ -864,22 +866,30 @@ extern "C" int mnn_run_ahb_output(
     const bool bound = output->buffer().flags == MNN_MEMORY_AHARDWAREBUFFER &&
                        output->buffer().device == ahb_id;
     bool rebound = false;
-    if (!bound && fits &&
-        (output->buffer().device == 0 || output->buffer().device == ahb_id)) {
+    if (!bound && fits) {
         output->setDevicePtr(output_ahb, MNN_MEMORY_AHARDWAREBUFFER);
         rebound = output->buffer().flags == MNN_MEMORY_AHARDWAREBUFFER &&
                   output->buffer().device == ahb_id;
+        if (!rebound) {
+            set_last_error("output tensor '%s' rebind failed: flags=%d (want %d), "
+                           "device=%llu want=%llu", output_name,
+                           (int)output->buffer().flags,
+                           (int)MNN_MEMORY_AHARDWAREBUFFER,
+                           (unsigned long long)output->buffer().device,
+                           (unsigned long long)ahb_id);
+            return -10;
+        }
     }
     if (!bound && !rebound) {
         set_last_error("output tensor '%s' not AHB-backed: flags=%d (want %d), "
                        "device=%llu want=%llu, ahb=%p bytes=%llu, "
-                       "out_elems=%d max_out=%d need=%llu, rebound=%d",
-                       output_name, (int)output->buffer().flags,
+                       "out_elems=%d max_out=%d need=%llu", output_name,
+                       (int)output->buffer().flags,
                        (int)MNN_MEMORY_AHARDWAREBUFFER,
                        (unsigned long long)output->buffer().device,
                        (unsigned long long)ahb_id, output_ahb,
                        (unsigned long long)ahb_bytes, out_elems, max_out,
-                       (unsigned long long)needed_bytes, (int)rebound);
+                       (unsigned long long)needed_bytes);
         return -10;
     }
     if (out_elems <= 0 || out_elems > max_out) {
