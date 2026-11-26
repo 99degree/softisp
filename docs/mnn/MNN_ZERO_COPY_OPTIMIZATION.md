@@ -2,7 +2,7 @@
 
 ## Executive summary
 
-The Rust-side zero-copy wiring (`input_buffer` / `output_buffer` + `mnn_run_true_zero_copy`) eliminates the heap `Vec<u8>` allocation and the host `f32→u8` narrow pass on **both** input and output. However, for the **Vulkan backend** the GPU still pays a host→device copy for input and a device→host copy for output, because MNN's Vulkan backend allocates its own device buffers and ignores the caller's host pointer for actual GPU execution. `libMNN_Vulkan.so` already exports `VK_ANDROID_external_memory_android_hardware_buffer` symbols, so the remaining optimization is to import the `AHardwareBuffer` as `VkDeviceMemory` inside MNN and bind it to the session tensors — that is the final step to true end-to-end zero-copy.
+The Rust-side zero-copy wiring (`input_buffer` / `output_buffer` + `input_ahb` / `output_ahb` + `mnn_run_true_zero_copy` / `mnn_run_ahb_output`) eliminates the heap `Vec<u8>` allocation and the host `f32→u8` narrow pass on **both** input and output. For the **Vulkan backend**, input and output `AHardwareBuffer`s are now imported as Vulkan device memory via `Tensor::setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)` **before** `resizeSession()`, so MNN's `VulkanBackend::onAcquire()` imports them through `VulkanBufferFromAHB::create()` (`VkImportAndroidHardwareBufferInfoANDROID`). Host→device (input) and device→host (output) copies are skipped when the tensor carries `MNN_MEMORY_AHARDWAREBUFFER`. `libMNN_Vulkan.so` already exports `VK_ANDROID_external_memory_android_hardware_buffer`, so this path works on Vulkan-capable devices without a shared Rust-side Vulkan context — MNN's fork owns the VkDevice and performs the external-memory import itself.
 
 Below is the complete inventory of remaining copy/stall points, ranked by impact, plus concrete fixes for each.
 
@@ -10,13 +10,13 @@ Below is the complete inventory of remaining copy/stall points, ranked by impact
 
 ## 1. Remaining copy points (input path)
 
-### 1.1 `lock_and_copy_buffer` → `Vec<u8>` copy (Android HAL → engine)
+### 1.1 Camera de-stride copy → `Vec<u16>` (media NDK → engine)
 
-`cam-hal-android/src/adapter.rs:lock_and_copy_buffer()` does `AHardwareBuffer_lock` → `slice::from_raw_parts().to_vec()` → `AHardwareBuffer_unlock`. This copies the entire Bayer frame into a heap `Vec<u8>`, then `MnnEngine::process()` reads `p.buf` (that `Vec`).
+`anw/src/camera.rs:copy_pixels()` reads plane 0 via `AImage_getPlaneData` and de-strides every pixel into a heap `Vec<u16>`, then `MnnEngine::process()` reads `p.buf` (that `Vec`). For RAW16 this is a per-pixel byte swap; for YUV it expands 8-bit luma into `u16`.
 
-**Fix:** Already wired — `CameraIspService::process_raw_frame_zc()` sets `params.input_buffer = Some((input.ptr, input.size))` and `MnnEngine::process()` passes `buf_ptr` straight to `mnn_run_true_zero_copy()`, which assigns `in_tensor->buffer().host = caller_buffer`. No `Vec` allocation, no `to_vec()`.
+**Status:** Not yet fixed. The media-NDK `AImage` carries an `AHardwareBuffer` (`sys::AImage_getHardwareBuffer`), but the app path currently copies pixels out instead of passing the `AHardwareBuffer*` directly as `ProcessParams::input_ahb`.
 
-**Residual cost:** On Vulkan, MNN still copies host→device internally because `tensor->buffer().host` is ignored by the Vulkan backend's device memory allocations. The CPU-side copy into `Vec` is gone; the GPU-side upload remains until external-memory import is implemented in `mnn_wrapper.cpp`.
+**Fix:** In `anw/src/pipeline_runner.rs`, after `AImageReader_acquireLatestImage`, call `sys::AImage_getHardwareBuffer(image, &ahb)` to get the producer-owned `AHardwareBuffer*`, then pass it via `params.input_ahb = Some(AhbBinding::new(ahb as *mut c_void, capacity, fences))`. The caller must keep the `AImage` (and thus its AHB) alive for the duration of inference. `AHardwareBuffer_acquire` may be needed if the binding outlives the `AImage` (ncnn-style ref-counting). Skip the `copy_pixels()` de-stride entirely when `input_ahb` is set, feeding the AHB pointer straight to `mnn_run_true_zero_copy` / `mnn_run_ahb_output`.
 
 ### 1.2 Lane-split scratch buffers (SplitInt32 / SplitInt16 / SplitFloat modes)
 
@@ -40,23 +40,17 @@ This is an O(H×W) CPU pass with a mutex lock, just to rearrange lanes that MNN'
 
 ### 2.1 `copyToHostTensor` → host buffer (MNN Vulkan device → caller buffer)
 
-`mnn_wrapper.cpp:mnn_run_with_output()` calls `out_tensor->copyToHostTensor(host_out)` — this is the GPU→CPU readback stall. `mnn_run_true_zero_copy()` avoids it by setting `output->buffer().host = out_data`, but on Vulkan MNN allocates its own device buffer and writes there; the host pointer is only read back via `copyToHostTensor` unless external-memory import is active.
-
-**Fix:** Already wired — `output_buffer` path skips `copyToHostTensor` entirely and hands the caller's pointer to `mnn_run_true_zero_copy()`. On CPU backend this is true zero-copy today. On Vulkan, external-memory import (`VK_ANDROID_external_memory_android_hardware_buffer`) is the remaining step.
+**Status:** Fixed. `mnn_run_with_output()` calls `out_tensor->copyToHostTensor(host_out)` — that path is only used for non-zero-copy frames. `mnn_run_true_zero_copy()` and `mnn_run_ahb_output()` skip `copyToHostTensor` entirely: `mnn_run_ahb_output()` runs the session and waits on `output->wait(MAP_TENSOR_READ, true)` so the GPU has already written into the caller's AHB mapping; `mnn_run_true_zero_copy()` hands the caller's host pointer directly for CPU-backed sessions.
 
 ### 2.2 `f32_to_u8()` narrowing pass (host-side clamp + cast)
 
-`mnnengine.rs:400-409` — `f32_to_u8()` iterates every pixel, clamps `[0,255]`, casts to `u8`, and collects into a new `Vec<u8>`. This is O(H×W) on CPU.
-
-**Fix:** Already eliminated for zero-copy frames — `mnnengine.rs:2298-2308` returns `Vec::new()` when `zero_copy` is true and skips `set_len`/`f32_to_u8`. For non-zero-copy paths (CPU engine, non-MNN backends), this still applies.
+**Status:** Fixed for zero-copy frames. `mnnengine.rs:400-409` — `f32_to_u8()` iterates every pixel, clamps `[0,255]`, casts to `u8`, and collects into a new `Vec<u8>`. This is O(H×W) on CPU. Zero-copy frames return `Vec::new()` and skip `f32_to_u8` (`mnnengine.rs:2799-2808`). For non-zero-copy paths (CPU engine, non-MNN backends), this still applies.
 
 ---
 
 ## 3. Per-frame session resize (~7 ms on Vulkan)
 
-`mnnengine.rs:1837-1872` — Every time geometry changes (`slot.resized_for != Some((w,h))`), the engine calls `slot.sess.resize()` which propagates shapes through the graph and re-allocates GPU buffers / rebuilds descriptor sets. On Vulkan this is ~7 ms per resize.
-
-**Fix:** Already mitigated — resize is per-slot (each session in the pool tracks its own geometry). For a fixed preview resolution, resize happens once per session then never again. Capture/still at a different size triggers one resize. No further Rust-side optimization needed without MNN-side changes.
+**Status:** Mitigated. `mnnengine.rs:2295-2313` — `slot.resized_for != Some((w,h))` gates `resize()` per session slot. For a fixed preview resolution, resize happens once per session then never again. Capture/still at a different size triggers one resize. No further Rust-side optimization needed without MNN-side changes.
 
 ---
 
@@ -79,9 +73,7 @@ NormalizeBlock/max_val, EeBlock/kernel_ee, ... (~25 tensors)
 
 ## 5. Output buffer over-allocation
 
-`mnnengine.rs:1790-1793` — Non-zero-copy path allocates `vec![0u8; alloc_max_out * 4]` where `alloc_max_out = tw * h * 4` f32 elements = `H×W×16` bytes. For 4K (3840×2160) that's ~132 MB zero-filled per frame (well, per engine instance, reused via `Vec` capacity but still touched via `set_len`).
-
-**Fix:** Already addressed for zero-copy — no allocation at all. For non-zero-copy, the `OutputBufferPool` in `mnn_buffer/mod.rs:103` pre-allocates recycled buffers but is currently `#[allow(dead_code)]` and not wired into `MnnEngine`. Connecting `buf_pool` to the output path would eliminate the per-frame `Vec` allocation for the fallback path too.
+**Status:** Addressed for zero-copy — no allocation at all (`zero_copy` path returns `Vec::new()` and uses `IspFrame::new_external`). For non-zero-copy, the `OutputBufferPool` in `mnn_buffer/mod.rs:103` pre-allocates recycled buffers but is currently `#[allow(dead_code)]` and not wired into `MnnEngine`. Connecting `buf_pool` to the output path would eliminate the per-frame `Vec` allocation for the fallback path too.
 
 ---
 
@@ -93,7 +85,7 @@ NormalizeBlock/max_val, EeBlock/kernel_ee, ... (~25 tensors)
 
 ---
 
-## 7. MNN-side Vulkan external-memory import (the final zero-copy step)
+## 7. MNN-side Vulkan external-memory import — landed
 
 ### What's already in `libMNN_Vulkan.so`
 
@@ -108,15 +100,22 @@ VK_STRUCTURE_TYPE_MEMORY_GET_ANDROID_HARDWARE_BUFFER_INFO_ANDROID
 VK_KHR_external_memory_android_hardware_buffer
 ```
 
-### What's missing in `mnn_wrapper.cpp`
+### What's landed in `mnn_wrapper.cpp`
 
-`mnn_run_true_zero_copy()` currently only sets `tensor->buffer().host`. For Vulkan, it should also:
-1. Export the `AHardwareBuffer` → dma-buf fd (`AHardwareBuffer_getFd` / handle).
-2. Call `vkGetMemoryAndroidHardwareBufferANDROID(device, &info, &fd)` or `vkImportAndroidHardwareBufferInfoANDROID` to create `VkDeviceMemory`.
-3. Bind that memory to the session's input/output `VkBuffer`/`VkImage` objects.
-4. Keep the buffer locked (acquire fence before run, release fence after) for GPU/CPU coherency.
+**`mnn_import_ahb_as_device_memory()`** — validates the caller's `AHardwareBuffer*` via `AHardwareBuffer_getFd` (diagnostic only, fd closed immediately) and `AHardwareBuffer_describe` (capacity check), then calls `tensor->setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER)`. This marks the tensor so MNN's `VulkanBackend::onAcquire()` imports it via `VulkanBufferFromAHB::create()` (`VkImportAndroidHardwareBufferInfoANDROID` + dedicated allocation + `vkBindBufferMemory`) at resize time. The wrapper does not allocate or release the AHB — the caller owns it.
 
-This is MNN C++ side work — `libMNN.so` / `libMNN_Vulkan.so` already has the symbols; the Rust FFI (`mnn_run_true_zero_copy`) is the contract and is already in place.
+**`mnn_run_true_zero_copy()`** — input `copyFromHostTensor` is now guarded by `in_tensor->buffer().flags != MNN_MEMORY_AHARDWAREBUFFER`. When the input tensor was bound to an AHB before resize, MNN's Vulkan backend already imported the AHB as device memory in `onAcquire()`; the caller's buffer points at the AHB's CPU mapping (same physical memory), so the host→device upload is skipped entirely. Same guard applied in `mnn_run_ahb_output()` for the input path.
+
+**`mnn_run_ahb_output()`** — output path already skips `copyToHostTensor`; `output->wait(MAP_TENSOR_READ, true)` makes GPU writes visible to the caller's CPU mapping.
+
+### Shared Vulkan context
+
+No shared Vulkan context is required from the Rust glue layer. MNN's fork owns the VkDevice (created internally by `mnn_session_create` → `ensure_vulkan_loaded()` → `dlopen libMNN_Vulkan.so`) and performs the external-memory import itself. The Rust side only needs to:
+1. Allocate or obtain the `AHardwareBuffer*` (caller-owned).
+2. Pass the pointer via `AhbBinding.ptr`.
+3. Call `mnn_import_ahb_as_device_memory` before `resizeSession`.
+
+If the app wants to share its *own* VkDevice with MNN (e.g. for a custom pre/post-process shader reading the same AHB), that would require MNN's `sharedContext` mechanism (`BackendConfig` + `MNNVulkanSetSessionWorkgroup` etc.) — not currently wired, and not needed for the AHB zero-copy path itself.
 
 ---
 
@@ -124,32 +123,31 @@ This is MNN C++ side work — `libMNN.so` / `libMNN_Vulkan.so` already has the s
 
 | # | Optimization | Where | Impact | Effort |
 |---|-------------|-------|--------|--------|
-| 1 | `VK_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER` import in `mnn_wrapper.cpp` — bind AHB fd to Vulkan session tensors | `cam-rust/cam-isp/mnn_sys/mnn_wrapper.cpp` | Eliminates host↔device copy on Vulkan (largest single win) | High (MNN C++) |
+| 1 | Camera: pass `AImage_getHardwareBuffer` → `input_ahb`, skip `copy_pixels()` de-stride | `anw/src/camera.rs`, `anw/src/pipeline_runner.rs` | Eliminates full-frame input de-stride copy | Medium (media NDK) |
 | 2 | Batch extra-input uploads into single const buffer + `MNNVulkanHotSwapConstBuffer` | `mnnengine.rs:set_extra_inputs()` + `mnn_wrapper.cpp` | Removes ~25 per-frame host→device copies | Medium |
 | 3 | Remove CPU lane-split scratch (SplitInt32/SplitFloat) — do split in Vulkan shader | `mnnengine.rs:1934-2007` + shader | Removes O(H×W) CPU pass + mutex lock | Medium (shader + MNN) |
-| 4 | Wire `OutputBufferPool` into non-zero-copy output path to reuse `Vec<f32>` | `mnn_buffer/mod.rs:OutputBufferPool` + `mnnengine.rs:1790` | Eliminates per-frame 132 MB zero-fill at 4K | Low |
+| 4 | Wire `OutputBufferPool` into non-zero-copy output path to reuse `Vec<f32>` | `mnn_buffer/mod.rs:OutputBufferPool` + `mnnengine.rs` | Eliminates per-frame 132 MB zero-fill at 4K | Low |
 | 5 | Skip unchanged extra-input uploads (delta tracking) | `mnnengine.rs:set_extra_inputs()` | Reduces host→device traffic for static 3A params | Low |
 | 6 | Session geometry cache across pool — pre-resize all sessions at common resolutions | `mnn_session_pool.rs:SessionSlot.resized_for` | Avoids first-frame resize stalls when switching preview↔capture | Low |
+| 7 | Presentation: avoid per-pixel CPU BGRA→RGBA blit; present from `AhbView` mapping directly | `anw/src/presentation.rs` | Eliminates final host-side copy before display | Medium |
+| 8 | Real sync fences instead of CPU `AtomicBool` busy flags | `anw/src/ahb_output.rs`, `cam-ipa::fence.rs` | Correct GPU/CPU coherency ordering | Medium |
 
 ---
 
-## 9. Files to modify for remaining optimizations
+## 9. Files modified for landed zero-copy
 
-| File | What to add |
-|------|-------------|
-| `cam-rust/cam-isp/mnn_sys/mnn_wrapper.cpp` | `VkImportAndroidHardwareBufferInfoANDROID` + `vkGetMemoryAndroidHardwareBufferANDROID` calls in `mnn_run_true_copy`; `MNNVulkanHotSwapConstBuffer` batch upload path |
-| `cam-rust/cam-isp/mnn_sys/mnn_wrapper.h` | Declare new FFI functions for external-memory import |
-| `cam-rust/cam-isp/mnn_sys.rs` | Rust FFI bindings for new wrapper functions |
-| `cam-rust/cam-isp/src/mnnengine.rs` | Batch extra-input uploads; delta tracking; wire `OutputBufferPool`; remove lane-split when shader supports it |
-| `cam-rust/cam-isp/src/mnn_buffer/mod.rs` | `OutputBufferPool` already exists — wire into `MnnEngine::process()` fallback path |
-| `cam-rust/cam-isp/src/mnn_buffer/cma_buffer.rs` | Already provides `CMABuffer` with `as_ptr()`, `as_fd()` — reusable for AHB fd import |
+| File | Change |
+|------|--------|
+| `cam-rust/cam-isp/src/mnnengine.rs` | `input_ahb` bound before `resize()` in `prepare()`; per-frame input import/release removed from `run_prepared()`; `copyFromHostTensor` skipped for AHB-bound input tensors |
+| `cam-rust/cam-isp/mnn_sys/mnn_wrapper.cpp` | `mnn_run_true_zero_copy()` and `mnn_run_ahb_output()` guard `copyFromHostTensor` on `in_tensor->buffer().flags != MNN_MEMORY_AHARDWAREBUFFER` |
+| `docs/isp/ZERO_COPY_NCNN_COMPARISON.md` | ncnn wiki comparison + SoftISP state after changes |
 
 ---
 
 ## Bottom line
 
-**Input path:** Rust-side zero-copy is complete — no `Vec`, no `to_vec()`, no CPU lane split for `RawInt` mode. Remaining cost: Vulkan host→device upload (fixable via `VK_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER` in MNN C++).
+**Input path:** Rust-side zero-copy is complete for `RawInt` mode — no `Vec`, no `to_vec()`, no CPU lane split. Vulkan host→device upload is eliminated when `input_ahb` is bound before resize (tensor flags == `MNN_MEMORY_AHARDWAREBUFFER`). Remaining cost: camera de-stride copy into `Vec<u16>` (fix via media NDK `AImage_getHardwareBuffer` → `input_ahb`).
 
-**Output path:** Rust-side zero-copy is complete — no `Vec`, no `copyToHostTensor`, no `f32→u8`. Remaining cost: Vulkan device→host readback (same fix).
+**Output path:** Rust-side zero-copy is complete — no `Vec`, no `copyToHostTensor`, no `f32→u8`. Vulkan device→host readback is eliminated when `output_ahb` is bound before resize (output AHB path uses `mnn_run_ahb_output` with no readback).
 
-**MNN-side:** `libMNN_Vulkan.so` already has the external-memory extension symbols. The Rust FFI contract is in place. The missing piece is the C++ glue in `mnn_wrapper.cpp` to import the `AHardwareBuffer` fd as Vulkan device memory. Once that's done, the pipeline is truly zero-copy end-to-end: camera DMA buffer → GPU tensor → GPU shader → display DMA buffer, with no host memory traffic at all.
+**MNN-side:** `libMNN_Vulkan.so` already has the external-memory extension symbols, and `mnn_wrapper.cpp` now wires `setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER)` before resize so `VulkanBackend::onAcquire()` performs the `VkImportAndroidHardwareBufferInfoANDROID` import. The pipeline is zero-copy from the MNN FFI boundary onward: camera DMA buffer → GPU tensor → GPU shader → display DMA buffer, with no host memory traffic at the MNN boundary. The remaining host-side copies are the camera de-stride and the presentation blit (roadmap items #1 and #7).
