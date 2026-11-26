@@ -26,20 +26,27 @@ usage() {
 Usage: ./shim-debug.sh <command> [args]
 
 Commands:
-  build          Build MNN, the hot-swappable core, and softisp-test.apk
+  build          Build the shim-only softisp-test.apk
+  libs [--core-only]
+                 Build MNN + core runtime libs (strip + patchelf, no APK)
   push           Push the current core + MNN libs to /sdcard/download
-  core           Rebuild only the core, then push (fast ISP/MNN iteration)
+  core           Rebuild only the core, then push (fast ISP iteration)
+  reload         Ask the app to clean legacy staged libs, stop, then relaunch
+  deploy         core + reload
   launch         Launch ShimActivity with am start
   ping           Send the control intent's ping command
   cancel         Ask the running pipeline to cancel after in-flight work
+  clean          Ask the app to delete legacy .so files from its private cache
   stop           Ask the app to finish itself (no shell force-stop needed)
   logs           Dump logcat + app log into .tmp/shim-debug and print a tail
   verify         Compare logged MD5s with local md5sum of build outputs
-  cycle          stop -> core -> launch -> wait -> verify
+  cycle          core -> reload -> wait -> verify
   help           Show this message
 
 Examples:
   ./shim-debug.sh core
+  ./shim-debug.sh reload
+  ./shim-debug.sh deploy
   ./shim-debug.sh launch
   ./shim-debug.sh verify
   WAIT_SECS=20 ./shim-debug.sh cycle
@@ -59,12 +66,16 @@ do_build() {
     ./build-test-apk.sh
 }
 
+do_libs() {
+    ./build-test-libs.sh "$@"
+}
+
 do_push() {
     ./push-test-libs.sh
 }
 
 do_core() {
-    cargo apk2 -- build -p softisp-anw
+    do_libs --core-only
     ./push-test-libs.sh
 }
 
@@ -77,18 +88,34 @@ do_launch() {
 do_control() {
     local cmd="$1"
     case "$cmd" in
-        ping|cancel|stop|kill|quit|exit) ;;
+        ping|cancel|clean|stop|kill|quit|exit) ;;
         *) echo "ERROR: unknown control command '$cmd'" >&2; usage >&2; exit 2 ;;
     esac
     am start -a "$ACTION" -n "$COMPONENT" --es "$EXTRA" "$cmd" >/dev/null
     echo "  sent control intent: $cmd"
 }
 
+do_reload() {
+    do_control clean || true
+    do_control stop || true
+    sleep 3
+    do_launch
+}
+
+do_deploy() {
+    do_core
+    do_reload
+}
+
 do_logs() {
     mkdir -p "$OUT"
     logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
     if [ -f "$LOG" ]; then
-        cp -f "$LOG" "$OUT/app.log"
+        if [ -f "$LOG.1" ]; then
+            cat "$LOG.1" "$LOG" > "$OUT/app.log"
+        else
+            cp -f "$LOG" "$OUT/app.log"
+        fi
     else
         : > "$OUT/app.log"
         echo "  WARN: $LOG missing; app may be using private fallback" >&2
@@ -111,9 +138,23 @@ do_verify() {
         echo "ERROR: $LOG missing; run '$0 launch' then '$0 logs'" >&2
         exit 1
     fi
-    cp -f "$LOG" "$OUT/app.log"
+    if [ -f "$LOG.1" ]; then
+        cat "$LOG.1" "$LOG" > "$OUT/app.log"
+    else
+        cp -f "$LOG" "$OUT/app.log"
+    fi
     expected_sums | sort > "$OUT/expected.txt"
-    awk '$3 == "md5" { print $4, $5 }' "$OUT/app.log" | sort > "$OUT/actual.txt"
+    awk '
+        BEGIN { start = 1 }
+        /\[shim\] launcher started/ { start = NR }
+        { line[NR] = $0 }
+        END {
+            for (i = start; i <= NR; i++) {
+                n = split(line[i], field, " ")
+                if (field[3] == "md5") print field[4], field[5]
+            }
+        }
+    ' "$OUT/app.log" | sort > "$OUT/actual.txt"
     if diff -u "$OUT/expected.txt" "$OUT/actual.txt" > "$OUT/diff.txt"; then
         echo "  md5 verification: PASS ($(wc -l < "$OUT/actual.txt") libraries)"
         return 0
@@ -125,10 +166,8 @@ do_verify() {
 }
 
 do_cycle() {
-    do_control stop || true
-    sleep 3
     do_core
-    do_launch
+    do_reload
     sleep "$WAIT_SECS"
     do_logs >/dev/null
     do_verify
@@ -141,11 +180,15 @@ fi
 
 case "$1" in
     build)  do_build ;;
+    libs)   shift; do_libs "$@" ;;
     push)   do_push ;;
     core)   do_core ;;
+    reload) do_reload ;;
+    deploy) do_deploy ;;
     launch) do_launch ;;
     ping)   do_control ping ;;
     cancel) do_control cancel ;;
+    clean)  do_control clean ;;
     stop)   do_control stop ;;
     logs)   do_logs ;;
     verify) do_verify ;;

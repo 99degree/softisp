@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Automated hot-swap debug loop for the shim-only test APK.
 #
-# Every launch fingerprints all staged libraries with MD5 and prints the values
+# Every launch fingerprints all uploaded libraries with MD5 and prints the values
 # to /sdcard/download/softisp-app.log. This script computes md5sum of the local
 # build outputs and compares them with the log. On a mismatch it sends a
 # dedicated control intent, waits for the app to terminate itself, rebuilds and
@@ -26,6 +26,18 @@ WAIT_SECS="${2:-12}"
 
 mkdir -p "$OUT"
 
+capture_log() {
+    if [ -f "$LOG" ]; then
+        if [ -f "$LOG.1" ]; then
+            cat "$LOG.1" "$LOG" > "$OUT/app.log"
+        else
+            cp -f "$LOG" "$OUT/app.log"
+        fi
+    else
+        : > "$OUT/app.log"
+    fi
+}
+
 expected_sums() {
     for file in "$CORE" "$MNN_DIR"/lib*.so; do
         [ -f "$file" ] || continue
@@ -39,7 +51,7 @@ launch() {
     am start -n "$COMPONENT" >/dev/null
     sleep "$WAIT_SECS"
     logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
-    cp -f "$LOG" "$OUT/app.log" 2>/dev/null || : > "$OUT/app.log"
+    capture_log
 }
 
 send_control() {
@@ -48,7 +60,7 @@ send_control() {
 
 wait_stopped() {
     for _ in $(seq 1 30); do
-        cp -f "$LOG" "$OUT/app.log" 2>/dev/null || : > "$OUT/app.log"
+        capture_log
         if grep -q "control intent '$1'" "$OUT/app.log" 2>/dev/null \
             || grep -q "forced exit after stop intent" "$OUT/app.log" 2>/dev/null; then
             return 0
@@ -61,7 +73,17 @@ wait_stopped() {
 
 verify() {
     expected_sums | sort > "$OUT/expected.txt"
-    awk '$3 == "md5" { print $4, $5 }' "$OUT/app.log" | sort > "$OUT/actual.txt"
+    awk '
+        BEGIN { start = 1 }
+        /\[shim\] launcher started/ { start = NR }
+        { line[NR] = $0 }
+        END {
+            for (i = start; i <= NR; i++) {
+                n = split(line[i], field, " ")
+                if (field[3] == "md5") print field[4], field[5]
+            }
+        }
+    ' "$OUT/app.log" | sort > "$OUT/actual.txt"
     if diff -u "$OUT/expected.txt" "$OUT/actual.txt" > "$OUT/diff.txt"; then
         echo "  md5 verification: PASS ($(wc -l < "$OUT/actual.txt") libraries)"
         return 0
@@ -73,7 +95,7 @@ verify() {
 
 rebuild_and_push() {
     echo "  rebuilding $CORE"
-    cargo apk2 -- build -p softisp-anw >/dev/null
+    ./build-test-libs.sh --core-only >/dev/null
     ./push-test-libs.sh
 }
 

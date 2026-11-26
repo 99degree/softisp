@@ -2,33 +2,73 @@
 //!
 //! Android starts this cdylib's `android_main` through the stock
 //! `android.app.NativeActivity`. It locates the real application cdylib built
-//! by `anw/` (`libsoftisp.so`), stages it and its MNN dependencies into
-//! app-private storage, and forwards the live `AndroidApp` to the core's
-//! `android_main`. Rebuilding the ISP/MNN core then needs no APK repack.
+//! by `anw/` (`libsoftisp.so`) in the uploaded runtime directory, copies it and
+//! its MNN/C++ dependencies into anonymous memfds, loads them with
+//! `android_dlopen_ext`, and forwards the live `AndroidApp` to the core's
+//! `android_main`. No library is copied into app-private storage, so the
+//! uploaded files are the only runtime source.
 //!
 //! Every search root is mirrored to logcat and to
-//! `/sdcard/download/softisp-app.log` (falling back to app-private storage),
+//! `/sdcard/download/softisp-app.log` (falling back to app external data),
 //! including on failure, so a missing core is diagnosable either way.
 
-use std::ffi::{c_int, c_void, CStr, CString};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
+#[cfg(target_os = "android")]
+use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use android_activity::AndroidApp;
-use libc::{dlclose, dlerror, dlopen, dlsym};
+#[cfg(not(target_os = "android"))]
+use libc::dlopen;
+use libc::{dlclose, dlerror, dlsym};
 use log::{error, info, warn};
 
 #[cfg(target_os = "android")]
 use jni::{objects::JObject, refs::Global, sys::jobject, JavaVM};
 
 const CORE_NAMES: &[&str] = &["libsoftisp.so", "libsoftisp_core.so", "libsoftisp_hot.so"];
-const STAGED_NAME: &str = "libsoftisp.so";
+const RUNTIME_DEPENDENCIES: &[&str] = &[
+    "libc++_shared.so",
+    "libsoftisp_cpp_shared.so",
+    "libMNN.so",
+    "libMNN_Express.so",
+    "libMNN_Vulkan.so",
+    "libMNNConvertDeps.so",
+];
 const RTLD_NOW: c_int = 2;
 const RTLD_LOCAL: c_int = 0;
 const PRIMARY_LOG: &str = "/sdcard/download/softisp-app.log";
+
+#[cfg(target_os = "android")]
+const ANDROID_DLEXT_USE_LIBRARY_FD: u64 = 0x10;
+#[cfg(target_os = "android")]
+const ANDROID_DLEXT_FORCE_LOAD: u64 = 0x40;
+
+#[cfg(target_os = "android")]
+#[repr(C)]
+struct AndroidDlextInfo {
+    flags: u64,
+    reserved_addr: *mut c_void,
+    reserved_size: usize,
+    relro_fd: c_int,
+    library_fd: c_int,
+    library_fd_offset: i64,
+    library_namespace: *mut c_void,
+}
+
+#[cfg(target_os = "android")]
+unsafe extern "C" {
+    fn android_dlopen_ext(
+        filename: *const c_char,
+        flags: c_int,
+        info: *const AndroidDlextInfo,
+    ) -> *mut c_void;
+}
 // Dedicated action so a launcher tap or another app's intent can never be
 // mistaken for a debug command.
 const INTENT_ACTION: &str = "com.softisp.camera.action.CONTROL";
@@ -244,11 +284,6 @@ fn resolve_log_path(app: &AndroidApp) -> PathBuf {
     resolve_public_path(app, "softisp-app.log")
 }
 
-fn signature(path: &Path) -> Option<(u64, SystemTime)> {
-    let meta = fs::metadata(path).ok()?;
-    Some((meta.len(), meta.modified().ok()?))
-}
-
 /// The APK native library directory is resolved from the mapped path of this
 /// shim, not hard-coded: Android app directories contain a random suffix.
 fn self_library_dir() -> Option<PathBuf> {
@@ -269,13 +304,8 @@ fn push_unique(list: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-fn search_roots(
-    external_data: Option<PathBuf>,
-    native_dir: Option<&Path>,
-    staged_dir: &Path,
-) -> Vec<PathBuf> {
+fn search_roots(external_data: Option<PathBuf>, native_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    push_unique(&mut roots, staged_dir.to_path_buf());
     for dir in ["/sdcard/download", "/sdcard/Download"] {
         push_unique(&mut roots, PathBuf::from(dir));
     }
@@ -309,79 +339,19 @@ fn find_core(roots: &[PathBuf]) -> Option<PathBuf> {
     None
 }
 
-/// Copy MNN/C++ dependencies next to the staged core so its `$ORIGIN` rpath
-/// resolves after `dlopen`. The test APK ships none of them, so they are taken
-/// from the same roots as the core (normally `/sdcard/download`). Core names
-/// are skipped: an old APK copy must never shadow the pushed update.
-fn sync_dependencies(roots: &[PathBuf], staged_dir: &Path, log: &ShimLog) {
-    let mut copied = 0;
-    for dir in roots {
-        let entries = match fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !name.ends_with(".so")
-                || name == "libsoftisp_shim.so"
-                || CORE_NAMES.iter().any(|core| *core == name.as_ref())
-            {
-                continue;
-            }
-            let source = entry.path();
-            let dest = staged_dir.join(name.as_ref());
-            if signature(&source) == signature(&dest) {
-                continue;
-            }
-            if fs::copy(&source, &dest).is_ok() {
-                copied += 1;
-            }
-        }
-    }
-    log.line(
-        "INFO",
-        "shim",
-        &format!(
-            "staged {copied} dependency libs into {} from: {}",
-            staged_dir.display(),
-            format_roots(roots)
-        ),
-    );
+fn find_library(dir: &Path, name: &str) -> Option<PathBuf> {
+    let candidate = dir.join(name);
+    candidate.is_file().then_some(candidate)
 }
 
-fn copy_core(source: &Path, staged: &Path, log: &ShimLog) -> bool {
-    if source == staged && signature(source).is_some() {
-        return true;
-    }
-    if signature(source) == signature(staged) {
-        return true;
-    }
-    match fs::copy(source, staged) {
-        Ok(bytes) => {
-            log.line(
-                "INFO",
-                "shim",
-                &format!(
-                    "staged core {} -> {} ({bytes} bytes)",
-                    source.display(),
-                    staged.display()
-                ),
-            );
-            true
-        }
-        Err(err) => {
-            log.line(
-                "FATAL",
-                "shim",
-                &format!(
-                    "cannot stage core {} -> {}: {err}",
-                    source.display(),
-                    staged.display()
-                ),
-            );
-            false
-        }
+struct LoadedLibrary {
+    _file: Option<File>,
+    handle: *mut c_void,
+}
+
+impl Drop for LoadedLibrary {
+    fn drop(&mut self) {
+        unsafe { dlclose(self.handle) };
     }
 }
 
@@ -396,18 +366,135 @@ fn dlerror_text() -> String {
     }
 }
 
-fn load_android_main(staged: &Path, log: &ShimLog) -> Option<(AndroidMain, *mut c_void)> {
-    let path = CString::new(staged.to_string_lossy().as_bytes()).ok()?;
+#[cfg(target_os = "android")]
+const MFD_CLOEXEC: libc::c_uint = 0x0001;
+
+#[cfg(target_os = "android")]
+fn memfd_library(path: &Path, source: &mut File, log: &ShimLog) -> Option<File> {
+    let name = CString::new(format!(
+        "softisp_{}",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ))
+    .ok()?;
+    let fd = unsafe { libc::memfd_create(name.as_ptr(), MFD_CLOEXEC) };
+    if fd < 0 {
+        log.line(
+            "FATAL",
+            "shim",
+            &format!("memfd_create for {} failed: {fd}", path.display()),
+        );
+        return None;
+    }
+    let mut memfd = unsafe { File::from_raw_fd(fd) };
+    if let Err(err) = std::io::copy(source, &mut memfd) {
+        log.line(
+            "FATAL",
+            "shim",
+            &format!("cannot copy {} into memfd: {err}", path.display()),
+        );
+        return None;
+    }
+    if let Err(err) = memfd.seek(SeekFrom::Start(0)) {
+        log.line(
+            "FATAL",
+            "shim",
+            &format!("cannot rewind memfd for {}: {err}", path.display()),
+        );
+        return None;
+    }
+    log.line(
+        "INFO",
+        "shim",
+        &format!("loaded {} into anonymous memfd", path.display()),
+    );
+    Some(memfd)
+}
+
+#[cfg(target_os = "android")]
+fn dlopen_fd(path: &Path, identity: &Path, file: &File, log: &ShimLog) -> Option<*mut c_void> {
+    let name = CString::new(identity.to_string_lossy().as_bytes()).ok()?;
+    let info = AndroidDlextInfo {
+        flags: ANDROID_DLEXT_USE_LIBRARY_FD | ANDROID_DLEXT_FORCE_LOAD,
+        reserved_addr: std::ptr::null_mut(),
+        reserved_size: 0,
+        relro_fd: -1,
+        library_fd: file.as_raw_fd(),
+        library_fd_offset: 0,
+        library_namespace: std::ptr::null_mut(),
+    };
     unsafe { dlerror() };
-    let handle = unsafe { dlopen(path.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
+    let handle = unsafe { android_dlopen_ext(name.as_ptr(), RTLD_NOW | RTLD_LOCAL, &info) };
     if handle.is_null() {
         log.line(
             "FATAL",
             "shim",
-            &format!("dlopen {} failed: {}", staged.display(), dlerror_text()),
+            &format!(
+                "memfd-backed dlopen {} as {} failed: {}",
+                path.display(),
+                identity.display(),
+                dlerror_text()
+            ),
         );
         return None;
     }
+    Some(handle)
+}
+
+fn load_library(path: &Path, identity: &Path, log: &ShimLog) -> Option<LoadedLibrary> {
+    log.line(
+        "INFO",
+        "shim",
+        &format!("loading {} as {}", path.display(), identity.display()),
+    );
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(err) => {
+            log.line(
+                "FATAL",
+                "shim",
+                &format!("cannot open {} for loading: {err}", path.display()),
+            );
+            return None;
+        }
+    };
+
+    #[cfg(target_os = "android")]
+    {
+        let mut source = file;
+        let memfd = memfd_library(path, &mut source, log)?;
+        let handle = dlopen_fd(path, identity, &memfd, log)?;
+        Some(LoadedLibrary {
+            _file: Some(memfd),
+            handle,
+        })
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        drop(file);
+        let name = CString::new(identity.to_string_lossy().as_bytes()).ok()?;
+        unsafe { dlerror() };
+        let handle = unsafe { dlopen(name.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
+        if handle.is_null() {
+            log.line(
+                "FATAL",
+                "shim",
+                &format!("dlopen {} failed: {}", path.display(), dlerror_text()),
+            );
+            return None;
+        }
+        Some(LoadedLibrary {
+            _file: None,
+            handle,
+        })
+    }
+}
+
+fn android_main_from_handle(
+    handle: *mut c_void,
+    path: &Path,
+    log: &ShimLog,
+) -> Option<AndroidMain> {
     unsafe { dlerror() };
     let symbol = unsafe { dlsym(handle, c"android_main".as_ptr()) };
     if symbol.is_null() {
@@ -416,17 +503,14 @@ fn load_android_main(staged: &Path, log: &ShimLog) -> Option<(AndroidMain, *mut 
             "shim",
             &format!(
                 "dlsym(android_main) in {} failed: {}",
-                staged.display(),
+                path.display(),
                 dlerror_text()
             ),
         );
         unsafe { dlclose(handle) };
         return None;
     }
-    Some((
-        unsafe { std::mem::transmute::<*mut c_void, AndroidMain>(symbol) },
-        handle,
-    ))
+    Some(unsafe { std::mem::transmute::<*mut c_void, AndroidMain>(symbol) })
 }
 
 fn fatal_not_found(log: &ShimLog, roots: &[PathBuf]) {
@@ -440,18 +524,29 @@ fn fatal_not_found(log: &ShimLog, roots: &[PathBuf]) {
     log.line("FATAL", "shim", &message);
 }
 
-/// Fingerprint every library that is about to be loaded. The caller compares
-/// these values with `md5sum` of its own build outputs, so a stale core on the
-/// device is detectable from the log alone.
-fn log_library_md5s(staged_dir: &Path, log: &ShimLog) {
-    let mut paths = vec![staged_dir.join(STAGED_NAME)];
-    if let Ok(entries) = fs::read_dir(staged_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.ends_with(".so") && name != STAGED_NAME {
-                paths.push(entry.path());
+/// Fingerprint the libraries in the directory they are loaded from. The caller
+/// compares these values with `md5sum` of its own build outputs, so a stale
+/// upload is detectable from the log alone.
+fn log_library_md5s(dir: &Path, log: &ShimLog) {
+    let mut paths = Vec::new();
+    match fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let path = entry.path();
+                if path.is_file() && name.ends_with(".so") && name != "libsoftisp_shim.so" {
+                    paths.push(path);
+                }
             }
+        }
+        Err(err) => {
+            log.line(
+                "FATAL",
+                "shim",
+                &format!("cannot list {}: {err}", dir.display()),
+            );
+            return;
         }
     }
     paths.sort();
@@ -472,6 +567,44 @@ fn log_library_md5s(staged_dir: &Path, log: &ShimLog) {
             ),
         }
     }
+}
+
+/// Remove `.so` files left by older shim builds that copied libs into the
+/// app-private data directory. The current shim never writes there, but this
+/// keeps a reload from carrying stale snapshots forward.
+fn remove_legacy_staged_libs(dir: Option<&Path>, log: &ShimLog) {
+    let Some(dir) = dir else {
+        return;
+    };
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !path.is_file() || !name.ends_with(".so") || name == "libsoftisp_shim.so" {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => removed += 1,
+            Err(err) => log.line(
+                "WARN",
+                "shim",
+                &format!("cannot remove legacy staged {}: {err}", path.display()),
+            ),
+        }
+    }
+    log.line(
+        "INFO",
+        "shim",
+        &format!(
+            "removed {removed} legacy staged .so files from {}",
+            dir.display()
+        ),
+    );
 }
 
 #[cfg(target_os = "android")]
@@ -553,7 +686,12 @@ fn intent_reader(app: &AndroidApp, log: &ShimLog) -> Option<Box<IntentReader>> {
 /// reaches this watcher through `ShimActivity.onNewIntent`; no shell
 /// force-stop permission is needed.
 #[cfg(target_os = "android")]
-fn spawn_control_watcher(app: &AndroidApp, log: ShimLog, core_handle: *mut c_void) {
+fn spawn_control_watcher(
+    app: &AndroidApp,
+    log: ShimLog,
+    core_handle: *mut c_void,
+    legacy_dir: Option<PathBuf>,
+) {
     let Some(read_command) = intent_reader(app, &log) else {
         return;
     };
@@ -579,6 +717,10 @@ fn spawn_control_watcher(app: &AndroidApp, log: ShimLog, core_handle: *mut c_voi
         };
         let command = command.trim().to_ascii_lowercase();
         match command.as_str() {
+            "clean" => {
+                log.line("INFO", "shim", "control intent: clean legacy staged libs");
+                remove_legacy_staged_libs(legacy_dir.as_deref(), &log);
+            }
             "ping" => log.line("INFO", "shim", "control intent: ping"),
             "cancel" => {
                 log.line("INFO", "shim", "control intent: cancel pipeline");
@@ -608,6 +750,7 @@ fn spawn_control_watcher(app: &AndroidApp, log: ShimLog, core_handle: *mut c_voi
                     "shim",
                     &format!("control intent '{command}'; finishing activity"),
                 );
+                remove_legacy_staged_libs(legacy_dir.as_deref(), &log);
                 let Some(activity) = activity.as_ref() else {
                     std::process::exit(0);
                 };
@@ -644,26 +787,8 @@ fn android_main(app: AndroidApp) {
     let log = ShimLog::new(&app);
     log.line("INFO", "shim", "launcher started");
 
-    let Some(internal) = app.internal_data_path() else {
-        log.line(
-            "FATAL",
-            "shim",
-            "no app internal data path; cannot stage core",
-        );
-        return;
-    };
-    let staged_dir = internal;
-    if let Err(err) = fs::create_dir_all(&staged_dir) {
-        log.line(
-            "FATAL",
-            "shim",
-            &format!("cannot create {}: {err}", staged_dir.display()),
-        );
-        return;
-    }
-
     let native_dir = self_library_dir();
-    let roots = search_roots(app.external_data_path(), native_dir.as_deref(), &staged_dir);
+    let roots = search_roots(app.external_data_path(), native_dir.as_deref());
     log.line(
         "INFO",
         "shim",
@@ -677,7 +802,8 @@ fn android_main(app: AndroidApp) {
             "cannot resolve APK native library dir from /proc/self/maps",
         );
     }
-    sync_dependencies(&roots, &staged_dir, &log);
+    #[cfg(target_os = "android")]
+    remove_legacy_staged_libs(app.internal_data_path().as_deref(), &log);
 
     let Some(source) = find_core(&roots) else {
         fatal_not_found(&log, &roots);
@@ -685,16 +811,57 @@ fn android_main(app: AndroidApp) {
     };
     log.line("INFO", "shim", &format!("found core {}", source.display()));
 
-    let staged = staged_dir.join(STAGED_NAME);
-    if !copy_core(&source, &staged, &log) {
-        return;
+    let load_dir = source
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    log.line(
+        "INFO",
+        "shim",
+        &format!("loading runtime libraries from {}", load_dir.display()),
+    );
+    log_library_md5s(load_dir, &log);
+
+    let mut loaded = Vec::new();
+    for name in RUNTIME_DEPENDENCIES {
+        let Some(path) = find_library(load_dir, name) else {
+            log.line(
+                "FATAL",
+                "shim",
+                &format!(
+                    "missing runtime dependency {name} next to {}",
+                    source.display()
+                ),
+            );
+            return;
+        };
+        let identity = native_dir
+            .as_deref()
+            .map(|dir| dir.join(name))
+            .unwrap_or_else(|| path.clone());
+        let Some(library) = load_library(&path, &identity, &log) else {
+            return;
+        };
+        log.line("INFO", "shim", &format!("loaded dependency {name}"));
+        loaded.push(library);
     }
-    log_library_md5s(&staged_dir, &log);
-    let Some((entry, core_handle)) = load_android_main(&staged, &log) else {
+
+    let core_name = source.file_name().unwrap_or_default();
+    let core_identity = native_dir
+        .as_deref()
+        .map(|dir| dir.join(core_name))
+        .unwrap_or_else(|| source.clone());
+    let Some(core) = load_library(&source, &core_identity, &log) else {
         return;
     };
+    let core_handle = core.handle;
+    let Some(entry) = android_main_from_handle(core_handle, &source, &log) else {
+        return;
+    };
+    loaded.push(core);
+
     #[cfg(target_os = "android")]
-    spawn_control_watcher(&app, log.clone(), core_handle);
+    spawn_control_watcher(&app, log.clone(), core_handle, app.internal_data_path());
     #[cfg(not(target_os = "android"))]
     let _ = core_handle;
 
@@ -702,14 +869,14 @@ fn android_main(app: AndroidApp) {
     log.line(
         "INFO",
         "shim",
-        &format!("forwarding android_main to {}", staged.display()),
+        &format!("forwarding android_main to {}", source.display()),
     );
     unsafe { entry(app) };
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{format_roots, md5::hex_of_bytes, search_roots, CORE_NAMES};
+    use super::{format_roots, md5::hex_of_bytes, search_roots, CORE_NAMES, RUNTIME_DEPENDENCIES};
     use std::path::PathBuf;
 
     #[test]
@@ -735,27 +902,42 @@ mod tests {
     }
 
     #[test]
-    fn search_roots_prioritises_staged_update_over_apk() {
-        let staged = PathBuf::from("/data/user/0/com.softisp.camera/files");
+    fn search_roots_prefers_uploaded_core_over_apk() {
         let external = PathBuf::from("/sdcard/Android/data/com.softisp.camera/files");
         let native = PathBuf::from("/data/app/com.softisp.camera/lib/arm64");
-        let roots = search_roots(Some(external.clone()), Some(&native), &staged);
+        let roots = search_roots(Some(external.clone()), Some(&native));
 
-        assert_eq!(roots[0], staged);
-        assert_eq!(roots[1], PathBuf::from("/sdcard/download"));
-        assert_eq!(roots[2], PathBuf::from("/sdcard/Download"));
-        assert_eq!(roots[3], external);
-        assert_eq!(roots[4], native);
-        assert_eq!(roots[5], PathBuf::from("."));
+        assert_eq!(roots[0], PathBuf::from("/sdcard/download"));
+        assert_eq!(roots[1], PathBuf::from("/sdcard/Download"));
+        assert_eq!(roots[2], external);
+        assert_eq!(roots[3], native);
+        assert_eq!(roots[4], PathBuf::from("."));
     }
 
     #[test]
-    fn search_roots_deduplicates_native_and_staged_paths() {
-        let staged = PathBuf::from("/data/app/com.softisp.camera/lib/arm64");
-        let roots = search_roots(None, Some(&staged), &staged);
+    fn search_roots_deduplicates_native_path() {
+        let native = PathBuf::from("/data/app/com.softisp.camera/lib/arm64");
+        let roots = search_roots(None, Some(&native));
         assert_eq!(roots.len(), 4);
-        assert_eq!(roots[0], staged);
-        assert!(!roots.iter().skip(1).any(|path| path == &staged));
+        assert_eq!(roots[0], PathBuf::from("/sdcard/download"));
+        assert_eq!(roots[2], native);
+        assert_eq!(roots.iter().filter(|path| *path == &native).count(), 1);
+    }
+
+    #[test]
+    fn runtime_dependencies_are_loaded_before_core() {
+        assert!(!RUNTIME_DEPENDENCIES
+            .iter()
+            .any(|name| CORE_NAMES.contains(name)));
+        let mnn = RUNTIME_DEPENDENCIES
+            .iter()
+            .position(|name| *name == "libMNN.so")
+            .unwrap();
+        let convert = RUNTIME_DEPENDENCIES
+            .iter()
+            .position(|name| *name == "libMNNConvertDeps.so")
+            .unwrap();
+        assert!(mnn < convert);
     }
 
     #[test]

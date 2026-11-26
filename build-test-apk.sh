@@ -1,10 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Build the test-only launcher APK.
 #
-# This APK deliberately contains NO MNN libraries and NO libsoftisp.so. It ships
-# only libsoftisp_shim.so, whose job is to stage a separately pushed core cdylib
-# and its MNN dependencies from /sdcard/download into app-private storage.
-# The production APK remains build-apk.sh.
+# This script builds only libsoftisp_shim.so and packages softisp-test.apk. It
+# deliberately contains NO MNN libraries and NO libsoftisp.so; the shim stages a
+# separately built/pushed core and its MNN dependencies from /sdcard/download.
+# Build those runtime libraries with ./build-test-libs.sh. The production APK
+# remains build-apk.sh.
 set -euo pipefail
 
 export JAVA_HOME=/data/data/com.termux/files/usr/lib/jvm/java-11-openjdk
@@ -13,53 +14,13 @@ export ANDROID_HOME="$HOME/android-sdk"
 cd "$(dirname "$0")"
 export RUSTC_WRAPPER="$PWD/scripts/libsoftisp-rustc-wrapper.sh"
 
-CORE_LIB="target/aarch64-linux-android/debug/libsoftisp.so"
 SHIM_LIB="target/aarch64-linux-android/debug/libsoftisp_shim.so"
 APK="target/debug/apk/softisp-test.apk"
-MNN_DIR="cam-rust/lib/arm64-v8a"
-
-# MNN is still built locally: the core links against these libs and the shim
-# stages them from the device copy pushed next to libsoftisp.so.
-./scripts/build_mnn_libs.sh arm64-v8a
-
-STRIP="$(command -v llvm-strip || true)"
-if [ -n "$STRIP" ]; then
-    for so in "$MNN_DIR"/libMNN*.so; do
-        [ -f "$so" ] || continue
-        "$STRIP" --strip-unneeded "$so"
-    done
-else
-    echo "  WARN: llvm-strip not found; device MNN libs stay unstripped" >&2
-fi
-
-# The MNN libs are built with Termux RUNPATHs. Nested dependencies such as
-# libMNNConvertDeps.so -> libMNN_Express.so are resolved with the dependency's
-# own RUNPATH, not the core's, so they must also point at the staged dir.
-if command -v patchelf >/dev/null 2>&1; then
-    for so in "$MNN_DIR"/libMNN*.so "$MNN_DIR"/libsoftisp_cpp_shared.so; do
-        [ -f "$so" ] || continue
-        patchelf --set-rpath '$ORIGIN' "$so"
-    done
-else
-    echo "ERROR: patchelf is required to retune MNN RUNPATHs for staging" >&2
-    exit 1
-fi
 
 rm -f target/debug/apk/softisp-test-unaligned.apk target/debug/apk/classes.dex
 
-# Build the hot-swappable core with the NDK environment, then the shim APK.
-cargo apk2 -- build -p softisp-anw
 cargo apk2 build -p softisp-shim
 sync
-
-# The core links libc++ via NDK; the shim does not. Patch the core if the
-# wrapper was not propagated. No APK rebuild is needed for a core-only patch.
-if command -v patchelf >/dev/null 2>&1 && [ -f "$CORE_LIB" ]; then
-    if readelf -d "$CORE_LIB" | grep -q '\[libc++_shared\.so\]'; then
-        echo "  WARN: RUSTC_WRAPPER did not retune $CORE_LIB; patching now"
-        patchelf --replace-needed libc++_shared.so libsoftisp_cpp_shared.so "$CORE_LIB"
-    fi
-fi
 
 if command -v unzip >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; then
     APK_LIB="lib/arm64-v8a/libsoftisp_shim.so"
@@ -90,10 +51,6 @@ if command -v unzip >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; the
         echo "ERROR: expected shim cdylib $SHIM_LIB was not produced" >&2
         exit 1
     fi
-    if [ ! -f "$CORE_LIB" ]; then
-        echo "ERROR: expected core cdylib $CORE_LIB was not produced" >&2
-        exit 1
-    fi
 
     target_sha=$(sha256sum "$SHIM_LIB" | awk '{print $1}')
     apk_sha=$(unzip -p "$APK" "$APK_LIB" | sha256sum | awk '{print $1}')
@@ -113,6 +70,5 @@ if command -v unzip >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; the
 fi
 
 echo "  test APK: $APK"
-echo "  refresh device libs with: ./push-test-libs.sh"
-echo "    $CORE_LIB -> /sdcard/download/libsoftisp.so"
-echo "    $MNN_DIR/lib*.so -> /sdcard/download/"
+echo "  build runtime libs with: ./build-test-libs.sh"
+echo "  upload runtime libs with: ./push-test-libs.sh"

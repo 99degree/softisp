@@ -9,7 +9,7 @@
 # target/debug/libsoftisp.so, NOT the file below, and links libc++_shared.so.
 # The APK-target build is the one that links libsoftisp_cpp_shared.so, so use:
 #
-#   cargo apk2 -- build -p softisp-anw && ./push-test-libs.sh
+#   ./build-test-libs.sh --core-only && ./push-test-libs.sh
 #
 # for a quick core-only update; no APK rebuild or reinstall is needed.
 #
@@ -31,7 +31,7 @@ DEST="/sdcard/download"
 TERMUX_LIB_DIR="/data/data/com.termux/files/usr/lib"
 
 if [ ! -f "$CORE" ]; then
-    echo "ERROR: missing $CORE; run ./build-test-apk.sh first" >&2
+    echo "ERROR: missing $CORE; run ./build-test-libs.sh first" >&2
     exit 1
 fi
 if [ ! -d "$DEST" ]; then
@@ -40,12 +40,12 @@ if [ ! -d "$DEST" ]; then
 fi
 if readelf -d "$CORE" | grep -q '\[libc++_shared\.so\]'; then
     echo "ERROR: $CORE links libc++_shared.so; it is a host build, not the APK core" >&2
-    echo "       rebuild with: cargo apk2 -- build -p softisp-anw" >&2
+    echo "       rebuild with: ./build-test-libs.sh --core-only" >&2
     exit 1
 fi
 if ! readelf -d "$MNN_DIR/libMNNConvertDeps.so" | grep -Fq 'Library runpath: [$ORIGIN]'; then
     echo "ERROR: MNN libs have build-host RUNPATHs; nested deps will not resolve" >&2
-    echo "       rebuild with: ./build-test-apk.sh" >&2
+    echo "       rebuild with: ./build-test-libs.sh" >&2
     exit 1
 fi
 
@@ -79,4 +79,4 @@ sync
 
 echo "  pushed core: $CORE -> $DEST/libsoftisp.so"
 echo "  pushed $count runtime libs from $MNN_DIR -> $DEST/"
-echo "  now relaunch the installed softisp-test.apk (no reinstall needed)"
+echo "  now reload the installed app with: ./shim-debug.sh reload"
