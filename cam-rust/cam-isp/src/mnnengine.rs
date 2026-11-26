@@ -2224,6 +2224,28 @@ impl MnnEngine {
                     true
                 }
             });
+        // An AHB input must be bound to the input tensor *before* the first
+        // resize: MNN's Vulkan backend imports the AHB in `onAcquire`, which
+        // only runs while the session tensors have no backing memory. Binding
+        // it later leaves a normal host-upload buffer in place and the GPU
+        // still pays a host→device copy. The same binding is reused for every
+        // frame on this worker.
+        let input_ahb = p.input_ahb.is_some_and(|binding| {
+            let required = self.expected_input_elements.unwrap_or(0) as usize;
+            if required == 0 {
+                warn!("AHB input import skipped: expected input element count unknown");
+                false
+            } else if binding.len < required * 2 {
+                warn!(
+                    "AHB input {}B is smaller than model input {}B; using host upload",
+                    binding.len,
+                    required * 2
+                );
+                false
+            } else {
+                true
+            }
+        });
         let (out_ptr, max_out, buf_id) = if let Some(&(buf_ptr, buf_len)) = p.output_buffer.as_ref()
         {
             let max_out = (buf_len / 4) as i32;
@@ -2272,6 +2294,32 @@ impl MnnEngine {
         let t_tensor_before = Instant::now();
         let needs_resize = slot.resized_for != Some((w, h));
         if needs_resize {
+            if input_ahb {
+                let frame_input_c = self
+                    .frame_input_c
+                    .as_ref()
+                    .map_or(std::ptr::null(), |c| c.as_ptr());
+                if frame_input_c.is_null() {
+                    warn!("AHB input import skipped: frame input name is unknown");
+                } else {
+                    let binding = p.input_ahb.as_ref().expect("AHB input binding");
+                    let rc = unsafe {
+                        crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                            interp.as_ptr(),
+                            slot.sess.as_ptr(),
+                            binding.ptr,
+                            frame_input_c,
+                            1,
+                        )
+                    };
+                    if rc != 0 {
+                        warn!(
+                            "AHB input import for '{}' failed: rc={rc}; using host upload",
+                            self.frame_input_name.as_deref().unwrap_or("")
+                        );
+                    }
+                }
+            }
             if output_ahb {
                 let binding = p.output_ahb.as_ref().expect("AHB output binding");
                 let rc = unsafe {
@@ -2619,25 +2667,9 @@ impl MnnEngine {
             .map_or(std::ptr::null(), |c| c.as_ptr());
         unsafe {
             if meta.zero_copy {
-                let mut imported_input = false;
-                if let Some(binding) = p.input_ahb.as_ref() {
-                    if !frame_name_ptr.is_null() {
-                        let rc = crate::mnn_sys::mnn_import_ahb_as_device_memory(
-                            interp.as_ptr(),
-                            sess.as_ptr(),
-                            binding.ptr as *const c_void,
-                            frame_name_ptr,
-                            1,
-                        );
-                        if rc != 0 {
-                            warn!("AHB import for frame input failed: rc={rc}");
-                        } else {
-                            imported_input = true;
-                        }
-                    } else {
-                        warn!("AHB input import skipped: frame input name is unknown");
-                    }
-                }
+                // Input AHB was already bound before resize in prepare(); do not
+                // re-import per frame. The binding persists for the worker
+                // lifetime like the output binding.
                 let mut imported_output = false;
                 if !meta.output_ahb {
                     // Without the prepared AHB binding the output tensor owns
@@ -2721,16 +2753,8 @@ impl MnnEngine {
                         max_out,
                     );
                 }
-                if imported_input {
-                    let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
-                        interp.as_ptr(),
-                        sess.as_ptr(),
-                        frame_name_ptr,
-                    );
-                    if rc != 0 {
-                        warn!("AHB release for frame input failed: rc={rc}");
-                    }
-                }
+                // Input AHB stays bound for the worker lifetime (bound before
+                // resize in prepare()); do not release per frame.
                 if imported_output {
                     let rc = crate::mnn_sys::mnn_release_ahb_device_memory(
                         interp.as_ptr(),

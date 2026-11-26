@@ -716,14 +716,20 @@ extern "C" int mnn_run_true_zero_copy(
         }
     }
 
-    // Assigning `buffer().host` is ignored by the Vulkan backend: it allocates
-    // its own device buffer. Use the supported upload so the frame actually
-    // reaches the GPU. For a CPU session this is still a no-copy host alias.
-    auto* host_in = MNN::Tensor::create(shape, buffer_type,
-        const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer)), MNN::Tensor::CAFFE);
-    if (!host_in) return -3;
-    in_tensor->copyFromHostTensor(host_in);
-    delete host_in;
+    // If the input tensor was bound to an AHardwareBuffer before resize
+    // (via mnn_import_ahb_as_device_memory + setDevicePtr), MNN's Vulkan
+    // backend already imported the AHB as device memory in onAcquire(). The
+    // caller's buffer points at the AHB's CPU mapping, which is the same
+    // physical memory — skip copyFromHostTensor to avoid a redundant
+    // host→device upload. For non-AHB tensors (CPU backend, or host buffer
+    // without AHB binding), the normal copy path applies.
+    if (in_tensor->buffer().flags != MNN_MEMORY_AHARDWAREBUFFER) {
+        auto* host_in = MNN::Tensor::create(shape, buffer_type,
+            const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer)), MNN::Tensor::CAFFE);
+        if (!host_in) return -3;
+        in_tensor->copyFromHostTensor(host_in);
+        delete host_in;
+    }
 
     auto* output = (output_name != nullptr)
         ? net->getSessionOutput(sess, output_name)
@@ -821,12 +827,17 @@ extern "C" int mnn_run_ahb_output(
         return -10;
     }
 
-    auto* host_in = MNN::Tensor::create(
-        shape, buffer_type, const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer)),
-        MNN::Tensor::CAFFE);
-    if (!host_in) return -3;
-    in_tensor->copyFromHostTensor(host_in);
-    delete host_in;
+    // If the input tensor was bound to an AHardwareBuffer before resize,
+    // skip the host→device copy: the AHB's CPU mapping is the same physical
+    // memory MNN's Vulkan backend imported as device memory.
+    if (in_tensor->buffer().flags != MNN_MEMORY_AHARDWAREBUFFER) {
+        auto* host_in = MNN::Tensor::create(
+            shape, buffer_type, const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer)),
+            MNN::Tensor::CAFFE);
+        if (!host_in) return -3;
+        in_tensor->copyFromHostTensor(host_in);
+        delete host_in;
+    }
 
     auto* output = (output_name != nullptr)
         ? net->getSessionOutput(sess, output_name)
