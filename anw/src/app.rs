@@ -636,6 +636,7 @@ impl Preview {
             Some(view) => (view.bytes(), Some(view.clone())),
             None => (done.data.as_slice(), None),
         };
+
         let present_t0 = Instant::now();
         let presented = if let Some(display) = self.ahb_display.as_mut() {
             // Path B: hand the GPU-written AHB straight to SurfaceFlinger,
@@ -664,20 +665,28 @@ impl Preview {
         self.frames += 1;
         self.last_frame = Some((done.data, done.width, done.height, done.kind, ahb_view));
 
-        // Workers report their own stage timings; combine them with the
-        // present time to keep the end-to-end budget diagnostic alive.
-        let pipeline = done.capture + done.stage + done.isp + t_present;
-        if pipeline > FRAME_BUDGET {
+        // Per-stage timing diagnostic (all ns → ms). Everything came from the
+        // worker via `Done` except `t_present` measured here.
+        let pipeline_ms = (done.media_ndk_capture_ns
+            + done.stager_ns
+            + done.mnn_prepare_ns
+            + done.mnn_inference_ns
+            + done.mnn_output_ns
+            + t_present.as_nanos() as u64) as f64
+            / 1_000_000.0;
+        if pipeline_ms > FRAME_BUDGET.as_secs_f64() * 1000.0 {
             write_line(
                 "WARN",
                 "loop",
                 &format!(
-                    "frame took {}ms (capture {} / stage {} / isp {} / present {} ms)",
-                    pipeline.as_millis(),
-                    done.capture.as_millis(),
-                    done.stage.as_millis(),
-                    done.isp.as_millis(),
-                    t_present.as_millis()
+                    "frame took {:.1} ms (media_ndk_capture {:.1} / stager {:.1} / mnn_prepare {:.1} / mnn_inference {:.1} / mnn_output {:.1} / present {:.1} ms)",
+                    pipeline_ms,
+                    done.media_ndk_capture_ns as f64 / 1_000_000.0,
+                    done.stager_ns as f64 / 1_000_000.0,
+                    done.mnn_prepare_ns as f64 / 1_000_000.0,
+                    done.mnn_inference_ns as f64 / 1_000_000.0,
+                    done.mnn_output_ns as f64 / 1_000_000.0,
+                    t_present.as_nanos() as f64 / 1_000_000.0,
                 ),
             );
         }

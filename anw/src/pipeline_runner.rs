@@ -51,9 +51,16 @@ pub(crate) struct Done {
     pub(crate) seq: u64,
     pub(crate) worker: usize,
     pub(crate) raw: RawStats,
-    pub(crate) capture: Duration,
-    pub(crate) stage: Duration,
-    pub(crate) isp: Duration,
+    /// Media NDK: `AImageReader_acquireLatestImage` + pixel de-stride copy (ns).
+    pub(crate) media_ndk_capture_ns: u64,
+    /// `FrameStager::stage()` u16→LE widening (ns).
+    pub(crate) stager_ns: u64,
+    /// MNN engine `prepare()`: controller snapshot + session acquire + tensor uploads (ns).
+    pub(crate) mnn_prepare_ns: u64,
+    /// MNN engine `runSession()` GPU dispatch (ns).
+    pub(crate) mnn_inference_ns: u64,
+    /// MNN output meta resolution + pixel copy/handoff (ns).
+    pub(crate) mnn_output_ns: u64,
     /// ISP failure. Reported without stalling the reorder queue: the sequence
     /// is consumed so later frames are not held behind a failed one.
     pub(crate) error: Option<String>,
@@ -234,6 +241,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
     let mut geometry: Option<(u32, u32)> = None;
     let mut prepared: Option<PreparedFrame<'_>> = None;
     let mut ahb_slot: Option<AhbOutputSlot> = None;
+    let mut mnn_prepare_ns: u64 = 0;
 
     while !stop.load(Ordering::Acquire) {
         // One AHB per worker, allocated once the geometry is known and reused
@@ -268,7 +276,9 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                     prepare_params.output_buffer = Some(buf);
                     prepare_params.output_ahb = Some(binding);
                 }
+                let prep_t0 = Instant::now();
                 prepared = mnn.prepare(&prepare_params).ok();
+                mnn_prepare_ns = prep_t0.elapsed().as_nanos() as u64;
             }
         }
         if stop.load(Ordering::Acquire) {
@@ -283,7 +293,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                 None => Ok(None),
             }
         };
-        let capture = capture_t0.elapsed();
+        let media_ndk_capture_ns = capture_t0.elapsed().as_nanos() as u64;
         if stop.load(Ordering::Acquire) {
             break;
         }
@@ -314,16 +324,16 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
 
         let stage_t0 = Instant::now();
         let staged = stager.stage(&frame);
-        let stage = stage_t0.elapsed();
+        let stager_ns = stage_t0.elapsed().as_nanos() as u64;
 
-        let (data, width, height, kind, isp, error) = if show_raw.load(Ordering::Relaxed) {
+        let (data, width, height, kind, _isp, error) = if show_raw.load(Ordering::Relaxed) {
             prepared = None;
             (
                 raw_to_grayscale_bgra(&frame),
                 frame.width,
                 frame.height,
                 FrameKind::Bgra,
-                Duration::ZERO,
+                0u64,
                 None,
             )
         } else {
@@ -363,19 +373,28 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             };
             match staged_result {
                 Some(Ok((out, pending))) => {
-                    let isp = isp_t0.elapsed();
                     let kind = if config.float_output() {
                         FrameKind::PlanarRgbF32
                     } else {
                         FrameKind::Bgra
                     };
+                    // Extract engine-internal phase timings from the returned frame.
+                    let mnn_inference_ns = out.inference_duration_ns;
+                    let mnn_output_ns = out
+                        .aux
+                        .as_ref()
+                        .and_then(|a| a.timing)
+                        .map(|t| t.output_meta_ns.saturating_add(t.output_copy_ns))
+                        .unwrap_or(0);
                     let done = Done {
                         seq: s,
                         worker,
                         raw,
-                        capture,
-                        stage,
-                        isp,
+                        media_ndk_capture_ns,
+                        stager_ns,
+                        mnn_prepare_ns,
+                        mnn_inference_ns,
+                        mnn_output_ns,
                         error: None,
                         data: out.data,
                         ahb: ahb_slot.as_ref().map(|s| s.view()),
@@ -398,7 +417,6 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                     continue;
                 }
                 Some(Err(e)) => {
-                    let isp = isp_t0.elapsed();
                     if let Some(slot) = ahb_slot.as_ref() {
                         slot.mark_free();
                     }
@@ -407,13 +425,12 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                         frame.width,
                         frame.height,
                         FrameKind::Bgra,
-                        isp,
+                        isp_t0.elapsed().as_nanos() as u64,
                         Some(e.to_string()),
                     )
                 }
                 None => {
                     let result = engine.process(&params);
-                    let isp = isp_t0.elapsed();
                     match result {
                         Ok(out) => {
                             let kind = if config.float_output() {
@@ -421,14 +438,21 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                             } else {
                                 FrameKind::Bgra
                             };
-                            (out.data, out.width, out.height, kind, isp, None)
+                            (
+                                out.data,
+                                out.width,
+                                out.height,
+                                kind,
+                                out.inference_duration_ns,
+                                None,
+                            )
                         }
                         Err(e) => (
                             Vec::new(),
                             frame.width,
                             frame.height,
                             FrameKind::Bgra,
-                            isp,
+                            0,
                             Some(e.to_string()),
                         ),
                     }
@@ -440,9 +464,11 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             seq: s,
             worker,
             raw,
-            capture,
-            stage,
-            isp,
+            media_ndk_capture_ns,
+            stager_ns,
+            mnn_prepare_ns,
+            mnn_inference_ns: 0,
+            mnn_output_ns: 0,
             error,
             data,
             ahb: None,
