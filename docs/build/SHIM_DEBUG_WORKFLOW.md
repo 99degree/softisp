@@ -22,14 +22,20 @@ For background and design rationale, see
   `install-apk.sh`, `pm install`, `pm uninstall`, `pm clear`, `am force-stop`,
   `am kill`, `pm disable`, or any other package/process lifecycle command from
   the harness (see `AGENTS.md` §1.7 and §3).
+- **After install, the user must grant permissions in Settings** before the app
+  can run:
+  - **Camera** (`android.permission.CAMERA`) — needed to open the sensor and
+    capture RAW16 frames; without it the app logs `Could not open camera`.
+  - **All files access** (`MANAGE_EXTERNAL_STORAGE`, API 30+) — needed to read
+    `/sdcard/download/softisp-app.log` and to load the pushed core + MNN libs;
+    without it the shim fails with `Permission denied (os error 13)` before
+    `dlopen`. A NativeActivity cannot request this itself — the user toggles it
+    in Settings → Apps → SoftISP Camera → All files access → Allow.
+  - Reinstalling changes the app UID; re-enable **All files access** after every
+    reinstall, or the app cannot read files in `/sdcard/download`.
 - `am start` is allowed for launching the activity and for sending this app's
   own control intent. That is how the app stops or cancels itself without
   shell-level force-stop permissions.
-- A process started from an older APK (before `ShimActivity`) cannot receive
-  control intents. It needs a one-time Force stop done by the user.
-- Reinstalling changes the app UID. Re-enable **All files access** for
-  `com.softisp.camera` after every reinstall, or the app cannot read files in
-  `/sdcard/download`.
 
 ---
 
