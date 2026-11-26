@@ -2,8 +2,6 @@
 
 A complete camera ISP pipeline in Rust with Vulkan GPU acceleration.
 
-## What It Does
-
 Converts raw Bayer sensor data into display-ready images in real-time:
 
 ```
@@ -33,10 +31,29 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 > shader — producing **incorrect output with no error**. Always validate a new
 > block's GPU/MNN result numerically against the `CpuEngine` reference.
 
+## Quick Start
+
+```rust
+// Create a GPU engine (falls back to CPU automatically)
+let mut engine = select_engine_by_name("mnn_vulkan")?;
+
+// Process a frame
+let params = ProcessParams::new(3840, 2160, &raw_bayer);
+let frame = engine.process(&params)?;
+```
+
+Build & test (from the workspace root):
+
+```bash
+cargo fmt --all -- --check
+cargo test -p cam-isp --features rectifier    # lib tests
+cargo run --example camera_isp -p cam-isp --features mnn -- --width 640 --height 480
+```
+
 ## Key Features
 
 - **52 ISP blocks** across input, black-level, white-balance, demosaic, color,
-  tone, denoise, warp, and display categories (see [Pipeline](#pipeline-blocks)).
+  tone, denoise, warp, and display categories (see [Pipeline Blocks](#pipeline-blocks)).
 - **Vulkan GPU acceleration** — the fused chain is 12 blocks at 4K: 8 image stages
   plus 4 statistics taps, of which 4 stages are single `isp.*` dispatches.
   Measured end to end: **3.1 FPS** at 3840×2160 and **5.7 FPS**
@@ -59,159 +76,6 @@ gamma, CCM weights, tone curve, warp grid, …) are feedable at runtime.
 - **Zero-copy memory** — CMA / ION / memfd buffer manager for camera → ISP → MNN.
 - **CLI (`ipa_sk` / `cam-ipa-sk`)** — Swiss-army-knife test binary: `generate` (synthetic frames), `capture` (V4L2), `process`, `bench` (FPS/latency), `stats` (CMOS characterization), `zerocopy` (memfd/dmabuf), `probe` (capabilities), `profile-json`, `cmos-dump` (libcamera-compatible CMOS JSON). Use it to exercise the ISP pipeline end to end without building the APK.
 - **801 lib tests** pass with `--features rectifier`, 0 failures.
-
-## Prebuilt APK
-
-A debug build of the camera app is checked in at
-[`release/softisp-camera-debug.apk`](release/softisp-camera-debug.apk) — ~13 MB,
-arm64-v8a, package `com.softisp.camera`, signed with the standard debug keystore.
-
-**The user installs it directly — no `adb install`, `pm install`, or
-`install-apk.sh` from Termux** (AGENTS.md §1.7). Transfer the APK to the device
-and let the user install it through the normal Android flow, then launch from
-the app drawer ("SoftISP Camera").
-
-It ships the whole fused stack: `libMNN.so`, the `libMNN_Vulkan.so` plugin with the
-`isp.*` shaders embedded, and `libMNNConvertDeps.so` for the same-process ONNX→MNN
-conversion. Nothing is fetched at run time.
-
-Building it yourself:
-
-```bash
-./build-apk.sh
-# -> target/debug/apk/softisp-camera.apk (workspace root)
-```
-
-`anw/` owns the NativeActivity code and produces `libsoftisp.so`;
-`android-app/` holds only the manifest and resources.
-
-## Debugging without reinstalling the APK (shim fast-debug)
-
-For ISP/MNN code changes, you do not need to repack or reinstall the APK. Build
-the shim-only test APK once, then push only the core library to the device:
-
-```bash
-# One-time: build the shim-only APK and push libs
-./build-test-apk.sh        # -> target/debug/apk/softisp-test.apk
-# user installs target/debug/apk/softisp-test.apk
-./push-test-libs.sh        # copies core + MNN libs to /sdcard/download/
-
-# Daily loop: rebuild core, stop app, relaunch, verify
-./shim-debug.sh core       # cargo apk2 -- build -p softisp-anw + push
-./shim-debug.sh stop       # control intent (no shell force-stop)
-./shim-debug.sh launch     # am start ShimActivity
-./shim-debug.sh verify     # MD5 fingerprint comparison
-./shim-debug.sh logs       # tail /sdcard/download/softisp-app.log
-# or all at once: WAIT_SECS=12 ./shim-debug.sh cycle
-```
-
-The test APK contains only `libsoftisp_shim.so` (no MNN, no core) — the shim
-`dlopen`s a separately pushed `libsoftisp.so` from `/sdcard/download/`. See
-[`docs/build/SHIM_DEBUG_WORKFLOW.md`](docs/build/SHIM_DEBUG_WORKFLOW.md) for
-the full workflow, including §9 on debugging the MNN Vulkan backend
-("probe session create fail").
-
-## Quick Start
-
-```rust
-// Create a GPU engine (falls back to CPU automatically)
-let mut engine = select_engine_by_name("mnn_vulkan")?;
-
-// Process a frame
-let params = ProcessParams::new(3840, 2160, &raw_bayer);
-let frame = engine.process(&params)?;
-```
-
-Build & test:
-
-```bash
-cargo test -p cam-isp --features rectifier    # 801 lib tests
-cargo run --example camera_isp -p cam-isp --features mnn -- --width 640 --height 480
-```
-
-## Performance (on-device, Vulkan GPU)
-
-End-to-end, whole chain, raw Bayer in → planar RGB out, 8 frames warmup then
-20–30 measured. `p50` over the run, not an average of block times.
-
-**Measure with tracing off.** Every ISP trace — the per-command markers, the
-zero-copy log, the `[VulkanFuse-PERF]` dispatch report — is behind one switch that
-is off by default:
-
-```bash
-MNN_ISP_TRACE=1 <command>   # turn them all on, for one debugging run
-```
-
-With it off a timing run adds zero bytes to `/sdcard/Download/isp_vlog_trace` and
-emits no per-dispatch lines; with it on, one three-profile run writes 26 KB. An op
-that falls back off the GPU is still reported unconditionally, because that costs
-two full-frame copies and is worth more than any tuning.
-
-**3840×2160** (`PERF_FRAMES=40 cargo test -p cam-isp --test probe_4k_perf perf_4k_all --features mnn -- --ignored --nocapture`)
-
-Measured on this device (Termux/Android, Vulkan GPU, MNN backend). Output format changes the cost materially — PackedRgb is a single fused dispatch; BGRA needs an extra format-conversion pass. MED/HEAVY/UNIFIED PackedRgb produce blank output on this build (known graph/packing gap) and are shown only for BGRA/ARGB where they render.
-
-| Profile | Blocks | p50 | p95 | FPS | Format |
-|---|---|---|---|---|---|
-| **FUSED** | 14 | **156.8 ms** | 161.3 ms | **6.4** | PackedRgb |
-| FUSED, statistics off | 14 | 157.1 ms | 177.9 ms | 6.4 | PackedRgb |
-| **FUSED** | 14 | **274.7 ms** | 297.3 ms | **3.6** | BGRA |
-| FUSED, statistics off | 14 | 258.4 ms | 312.4 ms | 3.9 | BGRA |
-| MED (primitives) | 19 | 468.1 ms | 509.3 ms | 2.1 | BGRA |
-| MED (primitives) | 19 | 498.6 ms | 526.0 ms | 2.0 | ARGB |
-| WHOLE (`isp.pipeline`) | 2 | 181.2 ms | 201.4 ms | 5.5 | PackedRgb |
-| UNIFIED | 14 | 164.8 ms | 183.1 ms | 6.1 | PackedRgb |
-| UNIFIED | 14 | 216.5 ms | 295.1 ms | 4.6 | BGRA |
-| DUAL fused (stats ON+OFF ping-pong) | 14 | 142.1 ms | 162.5 ms | 7.0 | PackedRgb |
-| DUAL fused | 14 | 276.5 ms | 322.0 ms | 3.6 | BGRA |
-
-Statistics readback costs ~2.5 ms per frame (~2% of p50) at 4K — the per-block statistics taps were already pooled into one shared `AveragePool` (`stats_downscale_max = 540`), so the 3A branches are ~6% of the frame instead of 38%.
-
-**1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25 …`)
-
-| Profile | Blocks | p50 | p95 | FPS |
-|---|---|---|---|---|
-| MED (primitives) | 19 | 132.3 ms | 156.7 ms | 7.6 |
-| **FUSED** | 13 | **74.5 ms** | 83.5 ms | **13.4** |
-| FUSED, statistics off | 13 | 70.3 ms | 79.2 ms | 14.2 |
-| WHOLE (`isp.pipeline`) | 2 | 19.7 ms | 22.1 ms | 50.8 |
-| UNIFIED (FUSED + all stages) | 13 | 72.6 ms | 80.7 ms | 13.8 |
-
-Fusion buys **~1.8×** at FHD and **~3×** at 4K (FUSED PackedRgb 156.8 ms vs MED BGRA 468.1 ms). Collapsing the whole chain into one dispatch (`WHOLE`) was worth 2.4× while the statistics still reduced the full frame; with them pooled, `FUSED` is within ~4× of `WHOLE` at FHD while keeping the 3A loop closed. `UNIFIED` mirrors FUSED with tiled rendering at 4K and matches it within noise, confirming the fusion is the driver. The DUAL engine (ping-pong two `MnnEngine` instances, stats on A / off B) reaches **7.0 FPS** at 4K PackedRgb — the best single-engine number.
-
-Absolute numbers move with device temperature — the same configuration measured 437.1 ms then 298.0 ms back to back (`probe_4k_drift`). Compare rows *within* a run.
-
-### Where the 4K time goes
-
-The 3A statistics were the whole problem. Each block used to shrink the frame for
-itself, so four blocks meant four traversals of a 100 MB tensor:
-
-| Removed | Saves | Share of the chain |
-|---|---|---|
-| all statistics | 225.3 ms | 67% |
-| `tone_stats` | 105.6 ms | 31% |
-| `zone_stats` | 82.4 ms | 24% |
-| `channel_means` | 40.6 ms | 12% |
-| saturation | 33.7 ms | 10% |
-| `ee` | −104.4 ms | noise |
-
-They now share one `AveragePool` (`stats_downscale_max = 540`), and the 3A branches
-cost **~6% of the frame** instead of 38%. The numbers they hand the controller do
-not move: a mean is exact under a box filter, so the calibration quad means are
-`[0.9962, 1.0000, 0.9987]` pooled against `[0.9963, 1.0000, 0.9987]` at full
-resolution.
-
-The two run-time levers still apply on top: `set_stats_interval(n)` measures every
-`n` frames, and `set_stats_enabled(false)` skips the readback entirely (a frame that
-skipped reports `stats_measured == false`). Anything under ~10% in the table above is
-inside run-to-run spread — `no ee` coming out negative is the honest reminder.
-
-### Historical
-
-The earlier figures in this README (680 / 438 / 78 FPS at HD / FHD / 4K) were
-per-block micro-benchmarks taken before the MNN DCE and fused-opset work. They
-measured a chain that did not run the same ops this one does; the numbers above
-supersede them.
 
 ## Pipeline Blocks
 
@@ -271,7 +135,7 @@ grouped by function:
 - `StatsBlock` — histogram / statistics extraction
 - `StageBlock` / `PluginBlock` — composable sub-pipelines
 
-### Fused `isp.*` opset
+## Fused `isp.*` opset
 
 Blocks can emit a purpose-built MNN op instead of a chain of ONNX primitives. The
 fused op is one Vulkan dispatch with its coefficients fed as per-frame tensors, so a
@@ -289,7 +153,7 @@ a probe that compares it against its primitive form:
 | `isp.downscale` | `Resize` | mean\|Δ\| 0.00037 |
 | `isp.display` | gamma pow + clip | mean\|Δ\| ≤ 0.001 |
 | `isp.cfa_downscale` | statistics tap `Resize` | statistics only |
-| `isp.pipeline` | the *whole* RAW→display chain | mean 0.6019 vs MED’s 0.6243 (box-filter demosaic) |
+| `isp.pipeline` | the *whole* RAW→display chain | mean 0.6019 vs MED's 0.6243 (box-filter demosaic) |
 
 `PipelineProfile::FUSED` enables the per-stage set — 8 blocks instead of MED's 15:
 
@@ -387,6 +251,90 @@ cargo build -p cam-ipa-sk --features v4l2          # + V4L2 capture
 ./target/debug/ipa_sk probe --json
 ```
 
+## Performance (on-device, Vulkan GPU)
+
+End-to-end, whole chain, raw Bayer in → planar RGB out, 8 frames warmup then
+20–30 measured. `p50` over the run, not an average of block times.
+
+**Measure with tracing off.** Every ISP trace — the per-command markers, the
+zero-copy log, the `[VulkanFuse-PERF]` dispatch report — is behind one switch that
+is off by default:
+
+```bash
+MNN_ISP_TRACE=1 <command>   # turn them all on, for one debugging run
+```
+
+With it off a timing run adds zero bytes to `/sdcard/Download/isp_vlog_trace` and
+emits no per-dispatch lines; with it on, one three-profile run writes 26 KB. An op
+that falls back off the GPU is still reported unconditionally, because that costs
+two full-frame copies and is worth more than any tuning.
+
+**3840×2160** (`PERF_FRAMES=40 cargo test -p cam-isp --test probe_4k_perf perf_4k_all --features mnn -- --ignored --nocapture`)
+
+Measured on this device (Termux/Android, Vulkan GPU, MNN backend). Output format changes the cost materially — PackedRgb is a single fused dispatch; BGRA needs an extra format-conversion pass. MED/HEAVY/UNIFIED PackedRgb produce blank output on this build (known graph/packing gap) and are shown only for BGRA/ARGB where they render.
+
+| Profile | Blocks | p50 | p95 | FPS | Format |
+|---|---|---|---|---|---|
+| **FUSED** | 14 | **156.8 ms** | 161.3 ms | **6.4** | PackedRgb |
+| FUSED, statistics off | 14 | 157.1 ms | 177.9 ms | 6.4 | PackedRgb |
+| **FUSED** | 14 | **274.7 ms** | 297.3 ms | **3.6** | BGRA |
+| FUSED, statistics off | 14 | 258.4 ms | 312.4 ms | 3.9 | BGRA |
+| MED (primitives) | 19 | 468.1 ms | 509.3 ms | 2.1 | BGRA |
+| MED (primitives) | 19 | 498.6 ms | 526.0 ms | 2.0 | ARGB |
+| WHOLE (`isp.pipeline`) | 2 | 181.2 ms | 201.4 ms | 5.5 | PackedRgb |
+| UNIFIED | 14 | 164.8 ms | 183.1 ms | 6.1 | PackedRgb |
+| UNIFIED | 14 | 216.5 ms | 295.1 ms | 4.6 | BGRA |
+| DUAL fused (stats ON+OFF ping-pong) | 14 | 142.1 ms | 162.5 ms | 7.0 | PackedRgb |
+| DUAL fused | 14 | 276.5 ms | 322.0 ms | 3.6 | BGRA |
+
+Statistics readback costs ~2.5 ms per frame (~2% of p50) at 4K — the per-block statistics taps were already pooled into one shared `AveragePool` (`stats_downscale_max = 540`), so the 3A branches are ~6% of the frame instead of 38%.
+
+**1920×1080** (`PERF_W=1920 PERF_H=1080 PERF_FRAMES=25 …`)
+
+| Profile | Blocks | p50 | p95 | FPS |
+|---|---|---|---|---|
+| MED (primitives) | 19 | 132.3 ms | 156.7 ms | 7.6 |
+| **FUSED** | 13 | **74.5 ms** | 83.5 ms | **13.4** |
+| FUSED, statistics off | 13 | 70.3 ms | 79.2 ms | 14.2 |
+| WHOLE (`isp.pipeline`) | 2 | 19.7 ms | 22.1 ms | 50.8 |
+| UNIFIED (FUSED + all stages) | 13 | 72.6 ms | 80.7 ms | 13.8 |
+
+Fusion buys **~1.8×** at FHD and **~3×** at 4K (FUSED PackedRgb 156.8 ms vs MED BGRA 468.1 ms). Collapsing the whole chain into one dispatch (`WHOLE`) was worth 2.4× while the statistics still reduced the full frame; with them pooled, `FUSED` is within ~4× of `WHOLE` at FHD while keeping the 3A loop closed. `UNIFIED` mirrors FUSED with tiled rendering at 4K and matches it within noise, confirming the fusion is the driver. The DUAL engine (ping-pong two `MnnEngine` instances, stats on A / off B) reaches **7.0 FPS** at 4K PackedRgb — the best single-engine number.
+
+Absolute numbers move with device temperature — the same configuration measured 437.1 ms then 298.0 ms back to back (`probe_4k_drift`). Compare rows *within* a run.
+
+### Where the 4K time goes
+
+The 3A statistics were the whole problem. Each block used to shrink the frame for
+itself, so four blocks meant four traversals of a 100 MB tensor:
+
+| Removed | Saves | Share of the chain |
+|---|---|---|
+| all statistics | 225.3 ms | 67% |
+| `tone_stats` | 105.6 ms | 31% |
+| `zone_stats` | 82.4 ms | 24% |
+| `channel_means` | 40.6 ms | 12% |
+| saturation | 33.7 ms | 10% |
+| `ee` | −104.4 ms | noise |
+
+They now share one `AveragePool` (`stats_downscale_max = 540`), and the 3A branches
+cost **~6% of the frame** instead of 38%. The numbers they hand the controller do
+not move: a mean is exact under a box filter, so the calibration quad means are
+`[0.9962, 1.0000, 0.9987]` pooled against `[0.9963, 1.0000, 0.9987]` at full
+resolution.
+
+The two run-time levers still apply on top: `set_stats_interval(n)` measures every
+`n` frames, and `set_stats_enabled(false)` skips the readback entirely (a frame that
+skipped reports `stats_measured == false`). Anything under ~10% in the table above is
+inside run-to-run spread — `no ee` coming out negative is the honest reminder.
+
+### Historical
+
+The earlier figures in this README (680 / 438 / 78 FPS at HD / FHD / 4K) were
+per-block micro-benchmarks taken before the MNN DCE and fused-opset work. They
+measured a chain that did not run the same ops this one does; the numbers above
+supersede them.
+
 ## Architecture (10 crates)
 
 | Crate | Purpose |
@@ -422,6 +370,57 @@ cargo build -p cam-ipa-sk --features v4l2          # + V4L2 capture
 - ✅ ONNX model generator (pure-Rust protobuf encoder) + MNN same-process conversion
 - ✅ ONNX `TypeProto`/`TensorShapeProto` encoding correct — no more MNN DCE
 - ✅ `synth_bayer` module (5 generators) for stress-test inputs
+
+## Prebuilt APK
+
+A debug build of the camera app is checked in at
+[`release/softisp-camera-debug.apk`](release/softisp-camera-debug.apk) — ~13 MB,
+arm64-v8a, package `com.softisp.camera`, signed with the standard debug keystore.
+
+**The user installs it directly — no `adb install`, `pm install`, or
+`install-apk.sh` from Termux** (AGENTS.md §1.7). Transfer the APK to the device
+and let the user install it through the normal Android flow, then launch from
+the app drawer ("SoftISP Camera").
+
+It ships the whole fused stack: `libMNN.so`, the `libMNN_Vulkan.so` plugin with the
+`isp.*` shaders embedded, and `libMNNConvertDeps.so` for the same-process ONNX→MNN
+conversion. Nothing is fetched at run time.
+
+Building it yourself:
+
+```bash
+./build-apk.sh
+# -> target/debug/apk/softisp-camera.apk (workspace root)
+```
+
+`anw/` owns the NativeActivity code and produces `libsoftisp.so`;
+`android-app/` holds only the manifest and resources.
+
+## Debugging without reinstalling the APK (shim fast-debug)
+
+For ISP/MNN code changes, you do not need to repack or reinstall the APK. Build
+the shim-only test APK once, then push only the core library to the device:
+
+```bash
+# One-time: build the shim-only APK and push libs
+./build-test-apk.sh        # -> target/debug/apk/softisp-test.apk
+# user installs target/debug/apk/softisp-test.apk
+./push-test-libs.sh        # copies core + MNN libs to /sdcard/download/
+
+# Daily loop: rebuild core, stop app, relaunch, verify
+./shim-debug.sh core       # cargo apk2 -- build -p softisp-anw + push
+./shim-debug.sh stop       # control intent (no shell force-stop)
+./shim-debug.sh launch     # am start ShimActivity
+./shim-debug.sh verify     # MD5 fingerprint comparison
+./shim-debug.sh logs       # tail /sdcard/download/softisp-app.log
+# or all at once: WAIT_SECS=12 ./shim-debug.sh cycle
+```
+
+The test APK contains only `libsoftisp_shim.so` (no MNN, no core) — the shim
+`dlopen`s a separately pushed `libsoftisp.so` from `/sdcard/download/`. See
+[`docs/build/SHIM_DEBUG_WORKFLOW.md`](docs/build/SHIM_DEBUG_WORKFLOW.md) for
+the full workflow, including §9 on debugging the MNN Vulkan backend
+("probe session create fail").
 
 ## Documentation
 
