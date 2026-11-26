@@ -1161,12 +1161,17 @@ extern "C" int mnn_run_with_output(
         }
     }
 
-    auto* host_in = MNN::Tensor::create(
-        shape, buffer_type, const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer)),
-        MNN::Tensor::CAFFE);
-    if (!host_in) return -3;
-    in_tensor->copyFromHostTensor(host_in);
-    delete host_in;
+    // If the input tensor was bound to an AHardwareBuffer before resize,
+    // skip the host→device copy: the AHB's CPU mapping is the same physical
+    // memory MNN's Vulkan backend imported as device memory.
+    if (in_tensor->buffer().flags != MNN_MEMORY_AHARDWAREBUFFER) {
+        auto* host_in = MNN::Tensor::create(
+            shape, buffer_type, const_cast<uint8_t*>(static_cast<const uint8_t*>(buffer)),
+            MNN::Tensor::CAFFE);
+        if (!host_in) return -3;
+        in_tensor->copyFromHostTensor(host_in);
+        delete host_in;
+    }
 
     // Run inference.
     auto run_ok = net->runSession(sess);
