@@ -91,7 +91,7 @@ do_launch() {
 do_control() {
     local cmd="$1"
     case "$cmd" in
-        ping|cancel|clean|stop|kill|quit|exit) ;;
+        ping|cancel|clean|log|stop|kill|quit|exit) ;;
         *) echo "ERROR: unknown control command '$cmd'" >&2; usage >&2; exit 2 ;;
     esac
     am start -a "$ACTION" -n "$COMPONENT" --es "$EXTRA" "$cmd" >/dev/null

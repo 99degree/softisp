@@ -144,10 +144,33 @@ if needed.
    INFO [shim] forwarding android_main to /sdcard/download/libsoftisp.so
    ```
 
-   followed by the normal `anw` startup lines. A `FATAL [shim]` line includes
-   the full search-root list and `dlerror()` text.
+The app log is held in an in-memory ring (10 MiB cap, ring behaviour on overflow)
+and mirrored to logcat. It is **not** written to `/sdcard/download/softisp-app.log`
+on every line — instead the control intent `softisp_cmd=log` flushes the ring to
+the file on demand. This avoids file wear and permission churn on every line.
 
-5. Verify the fingerprints:
+Expected in logcat (tag `softisp-shim`) and on `log` flush:
+
+```text
+INFO [shim] core search roots: ...
+INFO [shim] removed N legacy staged .so files from ...
+INFO [shim] found core /sdcard/download/libsoftisp.so
+INFO [shim] loading runtime libraries from /sdcard/download
+INFO [shim] loading /sdcard/download/libMNN.so as <apk native dir>/libMNN.so
+INFO [shim] md5 libsoftisp.so <hex> <bytes>
+INFO [shim] loaded dependency libMNN.so
+INFO [shim] forwarding android_main to /sdcard/download/libsoftisp.so
+```
+
+followed by the normal `anw` startup lines. A `FATAL [shim]` line includes
+the full search-root list and `dlerror()` text.
+
+5. Flush and verify:
+   ```bash
+   ./shim-debug.sh log   # send softisp_cmd=log, writes the in-memory ring to file
+   ./shim-debug.sh logs  # tail /sdcard/download/softisp-app.log
+   ./shim-debug.sh verify  # MD5 fingerprint comparison
+   ```
 
    ```bash
    ./shim-debug.sh verify

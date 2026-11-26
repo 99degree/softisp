@@ -8,10 +8,12 @@
 //! `android_main`. No library is copied into app-private storage, so the
 //! uploaded files are the only runtime source.
 //!
-//! Every search root is mirrored to logcat and to
-//! `/sdcard/download/softisp-app.log` (falling back to app external data),
-//! including on failure, so a missing core is diagnosable either way.
-
+//! Log records are held in an in-memory buffer (10 MiB cap, ring behaviour via
+//! truncation on overflow) and mirrored to logcat. They are only flushed to the
+//! on-device file `/sdcard/download/softisp-app.log` when the control intent
+//! carries `softisp_cmd=log`. This avoids file wear and permission churn on
+//! every line while still giving the user a file when they need one.
+use std::collections::VecDeque;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
@@ -19,6 +21,7 @@ use std::os::fd::AsRawFd;
 #[cfg(target_os = "android")]
 use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -43,6 +46,10 @@ const RUNTIME_DEPENDENCIES: &[&str] = &[
 const RTLD_NOW: c_int = 2;
 const RTLD_LOCAL: c_int = 0;
 const PRIMARY_LOG: &str = "/sdcard/download/softisp-app.log";
+
+/// In-memory log ring cap: ~10 MiB. When exceeded the oldest entries are
+/// dropped so the buffer never grows unbounded in RAM.
+const LOG_MEM_CAP_BYTES: usize = 10 * 1024 * 1024;
 
 #[cfg(target_os = "android")]
 const ANDROID_DLEXT_USE_LIBRARY_FD: u64 = 0x10;
@@ -233,32 +240,61 @@ fn init_logcat() {
     );
 }
 
-#[derive(Clone)]
+/// In-memory log ring: holds up to [`LOG_MEM_CAP_BYTES`] of formatted lines.
+/// On overflow the oldest entries are dropped. Flushed to disk only on the
+/// `softisp_cmd=log` control intent.
+#[derive(Default)]
 struct ShimLog {
-    path: PathBuf,
+    /// Ring of formatted lines, newest at the back.
+    buffer: Mutex<VecDeque<String>>,
+    /// Total bytes currently held in the ring.
+    bytes: Mutex<usize>,
 }
 
 impl ShimLog {
-    fn new(app: &AndroidApp) -> Self {
-        Self {
-            path: resolve_log_path(app),
-        }
+    fn new() -> Self {
+        Self::default()
     }
 
+    /// Append a formatted line to the ring, dropping the oldest entries while
+    /// the cap would be exceeded.
     fn line(&self, level: &str, tag: &str, message: &str) {
         let line = format!("{level} [{tag}] {message}\n");
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-        {
-            let _ = file.write_all(line.as_bytes());
+        let len = line.len();
+
+        let mut guard = self.buffer.lock().unwrap();
+        let mut bytes = self.bytes.lock().unwrap();
+
+        // Drop oldest lines until adding this one fits.
+        while *bytes + len > LOG_MEM_CAP_BYTES && !guard.is_empty() {
+            let dropped = guard.pop_front().unwrap();
+            *bytes = bytes.saturating_sub(dropped.len());
         }
+
+        guard.push_back(line.clone());
+        *bytes += len;
+        drop(guard);
+        drop(bytes);
+
+        // Also mirror to logcat.
         match level {
             "FATAL" | "ERROR" => error!("[{tag}] {message}"),
             "WARN" => warn!("[{tag}] {message}"),
             _ => info!("[{tag}] {message}"),
         }
+    }
+
+    /// Drain the ring into `writer`, returning bytes written.
+    fn drain_into<W: Write>(&self, writer: &mut W) -> std::io::Result<usize> {
+        let mut guard = self.buffer.lock().unwrap();
+        let mut total = 0usize;
+        for line in guard.drain(..) {
+            writer.write_all(line.as_bytes())?;
+            total += line.len();
+        }
+        let mut bytes = self.bytes.lock().unwrap();
+        *bytes = 0;
+        Ok(total)
     }
 }
 
@@ -278,10 +314,6 @@ fn resolve_public_path(app: &AndroidApp, name: &str) -> PathBuf {
     app.external_data_path()
         .map(|dir| dir.join(name))
         .unwrap_or(primary)
-}
-
-fn resolve_log_path(app: &AndroidApp) -> PathBuf {
-    resolve_public_path(app, "softisp-app.log")
 }
 
 /// The APK native library directory is resolved from the mapped path of this
@@ -744,6 +776,42 @@ fn spawn_control_watcher(
                     log.line("INFO", "shim", "pipeline cancellation requested");
                 }
             }
+            "log" => {
+                log.line(
+                    "INFO",
+                    "shim",
+                    "control intent: flush in-memory log to file",
+                );
+                let path = resolve_public_path(app, "softisp-app.log");
+                match OpenOptions::new().create(true).append(true).open(&path) {
+                    Ok(mut file) => match log.drain_into(&mut file) {
+                        Ok(n) => {
+                            log.line(
+                                "INFO",
+                                "shim",
+                                &format!(
+                                    "flushed {n} bytes of in-memory log to {}",
+                                    path.display()
+                                ),
+                            );
+                        }
+                        Err(err) => {
+                            log.line(
+                                "ERROR",
+                                "shim",
+                                &format!("cannot flush log to {}: {err}", path.display()),
+                            );
+                        }
+                    },
+                    Err(err) => {
+                        log.line(
+                            "ERROR",
+                            "shim",
+                            &format!("cannot open {} for log flush: {err}", path.display()),
+                        );
+                    }
+                }
+            }
             "stop" | "kill" | "quit" | "exit" => {
                 log.line(
                     "INFO",
@@ -784,7 +852,7 @@ fn spawn_control_watcher(
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
     init_logcat();
-    let log = ShimLog::new(&app);
+    let log = Arc::new(ShimLog::new());
     log.line("INFO", "shim", "launcher started");
 
     let native_dir = self_library_dir();
@@ -861,7 +929,12 @@ fn android_main(app: AndroidApp) {
     loaded.push(core);
 
     #[cfg(target_os = "android")]
-    spawn_control_watcher(&app, log.clone(), core_handle, app.internal_data_path());
+    spawn_control_watcher(
+        &app,
+        Arc::try_unwrap(log).unwrap_or(ShimLog::default()),
+        core_handle,
+        app.internal_data_path(),
+    );
     #[cfg(not(target_os = "android"))]
     let _ = core_handle;
 
@@ -952,5 +1025,19 @@ mod tests {
     fn format_roots_is_readable_on_one_line() {
         let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
         assert_eq!(format_roots(&roots), "/a | /b");
+    }
+
+    #[test]
+    fn log_ring_drops_oldest_on_overflow() {
+        let log = ShimLog::default();
+        let long = "x".repeat(1000);
+        // Fill past the cap with small lines.
+        for _ in 0..1000 {
+            log.line("INFO", "shim", &long);
+        }
+        let bytes = *log.bytes.lock().unwrap();
+        assert!(bytes <= LOG_MEM_CAP_BYTES, "ring exceeded cap: {bytes}");
+        // The ring must not be empty.
+        assert!(!log.buffer.lock().unwrap().is_empty());
     }
 }
