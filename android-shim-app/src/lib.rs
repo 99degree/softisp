@@ -6,8 +6,9 @@
 //! app-private storage, and forwards the live `AndroidApp` to the core's
 //! `android_main`. Rebuilding the ISP/MNN core then needs no APK repack.
 //!
-//! Every search root is written to `/sdcard/download/softisp-app.log`, including
-//! on failure, so a missing core is diagnosable without logcat.
+//! Every search root is mirrored to logcat and to
+//! `/sdcard/download/softisp-app.log` (falling back to app-private storage),
+//! including on failure, so a missing core is diagnosable either way.
 
 use std::ffi::{c_int, c_void, CStr, CString};
 use std::fs::{self, OpenOptions};
@@ -17,6 +18,7 @@ use std::time::SystemTime;
 
 use android_activity::AndroidApp;
 use libc::{dlclose, dlerror, dlopen, dlsym};
+use log::{error, info, warn};
 
 const CORE_NAMES: &[&str] = &["libsoftisp.so", "libsoftisp_core.so", "libsoftisp_hot.so"];
 const STAGED_NAME: &str = "libsoftisp.so";
@@ -25,6 +27,15 @@ const RTLD_LOCAL: c_int = 0;
 const PRIMARY_LOG: &str = "/sdcard/download/softisp-app.log";
 
 type AndroidMain = unsafe extern "Rust" fn(AndroidApp);
+
+fn init_logcat() {
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("softisp-shim"),
+    );
+}
 
 struct ShimLog {
     path: PathBuf,
@@ -45,6 +56,11 @@ impl ShimLog {
             .open(&self.path)
         {
             let _ = file.write_all(line.as_bytes());
+        }
+        match level {
+            "FATAL" | "ERROR" => error!("[{tag}] {message}"),
+            "WARN" => warn!("[{tag}] {message}"),
+            _ => info!("[{tag}] {message}"),
         }
     }
 }
@@ -100,7 +116,6 @@ fn search_roots(
         push_unique(&mut roots, PathBuf::from(dir));
     }
     if let Some(dir) = external_data {
-        push_unique(&mut roots, dir.join("files"));
         push_unique(&mut roots, dir);
     }
     if let Some(dir) = native_dir {
@@ -260,6 +275,7 @@ fn fatal_not_found(log: &ShimLog, roots: &[PathBuf]) {
 
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
+    init_logcat();
     let log = ShimLog::new(&app);
     log.line("INFO", "shim", "launcher started");
 
@@ -271,7 +287,7 @@ fn android_main(app: AndroidApp) {
         );
         return;
     };
-    let staged_dir = internal.join("files");
+    let staged_dir = internal;
     if let Err(err) = fs::create_dir_all(&staged_dir) {
         log.line(
             "FATAL",
@@ -329,17 +345,16 @@ mod tests {
     #[test]
     fn search_roots_prioritises_staged_update_over_apk() {
         let staged = PathBuf::from("/data/user/0/com.softisp.camera/files");
-        let external = PathBuf::from("/sdcard/Android/data/com.softisp.camera");
+        let external = PathBuf::from("/sdcard/Android/data/com.softisp.camera/files");
         let native = PathBuf::from("/data/app/com.softisp.camera/lib/arm64");
         let roots = search_roots(Some(external.clone()), Some(&native), &staged);
 
         assert_eq!(roots[0], staged);
         assert_eq!(roots[1], PathBuf::from("/sdcard/download"));
         assert_eq!(roots[2], PathBuf::from("/sdcard/Download"));
-        assert_eq!(roots[3], external.join("files"));
-        assert_eq!(roots[4], external);
-        assert_eq!(roots[5], native);
-        assert_eq!(roots[6], PathBuf::from("."));
+        assert_eq!(roots[3], external);
+        assert_eq!(roots[4], native);
+        assert_eq!(roots[5], PathBuf::from("."));
     }
 
     #[test]

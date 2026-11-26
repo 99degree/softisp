@@ -21,7 +21,8 @@ device-writable storage at runtime. The production APK is untouched.
   1. resolves the APK native-library directory from `/proc/self/maps`;
   2. copies all dependency `.so` files found in its search roots (normally
      `/sdcard/download`, where the user pushes MNN libs too) into
-     `internal_data_path()/files` so the core's `$ORIGIN` rpath resolves;
+     `internal_data_path()` (already the app's `files/` directory) so the
+     core's `$ORIGIN` rpath resolves;
   3. searches, in order: staged files dir, `/sdcard/download`,
      `/sdcard/Download`, app external data `files/`, app external data root,
      APK native-library dir, and `.`;
@@ -29,8 +30,10 @@ device-writable storage at runtime. The production APK is untouched.
      `libsoftisp_hot.so` into the staged dir as `libsoftisp.so`;
   5. `dlopen`s the staged copy, resolves `android_main`, and forwards the live
      `AndroidApp` by value.
-- Every launch logs the complete search-root list to
-  `/sdcard/download/softisp-app.log`. A missing core, failed `dlopen`, failed
+- Every launch mirrors the complete search-root list to logcat (tag
+  `softisp-shim`) and to `/sdcard/download/softisp-app.log`, falling back to
+  app-private storage when the public path is not writable (for example after
+  a reinstall changes the app UID). A missing core, failed `dlopen`, failed
   `dlsym`, or missing internal data path emits a `FATAL [shim]` line with the
   same root list and `dlerror()` text.
 

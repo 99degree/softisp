@@ -11,6 +11,10 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 android-activity = { workspace = true }
 libc = "0.2"
+log = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = { workspace = true }
 
 [lib]
 name = "softisp_shim"
