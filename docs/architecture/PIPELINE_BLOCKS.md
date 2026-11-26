@@ -334,11 +334,16 @@ All ISP pipeline blocks implement the `IspBlock` trait and contribute ONNX graph
 | | |
 |---|---|
 | **ID** | `rotate` |
-| **Role** | 90°/180°/270° rotation or flip |
-| **Input** | `{prev}/out` → `[1, 3, H, W]` FLOAT |
-| **Output** | `{ns}/out` → `[1, 3, H', W']` FLOAT |
-| **ONNX ops** | `Transpose(perm)` |
-| **Modes** | 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip |
+| **Role** | Standalone 90°/180°/270° rotation or flip on the float RGB frame |
+| **Input** | `{prev}/frame` → `[1, 3, H, W]` FLOAT |
+| **Output** | `RotateBlock/frame` → `[1, 3, H', W']` FLOAT |
+| **ONNX ops** | `Transpose(perm=[0,1,3,2])` for 90°/270°; each flip is a `Gather(axis=2\|3)` with a reversed int64 index initializer |
+| **Modes** | 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip; modes 1 and 3 swap H/W |
+| **Placement** | Inserted by `PipelineProfile::build_blocks()` immediately before `DisplayBlock` when `rotate_mode != 0` |
+
+Uses only the primitive opset — no `isp.*` shader, no `Slice`, and no float
+sampling grid. Arbitrary-angle rotation is deliberately out of scope; a later
+GPU warp stage can replace this block without touching `DisplayBlock`.
 
 #### `FlipBlock`
 | | |

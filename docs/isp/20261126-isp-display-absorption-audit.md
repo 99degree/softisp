@@ -51,10 +51,10 @@ patched by `VulkanFuse.cpp`; an unfed binding-0 leaves it 0 and the shaders
 guard it to 1.0 (assume already-normalized input). Tracked as a TODO below.
 
 Rotation was therefore never applied on the fused production path even though
-`DisplayBlock` declared a swapped output shape. The fused emitter now writes the
-shader into an intermediate tensor and applies `Transpose` / `Slice` nodes to
-reach `DisplayBlock/frame`; see
-`docs/isp/20261126-default-on-ahb-rotation-report.md`.
+`DisplayBlock` declared a swapped output shape. The later `Transpose` / `Slice`
+fix in `DisplayBlock` was itself replaced: that path collapsed rotate mode 3 to
+`600x2` on device. Rotation is now a standalone primitive `RotateBlock` before
+`DisplayBlock`; see `docs/isp/20261126-fused-rotation-regression-debug.md`.
 
 ## Finding 3 — softisp applies gamma twice when a standalone `GammaBlock` is present
 

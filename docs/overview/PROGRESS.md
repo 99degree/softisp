@@ -5,7 +5,7 @@
 - SIMD backend (NeonDotprod/NeonFp16/Neon/Scalar)
 - AdaptiveDownscaleBlock (fit/crop/pad, EIS margin)
 - Triple-buffered RollingStats
-- Fused orientation in DisplayBlock (rot90/180/270/hflip/vflip)
+- Standalone `RotateBlock` (rot90/180/270/hflip/vflip) before `DisplayBlock`; display stage is format/packing only
 - Tone fused into DemosaicCcmBlock Conv
 - pack_rgba INT32 default output
 - MNNConvert static C FFI (no subprocess)

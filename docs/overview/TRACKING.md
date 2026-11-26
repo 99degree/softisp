@@ -72,7 +72,7 @@ RawInput(INT16 [1,1,2160,3840])
 | **Demosaic** | BayerDemosaicBlock, BayerWbBlock, DemosaicBlock, DemosaicCcmBlock, DemosaicInterpBlock, CfaBlock |
 | **Color** | CcmBlock, ColorSpaceBlock, GammaBlock, ToneBlock |
 | **Enhance** | EeBlock, LdciBlock, FcsBlock, SharpenBlock, AutoContrastBlock |
-| **Warp** | WarpGridBlock, ChromaticAberrationBlock |
+| **Warp** | WarpGridBlock, RotateBlock, ChromaticAberrationBlock |
 | **Denoise** | TemporalDenoiseBlock, NoiseEstimateBlock |
 | **Effects** | HdrMergeBlock, StereoDepthBlock, GrayscaleBlock, PyramidBlock |
 | **Resize** | DynResizeBlock, AspectCropBlock, AdaptiveDownscaleBlock, ResizeBlock |

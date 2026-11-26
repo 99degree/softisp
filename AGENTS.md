@@ -235,10 +235,19 @@ There is **no `rustfmt.toml` and no `clippy.toml`** — defaults only. Do not ad
 Build the APK and hand the path to the user. **Do not run `install-apk.sh` yourself** — installation is a user-side action (see §1.7). The scripts exist for the user's manual workflow:
 
 ```bash
-./build-apk.sh       # -> target/debug/apk/softisp-camera.apk (workspace root)
-./build-test-apk.sh  # -> target/debug/apk/softisp-test.apk (shim-only test APK)
-./install-apk.sh     # user runs this: pm install-create / install-write / install-commit
+./build-apk.sh        # -> target/debug/apk/softisp-camera.apk (workspace root)
+./build-test-libs.sh  # -> MNN + core runtime libs only; --core-only skips MNN
+./build-test-apk.sh   # -> target/debug/apk/softisp-test.apk (shim-only test APK)
+./push-test-libs.sh   # -> upload runtime libs to /sdcard/download
+./shim-debug.sh reload # stop intent + relaunch so staged libs are reloaded
+./install-apk.sh      # user runs this: pm install-create / install-write / install-commit
 ```
+
+For fast local debug, `./shim-debug.sh deploy` builds the core only, uploads it,
+and reloads the installed shim APK; see
+[`docs/build/SHIM_DEBUG_WORKFLOW.md`](docs/build/SHIM_DEBUG_WORKFLOW.md). The
+Local debug iterations do **not** need to go through the full CI gate; run only
+focused checks. The full gate in §3 is for release/upstream changesets.
 
 `install-apk.sh` accepts an optional APK path as its first argument; the default is `target/debug/apk/softisp-camera.apk`. Do not use `pm install <path>` directly — Termux's private data dir is unreadable to `pm` under SELinux.
 

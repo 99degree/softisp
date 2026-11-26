@@ -17,15 +17,27 @@
   case, the C wrapper verifies a real AHardwareBuffer and rejects any in-run
   resize that would re-acquire the output tensor, and `-10` logs the tensor
   flags/device, AHB capacity and host-pool status before falling back. Signed
-  default-on APK rebuilt with the rotation and binding fixes; on-device
-  relaunch/log evidence is still pending. Ownership analysis:
+  default-on APK rebuilt with the AHB hardening; on-device relaunch/log
+  evidence is still pending. Ownership analysis:
   `docs/mnn/20261126-mnn-output-tensor-buffer-ownership-ahb-feasibility.md`.
-- **Output rotation fixed in the fused graph** (2026-11-26): the fused display
-  shader now writes an intermediate tensor and the graph's `Transpose` / `Slice`
-  nodes terminate at `DisplayBlock/frame`, so host-copy and AHB paths see the
-  same upright pixels. No standalone SPIR-V shader was added. Regression tests
-  cover the no-op and every rotate mode.
-  `docs/isp/20261126-default-on-ahb-rotation-report.md`.
+  **Binding-loss debug (2026-11-26, in progress):** the device log still shows
+  120 `AHB output binding lost` and 10 `still busy after 1M yields` warnings
+  despite the hardening fix, so the root cause is being traced in
+  `docs/isp/20261126-ahb-output-binding-loss-debug.md` before any new patch.
+- **Output rotation moved to a standalone block** (2026-11-26): the fused
+  display path's `Transpose` / `Slice` rotation collapsed rotate mode 3 to
+  `600x2` on device. `RotateBlock` now applies orientation to the float RGB
+  frame with primitive `Transpose` + `Gather` flips before `DisplayBlock`, which
+  is display formatting/packing only. Arbitrary-angle rotation is left to a
+  later GPU warp stage. Regression tests cover geometry and pixel permutation
+  for every mode and assert the stage is inserted directly before display.
+  Root-cause notes:
+  `docs/isp/20261126-fused-rotation-regression-debug.md`.
+  Partial device check after app data clear: new core MD5 `3d8fcb0b…` loaded,
+  `verify` PASS, zero `last 600x2` lines, and full-frame `400x600` stats.
+  Rotate-mode-3 acceptance is still pending because Camera permission was
+  denied after the clear (`sensor_orientation=0, rotate_mode=0`); user must
+  grant Camera permission and relaunch.
 - **Hermetic test warnings cleaned** (2026-11-26): stale `cam-ipa` scaffolding
   and `upload_cache` switch helpers were fixed at the root instead of
   suppressed; `AhwBuffer::new()` now rejects geometry/format mismatches.
@@ -530,21 +542,28 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   APK repacking by adding a separate tiny `NativeActivity` launcher crate in
   `android-shim-app/`; `android-app/` and `build-apk.sh` stay untouched.
 - **Change:** new `softisp-shim` crate builds `libsoftisp_shim.so`;
-  `android.app.lib_name` now selects it. It stages and `dlopen`s the real
-  `libsoftisp.so` from `anw/` and forwards `android_main`. All searched roots
-  are logged, with a `FATAL [shim]` line on failure.
-- **Build:** `./build-apk.sh` stays the production APK path. The new
-  `./build-test-apk.sh` builds the core with `cargo apk2 -- build -p softisp-anw`
-  and packages a shim-only APK (`softisp-test.apk`); no MNN or `libsoftisp.so`
-  is bundled. MNN libs are pushed to `/sdcard/download` alongside the core.
-- **Verification:** format/clippy/6 shim unit tests (including MD5 vectors) and
-  a successful `./build-test-apk.sh` pass locally. On-device startup is a
-  user-side check. Details: `docs/build/20261126-apk-shim-hotload-experiment.md`.
-- **MD5 assurance + intent control (2026-11-26):** every staged `.so` is
-  MD5-fingerprinted into the log, and `./auto-debug.sh` compares it with local
+  `android.app.lib_name` now selects it. It opens the real `libsoftisp.so` and
+  its MNN dependencies directly by FD from `/sdcard/download` with
+  `android_dlopen_ext`, then forwards `android_main`. No library is copied into
+  app-private storage; legacy staged `.so` files are cleaned on launch and by
+  the `clean`/`stop` control intents. All searched roots are logged, with a
+  `FATAL [shim]` line on failure.
+- **Build:** `./build-apk.sh` stays the production APK path.
+  `./build-test-libs.sh` builds the shim runtime libraries only (MNN + core,
+  strip/patchelf; `--core-only` skips MNN), and `./build-test-apk.sh` packages a
+  shim-only APK (`softisp-test.apk`); no MNN or `libsoftisp.so` is bundled.
+  `./shim-debug.sh deploy` builds/pushes the core and signals the app to reload.
+- **Verification:** format/clippy/7 shim unit tests (including MD5 vectors and
+  dependency-order coverage) and successful `./build-test-libs.sh` and
+  `./build-test-apk.sh` passes locally. On-device startup is a user-side check.
+  Details: `docs/build/20261126-apk-shim-hotload-experiment.md`.
+- **MD5 assurance + intent control (2026-11-26):** every uploaded `.so` in the
+  runtime directory is MD5-fingerprinted into the log, and `./shim-debug.sh
+  verify` / `./auto-debug.sh` compare the latest launch segment with local
   `md5sum`. The rare action `com.softisp.camera.action.CONTROL` with extra
   `softisp_cmd` accepts `ping`, `cancel` (calls the core's
-  `softisp_anw_cancel_pipeline`) and `stop` (self-terminates the activity).
+  `softisp_anw_cancel_pipeline`), `clean` (removes legacy app-private `.so`
+  files), and `stop` (cleans, then self-terminates the activity).
 - **Intent delivery fix:** stock `NativeActivity` never calls `setIntent()` on
   `onNewIntent()`, so the native watcher could not see control intents. The test
   APK now compiles `com.softisp.camera.ShimActivity extends NativeActivity` via

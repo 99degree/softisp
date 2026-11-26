@@ -31,6 +31,14 @@ ls -lh "$APK"
 The debug APK uses `~/.android/debug.keystore` for signing and ships
 `debuggable="true"` so logcat shows its output.
 
+For the shim-only fast-debug APK, the build is split: `./build-test-libs.sh`
+compiles/strips/patchelf's the runtime libraries, and `./build-test-apk.sh`
+builds only the launcher APK. The local iteration order is
+`./build-test-libs.sh --core-only` → `./push-test-libs.sh` →
+`./shim-debug.sh reload`; `./shim-debug.sh deploy` does those three steps in one
+command. See [`docs/build/SHIM_DEBUG_WORKFLOW.md`](SHIM_DEBUG_WORKFLOW.md).
+The full CI gate is for release/upstream changesets, not every debug cycle.
+
 ---
 
 ## 1. Install the APK (let the user install it — no `install-apk.sh` / `pm` in Termux)

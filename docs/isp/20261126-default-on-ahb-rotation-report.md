@@ -1,5 +1,10 @@
 # Default-on AHB output rotation report — findings (2026-11-26)
 
+> **Superseded:** the fused `Transpose`/`Slice` fix described below was the
+> reported regression. Rotate mode 3 collapsed to `600x2` on device. Rotation is
+> now a standalone primitive `RotateBlock` before `DisplayBlock`; see
+> `docs/isp/20261126-fused-rotation-regression-debug.md`.
+
 ## Symptom
 
 After the signed default-on AHB APK was launched, the user reports that the pipeline output looks rotated. This is a new regression report following the switch from opt-in host-copy output to default-on AHB-backed output.

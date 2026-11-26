@@ -5,10 +5,11 @@ and reinstalling the full APK on every change. The production path
 `./build-apk.sh` and `android-app/` are unchanged; everything here is the
 test-only `softisp-test.apk` built from `android-shim-app/`.
 
-The core idea is a tiny launcher (`libsoftisp_shim.so`) that stages a separately
-pushed `libsoftisp.so` plus its MNN dependencies into app-private storage and
-`dlopen`s them. Every staged library is MD5-fingerprinted into the log, so a
-local script can prove the device is running the exact binaries just built.
+The core idea is a tiny launcher (`libsoftisp_shim.so`) that reads a separately
+pushed `libsoftisp.so` plus its MNN dependencies into anonymous memfds and
+`dlopen`s them with Android's `android_dlopen_ext()`. No library is copied into
+app-private storage. Every uploaded library is MD5-fingerprinted into the log,
+so a local script can prove the device is running the exact binaries just built.
 
 For background and design rationale, see
 [`20261126-apk-shim-hotload-experiment.md`](20261126-apk-shim-hotload-experiment.md).
@@ -36,6 +37,11 @@ For background and design rationale, see
 - `am start` is allowed for launching the activity and for sending this app's
   own control intent. That is how the app stops or cancels itself without
   shell-level force-stop permissions.
+- A process started from an older APK (before `ShimActivity`) cannot receive
+  control intents. It needs a one-time Force stop done by the user.
+- The full CI gate is for a release/upstream changeset. Local debug iterations
+  use only focused checks (`cargo fmt --check`, targeted `cargo test`, targeted
+  `cargo clippy`) plus the build/push/reload loop below.
 
 ---
 
@@ -48,7 +54,8 @@ For background and design rationale, see
 | Hot-swappable core | `target/aarch64-linux-android/debug/libsoftisp.so` |
 | Shim native lib | `target/aarch64-linux-android/debug/libsoftisp_shim.so` |
 | MNN + renamed libc++ libs | `cam-rust/lib/arm64-v8a/lib*.so` |
-| Device staging directory | `/sdcard/download/` |
+| Device runtime directory | `/sdcard/download/` |
+| App-private legacy cache (cleaned) | `/data/user/0/com.softisp.camera/files/` |
 | App log | `/sdcard/download/softisp-app.log` |
 | Activity component | `com.softisp.camera/com.softisp.camera.ShimActivity` |
 | Control action | `com.softisp.camera.action.CONTROL` |
@@ -68,16 +75,18 @@ All scripts live at the repository root and are executable.
 
 | Script | Purpose |
 | --- | --- |
-| `./shim-debug.sh <cmd>` | One-entry wrapper for build/push/launch/control/logs/verify/cycle (see §6) |
-| `./build-test-apk.sh` | Build MNN, core, and the shim-only APK; verify its contents |
+| `./shim-debug.sh <cmd>` | One-entry wrapper for build/libs/push/reload/control/logs/verify/cycle (see §6) |
+| `./build-test-apk.sh` | Build and verify the shim-only APK; no MNN/core rebuild |
+| `./build-test-libs.sh` | Build MNN + core runtime libs only, with strip/patchelf (`--core-only` skips MNN) |
 | `./push-test-libs.sh` | Copy core + MNN libs into `/sdcard/download` |
 | `./auto-debug.sh [attempts] [wait_secs]` | Full automatic MD5/self-restart loop |
 | `./scripts/build_mnn_libs.sh arm64-v8a` | The only supported MNN build path (always `build_isp`, never `build_vk`) |
 
-A quick core-only rebuild must use the APK target:
+A quick core-only rebuild uses the runtime-library script, then pushes and
+reloads the app:
 
 ```bash
-cargo apk2 -- build -p softisp-anw && ./push-test-libs.sh
+./build-test-libs.sh --core-only && ./push-test-libs.sh && ./shim-debug.sh reload
 ```
 
 A plain `cargo build` writes `target/debug/libsoftisp.so` and links
@@ -87,15 +96,17 @@ A plain `cargo build` writes `target/debug/libsoftisp.so` and links
 
 ## 3. One-time setup
 
-1. Build the shim-only APK and the core:
+1. Build the shim-only APK and its runtime libraries:
 
    ```bash
+   ./build-test-libs.sh
    ./build-test-apk.sh
    ```
 
-   This runs `scripts/build_mnn_libs.sh arm64-v8a`, strips and `$ORIGIN`-retunes
-   the MNN libs, builds `libsoftisp.so` with the NDK target, builds
-   `softisp-test.apk`, then checks the APK hash and native-lib contents.
+   `build-test-libs.sh` runs `scripts/build_mnn_libs.sh arm64-v8a`, strips and
+   `$ORIGIN`-retunes the MNN libs, then builds `libsoftisp.so` with the NDK
+   target. `build-test-apk.sh` builds only `softisp-test.apk` and checks its
+   hash and native-lib contents.
 
 2. Give `target/debug/apk/softisp-test.apk` to the user to install. Tell them to
    enable **All files access** for `com.softisp.camera` immediately after
@@ -119,11 +130,13 @@ A plain `cargo build` writes `target/debug/libsoftisp.so` and links
 
    ```text
    INFO [shim] core search roots: ...
-   INFO [shim] staged N dependency libs into ...
+   INFO [shim] removed N legacy staged .so files from ...
    INFO [shim] found core /sdcard/download/libsoftisp.so
-   INFO [shim] staged core ...
+   INFO [shim] loading runtime libraries from /sdcard/download
+   INFO [shim] loading /sdcard/download/libMNN.so as <apk native dir>/libMNN.so
    INFO [shim] md5 libsoftisp.so <hex> <bytes>
-   INFO [shim] forwarding android_main to ...
+   INFO [shim] loaded dependency libMNN.so
+   INFO [shim] forwarding android_main to /sdcard/download/libsoftisp.so
    ```
 
    followed by the normal `anw` startup lines. A `FATAL [shim]` line includes
@@ -146,33 +159,29 @@ A plain `cargo build` writes `target/debug/libsoftisp.so` and links
 No APK rebuild and no reinstall is needed for a core-only change.
 
 ```bash
-# 1. rebuild only the app core and push it
-./shim-debug.sh core
+# 1. rebuild only the app core, push it, then stop/relaunch the app
+./shim-debug.sh deploy
 
-# 2. stop the running app through its own control intent
-./shim-debug.sh stop
-
-# 3. launch again
-./shim-debug.sh launch
-
-# 4. wait, collect logs, compare MD5s
+# 2. wait, collect logs, compare MD5s
 WAIT_SECS=12 ./shim-debug.sh logs
 ./shim-debug.sh verify
 ```
 
-Or do all four steps in one command:
+Or do all steps in one command:
 
 ```bash
 WAIT_SECS=12 ./shim-debug.sh cycle
 ```
 
-`cycle` sends `stop`, waits three seconds, rebuilds and pushes the core,
-launches, waits `WAIT_SECS`, dumps logs, and runs the MD5 verification.
+`deploy` rebuilds the core, pushes it, sends the app's own `clean` and `stop`
+intents, then launches again. The clean intent removes any `.so` files left in
+app-private storage by older shim builds; the new shim opens every library
+directly from `/sdcard/download`, so a fresh push is what gets loaded. `cycle`
+does `deploy`, waits `WAIT_SECS`, dumps logs, and runs the MD5 verification.
 
 If you changed MNN libraries themselves, rebuild and retune them first with
-`./build-test-apk.sh` (or rerun `scripts/build_mnn_libs.sh arm64-v8a` and the
-`patchelf` step from `build-test-apk.sh`), then push with
-`./shim-debug.sh push`.
+`./build-test-libs.sh` (or `./shim-debug.sh libs`), then push with
+`./shim-debug.sh push` and reload with `./shim-debug.sh reload`.
 
 ---
 
@@ -201,16 +210,20 @@ once from Settings before the new control path is live.
 
 | Command | What it does |
 | --- | --- |
-| `build` | Runs `./build-test-apk.sh` |
+| `build` | Runs `./build-test-apk.sh` (shim APK only) |
+| `libs` | Runs `./build-test-libs.sh`; accepts `--core-only` |
 | `push` | Runs `./push-test-libs.sh` |
-| `core` | `cargo apk2 -- build -p softisp-anw` then `push` |
+| `core` | `build-test-libs.sh --core-only` then `push` |
+| `reload` | `clean` + `stop` intents, then `launch`, so uploaded libs are reloaded |
+| `deploy` | `core` then `reload` |
 | `launch` | `am start -n com.softisp.camera/com.softisp.camera.ShimActivity` |
 | `ping` | Logs a control-intent confirmation; use to check delivery |
 | `cancel` | Calls the core's `softisp_anw_cancel_pipeline` after in-flight work |
-| `stop` | Asks the app to `finish()` and exit; no shell force-stop |
+| `clean` | Deletes legacy `.so` files from the app-private cache |
+| `stop` | Cleans legacy staged libs, then asks the app to `finish()` and exit |
 | `logs` | Dumps logcat and app log to `.tmp/shim-debug/`, prints a tail |
 | `verify` | MD5 comparison between local build outputs and the app log |
-| `cycle` | `stop` → `core` → `launch` → wait → `logs` → `verify` |
+| `cycle` | `core` → `reload` → wait → `logs` → `verify` |
 
 `WAIT_SECS` controls how long `launch`/`cycle` wait before reading logs
 (default 12).
@@ -225,6 +238,10 @@ am start -a com.softisp.camera.action.CONTROL \
 am start -a com.softisp.camera.action.CONTROL \
   -n com.softisp.camera/com.softisp.camera.ShimActivity \
   --es softisp_cmd cancel
+
+am start -a com.softisp.camera.action.CONTROL \
+  -n com.softisp.camera/com.softisp.camera.ShimActivity \
+  --es softisp_cmd clean
 
 am start -a com.softisp.camera.action.CONTROL \
   -n com.softisp.camera/com.softisp.camera.ShimActivity \
@@ -253,13 +270,14 @@ It clears the log, launches, waits, verifies MD5s, and on mismatch sends the
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
-| `FATAL [shim] cannot stage core ... Permission denied` | All files access not granted after reinstall | User enables All files access for `com.softisp.camera` |
-| `dlopen failed: library "libMNN_Express.so" not found` | MNN libs still have Termux RUNPATHs | `./build-test-apk.sh` (runs `patchelf --set-rpath '$ORIGIN'`) |
-| `verify` reports stale MD5s | Device is running an old core, or stop did not reach the app | `./shim-debug.sh ping`; if no confirmation, user force-stops once, then relaunch |
+| `FATAL [shim] cannot open ... for loading` | All files access not granted after reinstall, or the upload is missing | User enables All files access; then `./push-test-libs.sh` |
+| `memfd-backed dlopen ... failed` | MNN libs still have Termux RUNPATHs, or a dependency is missing next to the core | `./build-test-libs.sh` (runs `patchelf --set-rpath '$ORIGIN'`), then push + reload |
+| `verify` reports stale MD5s after a push | Old shim build still uses an app-private staged core | Rebuild with `./build-test-apk.sh`, user reinstalls, then push + reload; see `docs/isp/20261126-shim-staged-core-shadowing-debug.md` |
+| `verify` reports stale MD5s but shim is current | `stop` did not reach the app | `./shim-debug.sh ping`; if no confirmation, user force-stops once, then relaunch |
 | No `[shim]` lines in the log | Process started from an older APK / core log rotated | Check `logcat -d -s softisp-shim:I`; `./shim-debug.sh logs`; relaunch fresh |
 | Control intent does nothing | Stale `NativeActivity` process without `ShimActivity` | User installs the rebuilt APK and force-stops the old process once |
 | APK contains more than one native lib | Production packaging path was used | Use `./build-test-apk.sh`, not `./build-apk.sh` |
-| Core push fails with `libc++_shared.so` error | Host `cargo build` binary was used | `cargo apk2 -- build -p softisp-anw` |
+| Core push fails with `libc++_shared.so` error | Host `cargo build` binary was used | `./build-test-libs.sh --core-only` |
 
 The public log rotates at 512 KiB, so after a long run the startup `[shim] md5`
 lines may no longer be present. Relaunch to regenerate them before verifying.
@@ -342,18 +360,19 @@ Or one command: `WAIT_SECS=12 ./shim-debug.sh cycle`.
 
 ### 9.3 If `libMNN_Vulkan.so` cannot be dlopen'ed
 
-The shim's `$ORIGIN`-based RUNPATH means all MNN libs must live in the same
-directory as `libsoftisp.so` on the device. `push-test-libs.sh` verifies
-`libMNN_Vulkan.so` has `$ORIGIN` RUNPATH (retuned by `build-test-apk.sh` via
-`patchelf --set-rpath '$ORIGIN'`). If a manually copied lib lacks this, nested
-dependencies like `libMNN_Express.so` will fail with:
+The shim preloads every `.so` in the runtime directory into memfds in
+dependency order before loading the core, so the core's `DT_NEEDED` entries
+resolve by SONAME. `push-test-libs.sh` still verifies `libMNN_Vulkan.so` has the
+retuned `$ORIGIN` RUNPATH (set by `build-test-libs.sh` via
+`patchelf --set-rpath '$ORIGIN'`). If a manually copied lib lacks its expected
+dependency, the loader reports:
 
 ```
 dlopen failed: library "libMNN_Express.so" not found ... in namespace clns-7
 ```
 
-Fix by rebuilding: `./build-test-apk.sh` (which runs the `patchelf` step), then
-`./shim-debug.sh push`.
+Fix by rebuilding the runtime libraries with `./build-test-libs.sh` (which runs
+the `patchelf` step), then `./shim-debug.sh push`.
 
 ### 9.4 If the Vulkan driver itself fails
 

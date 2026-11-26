@@ -1,5 +1,17 @@
 # Testing Guide
 
+## Local debug vs release CI
+
+**Local debug iterations do not need to go through the full CI gate.** Run only
+the focused checks relevant to the change (for example `cargo fmt --all --
+--check`, the affected crate's `cargo test`, and targeted `cargo clippy`). The
+full gate in `AGENTS.md` §3 / `.github/workflows/ci.yml` is for a release
+changeset before pushing to upstream.
+
+For the shim-only on-device loop, the local sequence is
+`./build-test-libs.sh --core-only` → `./push-test-libs.sh` →
+`./shim-debug.sh reload`; see `docs/build/SHIM_DEBUG_WORKFLOW.md`.
+
 ## Quick Test (default)
 Runs only fast unit tests (no CPU pipeline execution):
 
