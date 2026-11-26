@@ -1133,6 +1133,35 @@ mod tests {
     }
 
     #[test]
+    fn test_build_blocks_inserts_rotate_before_display() {
+        let mut p = PipelineProfile::LITE;
+        p.rotate_mode = 3;
+        let blocks = p.build_blocks(128, 72, 0);
+        let rotate = blocks
+            .iter()
+            .position(|b| b.id() == "rotate")
+            .expect("rotate mode must insert a standalone RotateBlock");
+        let display = blocks
+            .iter()
+            .position(|b| b.id() == "display")
+            .expect("chain must still end at display");
+        assert_eq!(display, rotate + 1, "rotate must feed display directly");
+        assert_eq!(blocks.last().unwrap().id(), "display");
+    }
+
+    #[test]
+    fn test_rotate_mode_falls_back_from_whole_pipeline_fusion() {
+        let mut p = PipelineProfile::WHOLE;
+        p.rotate_mode = 1;
+        let blocks = p.build_blocks(128, 72, 0);
+        assert!(
+            blocks.iter().any(|b| b.id() == "rotate"),
+            "whole-pipeline fusion must fall back so RotateBlock can run"
+        );
+        assert!(blocks.iter().any(|b| b.id() == "display"));
+    }
+
+    #[test]
     fn test_yuv_profile_uses_packed_raw_head() {
         // The app hands the engine a Bayer-shaped `u16` buffer even on the YUV
         // fallback, so the YUV profile must compose the same packed RAW head

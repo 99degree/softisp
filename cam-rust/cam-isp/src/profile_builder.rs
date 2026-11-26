@@ -103,9 +103,14 @@ impl PipelineProfile {
                 // converter) even though the per-stage chain uses the packed
                 // INT32 head. That is not an inconsistency: the fused op reads
                 // one sample per pixel, so there is no packed pair to split.
-                if self
-                    .fuse_stages
-                    .allows(self.opset_mode, self.fuse_stages.whole_pipeline)
+                // The whole-chain shader returns a display tensor directly; a
+                // non-zero rotate_mode needs a standalone RotateBlock on the
+                // RGB frame before that conversion, so fall through to the
+                // per-stage chain in that case.
+                if self.rotate_mode == 0
+                    && self
+                        .fuse_stages
+                        .allows(self.opset_mode, self.fuse_stages.whole_pipeline)
                 {
                     let stages = crate::blocks::PipelineStages::PREVIEW
                         // The 3A needs BLC/WB/CCM applied to the *same* values it
@@ -627,16 +632,28 @@ impl PipelineProfile {
             blocks.push(Box::new(crate::blocks::IdentityBlock::new("auto_contrast")));
         }
 
+        let (display_h, display_w) = if self.rotate_mode == 0 {
+            (tail_h as i64, tail_w as i64)
+        } else {
+            let rotate = RotateBlock::new(self.rotate_mode, tail_h as i64, tail_w as i64);
+            let (out_h, out_w) = rotate.out_dims();
+            info!(
+                "  rotate: mode {} ({}x{} -> {}x{})",
+                self.rotate_mode, tail_w, tail_h, out_w, out_h
+            );
+            blocks.push(Box::new(rotate));
+            (out_h, out_w)
+        };
+
         blocks.push(Box::new(
-            DisplayBlock::new(tail_w)
-                .with_rotate(self.rotate_mode)
+            DisplayBlock::new(display_w as u32)
                 .with_output_format(self.output_format)
                 .with_opset_mode(if self.display_opset_mode() == BlockOpsetMode::MnnIspMin {
                     2
                 } else {
                     0
                 })
-                .with_concrete_dims(tail_h as i64, tail_w as i64),
+                .with_concrete_dims(display_h, display_w),
         ));
 
         info!("  blocks: {} total", blocks.len());

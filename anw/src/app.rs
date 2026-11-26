@@ -120,6 +120,22 @@ fn post_ccm_downscale(w: u32, h: u32) -> (u32, u32) {
     ((w / best).max(2), (h / best).max(2))
 }
 
+/// Map Camera2 `SENSOR_ORIENTATION` to a `RotateBlock` mode.
+///
+/// Camera2 already reports the clockwise rotation needed to make the output
+/// upright in the device's native orientation. `RotateBlock` modes 1/2/3 are
+/// the same clockwise quarter turns, so no counter-rotation is needed here.
+/// Normalising the angle keeps malformed metadata from selecting a mode the
+/// block does not define.
+fn rotate_mode_from_sensor_orientation(sensor_orientation: i32) -> i32 {
+    match sensor_orientation.rem_euclid(360) {
+        90 => 1,
+        180 => 2,
+        270 => 3,
+        _ => 0,
+    }
+}
+
 /// Greatest common divisor.
 fn gcd(a: u32, b: u32) -> u32 {
     if b == 0 {
@@ -385,17 +401,10 @@ impl Preview {
             );
         }
 
-        // Apply sensor orientation to the pipeline so the output is upright.
-        // Sensor orientation is clockwise from device natural orientation.
-        // The ISP's rotate_mode: 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip.
-        // Sensor orientation is degrees clockwise from device natural orientation.
-        // We need to counter-rotate by the sensor orientation.
-        let rotate_mode = match sensor_orientation {
-            90 => 3,  // sensor is rotated 90° CW -> rotate 270° CW (or 90° CCW)
-            180 => 2, // sensor is rotated 180° CW -> rotate 180° CW
-            270 => 1, // sensor is rotated 270° CW -> rotate 90° CW
-            _ => 0,
-        };
+        // Camera2 reports the clockwise rotation needed for an upright image
+        // in the device's native orientation. RotateBlock's 1/2/3 modes use
+        // the same convention, so the metadata maps straight through.
+        let rotate_mode = rotate_mode_from_sensor_orientation(sensor_orientation);
         profile.rotate_mode = rotate_mode;
         log::info!(
             "sensor_orientation={}, pipeline rotate_mode={}",
@@ -1065,6 +1074,16 @@ mod tests {
         assert_eq!(post_ccm_downscale(1940, 2592), (970, 1296));
         let (w, h) = post_ccm_downscale(1940, 2592);
         assert!(w <= super::TAIL_MAX_EDGE && h <= super::TAIL_MAX_EDGE);
+    }
+
+    #[test]
+    fn sensor_orientation_maps_directly_to_clockwise_rotate_mode() {
+        assert_eq!(rotate_mode_from_sensor_orientation(0), 0);
+        assert_eq!(rotate_mode_from_sensor_orientation(90), 1);
+        assert_eq!(rotate_mode_from_sensor_orientation(180), 2);
+        assert_eq!(rotate_mode_from_sensor_orientation(270), 3);
+        assert_eq!(rotate_mode_from_sensor_orientation(360), 0);
+        assert_eq!(rotate_mode_from_sensor_orientation(-90), 3);
     }
 }
 

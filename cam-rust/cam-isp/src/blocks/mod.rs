@@ -26,6 +26,7 @@
 //!
 //! ## Geometric
 //! - `WarpBlock` - Geometric correction (lens distortion, EIS)
+//! - `RotateBlock` - Standalone rotation / flip stage
 //! - `ResizeBlock` - Scale up/down
 //!
 //! # Pipeline Flow
@@ -73,6 +74,7 @@ mod pyramid;
 mod raw_input;
 mod resize;
 mod rgb_downscale;
+mod rotate;
 pub mod runtime_warp;
 pub mod saturation;
 mod sharpen;
@@ -135,6 +137,7 @@ pub use pyramid::PyramidBlock;
 pub use raw_input::{RawFloatInputBlock, RawInput16Block, RawInputBlock, RawInputPackedBlock};
 pub use resize::ResizeBlock;
 pub use rgb_downscale::RgbDownscaleBlock;
+pub use rotate::RotateBlock;
 pub use runtime_warp::RuntimeWarpBlock;
 pub use saturation::SaturationBlock;
 pub use sharpen::SharpenBlock;

@@ -1,4 +1,4 @@
-//! DisplayBlock — final format conversion + orientation transform fused.
+//! DisplayBlock — final format conversion.
 //!
 //! The output format is selected at build time via `with_output_format()`.
 //! The ONNX subgraph produces the exact byte layout requested — the engine
@@ -17,13 +17,13 @@
 //! - `Rgb`:       Conv(1×1) identity permutation, no alpha → `[1,3,H,W]` f32 RGB `[0,255]`
 //! - `Bgr`:       Conv(1×1) BGR permutation, no alpha → `[1,3,H,W]` f32 BGR `[0,255]`
 //!
-//! Rotation/flip modes fused via Transpose + Slice before the format node.
+//! Orientation is applied by `RotateBlock` before this stage.
 
 use crate::engine::OutputFormat;
 use crate::onnx::proto::Proto;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
 
-/// DisplayBlock — final format conversion + tone mapping.
+/// DisplayBlock — final format conversion.
 ///
 /// Converts float32 RGB `[0,1]` → RGBA/ARGB/AGBR `[0,255]` via Conv(1×1)
 /// with channel permutation weights. Supports sRGB gamma encoding.
@@ -36,9 +36,7 @@ pub struct DisplayBlock {
     pub frame_tensor: String,
     pub input_source: String,
     pub target_width: u32,
-    /// Orientation transform: 0=none, 1=rot90, 2=rot180, 3=rot270, 4=hflip, 5=vflip.
-    pub rotate_mode: i32,
-    /// Concrete input dims (set via with_concrete_dims) for Slice initializers.
+    /// Concrete input dims (set via with_concrete_dims).
     pub in_h: Option<i64>,
     pub in_w: Option<i64>,
     /// Output pixel format — determines the ONNX subgraph (Conv, Mul, Cast, etc.).
@@ -67,7 +65,6 @@ impl DisplayBlock {
             frame_tensor: "DisplayBlock/frame".into(),
             input_source: String::new(),
             target_width,
-            rotate_mode: 0,
             in_h: None,
             in_w: None,
             output_format: OutputFormat::default(),
@@ -78,13 +75,7 @@ impl DisplayBlock {
         }
     }
 
-    /// Set the rotation/flip mode (use `crate::profile::ROTATE_*` constants).
-    pub fn with_rotate(mut self, mode: i32) -> Self {
-        self.rotate_mode = mode;
-        self
-    }
-
-    /// Set concrete input dimensions for computing Slice flip initializers.
+    /// Set concrete input dimensions for the format conversion.
     pub fn with_concrete_dims(mut self, h: i64, w: i64) -> Self {
         self.in_h = Some(h);
         self.in_w = Some(w);
@@ -139,25 +130,9 @@ impl DisplayBlock {
         self
     }
 
-    /// Whether this mode swaps height and width (90° / 270°).
-    fn swaps_dims(&self) -> bool {
-        matches!(self.rotate_mode, 1 | 3) // ROTATE_ROT90 | ROTATE_ROT270
-    }
-
-    /// Whether this mode applies a horizontal flip.
-    fn needs_hflip(&self) -> bool {
-        matches!(self.rotate_mode, 1 | 2 | 4) // ROT90 | ROT180 | HFLIP
-    }
-
-    /// Whether this mode applies a vertical flip.
-    fn needs_vflip(&self) -> bool {
-        matches!(self.rotate_mode, 2 | 3 | 5) // ROT180 | ROT270 | VFLIP
-    }
-
-    /// Returns true if no rotation/flip transform is requested
-    /// AND no output format conversion (bg4a/pack_rgba) is needed.
+    /// Returns true when no output format conversion (bg4a/pack_rgba) is needed.
     fn is_identity(&self) -> bool {
-        self.rotate_mode == 0 && self.output_format == OutputFormat::FloatRgb
+        self.output_format == OutputFormat::FloatRgb
     }
 
     /// Show/hide the `Conv(1×1)` permutation weights for the display format.
@@ -293,50 +268,6 @@ impl DisplayBlock {
         self.with_output_format(OutputFormat::Abgr)
     }
 
-    /// `Slice` shape inference runs during `createSession`, before the engine
-    /// can write runtime inputs. Bake the flip parameters as initializers so
-    /// an interpreter session can be created at all — the runtime-input form
-    /// fails with "shape compute need input content" on device.
-    fn flip_initializers(&self) -> Vec<Vec<u8>> {
-        let (Some(h), Some(w)) = (self.in_h, self.in_w) else {
-            return vec![];
-        };
-        let ns = self.tensor_ns();
-        let (flip_h, flip_w) = if self.swaps_dims() { (w, h) } else { (h, w) };
-        let mut out = Vec::new();
-        if self.needs_hflip() && flip_w > 0 {
-            out.push(Proto::tensor_proto_int64(
-                &format!("{ns}/hflip_starts"),
-                &[flip_w - 1],
-            ));
-            out.push(Proto::tensor_proto_int64(
-                &format!("{ns}/hflip_ends"),
-                &[-1],
-            ));
-            out.push(Proto::tensor_proto_int64(&format!("{ns}/hflip_axes"), &[3]));
-            out.push(Proto::tensor_proto_int64(
-                &format!("{ns}/hflip_steps"),
-                &[-1],
-            ));
-        }
-        if self.needs_vflip() && flip_h > 0 {
-            out.push(Proto::tensor_proto_int64(
-                &format!("{ns}/vflip_starts"),
-                &[flip_h - 1],
-            ));
-            out.push(Proto::tensor_proto_int64(
-                &format!("{ns}/vflip_ends"),
-                &[-1],
-            ));
-            out.push(Proto::tensor_proto_int64(&format!("{ns}/vflip_axes"), &[2]));
-            out.push(Proto::tensor_proto_int64(
-                &format!("{ns}/vflip_steps"),
-                &[-1],
-            ));
-        }
-        out
-    }
-
     /// Emit MNN ISP min opset nodes — one `isp.display_*` dispatch for format
     /// conversion and packing. Gamma is encoded by the tone stage; the shader
     /// receives `gamma=1.0` so its own encode is an identity.
@@ -344,7 +275,6 @@ impl DisplayBlock {
         let ns = self.tensor_ns();
         let inp = self.effective_input();
         let final_output = self.frame_tensor.clone();
-        let display_output = format!("{ns}/display");
 
         // Map OutputFormat to the correct isp.display_* op type.
         // MNN's VulkanFuse selects shaders by exact op type name (e.g.,
@@ -354,19 +284,13 @@ impl DisplayBlock {
         // Build attributes for the isp.display shader
         let mut attrs = Vec::new();
 
-        // The fork's display shaders do not read `rotate_mode`. Keep the
-        // attribute at zero and apply the transform as ordinary graph nodes
-        // below; passing the mode here would double-rotate if the shader ever
-        // gains rotation support.
-        attrs.push(Proto::attribute_int("rotate_mode", 0i64));
-
         // Packing attribute: the fused shader writes one BGRA uint32 per pixel.
         attrs.push(Proto::attribute_int(
             "pack_two_pixels",
             if self.pack_two_pixels { 1 } else { 0 },
         ));
 
-        // Concrete dimensions for Slice initializers
+        // Concrete dimensions for the shader's dispatch bounds.
         if let (Some(h), Some(w)) = (self.in_h, self.in_w) {
             attrs.push(Proto::attribute_int("in_h", h));
             attrs.push(Proto::attribute_int("in_w", w));
@@ -398,82 +322,13 @@ impl DisplayBlock {
         // `resizeSession` with COMPUTE_SIZE_ERROR, and leaving gamma unwritten
         // made `pow(x, 0)` a constant 1.0 (a white frame).
         let gamma = format!("{ns}/gamma");
-        let transformed = self.swaps_dims() || self.needs_hflip() || self.needs_vflip();
-        let display_target = if transformed {
-            display_output.clone()
-        } else {
-            final_output.clone()
-        };
-        let mut nodes = vec![Proto::node_with_domain(
+        vec![Proto::node_with_domain(
             op_type,
             "isp",
             &[&inp, &gamma],
-            &[&display_target],
+            &[&final_output],
             &attrs,
-        )];
-
-        if !transformed {
-            return nodes;
-        }
-        let mut prev = display_output;
-        let mut temporaries: Vec<String> = Vec::new();
-
-        // 90°/270°: transpose the packed words so the display geometry becomes
-        // H×W. The primitive path already does this; the fused shader cannot.
-        if self.swaps_dims() {
-            let transposed = format!("{ns}/transposed");
-            nodes.push(Proto::node(
-                "Transpose",
-                &[&prev],
-                &[&transposed],
-                &[Proto::attribute_ints("perm", &[0, 1, 3, 2])],
-            ));
-            temporaries.push(transposed);
-            prev = temporaries.last().unwrap().clone();
-        }
-
-        if self.needs_hflip() {
-            let hflipped = if self.needs_vflip() {
-                format!("{ns}/hflipped")
-            } else {
-                final_output.clone()
-            };
-            let starts = format!("{ns}/hflip_starts");
-            let ends = format!("{ns}/hflip_ends");
-            let axes = format!("{ns}/hflip_axes");
-            let steps = format!("{ns}/hflip_steps");
-            nodes.push(Proto::node(
-                "Slice",
-                &[&prev, &starts, &ends, &axes, &steps],
-                &[&hflipped],
-                &[],
-            ));
-            if self.needs_vflip() {
-                temporaries.push(hflipped);
-                prev = temporaries.last().unwrap().clone();
-            } else {
-                return nodes;
-            }
-        }
-
-        if self.needs_vflip() {
-            let starts = format!("{ns}/vflip_starts");
-            let ends = format!("{ns}/vflip_ends");
-            let axes = format!("{ns}/vflip_axes");
-            let steps = format!("{ns}/vflip_steps");
-            nodes.push(Proto::node(
-                "Slice",
-                &[&prev, &starts, &ends, &axes, &steps],
-                &[&final_output],
-                &[],
-            ));
-            return nodes;
-        }
-
-        if prev != final_output {
-            nodes.push(Proto::node("Identity", &[&prev], &[&final_output], &[]));
-        }
-        nodes
+        )]
     }
 }
 
@@ -550,14 +405,13 @@ impl IspBlock for DisplayBlock {
         let elem = self.output_format.onnx_elem_type();
         match (self.in_h, self.in_w) {
             (Some(h), Some(w)) => {
-                let (oh, ow) = if self.swaps_dims() { (w, h) } else { (h, w) };
-                let packed_ow = self.packed_output_width(ow);
+                let packed_ow = self.packed_output_width(w);
                 Some(Proto::value_info(
                     &self.frame_tensor,
                     &[
                         Proto::tensor_dim_value(1),
                         Proto::tensor_dim_value(ch),
-                        Proto::tensor_dim_value(oh),
+                        Proto::tensor_dim_value(h),
                         Proto::tensor_dim_value(packed_ow),
                     ],
                     elem,
@@ -609,57 +463,6 @@ impl IspBlock for DisplayBlock {
         // Keep intermediate tensor names alive across the function scope
         let mut tensor_pool: Vec<String> = Vec::new();
         let mut prev = self.effective_input();
-
-        // 90° or 270°: transpose to swap H ↔ W
-        if self.swaps_dims() {
-            let transposed = format!("{}/transposed", ns);
-            nodes.push(Proto::node(
-                "Transpose",
-                &[&prev],
-                &[&transposed],
-                &[Proto::attribute_ints("perm", &[0, 1, 3, 2])],
-            ));
-            tensor_pool.push(transposed);
-            prev = tensor_pool.last().unwrap().clone();
-        }
-
-        // Horizontal flip on W (axis 3)
-        if self.needs_hflip() {
-            let hflipped = if self.needs_vflip() {
-                format!("{}/hflipped", ns)
-            } else {
-                self.frame_tensor.clone()
-            };
-            let starts = format!("{}/hflip_starts", ns);
-            let ends = format!("{}/hflip_ends", ns);
-            let axes = format!("{}/hflip_axes", ns);
-            let steps = format!("{}/hflip_steps", ns);
-            nodes.push(Proto::node(
-                "Slice",
-                &[&prev, &starts, &ends, &axes, &steps],
-                &[&hflipped],
-                &[],
-            ));
-            tensor_pool.push(hflipped);
-            prev = tensor_pool.last().unwrap().clone();
-        }
-
-        // Vertical flip on H (axis 2)
-        if self.needs_vflip() {
-            let vflipped = format!("{}/vflipped", ns);
-            let starts = format!("{}/vflip_starts", ns);
-            let ends = format!("{}/vflip_ends", ns);
-            let axes = format!("{}/vflip_axes", ns);
-            let steps = format!("{}/vflip_steps", ns);
-            nodes.push(Proto::node(
-                "Slice",
-                &[&prev, &starts, &ends, &axes, &steps],
-                &[&vflipped],
-                &[],
-            ));
-            tensor_pool.push(vflipped);
-            prev = tensor_pool.last().unwrap().clone();
-        }
 
         // Final: apply output format conversion
         use OutputFormat::*;
@@ -813,7 +616,7 @@ impl IspBlock for DisplayBlock {
     }
 
     fn initializers(&self) -> Vec<Vec<u8>> {
-        let mut out = self.flip_initializers();
+        let mut out = Vec::new();
         // The Conv(1×1) permutation must be a constant: MNN's Vulkan backend
         // reads kernels from the operator, and zero-fills when they are absent
         // (see `conv_weights`). Baked here they also survive constant folding.
@@ -1031,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn fused_display_without_rotation_has_no_extra_nodes() {
+    fn fused_display_has_no_orientation_nodes() {
         let block = DisplayBlock::new(640)
             .with_output_format(OutputFormat::PackedRgb)
             .with_opset_mode(2)
@@ -1039,60 +842,6 @@ mod tests {
         let nodes = block.nodes();
         assert_eq!(nodes.len(), 1);
         assert!(op_type(&nodes[0]).starts_with("isp.display_"));
-    }
-
-    #[test]
-    fn fused_display_applies_rotation_as_graph_nodes() {
-        for (mode, expected) in [
-            (1, vec!["Transpose", "Slice"]),
-            (2, vec!["Slice", "Slice"]),
-            (3, vec!["Transpose", "Slice"]),
-            (4, vec!["Slice"]),
-            (5, vec!["Slice"]),
-        ] {
-            let block = DisplayBlock::new(640)
-                .with_output_format(OutputFormat::PackedRgb)
-                .with_opset_mode(2)
-                .with_rotate(mode)
-                .with_concrete_dims(480, 640);
-            let nodes = block.nodes();
-            let actual: Vec<&str> = nodes.iter().skip(1).map(|n| op_type(n)).collect();
-            assert_eq!(actual, expected, "rotate_mode {mode}");
-        }
-    }
-
-    #[test]
-    fn rotation_slice_params_are_initializers_not_runtime_inputs() {
-        for (mode, expected_initializers) in [(1, 4), (2, 8), (3, 4), (4, 4), (5, 4)] {
-            let block = DisplayBlock::new(640)
-                .with_output_format(OutputFormat::PackedRgb)
-                .with_opset_mode(2)
-                .with_rotate(mode)
-                .with_concrete_dims(480, 640);
-            let extra_inputs = block.extra_inputs();
-            let defaults_bytes = block.extra_input_defaults();
-            let extras: Vec<&str> = extra_inputs
-                .iter()
-                .map(|(name, _, _)| name.as_str())
-                .collect();
-            let defaults: Vec<&str> = defaults_bytes
-                .iter()
-                .map(|(name, _)| name.as_str())
-                .collect();
-            assert!(
-                !extras.iter().any(|n| n.contains("flip_")),
-                "rotate_mode {mode}: {extras:?}"
-            );
-            assert!(
-                !defaults.iter().any(|n| n.contains("flip_")),
-                "rotate_mode {mode}: {defaults:?}"
-            );
-            assert_eq!(
-                block.initializers().len(),
-                expected_initializers,
-                "rotate_mode {mode}"
-            );
-        }
     }
 
     #[test]
