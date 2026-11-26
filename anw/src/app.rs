@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::ahb_display::AhbDisplay;
 use crate::ahb_output::AhbView;
 use crate::camera::{take_fatal_camera_error, CameraSession, RawFrame};
 use crate::crashlog::{self, write_line};
@@ -297,6 +298,10 @@ struct Preview {
     /// Shared with the workers so the debug raw-grayscale view can be toggled
     /// without restarting the pipeline.
     show_raw: Arc<AtomicBool>,
+    /// Path B (AHB + ASurfaceControl) presenter — avoids the per-pixel CPU
+    /// BGRA→RGBA blit in `WindowTarget::present()`. Owned once per window
+    /// lifetime; falls back to `WindowTarget::present()` if it fails to open.
+    ahb_display: Option<AhbDisplay>,
 }
 
 impl Preview {
@@ -505,6 +510,7 @@ impl Preview {
             last_present_error: None,
             frames: 0,
             show_raw,
+            ahb_display: None,
         })
     }
 
@@ -631,7 +637,16 @@ impl Preview {
             None => (done.data.as_slice(), None),
         };
         let present_t0 = Instant::now();
-        let presented = present_frame(target, bytes, done.width, done.height, done.kind);
+        let presented = if let Some(display) = self.ahb_display.as_mut() {
+            // Path B: hand the GPU-written AHB straight to SurfaceFlinger,
+            // no CPU blit, no `ANativeWindow_lock`.
+            let ahb_ptr = ahb_view
+                .as_ref()
+                .map_or(std::ptr::null_mut(), |v| v.ahb_ptr());
+            unsafe { display.present_ahb_raw(ahb_ptr, bytes, done.width, done.height) }
+        } else {
+            present_frame(target, bytes, done.width, done.height, done.kind)
+        };
         let t_present = present_t0.elapsed();
         if let Some(view) = ahb_view.as_ref() {
             view.mark_free();
@@ -978,6 +993,21 @@ fn android_main(app: AndroidApp) {
                         let t = unsafe {
                             std::mem::transmute::<WindowTarget<'_>, WindowTarget<'static>>(t)
                         };
+
+                        // Also open the Path B ASurfaceControl presenter so the
+                        // GPU-written AHB can be handed straight to SurfaceFlinger
+                        // without a CPU blit. This is best-effort: if
+                        // `libnativewindow.so` lacks `ASurfaceControl_*` symbols
+                        // (older devices), we fall back to `WindowTarget::present()`.
+                        let ahb_display =
+                            unsafe { AhbDisplay::new(win.ptr().as_ptr() as *mut c_void) };
+                        if let Err(e) = &ahb_display {
+                            log::warn!(
+                                "Path B AHB display unavailable, falling back to CPU blit: {e}"
+                            );
+                        }
+                        preview.as_mut().unwrap().ahb_display = ahb_display.ok();
+
                         target.insert(t)
                     }
                     Err(e) => {

@@ -2160,6 +2160,7 @@ dependencies = [
  "cam-ipa",
  "cam-isp",
  "cam-types",
+ "libc",
  "log",
  "ndk-sys",
  "thiserror 2.0.21",

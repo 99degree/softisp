@@ -25,6 +25,7 @@ log = "0.4"
 thiserror = "2"
 env_logger = "0.10"
 android_logger = "0.14"
+libc = "0.2"
 # NativeActivity lifecycle + ANativeWindow (anw/softisp-anw, libsoftisp.so).
 android-activity = { version = "0.6.1", features = ["native-activity"] }
 # Raw ACamera* / AImageReader* NDK bindings (anw/softisp-anw).

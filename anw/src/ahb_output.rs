@@ -146,6 +146,7 @@ pub(crate) fn slot_debug(message: impl std::fmt::Display) {
 #[derive(Clone)]
 pub(crate) struct AhbView {
     ptr: *mut u8,
+    ahb: *mut std::ffi::c_void,
     len: usize,
     busy: Arc<AtomicBool>,
 }
@@ -160,6 +161,7 @@ impl AhbView {
     fn new(slot: &AhbOutputSlot) -> Self {
         Self {
             ptr: slot.map,
+            ahb: slot.ahb as *mut std::ffi::c_void,
             len: slot.display_bytes(),
             busy: Arc::clone(&slot.busy),
         }
@@ -168,6 +170,12 @@ impl AhbView {
     /// Bytes the presenter is allowed to read: one BGRA pixel per output pixel.
     pub(crate) fn bytes(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+
+    /// Raw `AHardwareBuffer*` backing this view, for `ASurfaceTransaction_setBuffer`
+    /// (Path B presentation — no CPU blit).
+    pub(crate) fn ahb_ptr(&self) -> *mut std::ffi::c_void {
+        self.ahb
     }
 
     pub(crate) fn is_busy(&self) -> bool {
