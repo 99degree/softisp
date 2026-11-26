@@ -32,6 +32,19 @@ else
     echo "  WARN: llvm-strip not found; device MNN libs stay unstripped" >&2
 fi
 
+# The MNN libs are built with Termux RUNPATHs. Nested dependencies such as
+# libMNNConvertDeps.so -> libMNN_Express.so are resolved with the dependency's
+# own RUNPATH, not the core's, so they must also point at the staged dir.
+if command -v patchelf >/dev/null 2>&1; then
+    for so in "$MNN_DIR"/libMNN*.so "$MNN_DIR"/libsoftisp_cpp_shared.so; do
+        [ -f "$so" ] || continue
+        patchelf --set-rpath '$ORIGIN' "$so"
+    done
+else
+    echo "ERROR: patchelf is required to retune MNN RUNPATHs for staging" >&2
+    exit 1
+fi
+
 rm -f target/debug/apk/softisp-test-unaligned.apk target/debug/apk/classes.dex
 
 # Build the hot-swappable core with the NDK environment, then the shim APK.

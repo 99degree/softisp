@@ -57,8 +57,13 @@ files before `dlopen`; loading directly from Download would fail.
 - `./push-test-libs.sh` copies that freshly built core plus the MNN libs from
   `cam-rust/lib/arm64-v8a/` into `/sdcard/download/`. The app cannot read
   Termux's private `/data/data/com.termux` tree, so this copy step is mandatory.
-  The FUSE mount rewrites copied files to `u0_a170:media_rw 0660`, so the app can
-  read them. The script rejects a core that still links `libc++_shared.so`.
+  The emulated-storage FUSE mount rewrites copied files to a fixed shared-storage
+  owner (`u0_a170:media_rw 0660` on this device), which may differ from the
+  current app UID after a reinstall. **All files access** must be enabled for
+  `com.softisp.camera` or the app cannot read the pushed libs; the symptom is
+  `FATAL [shim] cannot stage core ... Permission denied (os error 13)` plus a
+  `MediaProvider: Permission to access file ... is denied` line in logcat.
+  The script rejects a core that still links `libc++_shared.so`.
 - A plain `cargo build` is **not** a substitute. The host triple is
   `aarch64-linux-android`, so it writes `target/debug/libsoftisp.so` (which still
   links `libc++_shared.so`), not the APK-target core under
@@ -70,6 +75,12 @@ files before `dlopen`; loading directly from Download would fail.
   ```
 
   No APK rebuild or reinstall is needed.
+- The MNN libs keep the Termux build-host RUNPATHs after
+  `scripts/build_mnn_libs.sh arm64-v8a`. `build-test-apk.sh` rewrites them to
+  `$ORIGIN` with `patchelf`; without that, the core loads its direct MNN deps but
+  `libMNNConvertDeps.so` cannot find its own `libMNN_Express.so`, producing
+  `dlopen failed: library "libMNN_Express.so" not found ... in namespace clns-7`.
+  `push-test-libs.sh` verifies the `$ORIGIN` RUNPATH before copying.
 
 Outputs:
 
@@ -80,7 +91,10 @@ Outputs:
 
 ## Device flow
 
-1. Clean-install `softisp-test.apk` (the activity library name changed).
+1. Clean-install `softisp-test.apk` (the activity library name changed) and
+   enable **All files access** for `com.softisp.camera` in Settings. Reinstalling
+   assigns a new UID, so without this the app cannot read files Termux copies
+   into shared storage.
 2. Copy to `/sdcard/download/`:
    - `target/aarch64-linux-android/debug/libsoftisp.so` as `libsoftisp.so`;
    - every `cam-rust/lib/arm64-v8a/lib*.so` (MNN and renamed libc++).
@@ -106,6 +120,8 @@ Outputs:
 - The test APK has no bundled MNN libs by design; pushing them to Download is
   mandatory. A missing dependency produces `dlopen ... failed: cannot locate ...`
   with the staged path in the log.
+- All files access is mandatory after a reinstall; without it the shim finds the
+  core but fails with `Permission denied (os error 13)` before `dlopen`.
 - This is an experiment; the stable P2g packaging description in
   `docs/overview/ROADMAP.md` remains the reference for the production APK.
 

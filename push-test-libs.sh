@@ -33,6 +33,11 @@ if readelf -d "$CORE" | grep -q '\[libc++_shared\.so\]'; then
     echo "       rebuild with: cargo apk2 -- build -p softisp-anw" >&2
     exit 1
 fi
+if ! readelf -d "$MNN_DIR/libMNNConvertDeps.so" | grep -Fq 'Library runpath: [$ORIGIN]'; then
+    echo "ERROR: MNN libs have build-host RUNPATHs; nested deps will not resolve" >&2
+    echo "       rebuild with: ./build-test-apk.sh" >&2
+    exit 1
+fi
 
 cp -f "$CORE" "$DEST/libsoftisp.so"
 count=0
