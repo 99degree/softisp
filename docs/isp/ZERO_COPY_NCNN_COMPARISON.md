@@ -27,9 +27,9 @@ AImageReader (GPU_SAMPLED_IMAGE usage)
 
 ---
 
-## 2. SoftISP current zero-copy state (before changes)
+## 2. SoftISP zero-copy state (current, after changes)
 
-### What already landed
+### What is now landed
 | Item | Location |
 |------|----------|
 | `ProcessParams::{input_buffer, output_buffer, input_ahb, output_ahb}` non-owning views | `cam-rust/cam-isp/src/engine.rs` |
@@ -38,17 +38,17 @@ AImageReader (GPU_SAMPLED_IMAGE usage)
 | `Tensor::setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER)` → MNN Vulkan `onAcquire` → `VulkanBufferFromAHB` | MNN fork |
 | `AhbOutputSlot` — one per worker, BLOB AHB allocated+locked once, mapping kept for worker lifetime | `anw/src/ahb_output.rs` |
 | Output AHB bound before `resizeSession` (import-before-resize) | `cam-rust/cam-isp/src/mnnengine.rs:prepare()` |
+| **Input AHB now also bound before `resizeSession`** (same import-before-resize ordering) | `cam-rust/cam-isp/src/mnnengine.rs:prepare()` |
+| Input binding persists for worker lifetime; not re-imported per frame | `cam-rust/cam-isp/src/mnnengine.rs:run_prepared()` |
 | `mnn_run_ahb_output` (no `copyToHostTensor`) on AHB output path | `mnnengine.rs:run_prepared()` |
+| `copyFromHostTensor` skipped when input tensor carries `MNN_MEMORY_AHARDWAREBUFFER` | `mnn_wrapper.cpp:mnn_run_true_zero_copy` + `mnn_run_ahb_output` |
 | Zero-copy frames skip `f32_to_u8` narrowing and `copyToHostTensor`; `IspFrame::new_external` carries caller pointer | `mnnengine.rs` |
 
-### What was NOT real zero-copy (gaps)
-1. **Input AHB imported per-frame in `run_prepared()`**, not cached (ncnn caches per-AHB).
-2. **Input AHB bound after resize** — too late for Vulkan `onAcquire` import; host→device copy still happened.
-3. **`mnn_run_true_zero_copy` always called `copyFromHostTensor`** even when the input tensor was AHB-bound — redundant host→device upload.
-4. Camera still de-strides RAW16 into `Vec<u16>` (`anw/src/camera.rs:copy_pixels()`).
-5. Presentation does per-pixel CPU BGRA→RGBA blit (`anw/src/presentation.rs:present()`).
-6. Fences are CPU `AtomicBool` busy flags, not real sync fds.
-7. `mnn_wrapper.h` claimed wrapper-side fd/VkDeviceMemory import steps that the implementation did not do (only `setDevicePtr`).
+### What remains for true end-to-end zero-copy
+1. Camera still de-strides RAW16 into `Vec<u16>` (`anw/src/camera.rs:copy_pixels()`) — needs media NDK `AImage_getHardwareBuffer` → `AHardwareBuffer` passed directly as `input_ahb`.
+2. Presentation does per-pixel CPU BGRA→RGBA blit (`anw/src/presentation.rs:present()`).
+3. Fences are CPU `AtomicBool` busy flags, not real sync fds (`anw/src/ahb_output.rs`).
+4. `mnn_wrapper.h` header claims wrapper-side fd/VkDeviceMemory import steps that the implementation doesn't do (`mnn_wrapper.h:346-349`).
 
 ---
 
