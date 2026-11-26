@@ -86,7 +86,7 @@
 
     <application
         android:label="SoftISP Camera"
-        android:hasCode="false"
+        android:hasCode="true"
         android:debuggable="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
         android:icon="@mipmap/icon">
@@ -95,10 +95,15 @@
              activity is not recreated mid-preview: anw/src/app.rs re-takes the
              window and reallocates the presentation buffers on the resize
              events. -->
+        <!-- singleTask delivers a control intent to the live activity via
+             onNewIntent. ShimActivity overrides that callback and calls
+             setIntent(), which the stock NativeActivity does not do; without
+             it getIntent() keeps returning the original launcher intent. -->
         <activity
-            android:name="android.app.NativeActivity"
+            android:name="com.softisp.camera.ShimActivity"
             android:exported="true"
             android:label="SoftISP Camera"
+            android:launchMode="singleTask"
             android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection">
             <!-- android.app.lib_name is what NativeActivity dlopen()s. The test
                  APK launches the launcher cdylib from android-shim-app/, which

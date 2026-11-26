@@ -28,7 +28,9 @@ device-writable storage at runtime. The production APK is untouched.
      APK native-library dir, and `.`;
   4. copies the first found `libsoftisp.so` / `libsoftisp_core.so` /
      `libsoftisp_hot.so` into the staged dir as `libsoftisp.so`;
-  5. `dlopen`s the staged copy, resolves `android_main`, and forwards the live
+  5. computes a streaming MD5 of every staged `.so` (core and dependencies)
+     and logs `INFO [shim] md5 <name> <hex> <bytes>` before loading;
+  6. `dlopen`s the staged copy, resolves `android_main`, and forwards the live
      `AndroidApp` by value.
 - Every launch mirrors the complete search-root list to logcat (tag
   `softisp-shim`) and to `/sdcard/download/softisp-app.log`, falling back to
@@ -91,10 +93,12 @@ Outputs:
 
 ## Device flow
 
-1. Clean-install `softisp-test.apk` (the activity library name changed) and
-   enable **All files access** for `com.softisp.camera` in Settings. Reinstalling
+1. The **user** installs `softisp-test.apk` (the activity class changed from
+   `android.app.NativeActivity` to `com.softisp.camera.ShimActivity`) and enables
+   **All files access** for `com.softisp.camera` in Settings. Reinstalling
    assigns a new UID, so without this the app cannot read files Termux copies
-   into shared storage.
+   into shared storage. The assistant never runs `install-apk.sh` or any
+   `pm`/`am` package-lifecycle command (see `AGENTS.md` §1.7).
 2. Copy to `/sdcard/download/`:
    - `target/aarch64-linux-android/debug/libsoftisp.so` as `libsoftisp.so`;
    - every `cam-rust/lib/arm64-v8a/lib*.so` (MNN and renamed libc++).
@@ -109,6 +113,51 @@ Outputs:
 5. For later ISP/MNN changes, run
    `cargo apk2 -- build -p softisp-anw && ./push-test-libs.sh`, then relaunch.
    The test APK is unchanged; only the pushed core needs refreshing.
+
+## MD5 assurance and intent control
+
+Every staged library is MD5-fingerprinted before `dlopen`. The log lines look
+like `INFO [shim] md5 libsoftisp.so <32 hex> 134881689 bytes`. An external
+script computes `md5sum` of its own build outputs and compares the two lists;
+a mismatch means the device is running a stale or substituted library.
+
+The activity uses the rare action `com.softisp.camera.action.CONTROL` with
+`android:launchMode="singleTask"`, so a debug command reaches the live activity
+instead of creating a second instance. The stock `android.app.NativeActivity`
+does **not** override `onNewIntent()` or call `setIntent()`, so `getIntent()`
+keeps returning the original launcher intent and the native watcher never sees
+later commands. The test APK therefore compiles a tiny Java subclass,
+`com.softisp.camera.ShimActivity`, whose `onNewIntent()` calls `setIntent(intent)`.
+`hasCode` is `true` and `java_sources = "java"` is set in the shim crate's Cargo
+manifest so cargo-apk2 compiles it into `classes.dex`.
+
+```
+am start -a com.softisp.camera.action.CONTROL \
+  -n com.softisp.camera/com.softisp.camera.ShimActivity \
+  --es softisp_cmd stop
+```
+
+Recognised values:
+
+- `ping` — log a confirmation line.
+- `cancel` — `dlsym` the core's exported `softisp_anw_cancel_pipeline()` and
+  call it, so the ISP pipeline stops without killing the app.
+- `stop` / `kill` / `quit` / `exit` — call `Activity.finish()`, then force a
+  process exit after two seconds. This is needed because Termux's shell UID
+  cannot use `am force-stop`.
+
+`ShimActivity` also sets `FLAG_SHOW_WHEN_LOCKED`, `FLAG_TURN_SCREEN_ON`,
+`FLAG_DISMISS_KEYGUARD` and `FLAG_KEEP_SCREEN_ON` on both `onCreate()` and
+`onNewIntent()`, so a control intent can bring the preview up while the device
+is locked. Whether this is reliable in unattended runs is still under study
+(TODO). A control intent cannot reach a **stale process** that was started from
+an older APK without the Java subclass; that needs a one-time force-stop done
+by the user.
+
+`./auto-debug.sh [attempts] [wait_secs]` automates the whole loop: clear log,
+launch, wait, compare logged MD5s with local `md5sum`, and on mismatch send the
+`stop` intent, rebuild and re-push the core, then relaunch. Results land in
+`.tmp/auto-debug/`. The user installs the rebuilt APK.
 
 ## Constraints and risks
 
@@ -129,7 +178,8 @@ Outputs:
 
 - `cargo fmt --all -- --check`, `git diff --check`.
 - `cargo clippy -p softisp-shim --all-features --no-deps -- -D warnings`.
-- `cargo test -p softisp-shim --lib --no-fail-fast` (4 tests).
+- `cargo test -p softisp-shim --lib --no-fail-fast` (6 tests, including MD5
+  known-answer vectors).
 - `./build-test-apk.sh` succeeds; the test APK contains exactly one native
   library and no MNN/core libs.
 - On-device confirmation is user-side: this harness only reads logs.

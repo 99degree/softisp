@@ -15,6 +15,9 @@ log = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = { workspace = true }
+# Test-only control channel: the watcher calls Activity.finish() so an external
+# script can terminate the app without shell-level force-stop permission.
+jni = "0.22"
 
 [lib]
 name = "softisp_shim"
@@ -33,6 +36,10 @@ package = "com.softisp.camera"
 # the real application cdylib are pushed to the device separately.
 manifest_override = "AndroidManifest.xml"
 resources = "../android-app/Sources/res"
+# ShimActivity overrides onNewIntent() to call setIntent(), which the stock
+# NativeActivity does not do. Without it the native watcher only ever sees the
+# original launcher intent and control commands are invisible.
+java_sources = "java"
 
 [package.metadata.android.sdk]
 min_sdk_version = 24
@@ -60,13 +67,13 @@ name = "android.permission.MANAGE_EXTERNAL_STORAGE"
 
 [package.metadata.android.application]
 label = "SoftISP Camera"
-has_code = false
+has_code = true
 debuggable = true
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
 icon = "@mipmap/icon"
 
 [[package.metadata.android.application.activity]]
-name = "android.app.NativeActivity"
+name = "com.softisp.camera.ShimActivity"
 exported = true
 config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection"
 

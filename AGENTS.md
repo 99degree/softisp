@@ -117,7 +117,8 @@ You must process every single engineering task through this strict, non-negotiab
 
 * **Session created**: 2026-06-21
 * All work executes in the Pi harness inside Termux on Android. The Rust toolchain is pinned via `rust-toolchain.toml` (stable, with `rustfmt` + `clippy` components).
-* **No adb on the device:** Termux/Android is the test machine — there is no `adb`. Let the user install the APK (`target/debug/apk/softisp-camera.apk`) via the normal Android install flow and launch from the launcher or `am start`; read diagnostics from the crash log file (`/sdcard/download/softisp-app.log` or fallback) plus `logcat` run directly on the device. Reference `docs/build/DEBUG_APK.md` for the full no-adb debugging procedure.
+* **No adb on the device:** Termux/Android is the test machine — there is no `adb`. **The user owns installation:** build the APK but never run `install-apk.sh`, `pm install`, `pm uninstall`, `pm clear`, `am force-stop`, `am kill`, or any other package/process lifecycle command yourself. Tell the user the APK path and let them install it through the normal Android flow; then launch with `am start` and read diagnostics from `/sdcard/download/softisp-app.log` plus `logcat`. Reference `docs/build/DEBUG_APK.md` and `docs/build/20261126-apk-shim-hotload-experiment.md`.
+* **Termux UID cannot manage other apps' processes:** `forceStopPackage`, `killBackgroundProcesses`, `clearApplicationUserData`, `runUninstall`, and `setApplicationEnabledSetting` all throw `SecurityException` for the Termux UID. Do not try them. For the shim-only test APK, use the app's own control intent (`am start -a com.softisp.camera.action.CONTROL -n com.softisp.camera/android.app.NativeActivity --es softisp_cmd stop|cancel|ping`) to make the running app terminate or cancel the pipeline. A stale process that predates the intent-enabled APK needs a one-time force-stop performed by the user.
 
 ### 1.8 ACTIVE EXTENSIONS
 
@@ -231,11 +232,12 @@ There is **no `rustfmt.toml` and no `clippy.toml`** — defaults only. Do not ad
 
 ### Install (Android APK)
 
-Build the APK, then sideload it through a PackageManager session:
+Build the APK and hand the path to the user. **Do not run `install-apk.sh` yourself** — installation is a user-side action (see §1.7). The scripts exist for the user's manual workflow:
 
 ```bash
 ./build-apk.sh       # -> target/debug/apk/softisp-camera.apk (workspace root)
-./install-apk.sh     # pm install-create / install-write / install-commit over stdin
+./build-test-apk.sh  # -> target/debug/apk/softisp-test.apk (shim-only test APK)
+./install-apk.sh     # user runs this: pm install-create / install-write / install-commit
 ```
 
 `install-apk.sh` accepts an optional APK path as its first argument; the default is `target/debug/apk/softisp-camera.apk`. Do not use `pm install <path>` directly — Termux's private data dir is unreadable to `pm` under SELinux.

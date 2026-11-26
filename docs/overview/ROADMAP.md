@@ -537,9 +537,24 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   `./build-test-apk.sh` builds the core with `cargo apk2 -- build -p softisp-anw`
   and packages a shim-only APK (`softisp-test.apk`); no MNN or `libsoftisp.so`
   is bundled. MNN libs are pushed to `/sdcard/download` alongside the core.
-- **Verification:** format/clippy/4 shim unit tests and a successful
-  `./build-test-apk.sh` pass locally. On-device startup is a user-side check.
-  Details: `docs/build/20261126-apk-shim-hotload-experiment.md`.
+- **Verification:** format/clippy/6 shim unit tests (including MD5 vectors) and
+  a successful `./build-test-apk.sh` pass locally. On-device startup is a
+  user-side check. Details: `docs/build/20261126-apk-shim-hotload-experiment.md`.
+- **MD5 assurance + intent control (2026-11-26):** every staged `.so` is
+  MD5-fingerprinted into the log, and `./auto-debug.sh` compares it with local
+  `md5sum`. The rare action `com.softisp.camera.action.CONTROL` with extra
+  `softisp_cmd` accepts `ping`, `cancel` (calls the core's
+  `softisp_anw_cancel_pipeline`) and `stop` (self-terminates the activity).
+- **Intent delivery fix:** stock `NativeActivity` never calls `setIntent()` on
+  `onNewIntent()`, so the native watcher could not see control intents. The test
+  APK now compiles `com.softisp.camera.ShimActivity extends NativeActivity` via
+  `java_sources = "java"` and calls `setIntent()`; the activity class in the
+  manifest and in all launch commands changed accordingly. Window flags for
+  locked-screen wake are set, but their reliability is still under study.
+- **User-owned install:** the assistant must never run `install-apk.sh` or any
+  `pm`/`am` package/process lifecycle command (see `AGENTS.md` §1.7); the user
+  installs each rebuilt APK. A stale process predating the Java subclass needs
+  one user-side force-stop.
 
 ### P2h — Overlap AHB framing with metadata prefill/readback (TODO)
 
