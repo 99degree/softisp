@@ -2166,6 +2166,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "softisp-shim"
+version = "0.1.0"
+dependencies = [
+ "android-activity",
+ "libc",
+]
+
+[[package]]
 name = "stacker"
 version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"

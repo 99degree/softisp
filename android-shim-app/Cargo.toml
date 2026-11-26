@@ -1,0 +1,77 @@
+[package]
+name = "softisp-shim"
+version = "0.1.0"
+edition = "2021"
+description = "NativeActivity launcher that forwards android_main to a hot-swappable softisp core cdylib"
+license = "MIT OR Apache-2.0"
+
+# The APK entrypoint is deliberately tiny: it has no ISP/MNN dependencies. It
+# only locates the real `libsoftisp.so`, stages it into app-private storage (the
+# public Download mount is noexec), and calls its `android_main`.
+[dependencies]
+android-activity = { workspace = true }
+libc = "0.2"
+
+[lib]
+name = "softisp_shim"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+# ── APK packaging (cargo-apk2) ───────────────────────────────────────────
+
+[package.metadata.android]
+apk_name = "softisp-test"
+package = "com.softisp.camera"
+# Paths are relative to this crate (`android-shim-app/`). The manifest is a
+# shim-specific copy of the production shell with a different library name;
+# the resources are still shared from the untouched `android-app/`.
+# No `runtime_libs`: the test APK must contain only the launcher shim. MNN and
+# the real application cdylib are pushed to the device separately.
+manifest_override = "AndroidManifest.xml"
+resources = "../android-app/Sources/res"
+
+[package.metadata.android.sdk]
+min_sdk_version = 24
+target_sdk_version = 34
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.camera"
+required = true
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.CAMERA"
+
+# The crash log lives in the public Download directory. API 29 and below use
+# WRITE_EXTERNAL_STORAGE; API 30+ needs the "all files access" special grant.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.WRITE_EXTERNAL_STORAGE"
+max_sdk_version = 29
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.READ_EXTERNAL_STORAGE"
+max_sdk_version = 29
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.MANAGE_EXTERNAL_STORAGE"
+
+[package.metadata.android.application]
+label = "SoftISP Camera"
+has_code = false
+debuggable = true
+theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+icon = "@mipmap/icon"
+
+[[package.metadata.android.application.activity]]
+name = "android.app.NativeActivity"
+exported = true
+config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|keyboard|navigation|uiMode|density|layoutDirection"
+
+# Android launches this crate's cdylib. The real application cdylib built by
+# `anw/` is named `libsoftisp.so` and is loaded at runtime instead.
+[[package.metadata.android.application.activity.meta_data]]
+name = "android.app.lib_name"
+value = "softisp_shim"
+
+[[package.metadata.android.application.activity.intent_filter]]
+actions = ["android.intent.action.MAIN"]
+categories = ["android.intent.category.LAUNCHER"]

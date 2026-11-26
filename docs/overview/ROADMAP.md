@@ -524,6 +524,23 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   a user-side check (the assistant does not install or share the APK). Full
   plan: `docs/ipa/ANW_SPLIT_PLAN.md`.
 
+### P2g.1 — APK launcher shim experiment (device check pending)
+
+- **User direction recorded 2026-11-26.** Test whether ISP/MNN edits can skip
+  APK repacking by adding a separate tiny `NativeActivity` launcher crate in
+  `android-shim-app/`; `android-app/` and `build-apk.sh` stay untouched.
+- **Change:** new `softisp-shim` crate builds `libsoftisp_shim.so`;
+  `android.app.lib_name` now selects it. It stages and `dlopen`s the real
+  `libsoftisp.so` from `anw/` and forwards `android_main`. All searched roots
+  are logged, with a `FATAL [shim]` line on failure.
+- **Build:** `./build-apk.sh` stays the production APK path. The new
+  `./build-test-apk.sh` builds the core with `cargo apk2 -- build -p softisp-anw`
+  and packages a shim-only APK (`softisp-test.apk`); no MNN or `libsoftisp.so`
+  is bundled. MNN libs are pushed to `/sdcard/download` alongside the core.
+- **Verification:** format/clippy/4 shim unit tests and a successful
+  `./build-test-apk.sh` pass locally. On-device startup is a user-side check.
+  Details: `docs/build/20261126-apk-shim-hotload-experiment.md`.
+
 ### P2h — Overlap AHB framing with metadata prefill/readback (TODO)
 
 - **User concern recorded 2026-11-26.** Reduce the visible per-frame critical
