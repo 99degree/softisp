@@ -78,7 +78,7 @@ All scripts live at the repository root and are executable.
 | `./shim-debug.sh <cmd>` | One-entry wrapper for build/libs/push/reload/control/logs/verify/cycle (see §6) |
 | `./build-test-apk.sh` | Build and verify the shim-only APK; no MNN/core rebuild |
 | `./build-test-libs.sh` | Build MNN + core runtime libs only, with strip/patchelf (`--core-only` skips MNN) |
-| `./push-test-libs.sh` | Copy core + MNN libs into `/sdcard/download` |
+| `./push-test-libs.sh` | Copy core + MNN libs + Termux Vulkan/libc++ runtime libs into `/sdcard/download` |
 | `./auto-debug.sh [attempts] [wait_secs]` | Full automatic MD5/self-restart loop |
 | `./scripts/build_mnn_libs.sh arm64-v8a` | The only supported MNN build path (always `build_isp`, never `build_vk`) |
 
@@ -91,6 +91,11 @@ reloads the app:
 
 A plain `cargo build` writes `target/debug/libsoftisp.so` and links
 `libc++_shared.so`; it is the wrong binary and `push-test-libs.sh` rejects it.
+The shim still needs a plain `libc++_shared.so`, which it preloads before the
+MNN libs. `scripts/build_mnn_libs.sh` only stages the renamed
+`libsoftisp_cpp_shared.so`, so `push-test-libs.sh` obtains plain `libc++_shared.so`
+from Termux (falling back to an existing MNN-dir copy) and patches its SONAME
+if needed.
 
 ---
 
@@ -148,9 +153,12 @@ A plain `cargo build` writes `target/debug/libsoftisp.so` and links
    ./shim-debug.sh verify
    ```
 
-   It computes local `md5sum` values for `libsoftisp.so` and every
-   `cam-rust/lib/arm64-v8a/lib*.so`, then compares them with the `md5` lines in
-   the app log. PASS means the device is running exactly the local build.
+   It computes local `md5sum` values for `libsoftisp.so`, the Termux
+   `libc++_shared.so` selected by `push-test-libs.sh`, and every
+   `cam-rust/lib/arm64-v8a/lib*.so` except that same plain libc++ name. It then
+   compares them with the `md5` lines in the app log. PASS means the device is
+   running exactly the local build. The core rotates an oversized log instead
+   of truncating it, so the shim's pre-core MD5 lines survive for this check.
 
 ---
 

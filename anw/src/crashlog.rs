@@ -192,9 +192,12 @@ pub fn install(fallback_dir: Option<&Path>) {
     let candidates = candidate_paths(fallback_dir);
     match resolve_log_path(&candidates) {
         Some(path) => {
-            // Start each launch with a clean log so stale entries from a
-            // previous run cannot be mistaken for a current failure.
-            let _ = std::fs::File::create(&path).map(|f| f.set_len(0));
+            // Never truncate here: the shim writes the loaded-library MD5s
+            // just before forwarding android_main, and those lines are the
+            // only file-based proof of which binaries this launch selected.
+            if let Err(e) = rotate_if_needed(&path) {
+                eprintln!("softisp: could not rotate {}: {e}", path.display());
+            }
             let _ = ACTIVE_PATH.set(path.clone());
             let ver = env!("CARGO_PKG_VERSION");
             write_line("INFO", "boot", &format!("log file: {}", path.display()));
@@ -508,10 +511,16 @@ mod tests {
         let _ = std::fs::remove_file(&rotated);
         // MAX_LOG_BYTES is a const, so pad to exactly the threshold: `>=` must
         // treat that as oversized.
-        std::fs::write(&p, vec![b'x'; MAX_LOG_BYTES as usize]).unwrap();
+        let payload = vec![b'x'; MAX_LOG_BYTES as usize];
+        std::fs::write(&p, &payload).unwrap();
         assert!(rotate_if_needed(&p).is_ok());
         assert!(!p.exists(), "oversized file must be moved aside");
         assert!(rotated.exists(), "rotated generation must exist");
+        assert_eq!(
+            std::fs::read(&rotated).unwrap(),
+            payload,
+            "rotation must preserve the shim's pre-core log lines"
+        );
         let _ = std::fs::remove_file(&rotated);
     }
 }

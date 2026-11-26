@@ -69,8 +69,11 @@ directory; the descriptor still supplies all bytes from the uploaded file.
      MNN/core libs, and that its hash matches
      `target/aarch64-linux-android/debug/libsoftisp_shim.so`.
 - `./push-test-libs.sh` copies that freshly built core plus the MNN libs from
-  `cam-rust/lib/arm64-v8a/` into `/sdcard/download/`. The app cannot read
-  Termux's private `/data/data/com.termux` tree, so this copy step is mandatory.
+  `cam-rust/lib/arm64-v8a/` into `/sdcard/download/`. It also explicitly stages
+  Termux `libvulkan.so` (SONAME patched) and plain `libc++_shared.so`, which the
+  shim preloads; the MNN build only produces the renamed
+  `libsoftisp_cpp_shared.so`. The app cannot read Termux's private
+  `/data/data/com.termux` tree, so this copy step is mandatory.
   The emulated-storage FUSE mount rewrites copied files to a fixed shared-storage
   owner (`u0_a170:media_rw 0660` on this device), which may differ from the
   current app UID after a reinstall. **All files access** must be enabled for
@@ -117,7 +120,8 @@ Outputs:
    `pm`/`am` package-lifecycle command (see `AGENTS.md` §1.7).
 2. Copy to `/sdcard/download/`:
    - `target/aarch64-linux-android/debug/libsoftisp.so` as `libsoftisp.so`;
-   - every `cam-rust/lib/arm64-v8a/lib*.so` (MNN and renamed libc++).
+   - every `cam-rust/lib/arm64-v8a/lib*.so` except plain `libc++_shared.so`;
+   - Termux `libc++_shared.so` and SONAME-patched `libvulkan.so`.
 3. Launch the app.
 4. Read `/sdcard/download/softisp-app.log`. Expect:
    - `INFO [shim] core search roots: ...`

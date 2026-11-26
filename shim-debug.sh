@@ -17,6 +17,9 @@ ACTION="com.softisp.camera.action.CONTROL"
 EXTRA="softisp_cmd"
 CORE="target/aarch64-linux-android/debug/libsoftisp.so"
 MNN_DIR="cam-rust/lib/arm64-v8a"
+TERMUX_LIB_DIR="/data/data/com.termux/files/usr/lib"
+TERMUX_LIBCPP="$TERMUX_LIB_DIR/libc++_shared.so"
+TERMUX_VULKAN="$TERMUX_LIB_DIR/libvulkan.so"
 LOG="/sdcard/download/softisp-app.log"
 OUT=".tmp/shim-debug"
 WAIT_SECS="${WAIT_SECS:-12}"
@@ -29,7 +32,7 @@ Commands:
   build          Build the shim-only softisp-test.apk
   libs [--core-only]
                  Build MNN + core runtime libs (strip + patchelf, no APK)
-  push           Push the current core + MNN libs to /sdcard/download
+  push           Push core + MNN libs + Termux Vulkan/libc++ runtime libs
   core           Rebuild only the core, then push (fast ISP iteration)
   reload         Ask the app to clean legacy staged libs, stop, then relaunch
   deploy         core + reload
@@ -126,8 +129,24 @@ do_logs() {
 }
 
 expected_sums() {
-    for file in "$CORE" "$MNN_DIR"/lib*.so; do
+    if [ -f "$TERMUX_VULKAN" ]; then
+        if command -v patchelf >/dev/null 2>&1; then
+            tmp_vulkan="$(mktemp /data/data/com.termux/files/usr/tmp/vulkan-expected.XXXXXX.so)"
+            cp -f "$TERMUX_VULKAN" "$tmp_vulkan"
+            patchelf --set-soname libvulkan.so "$tmp_vulkan"
+            printf '%s %s\n' libvulkan.so "$(md5sum "$tmp_vulkan" | cut -d' ' -f1)"
+            rm -f "$tmp_vulkan"
+        else
+            printf '%s %s\n' libvulkan.so "$(md5sum "$TERMUX_VULKAN" | cut -d' ' -f1)"
+        fi
+    fi
+    for file in "$CORE" "$TERMUX_LIBCPP" "$MNN_DIR"/lib*.so; do
         [ -f "$file" ] || continue
+        # push-test-libs.sh selects plain libc++ from Termux, so an incidental
+        # cam-rust/lib copy must not create a duplicate expected hash.
+        if [ "$file" = "$MNN_DIR/libc++_shared.so" ]; then
+            continue
+        fi
         printf '%s %s\n' "$(basename "$file")" "$(md5sum "$file" | cut -d' ' -f1)"
     done
 }

@@ -32,12 +32,14 @@
   later GPU warp stage. Regression tests cover geometry and pixel permutation
   for every mode and assert the stage is inserted directly before display.
   Root-cause notes:
-  `docs/isp/20261126-fused-rotation-regression-debug.md`.
-  Partial device check after app data clear: new core MD5 `3d8fcb0b…` loaded,
-  `verify` PASS, zero `last 600x2` lines, and full-frame `400x600` stats.
-  Rotate-mode-3 acceptance is still pending because Camera permission was
-  denied after the clear (`sensor_orientation=0, rotate_mode=0`); user must
-  grant Camera permission and relaunch.
+  `docs/isp/20261126-fused-rotation-regression-debug.md`. Camera2
+  `SENSOR_ORIENTATION` now maps directly to clockwise rotate modes, so
+  `90 → 1` instead of the old inverted `90 → 3`. Device check after permission
+  was granted: core MD5 `5d8eea39…` loaded, `verify` PASS (8 libraries), zero
+  `last 600x2` lines, `rotate: mode 1 (800x600 -> 600x800)`, and steady
+  `last 600x800` stats. The shim push/verify loop now stages plain
+  `libc++_shared.so` from Termux and preserves the shim's pre-core MD5 lines;
+  see `docs/isp/20261126-shim-staged-core-shadowing-debug.md`.
 - **Hermetic test warnings cleaned** (2026-11-26): stale `cam-ipa` scaffolding
   and `upload_cache` switch helpers were fixed at the root instead of
   suppressed; `AhwBuffer::new()` now rejects geometry/format mismatches.

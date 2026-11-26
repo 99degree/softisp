@@ -106,3 +106,37 @@ maps the ELF bytes from the supplied FD, so the runtime still comes only from
   from `/sdcard/download` and `verify` reported `PASS (7 libraries)`. This is a
   one-time workaround, not a durable fix: once staged, the old shim again
   shadows future pushes. Reinstalling the rebuilt shim APK is still required.
+
+## Follow-up: `libc++_shared.so` was not owned by the push script
+
+After the memfd shim landed, a fresh `--core-only` rebuild produced
+`libsoftisp.so cc30a34ef848e80aba243932ee6ac416` and `sensor_orientation=90,
+pipeline rotate_mode=1` appeared in the device log, but `./shim-debug.sh verify`
+still reported the old core MD5. Two separate faults were involved.
+
+First, `scripts/build_mnn_libs.sh` only stages a **renamed** Termux libc++ as
+`libsoftisp_cpp_shared.so`, because MNN's `DT_NEEDED` entries are retuned to that
+unique SONAME. It does not promise to create a plain
+`cam-rust/lib/arm64-v8a/libc++_shared.so`. `push-test-libs.sh` happened to copy
+a leftover copy with the `lib*.so` wildcard, but the shim's
+`RUNTIME_DEPENDENCIES` explicitly preloads `libc++_shared.so` before MNN and the
+core. A clean rebuild would therefore leave that dependency stale or absent
+in `/sdcard/download`. The push script now treats plain `libc++_shared.so` as a
+developer-managed Termux library like `libvulkan.so`: verify its SONAME, copy it
+explicitly, and skip the wildcard copy so no stale MNN-dir file can replace it.
+`shim-debug.sh verify` hashes the same Termux source instead of the incidental
+MNN-dir copy.
+
+Second, `anw/src/crashlog.rs::install()` truncated the app log on every core
+start. The shim logs its MD5 lines immediately before `forwarding android_main`,
+so the core erased the only file-based proof of which binaries had just been
+loaded. The fresh launch was visible in logcat with the correct `cc30…` MD5 but
+not in `softisp-app.log`. `install()` now rotates an oversized log instead of
+truncating it; the shim's pre-core lines survive in the rotated generation and
+`verify` can compare the current launch.
+
+Device proof after the fix: `md5 verification: PASS (8 libraries)` with core
+`5d8eea3937eb79d058b119c0f062f205`, `sensor_orientation=90, pipeline
+rotate_mode=1`, `rotate: mode 1 (800x600 -> 600x800)`, steady `last 600x800`
+stats, plain `libc++_shared.so 381f48bf739852249dce82817a269b3d` pushed from
+Termux, and no `FATAL [shim]`.

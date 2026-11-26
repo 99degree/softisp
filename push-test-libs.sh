@@ -13,11 +13,13 @@
 #
 # for a quick core-only update; no APK rebuild or reinstall is needed.
 #
-# Device system libs (libvulkan.so, libc++_shared.so) are NOT bundled in the
-# APK by design. Instead they are pushed from Termux so the developer manages
-# them directly:
+# Device system libs (libvulkan.so and plain libc++_shared.so) are NOT bundled
+# in the APK by design. Instead they are pushed from Termux so the developer
+# manages them directly:
 #   - libvulkan.so: copied from /data/data/com.termux/files/usr/lib/libvulkan.so
 #     (SONAME patched to libvulkan.so so MNN's NEEDED entry resolves)
+#   - libc++_shared.so: copied unchanged from Termux; the shim preloads it
+#     before libsoftisp_cpp_shared.so and the MNN libs
 #   - libsoftisp_cpp_shared.so: built by scripts/build_mnn_libs.sh from Termux
 #     libc++ with a unique SONAME, copied into cam-rust/lib/arm64-v8a/
 #
@@ -29,6 +31,7 @@ CORE="target/aarch64-linux-android/debug/libsoftisp.so"
 MNN_DIR="cam-rust/lib/arm64-v8a"
 DEST="/sdcard/download"
 TERMUX_LIB_DIR="/data/data/com.termux/files/usr/lib"
+TERMUX_LIBCPP="$TERMUX_LIB_DIR/libc++_shared.so"
 
 if [ ! -f "$CORE" ]; then
     echo "ERROR: missing $CORE; run ./build-test-libs.sh first" >&2
@@ -46,6 +49,21 @@ fi
 if ! readelf -d "$MNN_DIR/libMNNConvertDeps.so" | grep -Fq 'Library runpath: [$ORIGIN]'; then
     echo "ERROR: MNN libs have build-host RUNPATHs; nested deps will not resolve" >&2
     echo "       rebuild with: ./build-test-libs.sh" >&2
+    exit 1
+fi
+
+# The shim preloads this SONAME before MNN and the core. MNN's own build only
+# stages the renamed libsoftisp_cpp_shared.so, so fall back to the MNN-dir copy
+# when a Termux libc++ is not installed.
+LIBCPP_SOURCE=""
+for candidate in "$TERMUX_LIBCPP" "$MNN_DIR/libc++_shared.so"; do
+    if [ -f "$candidate" ] && readelf -h "$candidate" >/dev/null 2>&1; then
+        LIBCPP_SOURCE="$candidate"
+        break
+    fi
+done
+if [ -z "$LIBCPP_SOURCE" ]; then
+    echo "ERROR: no libc++_shared.so found at $TERMUX_LIBCPP or $MNN_DIR" >&2
     exit 1
 fi
 
@@ -68,10 +86,30 @@ else
     echo "  pushed libvulkan.so (from Termux, SONAME may be libvulkan.so.1) -> $DEST/libvulkan.so"
 fi
 
+# ── Push plain libc++_shared.so from the selected developer source ──
+if readelf -d "$LIBCPP_SOURCE" | grep -Fq 'Library soname: [libc++_shared.so]'; then
+    cp -f "$LIBCPP_SOURCE" "$DEST/libc++_shared.so"
+else
+    if ! command -v patchelf >/dev/null 2>&1; then
+        echo "ERROR: $LIBCPP_SOURCE has the wrong SONAME and patchelf is unavailable" >&2
+        exit 1
+    fi
+    tmp_libcpp="$(mktemp /data/data/com.termux/files/usr/tmp/libcpp.XXXXXX.so)"
+    cp -f "$LIBCPP_SOURCE" "$tmp_libcpp"
+    patchelf --set-soname libc++_shared.so "$tmp_libcpp"
+    cp -f "$tmp_libcpp" "$DEST/libc++_shared.so"
+    rm -f "$tmp_libcpp"
+    echo "  patchelf: $LIBCPP_SOURCE SONAME -> libc++_shared.so"
+fi
+echo "  pushed libc++_shared.so ($LIBCPP_SOURCE, md5=$(md5sum "$DEST/libc++_shared.so" | cut -d' ' -f1)) -> $DEST/libc++_shared.so"
+
 # ── Push all MNN + renamed libc++ libs from cam-rust/lib/arm64-v8a/ ──
 count=0
 for so in "$MNN_DIR"/lib*.so; do
     [ -f "$so" ] || continue
+    if [ "$(basename "$so")" = "libc++_shared.so" ]; then
+        continue
+    fi
     cp -f "$so" "$DEST/"
     count=$((count + 1))
 done
