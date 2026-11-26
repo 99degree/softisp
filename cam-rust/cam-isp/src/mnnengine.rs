@@ -1310,11 +1310,44 @@ impl MnnEngine {
             }
         }
 
-        // DisplayBlock/gamma — every `isp.display*` shader applies `pow(x,
-        // 1/gamma)` as part of byte packing. Gamma is owned by the tone stage,
-        // so pass 1.0 here to make that encode an identity. Zero would be worse
-        // (`pow(x, 0) == 1`, a white frame), hence the explicit neutral value.
-        write_f32(&mut pending, "DisplayBlock/gamma", 1.0);
+        // Tone inverse gamma exponent `[1]` — canonical + legacy spellings so
+        // whichever block (`ToneBlock` or `GammaBlock`) the profile uses gets
+        // the value. Names the session lacks are silently dropped by the flush.
+        if let Some(isp) = isp_params {
+            let inv_gamma = if isp.tone.gamma > 0.0 {
+                1.0 / isp.tone.gamma
+            } else {
+                1.0
+            };
+            for name in crate::tensor_names::TONE_INV_GAMMA_ALIASES {
+                write_f32(&mut pending, name, inv_gamma);
+            }
+            for name in crate::tensor_names::TONE_CONTRAST_ALIASES {
+                write_f32(&mut pending, name, isp.tone.contrast);
+            }
+            for name in crate::tensor_names::TONE_BRIGHTNESS_ALIASES {
+                write_f32(&mut pending, name, isp.tone.brightness);
+            }
+            for name in crate::tensor_names::TONE_EXPOSURE_ALIASES {
+                write_f32(&mut pending, name, 1.0);
+            }
+            // White level — sensor full-well value for normalization.
+            for name in crate::tensor_names::ISP_WHITE_LEVEL_ALIASES {
+                write_f32(&mut pending, name, white_level.max(1.0));
+            }
+            // Clip bounds — shared across BlcBlock/ToneBlock/AutoContrastBlock/
+            // DisplayBlock.
+            for name in crate::tensor_names::CLIP_ZERO_ALIASES {
+                write_f32(&mut pending, name, 0.0);
+            }
+            for name in crate::tensor_names::CLIP_ONE_ALIASES {
+                write_f32(
+                    &mut pending,
+                    name,
+                    if input_scale != 1.0 { input_scale } else { 1.0 },
+                );
+            }
+        }
         // BAYERWBBLOCK/BAYER_GAINS [1,4,1,1] — white balance per-channel gains.
         // Written under both the canonical and legacy names; the flush below
         // drops names this session does not have. When the block is absent the
@@ -1362,21 +1395,11 @@ impl MnnEngine {
         for name in tensor_names::ccm_matrix_aliases("ccm") {
             write_f32_array(&mut pending, cache, &name, &ccm_mat);
         }
-        // ToneBlock/contrast [1]
-        write_f32(&mut pending, "ToneBlock/contrast", tone.contrast);
-        // ToneBlock/brightness [1]
-        write_f32(&mut pending, "ToneBlock/brightness", tone.brightness);
-        // ToneBlock/inv_gamma [1] — display gamma exponent (1/γ), derived here
-        // so neither the graph nor the Vulkan shader needs a scalar divide.
-        write_f32(
-            &mut pending,
-            "ToneBlock/inv_gamma",
-            if tone.gamma > 0.0 {
-                1.0 / tone.gamma
-            } else {
-                1.0
-            },
-        );
+        // ToneBlock/contrast, ToneBlock/brightness, ToneBlock/inv_gamma and
+        // white level / clip bounds are now written via canonical-first aliases
+        // in the `if let Some(isp) = isp_params` block above — they cover both
+        // the fused and primitive profiles and overwrite any session tensor the
+        // profile actually declares.
         // ToneLutBlock runs after ToneBlock with identity parametric defaults;
         // only the neural 7-point curve needs a per-frame override. Slopes are
         // scalar derivations, so compute them here on the CPU before inference
@@ -1505,45 +1528,56 @@ impl MnnEngine {
             );
         }
 
-        // Every `Clip(x, <ns>/zero, <ns>/one)` in the chain assumes a [0,1]
-        // frame. With the divide deferred it must allow the full white level,
-        // or highlights saturate at a single count.
+        // Clip bounds shared across BlcBlock/ToneBlock/AutoContrastBlock/
+        // DisplayBlock (and BayerWbBlock/CcmBlock_ccm/SaturationBlock/BlcBlock_dpc
+        // in non-fused profiles). Canonical-first aliases cover the registered
+        // namespaces; the loop below adds the namespaces the aliases don't.
         if input_scale != 1.0 {
-            for ns in [
-                "BlcBlock_dpc",
-                "BlcBlock",
-                "BayerWbBlock",
-                "CcmBlock_ccm",
-                "ToneBlock",
-                "SaturationBlock",
-            ] {
-                write_f32(&mut pending, &format!("{ns}/one"), input_scale);
-                write_f32(&mut pending, &format!("{ns}/zero"), 0.0);
+            let one = input_scale;
+            for name in crate::tensor_names::CLIP_ONE_ALIASES {
+                write_f32(&mut pending, name, one);
+            }
+            for ns in ["BayerWbBlock", "CcmBlock_ccm", "SaturationBlock", "BlcBlock_dpc"] {
+                write_f32(&mut pending, &format!("{ns}/one"), one);
+            }
+        } else {
+            for name in crate::tensor_names::CLIP_ONE_ALIASES {
+                write_f32(&mut pending, name, 1.0);
+            }
+            for ns in ["BayerWbBlock", "CcmBlock_ccm", "SaturationBlock", "BlcBlock_dpc"] {
+                write_f32(&mut pending, &format!("{ns}/one"), 1.0);
             }
         }
-        // GammaBlock — inv_gamma, min, max, lift, norm
+        for name in crate::tensor_names::CLIP_ZERO_ALIASES {
+            write_f32(&mut pending, name, 0.0);
+        }
+        for ns in ["BayerWbBlock", "CcmBlock_ccm", "SaturationBlock", "BlcBlock_dpc"] {
+            write_f32(&mut pending, &format!("{ns}/zero"), 0.0);
+        }
+        // GammaBlock — inv_gamma, min, max, lift, norm; AutoContrastBlock;
+        // DisplayBlock — clip bounds and white level. These all overlap the
+        // canonical-first aliases written above for `isp_params`; writing them
+        // here too keeps primitive-only profiles (which may skip ToneBlock)
+        // covered for whichever block they actually declare.
         if let Some(isp) = isp_params {
             let inv_gamma = if isp.tone.gamma > 0.0 {
                 1.0 / isp.tone.gamma
             } else {
                 1.0
             };
-            write_f32(&mut pending, "Gamma/inv_gamma", inv_gamma);
+            for name in crate::tensor_names::TONE_INV_GAMMA_ALIASES {
+                write_f32(&mut pending, name, inv_gamma);
+            }
             write_f32(&mut pending, "Gamma/min", isp.tone.black_crush);
             write_f32(&mut pending, "Gamma/max", isp.tone.white_clip);
             write_f32(&mut pending, "Gamma/lift", isp.tone.black_crush);
             write_f32(&mut pending, "Gamma/norm", 1.0);
-            // AutoContrastBlock — lift, half, contrast_w, zero, one
+            // AutoContrastBlock — lift, half, contrast_w
             write_f32(&mut pending, "AutoContrast/lift", isp.tone.black_crush);
             write_f32(&mut pending, "AutoContrast/half", 0.5);
-            write_f32(&mut pending, "AutoContrast/contrast_w", isp.tone.contrast);
-            write_f32(&mut pending, "AutoContrast/zero", 0.0);
-            write_f32(&mut pending, "AutoContrast/one", 1.0);
-            // DisplayBlock — scale, gamma_exp, zero, one (FloatRgb path)
-            write_f32(&mut pending, "DisplayBlock/scale", 1.0);
-            write_f32(&mut pending, "DisplayBlock/gamma_exp", 1.0);
-            write_f32(&mut pending, "DisplayBlock/zero", 0.0);
-            write_f32(&mut pending, "DisplayBlock/one", input_scale);
+            for name in crate::tensor_names::TONE_CONTRAST_ALIASES {
+                write_f32(&mut pending, name, isp.tone.contrast);
+            }
             // SaturationBlock/scale [3] — from saturation.factor
             write_f32_array(
                 &mut pending,
@@ -1553,7 +1587,7 @@ impl MnnEngine {
             );
             // Sharpen/strength [1] — from sharpen.amount
             write_f32(&mut pending, "Sharpen/strength", isp.sharpen.amount);
-            // LdciBlock/strength [1] — from denoise params (use sharpen radius as proxy)
+            // LdciBlock/strength [1] — local contrast strength
             write_f32(
                 &mut pending,
                 "LdciBlock/strength",
@@ -1581,7 +1615,9 @@ impl MnnEngine {
             } else {
                 white_level
             };
-            write_f32(&mut pending, "NormalizeBlock/max_val", divisor.max(1.0));
+            for name in crate::tensor_names::ISP_WHITE_LEVEL_ALIASES {
+                write_f32(&mut pending, name, divisor.max(1.0));
+            }
         }
 
         // ── Warp grid + shading LUT (runtime extra_inputs) ────────
