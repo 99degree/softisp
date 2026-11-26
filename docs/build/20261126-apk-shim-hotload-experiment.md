@@ -48,11 +48,28 @@ files before `dlopen`; loading directly from Download would fail.
   `target/debug/apk/softisp-camera.apk`. No behaviour change.
 - `./build-test-apk.sh` builds the launcher-only APK:
   1. builds MNN libs with `scripts/build_mnn_libs.sh arm64-v8a` and strips them;
-  2. builds the core with `cargo apk2 -- build -p softisp-anw`;
+  2. builds the core with `cargo apk2 -- build -p softisp-anw` into
+     `target/aarch64-linux-android/debug/libsoftisp.so`;
   3. builds the test APK with `cargo apk2 build -p softisp-shim`;
   4. verifies the APK contains exactly `lib/arm64-v8a/libsoftisp_shim.so`, no
      MNN/core libs, and that its hash matches
      `target/aarch64-linux-android/debug/libsoftisp_shim.so`.
+- `./push-test-libs.sh` copies that freshly built core plus the MNN libs from
+  `cam-rust/lib/arm64-v8a/` into `/sdcard/download/`. The app cannot read
+  Termux's private `/data/data/com.termux` tree, so this copy step is mandatory.
+  The FUSE mount rewrites copied files to `u0_a170:media_rw 0660`, so the app can
+  read them. The script rejects a core that still links `libc++_shared.so`.
+- A plain `cargo build` is **not** a substitute. The host triple is
+  `aarch64-linux-android`, so it writes `target/debug/libsoftisp.so` (which still
+  links `libc++_shared.so`), not the APK-target core under
+  `target/aarch64-linux-android/debug/` (which links the renamed
+  `libsoftisp_cpp_shared.so`). Quick core-only iteration is:
+
+  ```
+  cargo apk2 -- build -p softisp-anw && ./push-test-libs.sh
+  ```
+
+  No APK rebuild or reinstall is needed.
 
 Outputs:
 
@@ -75,10 +92,9 @@ Outputs:
    - `INFO [shim] staged core ...`
    - `INFO [shim] forwarding android_main to ...`
    - followed by the normal `anw` startup lines.
-5. For later ISP/MNN changes, rebuild with `./build-test-apk.sh` (or just
-   `cargo apk2 -- build -p softisp-anw` for ISP-only changes), copy the new
-   `libsoftisp.so` and any changed MNN libs to Download, and relaunch. The test
-   APK is unchanged.
+5. For later ISP/MNN changes, run
+   `cargo apk2 -- build -p softisp-anw && ./push-test-libs.sh`, then relaunch.
+   The test APK is unchanged; only the pushed core needs refreshing.
 
 ## Constraints and risks
 

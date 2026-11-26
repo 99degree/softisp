@@ -100,6 +100,6 @@ if command -v unzip >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; the
 fi
 
 echo "  test APK: $APK"
-echo "  push to device:"
+echo "  refresh device libs with: ./push-test-libs.sh"
 echo "    $CORE_LIB -> /sdcard/download/libsoftisp.so"
 echo "    $MNN_DIR/lib*.so -> /sdcard/download/"
