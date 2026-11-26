@@ -288,17 +288,28 @@ MNN engine loaded (22768 bytes, backend=Vulkan, 4 sessions, 36 extra inputs)
 ```
 
 If `libs visible in $ORIGIN` does **not** list `libvulkan.so`, the Vulkan ICD
-loader is missing from `/sdcard/download/`. Copy it there:
+loader is missing from `/sdcard/download/`. Copy it from Termux
+(developer-managed, not system-provided):
 
 ```bash
-# From the device system Vulkan loader
-cp /system/lib64/libvulkan.so /sdcard/download/libvulkan.so
-
-# Or from Termux (if it has a compatible build)
-cp /data/data/com.termux/files/usr/lib/libvulkan.so.1.4.368 /sdcard/download/libvulkan.so
+# From Termux — patchelf SONAME to libvulkan.so so MNN's NEEDED entry resolves.
+# Termux ships libvulkan.so with SONAME libvulkan.so.1 which does not match.
+push-test-libs.sh   # copies + patchelf's SONAME to libvulkan.so
 ```
 
-Then relaunch via `./shim-debug.sh launch` — no APK reinstall needed.
+or manually:
+
+```bash
+tmp="$(mktemp /data/data/com.termux/files/usr/tmp/libvulkan.XXXXXX.so)"
+cp -f /data/data/com.termux/files/usr/lib/libvulkan.so "$tmp"
+patchelf --set-soname libvulkan.so "$tmp"
+cp -f "$tmp" /sdcard/download/libvulkan.so
+rm -f "$tmp"
+```
+
+Do **not** use `/system/lib64/libvulkan.so` directly: its SONAME is `libvulkan.so`
+and it works, but it is system-provided and not under developer control.
+Termux's copy lets you rebuild the loader independently.
 
 If `MNN engine loaded` never appears but `MNN build backend=mnn_vulkan` does,
 the probe session creation failed. Check logcat for `softisp-shim` or
@@ -343,10 +354,9 @@ Fix by rebuilding: `./build-test-apk.sh` (which runs the `patchelf` step), then
 If all libraries load but `probe session create fail` persists, the device's
 Vulkan driver may not support the features MNN needs. Try:
 
-1. Confirm `libvulkan.so` in `/sdcard/download/` is the device system copy
-   (`/system/lib64/libvulkan.so`, SONAME `libvulkan.so`), not a Termux build
-   (Termux's `libvulkan.so.1` has SONAME `libvulkan.so.1` and will not match
-   `libvulkan.so` NEEDED entries).
+1. Confirm `libvulkan.so` in `/sdcard/download/` has SONAME `libvulkan.so`
+   (not `libvulkan.so.1`). Use Termux's copy patched by `push-test-libs.sh`,
+   not a raw Termux or system copy.
 2. Check `logcat -d` for Vulkan driver errors (may require `READ_LOGS` grant).
 3. Test with a minimal MNN Vulkan model via the `test_warp_vulkan` example
    on host to isolate driver vs. graph issues.
