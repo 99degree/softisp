@@ -60,7 +60,7 @@ wait_stopped() {
 }
 
 verify() {
-    expected_sums > "$OUT/expected.txt"
+    expected_sums | sort > "$OUT/expected.txt"
     awk '$3 == "md5" { print $4, $5 }' "$OUT/app.log" | sort > "$OUT/actual.txt"
     if diff -u "$OUT/expected.txt" "$OUT/actual.txt" > "$OUT/diff.txt"; then
         echo "  md5 verification: PASS ($(wc -l < "$OUT/actual.txt") libraries)"

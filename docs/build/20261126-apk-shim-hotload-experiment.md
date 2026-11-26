@@ -6,6 +6,9 @@ Allow ISP/MNN edits to be tested without repacking the APK. Android starts a
 tiny launcher cdylib; the real application cdylib built by `anw/` is loaded from
 device-writable storage at runtime. The production APK is untouched.
 
+For the day-to-day commands, MD5 verification, and troubleshooting, use
+[`SHIM_DEBUG_WORKFLOW.md`](SHIM_DEBUG_WORKFLOW.md).
+
 ## Architecture
 
 - `android-shim-app/` is a new crate: `softisp-shim`, cdylib
