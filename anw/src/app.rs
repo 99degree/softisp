@@ -772,6 +772,46 @@ const ENGINE_NAME: &str = "mnn_vulkan";
 #[cfg(not(feature = "mnn"))]
 const ENGINE_NAME: &str = "cpu";
 
+/// Log where the loader's `$ORIGIN` actually resolves at runtime.
+///
+/// `cargo-apk2` bundles libs under `lib/arm64-v8a`, but Android flattens them
+/// into a single private `nativeLibraryDir` (typically `lib/arm64`). Reading
+/// the mapped path of this cdylib is the only reliable way to tell whether a
+/// relative rpath such as `$ORIGIN/lib/arm64-v8a` points somewhere real.
+fn log_origin() {
+    let mapped = std::fs::read_to_string("/proc/self/maps").unwrap_or_default();
+    let origin = mapped
+        .lines()
+        .filter_map(|line| line.rsplit_once(' ').map(|(_, path)| path))
+        .find(|path| path.ends_with("/libsoftisp.so"))
+        .and_then(|path| Path::new(path).parent());
+
+    match origin {
+        Some(dir) => {
+            log::info!("loader $ORIGIN: {}", dir.display());
+            let mut libs: Vec<String> = std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    name.ends_with(".so").then_some(name)
+                })
+                .collect();
+            libs.sort();
+            log::info!(
+                "libs visible in $ORIGIN: {}",
+                if libs.is_empty() {
+                    "NONE".to_owned()
+                } else {
+                    libs.join(", ")
+                }
+            );
+        }
+        None => log::warn!("could not resolve loader $ORIGIN from /proc/self/maps"),
+    }
+}
+
 /// Entry point the `NativeActivity` glue spawns on its own thread.
 ///
 /// This symbol has the Rust ABI, not the C one, and may be called again if the
@@ -797,6 +837,7 @@ fn android_main(app: AndroidApp) {
     if let Some(p) = crashlog::active_path() {
         log::info!("log file: {}", p.display());
     }
+    log_origin();
     // Recording why the spec path was skipped turns a silent log-location
     // change into something the user can act on.
     if crashlog::active_path() != Some(Path::new(crashlog::LOG_PATH)) {
