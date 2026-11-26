@@ -191,11 +191,13 @@ at 4K:
 | 4 | Cache `get_output()` shape/type/channel derivation and `CString` names in `PreparedMeta` | per-frame metadata reconstruction | DONE — `docs/isp/20261126-output-meta-cache.md` |
 | 5 | Release the buffer-pool guard before `runSession`; reacquire only for the output copy | lock contention between workers | TODO — helps concurrency, not single-frame latency |
 | 6 | Resize/warm every session slot once at startup | first-frame stalls after a geometry change | TODO |
-| 7 | Bind the camera buffer directly instead of `FrameStager`'s CPU copy | input staging | TODO — P2b; the `RawInt` path is already zero-copy from `p.input_buffer` |
+| 7 | Bind the camera buffer directly instead of `FrameStager`'s CPU copy | input staging | PARTIAL — input AHB now bound before `resize()` in `mnnengine.rs::prepare()` and `copyFromHostTensor` is skipped when the input tensor carries `MNN_MEMORY_AHARDWAREBUFFER`; remaining work is the media-NDK side: `AImage_getHardwareBuffer` → `input_ahb`, skip `copy_pixels()` de-stride (`anw/src/camera.rs`, `anw/src/pipeline_runner.rs`). See `docs/guides/NDK_CAMERA_CAPTURE_STUDY.md` and `docs/isp/ZERO_COPY_NCNN_COMPARISON.md`. |
 | 8 | Lower preview resolution, fp16 storage, or a lighter profile (`MED`/`LITE`) | `runSession` itself | TODO — algorithmic, not plumbing |
 | 9 | Raise the session pool above two slots | `acquire()` blocking when more than two frames are in flight | Deferred — one-frame-ahead prep is already covered; extra slots cost Vulkan memory and a first-frame resize (four slots at 5 Mpx previously got the process killed) |
 | 10 | Copy the stats output into the next metadata input device-to-device | host round-trip | Rejected as stated — MNN tensor roles are fixed by the graph; output→host→input costs two copies plus a sync, and Vulkan `onCopyBuffer` still calls `_finish()` |
 | 11 | Ping-pong the output AHB of frame N into the input of frame N+2 behind fences | both copies on GPU | Blocked — needs the P2b/P2h fence lifecycle; the acquire fd is not yet waited by the Vulkan path |
+| 12 | Remove per-pixel CPU BGRA→RGBA presentation blit; present from `AhbView` mapping directly | present blit on visible path | TODO — `anw/src/presentation.rs:present()` still does a CPU scale/BGRA→RGBA copy |
+| 13 | Replace CPU `AtomicBool` busy flag with real sync fd ordering (camera acquire → Vulkan wait; GPU completion → display release) | both copies on GPU | Blocked — needs P2b/P2h fence lifecycle; `cam-ipa::fence.rs` has `SyncFence`/`AhbFenceState` but the app slot uses CPU handoff only |
 
 Landed in this window:
 
