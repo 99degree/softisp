@@ -28,6 +28,7 @@ Pipeline stages are `IspBlock`s composable into ONNX, fused into GPU `isp.*` ops
 | NDK camera capture | `docs/guides/NDK_CAMERA_CAPTURE_STUDY.md` | Android Camera2 HAL3 capture study |
 | **Build the APK** | `docs/build/README_BUILD_APK.md` | toolchain, MNN subproject build first, env vars, cargo-apk2, CI gate, troubleshooting |
 | **Debug APK crash/fail** | `docs/build/DEBUG_APK.md` | user installs `target/debug/apk/softisp-camera.apk` directly (no `install-apk.sh`/`pm` in Termux), launch via launcher/am start, read crash log (`/sdcard/download/softisp-app.log` or fallback), run `logcat` directly on device — no `adb` |
+| **Shim fast-debug (no reinstall)** | `docs/build/SHIM_DEBUG_WORKFLOW.md` | build `softisp-test.apk` once (shim-only launcher, no MNN/core bundled), push core+MNN libs to `/sdcard/download/`, relaunch to iterate. `./shim-debug.sh core` → `stop` → `launch` → `logs` → `verify`. MD5 fingerprints prove device runs exact local binaries. §9 covers Vulkan "probe session create fail" debugging. |
 | CI gate / lint / test | `cam-rust/README.md` | build/test/lint commands (same as below) |
 | Test plan / results | `docs/testing/` — TESTING.md, TEST_PLAN_MNN_VULKAN.md, TEST_RESULTS.md | how tests are organized and results |
 | Other guides | `docs/guides/` — MNN_SOLUTION_SUMMARY.md, profiles-technical.md, mnn-inference-guide.md | MNN solution summary, profile tech, inference guide |

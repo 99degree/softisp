@@ -260,3 +260,95 @@ lines may no longer be present. Relaunch to regenerate them before verifying.
 
 Locked-screen wake flags are compiled into `ShimActivity`, but their reliability
 for unattended runs is still under study; do not depend on it yet.
+
+---
+
+## 9. Debugging the Vulkan backend ("probe session create fail")
+
+The MNN engine's `build()` creates a probe Vulkan session. If it returns `null`,
+the engine fails with:
+
+```
+FATAL [engine] engine.build failed: MNN error: probe session create fail (Vulkan backend unavailable)
+```
+
+This can be caused by any of: `libMNN_Vulkan.so` not being found, `libvulkan.so`
+not resolving, or the Vulkan driver failing to initialize. The shim workflow
+makes this easy to iterate on because you can swap the Vulkan `.so` files
+without repacking the APK.
+
+### 9.1 What to check in the log
+
+Look for these `INFO`/`WARN` lines from `cam_isp::mnnengine`:
+
+```
+libs visible in $ORIGIN: libMNN.so, libMNNConvertDeps.so, libMNN_Express.so, libMNN_Vulkan.so, libsoftisp.so, libsoftisp_cpp_shared.so, libvulkan.so
+MNN build backend=mnn_vulkan
+MNN engine loaded (22768 bytes, backend=Vulkan, 4 sessions, 36 extra inputs)
+```
+
+If `libs visible in $ORIGIN` does **not** list `libvulkan.so`, the Vulkan ICD
+loader is missing from `/sdcard/download/`. Copy it there:
+
+```bash
+# From the device system Vulkan loader
+cp /system/lib64/libvulkan.so /sdcard/download/libvulkan.so
+
+# Or from Termux (if it has a compatible build)
+cp /data/data/com.termux/files/usr/lib/libvulkan.so.1.4.368 /sdcard/download/libvulkan.so
+```
+
+Then relaunch via `./shim-debug.sh launch` — no APK reinstall needed.
+
+If `MNN engine loaded` never appears but `MNN build backend=mnn_vulkan` does,
+the probe session creation failed. Check logcat for `softisp-shim` or
+`cam_isp::mnnengine` lines showing `dlopen` results.
+
+### 9.2 Pushing a fresh core + libs after a Vulkan fix
+
+```bash
+# 1. Rebuild only the app core (no APK repack)
+./shim-debug.sh core
+
+# 2. Stop the running app via its own control intent
+./shim-debug.sh stop
+
+# 3. Launch again (shim reloads the new core + libs)
+./shim-debug.sh launch
+
+# 4. Wait, dump logs, verify MD5 fingerprints
+WAIT_SECS=12 ./shim-debug.sh logs
+./shim-debug.sh verify
+```
+
+Or one command: `WAIT_SECS=12 ./shim-debug.sh cycle`.
+
+### 9.3 If `libMNN_Vulkan.so` cannot be dlopen'ed
+
+The shim's `$ORIGIN`-based RUNPATH means all MNN libs must live in the same
+directory as `libsoftisp.so` on the device. `push-test-libs.sh` verifies
+`libMNN_Vulkan.so` has `$ORIGIN` RUNPATH (retuned by `build-test-apk.sh` via
+`patchelf --set-rpath '$ORIGIN'`). If a manually copied lib lacks this, nested
+dependencies like `libMNN_Express.so` will fail with:
+
+```
+dlopen failed: library "libMNN_Express.so" not found ... in namespace clns-7
+```
+
+Fix by rebuilding: `./build-test-apk.sh` (which runs the `patchelf` step), then
+`./shim-debug.sh push`.
+
+### 9.4 If the Vulkan driver itself fails
+
+If all libraries load but `probe session create fail` persists, the device's
+Vulkan driver may not support the features MNN needs. Try:
+
+1. Confirm `libvulkan.so` in `/sdcard/download/` is the device system copy
+   (`/system/lib64/libvulkan.so`, SONAME `libvulkan.so`), not a Termux build
+   (Termux's `libvulkan.so.1` has SONAME `libvulkan.so.1` and will not match
+   `libvulkan.so` NEEDED entries).
+2. Check `logcat -d` for Vulkan driver errors (may require `READ_LOGS` grant).
+3. Test with a minimal MNN Vulkan model via the `test_warp_vulkan` example
+   on host to isolate driver vs. graph issues.
+
+---
