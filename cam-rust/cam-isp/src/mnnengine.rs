@@ -1265,7 +1265,20 @@ impl MnnEngine {
         // fused its head to one of the other two kept the block default of
         // 65535, so a 10-bit sensor's 1023-count frame came out at 0.016 — a
         // nearly black picture at the end of an otherwise correct chain.
-        for ns in ["isp_unpack_blc", "isp_unpack16_blc", "isp_unpack32_blc"] {
+        //
+        // When the head is NOT fused (primitive/non-fused profile), a standalone
+        // `BlcBlock` (or `BlcBlock_dpc` for bad-pixel) owns the `blc_vals`
+        // tensor instead. Those namespaces are included here too so black level
+        // reaches whichever head the profile actually uses. Names the session
+        // lacks are silently dropped by the flush below.
+        let blc_namespaces = [
+            "isp_unpack_blc",
+            "isp_unpack16_blc",
+            "isp_unpack32_blc",
+            "BlcBlock",
+            "BlcBlock_dpc",
+        ];
+        for ns in blc_namespaces {
             // `int bayer_pattern[]` in every one of these shaders — four bytes of
             // int, not four bytes of float bits. Uploading `2.0f` put 0x40000000
             // in the buffer, which matches none of the four phases and fell
@@ -1286,18 +1299,14 @@ impl MnnEngine {
                 }
                 .max(1.0),
             );
-            // Black level per Bayer channel `[R, Gr, Gb, B]` — subtracted by the
-            // fused RAW head / BlcBlock before any downstream stage sees the frame.
-            // `p.blc_values` (from sensor `ACAMERA_SENSOR_BLACK_LEVEL_PATTERN`)
-            // takes precedence; falls back to the block constructor default (zeros)
-            // when the sensor does not report one.
-            if let Some(blc) = blc_values {
-                write_f32_array(
-                    &mut pending,
-                    cache,
-                    &format!("{ns}/blc_vals"),
-                    blc,
-                );
+        }
+
+        // Black level per Bayer channel `[R, Gr, Gb, B]` — canonical-first
+        // aliases mirror `BAYER_WB_GAINS_ALIASES` / `DEMOSAIC_CCM_W_ALIASES`
+        // so the value reaches whatever namespace the profile's head declares.
+        if let Some(blc) = blc_values {
+            for name in crate::tensor_names::BLC_VALS_ALIASES {
+                write_f32_array(&mut pending, cache, name, blc);
             }
         }
 

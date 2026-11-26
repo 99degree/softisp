@@ -363,7 +363,16 @@ impl Preview {
             }
             Err(e) => {
                 log::warn!("Could not open camera for capability check: {e}");
-                (None, false, 1023.0, [0.0; 4], crate::camera::BGGR, 1600, 1200, 0)
+                (
+                    None,
+                    false,
+                    1023.0,
+                    [0.0; 4],
+                    crate::camera::BGGR,
+                    1600,
+                    1200,
+                    0,
+                )
             }
         };
 

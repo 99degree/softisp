@@ -38,6 +38,33 @@ pub const CCM_BIAS_LEGACY: &str = "CcmBlock_ccm/bias";
 /// Generic-instance spelling of [`CCM_BIAS`] in older graphs.
 pub const CCM_BIAS_LEGACY_DEFAULT: &str = "CcmBlock/bias";
 
+/// Black level per Bayer channel `[R, Gr, Gb, B]` — canonical name.
+///
+/// Emitted by the fused RAW heads (`isp_unpack_blc`, `isp_unpack16_blc`,
+/// `isp_unpack32_blc`) and by standalone `BlcBlock` / `BlcBlock_dpc` when the
+/// head is not fused. The engine writes `ACAMERA_SENSOR_BLACK_LEVEL_PATTERN`
+/// here so black level reaches whichever head the profile actually uses.
+pub const BLC_VALS: &str = "ISPBLKBLOCK/BLC_VALS";
+/// Legacy spelling of [`BLC_VALS`] for the default `BlcBlock` namespace.
+pub const BLC_VALS_LEGACY_DEFAULT: &str = "BlcBlock/blc_vals";
+/// Legacy spelling for the bad-pixel `BlcBlock_dpc` namespace.
+pub const BLC_VALS_LEGACY_DPC: &str = "BlcBlock_dpc/blc_vals";
+/// Legacy spelling for the fused packed-INT32 head namespace.
+pub const BLC_VALS_LEGACY_PACKED: &str = "isp_unpack_blc/blc_vals";
+/// Legacy spelling for the fused INT16 head namespace.
+pub const BLC_VALS_LEGACY_INT16: &str = "isp_unpack16_blc/blc_vals";
+/// Legacy spelling for the fused INT32 head namespace.
+pub const BLC_VALS_LEGACY_INT32: &str = "isp_unpack32_blc/blc_vals";
+/// Canonical-first aliases the engine writes for black level.
+pub const BLC_VALS_ALIASES: [&str; 6] = [
+    BLC_VALS,
+    BLC_VALS_LEGACY_DEFAULT,
+    BLC_VALS_LEGACY_DPC,
+    BLC_VALS_LEGACY_PACKED,
+    BLC_VALS_LEGACY_INT16,
+    BLC_VALS_LEGACY_INT32,
+];
+
 /// The tensor name emitted by `CcmBlock` for the given instance.
 ///
 /// The registry has one CCM namespace, so the production `ccm` instance and
