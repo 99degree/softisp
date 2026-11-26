@@ -127,7 +127,46 @@ RAW/Bayer input path expects. Combined with `cam-binder/src/hal_bridge.rs`
 (`HardwareBufferBridge::lock_for_inference` for zero-copy AHardwareBuffer), we
 have two frame-ingest paths:
 - **CPU path:** `AImage_getPlaneData` → `Vec<u8>` → `cam-isp` (hermetic, testable)
-- **Zero-copy path:** `AHardwareBuffer` lock → host ptr → MNN `set_tensor_host`
+- **Zero-copy path:** `AImage_getHardwareBuffer` → `AHardwareBuffer*` →
+  `ProcessParams::input_ahb` → MNN `setDevicePtr(..., MNN_MEMORY_AHARDWAREBUFFER)`
+  → Vulkan `onAcquire()` imports as `VkDeviceMemory` via
+  `VkImportAndroidHardwareBufferInfoANDROID` (no host→device copy)
+
+### Zero-copy pixel access via `AImage_getHardwareBuffer`
+
+`ndk-sys` 0.6 exposes `sys::AImage_getHardwareBuffer(image, &buffer)` which
+returns the producer-owned `AHardwareBuffer*` backing the `AImage`. This is the
+media-NDK equivalent of ncnn's `VkImageMat::from_android_hardware_buffer` — the
+AHB is imported directly into Vulkan as device memory, avoiding the
+host→device copy that `Mat::from_pixels` / `copyFromHostTensor` would incur.
+
+Requirements (per the ncnn wiki, which softisp mirrors):
+- Android API 26+
+- `VK_ANDROID_external_memory_android_hardware_buffer` device extension
+- The `AImageReader` must be created with
+  `AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE` in its usage mask —
+  `AImageReader_new` does **not** set it; use
+  `AImageReader_newWithUsage` with
+  `AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE`.
+- Verify the AHB descriptor carries the flag via `AHardwareBuffer_describe`
+  (`desc.usage & 0x100`).
+
+The caller must keep the `AImage` (and thus its AHB) alive for the duration of
+inference. If the binding must outlive the `AImage`, call
+`AHardwareBuffer_acquire(ahb)` before `AImage_delete(image)` and
+`AHardwareBuffer_release(ahb)` when the binding is evicted (ncnn-style
+ref-counting). `anw/src/ahb_output.rs` already owns one `AHardwareBuffer` per
+worker for the output side; the input side should follow the same pattern.
+
+**Example (C-like pseudocode):**
+```cpp
+AImage* img = nullptr;
+AImageReader_acquireLatestImage(reader, &img);
+AHardwareBuffer* ahb = nullptr;
+AImage_getHardwareBuffer(img, &ahb);   // producer-owned, valid while img alive
+// pass ahb ptr as ProcessParams::input_ahb, bound before resizeSession
+AImage_delete(img);                    // releases frame back to queue
+```
 
 ---
 
