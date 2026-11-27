@@ -144,8 +144,10 @@ impl DisplayBlock {
     /// case when the weights arrive as a graph input — the creator zero-fills
     /// the kernel instead of sampling the input tensor:
     ///
-    ///     VulkanConvolution.cpp:  if (nullptr != weightData) {...}
-    ///                             else { memset(weight, 0, ...); }
+    /// ```text
+    /// VulkanConvolution.cpp:  if (nullptr != weightData) {...}
+    ///                         else { memset(weight, 0, ...); }
+    /// ```
     ///
     /// Bias is not affected, so the symptom is a frame whose alpha plane is 255
     /// and whose RGB planes are all zero. `DisplayBlock::conv_weights` therefore

@@ -36,7 +36,7 @@
 use crate::engine::OutputFormat;
 use crate::pipeline::GraphComposer;
 use crate::pipeline::{BlockOpsetMode, IspBlock};
-use crate::profile::{DemosaicQuality, PipelineLevel, PipelineProfile};
+use crate::profile::{DemosaicQuality, FuseStages, PipelineLevel, PipelineProfile};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -165,6 +165,7 @@ impl From<CustomProfile> for PipelineProfile {
         Self {
             label: c.label,
             level: c.level,
+            input_type: "raw",
             use_unpack: c.use_unpack,
             force_input16: c.force_input16,
             use_fcs: c.use_fcs,
@@ -175,6 +176,7 @@ impl From<CustomProfile> for PipelineProfile {
             use_local_contrast: c.use_local_contrast,
             use_unsharp: c.use_unsharp,
             use_lsc: c.use_lsc,
+            lsc_strength: 0.5,
             use_warp: c.use_warp,
             use_hdr: c.use_hdr,
             rotate_mode: c.rotate_mode,
@@ -184,6 +186,7 @@ impl From<CustomProfile> for PipelineProfile {
             use_histogram: c.use_histogram,
             stats_downscale_max: c.stats_downscale_max,
             pipeline_downscale_target: c.pipeline_downscale_target,
+            post_ccm_downscale: (0, 0),
             eis_margin: c.eis_margin,
             use_bilateral: c.use_bilateral,
             use_saturation: c.use_saturation,
@@ -194,11 +197,14 @@ impl From<CustomProfile> for PipelineProfile {
             use_wavelet_denoise: c.use_wavelet_denoise,
             use_auto_contrast: c.use_auto_contrast,
             use_normalize: c.use_normalize,
+            normalize_at_display: false,
             use_tiled_rendering: c.use_tiled_rendering,
             tile_count_x: c.tile_count_x,
             tile_count_y: c.tile_count_y,
             tile_overlap: c.tile_overlap,
             output_format: c.output_format,
+            opset_mode: 0,
+            fuse_stages: FuseStages::NONE,
         }
     }
 }

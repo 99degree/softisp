@@ -34,7 +34,10 @@ impl OnnxSession {
     pub fn from_bytes(model_data: &[u8], name: &str) -> Result<Self, String> {
         #[cfg(feature = "ort")]
         {
-            let session = ort::session::Session::builder()
+            let environment = ort::init()
+                .build()
+                .map_err(|e| format!("ORT environment init failed: {}", e))?;
+            let session = ort::session::Session::builder(&environment)
                 .map_err(|e| format!("ORT session builder failed: {}", e))?
                 .commit_from_memory(model_data)
                 .map_err(|e| format!("ORT model load failed: {}", e))?;

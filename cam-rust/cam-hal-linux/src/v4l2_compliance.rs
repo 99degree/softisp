@@ -39,7 +39,7 @@ impl ComplianceResult {
     }
 }
 
-#[cfg(feature = "v4l2")]
+#[cfg(all(feature = "v4l2", target_os = "linux"))]
 mod v4l2_impl {
     use super::*;
     use std::path::Path;
@@ -100,7 +100,7 @@ mod v4l2_impl {
     }
 }
 
-#[cfg(not(feature = "v4l2"))]
+#[cfg(not(all(feature = "v4l2", target_os = "linux")))]
 mod v4l2_impl {
     use super::*;
     pub fn test_query_caps(_p: &str) -> ComplianceResult {

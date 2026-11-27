@@ -128,11 +128,15 @@ impl IspEngine for OnnxEngine {
 
         #[cfg(feature = "ort")]
         {
-            // Initialize ORT environment (auto-created if not already done)
-            // ort::init() already called by cam_isp::init()
+            let environment = ::ort::init().build().map_err(|e| {
+                crate::error::IspError::Onnx(format!(
+                    "OnnxEngine({}) failed to init ORT environment: {}",
+                    self.backend.id(),
+                    e
+                ))
+            })?;
 
-            // Build session from model
-            let session = ::ort::session::Session::builder()
+            let session = ::ort::session::Session::builder(&environment)
                 .and_then(|mut b| b.commit_from_memory(&model))
                 .map_err(|e| {
                     crate::error::IspError::Onnx(format!(

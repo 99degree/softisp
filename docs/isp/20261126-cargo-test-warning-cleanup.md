@@ -60,6 +60,52 @@ Logs from the failing runs: `.tmp/final-anw-tests.log`, `.tmp/final-tests.log`.
   `cargo clippy -p softisp-anw --all-features --no-deps -- -D warnings`,
   857 `cam-isp --features rectifier` tests, 895 `rectifier mnn` tests and
   51 `softisp-anw` tests. No `warning:` lines remain in the hermetic test logs.
-- `cargo test --workspace --doc --all-features --no-fail-fast` still exits 101
-  on the pre-existing `rscam (v4l2) is for linux/freebsd only` error; this is
-  unrelated to these edits and is not part of the canonical CI gate.
+## Follow-up: `rscam` on Android host
+
+`cargo test --workspace --doc --all-features --no-fail-fast` still exits 101 on
+Termux/Android because `--all-features` enables `v4l2` in both
+`cam-hal-linux` and `cam-hal-android`. Both crates declare `rscam` as a plain
+optional dependency, so Cargo builds `rscam 0.5.5` for `target_os = "android"`
+and its `compile_error!("rscam (v4l2) is for linux/freebsd only")` aborts the
+doc-test build. The Android HAL also has no business probing V4L2 — camera
+input comes from MediaNDK `AImageReader`/`AImage` and native `AHardwareBuffer`.
+
+Fix applied: `rscam` is now declared only under
+`[target.'cfg(target_os = "linux")'.dependencies]` in `cam-hal-linux`; every
+V4L2/rscam code path there is gated on `all(feature = "v4l2", target_os = "linux")`
+while stub APIs remain available on other targets. The `v4l2` feature, module and
+`rscam` dependency were removed from `cam-hal-android` entirely: Android camera
+input is the MediaNDK `AImageReader`/`AImage` path, not V4L2. Verification is the
+same `--workspace --doc --all-features` command plus the canonical fmt/clippy
+gate.
+
+After the 2026-11-27 sync to `1b6ad529`, `cargo check -p cam-hal-linux
+--all-features`, `cargo check -p cam-hal-android --all-features` and
+`cargo check -p cam-binder --all-features` all pass on the Android host with no
+`rscam` build. The full doc-test command then exposed two independent,
+pre-existing all-features issues:
+
+- `ort-sys 2.0.0-rc.15` panics with `could not determine cache directory`
+  because `cache_dir_default()` has no Android branch. Setting
+  `ORT_SKIP_DOWNLOAD=1` avoids the download path and defers the ORT link error
+  as designed.
+- With ORT download skipped, `cam-onnx/src/lib.rs` fails to compile because
+  `ort 2.0.0-rc.15` changed `Session::builder()` to require an `&Environment`.
+  This is a real API drift in the `ort` feature path, so the call now creates
+  an environment with `ort::init().build()` before building the session.
+- `cam-isp/src/onnx/mod.rs` has the same `Session::builder()` API drift in its
+  `ort` feature path.
+- `cam-isp/src/cabi.rs` still constructs `PipelineProfile` with the pre-`fuse_stages`
+  field set and is missing six newer fields (`input_type`, `lsc_strength`,
+  `post_ccm_downscale`, `normalize_at_display`, `opset_mode`, `fuse_stages`).
+  The C ABI custom profile must preserve the legacy defaults: raw input, no
+  post-CCM downscale, no display-normalisation trick, primitive opsets and no
+  fused stages.
+- Once those compile errors were removed, the doc tests exposed two pseudo-code
+  snippets that rustdoc treated as Rust: an indented C++ excerpt in
+  `DisplayBlock::conv_weights` and the `?`/`...` usage example in
+  `isp-rectifier/src/lib.rs`. Both are now explicitly `text`/`ignore` blocks.
+- On Termux/Android, `ort-sys` still needs `ORT_CACHE_DIR` because its
+  `cache_dir_default()` has no Android branch. With a repo-local cache directory
+  set, the canonical `--workspace --doc --all-features` command passes; the CI
+  Linux host uses its normal `$HOME/.cache` path and needs no override.

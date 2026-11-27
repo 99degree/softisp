@@ -324,7 +324,6 @@ dependencies = [
  "cam-types",
  "libc",
  "log",
- "rscam",
  "thiserror 2.0.21",
 ]
 
@@ -332,7 +331,6 @@ dependencies = [
 name = "cam-hal-linux"
 version = "0.1.0"
 dependencies = [
- "cam-core",
  "cam-hal",
  "cam-isp",
  "cam-types",

@@ -14,9 +14,6 @@ pub mod gralloc;
 pub mod util;
 pub mod vulkan_display;
 
-#[cfg(feature = "v4l2")]
-pub mod v4l2;
-
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 
@@ -560,18 +557,7 @@ static DEVICE_OPS: camera3_device_ops_t = camera3_device_ops_t {
 // ============================================================================
 
 unsafe extern "C" fn hal_get_number_of_cameras() -> i32 {
-    // Detect physical cameras via V4L2 or return default
-    #[cfg(feature = "v4l2")]
-    {
-        let devices = crate::v4l2::list_devices();
-        let count = devices.len() as i32;
-        log::info!("hal_get_number_of_cameras: found {} V4L2 devices", count);
-        count.max(1) // Always return at least 1 (stub)
-    }
-    #[cfg(not(feature = "v4l2"))]
-    {
-        1 // Default stub camera
-    }
+    1 // Default stub camera; Android capture uses the MediaNDK camera path.
 }
 
 unsafe extern "C" fn hal_get_camera_info(id: i32, info: *mut camera_info) -> i32 {
@@ -590,18 +576,6 @@ unsafe extern "C" fn hal_get_camera_info(id: i32, info: *mut camera_info) -> i32
     info.resource_cost = 50;
     info.conflicting_devices = std::ptr::null_mut();
     info.conflicting_devices_length = 0;
-
-    // Try to get real camera info from V4L2
-    #[cfg(feature = "v4l2")]
-    {
-        if let Some(path) = crate::v4l2::list_devices().get(id as usize) {
-            log::info!("Camera {}: {}", id, path);
-            // Try to open the camera
-            if rscam::Camera::new(path).is_ok() {
-                log::info!("  device={}, successfully opened", path);
-            }
-        }
-    }
 
     0
 }

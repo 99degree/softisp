@@ -15,16 +15,16 @@
 //!     .expect("Failed to create V4L2 adapter");
 //! ```
 
-#[cfg(feature = "v4l2")]
+#[cfg(all(feature = "v4l2", target_os = "linux"))]
 pub mod v4l2;
 
 pub mod v4l2_compliance;
 
-#[cfg(feature = "v4l2")]
+#[cfg(all(feature = "v4l2", target_os = "linux"))]
 use crate::v4l2::V4l2CameraAdapter;
 
 use cam_hal::camera::ICameraAdapter;
-#[cfg(not(feature = "v4l2"))]
+#[cfg(not(all(feature = "v4l2", target_os = "linux")))]
 use log::warn;
 
 /// Create a Linux V4L2 camera adapter.
@@ -38,13 +38,13 @@ use log::warn;
 /// # Returns
 /// Some(adapter) if successful, None otherwise.
 pub fn create_v4l2_adapter(_device_path: &str) -> Option<Box<dyn ICameraAdapter>> {
-    #[cfg(feature = "v4l2")]
+    #[cfg(all(feature = "v4l2", target_os = "linux"))]
     {
         V4l2CameraAdapter::new(_device_path)
             .ok()
             .map(|a| Box::new(a) as Box<dyn ICameraAdapter>)
     }
-    #[cfg(not(feature = "v4l2"))]
+    #[cfg(not(all(feature = "v4l2", target_os = "linux")))]
     {
         warn!("V4L2 feature not enabled, cannot create V4L2 camera adapter");
         None
@@ -58,11 +58,11 @@ pub fn create_v4l2_adapter(_device_path: &str) -> Option<Box<dyn ICameraAdapter>
 /// # Returns
 /// List of device paths (e.g., ["/dev/video0", "/dev/video1"])
 pub fn list_v4l2_devices() -> Vec<String> {
-    #[cfg(feature = "v4l2")]
+    #[cfg(all(feature = "v4l2", target_os = "linux"))]
     {
         crate::v4l2::list_devices()
     }
-    #[cfg(not(feature = "v4l2"))]
+    #[cfg(not(all(feature = "v4l2", target_os = "linux")))]
     {
         warn!("V4L2 feature not enabled");
         vec![]
@@ -76,7 +76,7 @@ pub fn list_v4l2_devices() -> Vec<String> {
 /// as a `Vec<u8>`. Useful for single-shot captures in the HAL binder.
 ///
 /// Returns `(width, height, data)` on success.
-#[cfg(feature = "v4l2")]
+#[cfg(all(feature = "v4l2", target_os = "linux"))]
 pub fn capture_single_v4l2_frame(
     device_path: &str,
     width: u32,
@@ -136,7 +136,7 @@ pub fn capture_single_v4l2_frame(
 }
 
 /// Non-V4L2 stub for `capture_single_v4l2_frame`.
-#[cfg(not(feature = "v4l2"))]
+#[cfg(not(all(feature = "v4l2", target_os = "linux")))]
 pub fn capture_single_v4l2_frame(
     _device_path: &str,
     _width: u32,

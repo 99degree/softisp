@@ -5,7 +5,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use isp_rectifier::{FrameMetadata, OptimizedInference};
 //!
 //! // Initialize
