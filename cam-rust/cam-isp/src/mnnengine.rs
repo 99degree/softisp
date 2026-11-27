@@ -1537,21 +1537,36 @@ impl MnnEngine {
             for name in crate::tensor_names::CLIP_ONE_ALIASES {
                 write_f32(&mut pending, name, one);
             }
-            for ns in ["BayerWbBlock", "CcmBlock_ccm", "SaturationBlock", "BlcBlock_dpc"] {
+            for ns in [
+                "BayerWbBlock",
+                "CcmBlock_ccm",
+                "SaturationBlock",
+                "BlcBlock_dpc",
+            ] {
                 write_f32(&mut pending, &format!("{ns}/one"), one);
             }
         } else {
             for name in crate::tensor_names::CLIP_ONE_ALIASES {
                 write_f32(&mut pending, name, 1.0);
             }
-            for ns in ["BayerWbBlock", "CcmBlock_ccm", "SaturationBlock", "BlcBlock_dpc"] {
+            for ns in [
+                "BayerWbBlock",
+                "CcmBlock_ccm",
+                "SaturationBlock",
+                "BlcBlock_dpc",
+            ] {
                 write_f32(&mut pending, &format!("{ns}/one"), 1.0);
             }
         }
         for name in crate::tensor_names::CLIP_ZERO_ALIASES {
             write_f32(&mut pending, name, 0.0);
         }
-        for ns in ["BayerWbBlock", "CcmBlock_ccm", "SaturationBlock", "BlcBlock_dpc"] {
+        for ns in [
+            "BayerWbBlock",
+            "CcmBlock_ccm",
+            "SaturationBlock",
+            "BlcBlock_dpc",
+        ] {
             write_f32(&mut pending, &format!("{ns}/zero"), 0.0);
         }
         // GammaBlock — inv_gamma, min, max, lift, norm; AutoContrastBlock;
