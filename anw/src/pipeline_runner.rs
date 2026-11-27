@@ -321,14 +321,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         let raw = raw_stats(&frame.data);
 
         let stage_t0 = Instant::now();
-        // Input AHB zero-copy: MNN reads the sensor frame directly from the
-        // caller's AHardwareBuffer via input_ahb, so the CPU de-stride /
-        // u16→LE widen is dead work. Skip it to save 132-189 ms / frame.
-        let staged: &[u8] = if frame.ahb.is_some() {
-            &[]
-        } else {
-            stager.stage(&frame)
-        };
+        let staged = stager.stage(&frame);
 
         let (data, width, height, kind, error) = if show_raw.load(Ordering::Relaxed) {
             prepared = None;
@@ -570,7 +563,6 @@ mod tests {
             [make_engine(), make_engine()],
             PipelineConfig {
                 sensor_max: 1023.0,
-                black_level: [0.0; 4],
                 bayer_pattern: 0,
             },
             Arc::new(AtomicBool::new(false)),
@@ -602,7 +594,6 @@ mod tests {
         let drops = Arc::new(AtomicUsize::new(0));
         let config = PipelineConfig {
             sensor_max: 1023.0,
-            black_level: [0.0; 4],
             bayer_pattern: 0,
         };
         let show_raw = Arc::new(AtomicBool::new(false));
@@ -653,11 +644,9 @@ mod tests {
                     max: 255,
                     mean: 127.0,
                 },
-                t_capture_ns: 0,
-                t_stage_ns: 0,
-                t_mnn_prepare_ns: 0,
-                t_mnn_inference_ns: 0,
-                t_mnn_output_ns: 0,
+                capture: Duration::ZERO,
+                stage: Duration::ZERO,
+                isp: Duration::ZERO,
                 error: None,
                 data: produced.data.clone(),
                 ahb: None,

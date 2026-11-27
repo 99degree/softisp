@@ -60,8 +60,6 @@ impl Default for FrameStager {
 pub struct PipelineConfig {
     /// Full-well capacity of the sensor.
     pub sensor_max: f32,
-    /// Black level per Bayer channel `[R, Gr, Gb, B]` in raw sensor counts.
-    pub black_level: [f32; 4],
     /// CFA phase, as the ISP's `bayer_pattern` encoding.
     pub bayer_pattern: i32,
 }
@@ -90,9 +88,6 @@ impl PipelineConfig {
         let mut params = ProcessParams::new(width, height, staged);
         params.sensor_max = self.sensor_max;
         params.bayer_pattern = self.bayer_pattern;
-        // Black level from the sensor's `ACAMERA_SENSOR_BLACK_LEVEL_PATTERN`
-        // drives BlcBlock / Blc50Block subtraction at the head of the chain.
-        params.blc_values = Some(self.black_level);
         // `PackedRgb`: the fused display shader writes packed BGRA bytes,
         // which the window can present without any host-side conversion.
         params.output_format = OUTPUT_FORMAT;
@@ -162,7 +157,6 @@ mod tests {
     fn params_carry_sensor_and_bayer() {
         let cfg = PipelineConfig {
             sensor_max: 4095.0,
-            black_level: [0.0; 4],
             bayer_pattern: 2,
         };
         let staged = [0u8; 8];
@@ -173,6 +167,5 @@ mod tests {
         assert_eq!(p.output_format, OUTPUT_FORMAT);
         assert_eq!(p.width, 2);
         assert_eq!(p.height, 1);
-        assert_eq!(p.blc_values, Some([0.0; 4]));
     }
 }
