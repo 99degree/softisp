@@ -334,19 +334,6 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             )
         } else {
             let mut params = config.params(frame.width, frame.height, staged, frame.timestamp_ns);
-            // Zero-copy input: hand the camera's AHB-backed frame directly to
-            // MNN via `input_ahb`, bound before resize in `prepare()`. The
-            // frame's `ahb` is producer-owned and valid while the `AImage`
-            // (kept alive by `PipelineRunner`) is not deleted. Falls back to
-            // `input_buffer`/`p.buf` host upload when no AHB is available.
-            if let Some(ahb) = frame.ahb {
-                let capacity = (frame.width as usize) * (frame.height as usize) * 2;
-                params.input_ahb = Some(cam_types::AhbBinding::new(
-                    ahb as *mut std::ffi::c_void,
-                    capacity,
-                    cam_types::AhbFenceTokens::new(-1, -1, 0),
-                ));
-            }
             if let Some(slot) = ahb_slot.as_ref() {
                 // Wait only for this worker's presenter handoff; the other
                 // engine keeps running. Marking busy here prevents the GPU

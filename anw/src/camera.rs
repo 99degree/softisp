@@ -576,20 +576,10 @@ impl CameraSession {
         self.sensor_orientation
     }
 
-    /// Acquire the next queued frame.
+    /// Acquire the next queued frame and copy its pixels out as RAW `u16`.
     ///
     /// Returns `Ok(None)` when the queue is empty — the caller should redraw
     /// the previous frame rather than stall.
-    ///
-    /// The returned `RawFrame` carries `data` (de-strided `u16` pixels,
-    /// needed for non-zero-copy paths) and, when the frame's `AHardwareBuffer`
-    /// is available, `ahb` (the producer-owned `AHardwareBuffer*` from
-    /// `AImage_getHardwareBuffer`) so the ISP engine can read the frame
-    /// directly with no host→device copy via `ProcessParams::input_ahb`.
-    ///
-    /// The `AImage` stays alive until `guard` drops; the caller must not
-    /// `AImage_delete` the image before inference finishes when `ahb` is used,
-    /// because the AHB is borrowed from the image.
     pub fn next_frame(&self) -> CamResult<Option<RawFrame>> {
         let mut image: *mut sys::AImage = null_mut();
         // `acquireLatestImage` drops everything but the newest queued frame, so
@@ -612,22 +602,7 @@ impl CameraSession {
         }
         // Every path below drops the guard, which closes the image exactly once.
         let guard = ImageGuard(image);
-
-        // Grab the AHB backing this frame *before* copying pixels. The AHB is
-        // producer-owned and valid while `image` (and thus `guard`) is alive.
-        let mut ahb: *mut sys::AHardwareBuffer = null_mut();
-        let ahb_status = unsafe { sys::AImage_getHardwareBuffer(image, &mut ahb) };
-        let ahb_ptr = if ahb_status == sys::media_status_t::AMEDIA_OK && !ahb.is_null() {
-            Some(ahb)
-        } else {
-            None
-        };
-
-        let frame = self.copy_pixels(guard.0)?;
-        Ok(Some(RawFrame {
-            ahb: ahb_ptr,
-            ..frame
-        }))
+        self.copy_pixels(guard.0).map(Some)
     }
 
     /// Read plane 0 into a tightly packed `u16` Bayer buffer.
@@ -712,7 +687,6 @@ impl CameraSession {
             data: out,
             width: w as u32,
             height: h as u32,
-            ahb: None,
         })
     }
 
@@ -772,13 +746,6 @@ pub struct RawFrame {
     pub height: u32,
     /// Capture timestamp in nanoseconds, or 0 when the sensor gave none.
     pub timestamp_ns: u64,
-    /// Optional `AHardwareBuffer*` backing this frame (zero-copy input path).
-    ///
-    /// When `Some`, the ISP engine reads the frame directly from this AHB via
-    /// `ProcessParams::input_ahb` instead of from `data`. The `AImage` that
-    /// produced this buffer must stay alive (not `AImage_delete`d) for the
-    /// duration of inference; the caller owns that lifetime.
-    pub ahb: Option<*mut sys::AHardwareBuffer>,
 }
 
 /// Closes an `AImage` exactly once when dropped.
