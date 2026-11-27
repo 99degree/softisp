@@ -321,14 +321,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         let raw = raw_stats(&frame.data);
 
         let stage_t0 = Instant::now();
-        // Input AHB zero-copy: MNN reads the sensor frame directly from the
-        // caller's AHardwareBuffer via input_ahb, so the CPU de-stride /
-        // u16→LE widen is dead work. Skip it to save 132-189 ms / frame.
-        let staged: &[u8] = if frame.ahb.is_some() {
-            &[]
-        } else {
-            stager.stage(&frame)
-        };
+        let staged = stager.stage(&frame);
 
         let (data, width, height, kind, error) = if show_raw.load(Ordering::Relaxed) {
             prepared = None;
