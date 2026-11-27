@@ -32,7 +32,9 @@ transient `AImage` buffer directly:
 
 - One `AHardwareBuffer` per worker, allocated as `BLOB` with
   `CPU_READ_OFTEN | CPU_WRITE_OFTEN | GPU_DATA_BUFFER` and mapped for the
-  worker's lifetime.
+  worker's lifetime. Capacity is `w*h*16` rounded to a power of two: MNN's
+  Vulkan backend sizes int tensor storage at four bytes per element, and the
+  extra margin covers padded/fused graph variants without swapping the binding.
 - Camera pixels are de-strided directly into that mapping, so there is no
   second `Vec<u8>` staging buffer and no host→device tensor upload.
 - The slot is bound to the frame input tensor before `resizeSession()` and is
@@ -43,9 +45,9 @@ transient `AImage` buffer directly:
 - If allocation or binding fails, the normal host staging path remains
   available, so a fallback can never produce an empty tensor.
 
-The camera still uses MediaNDK `AImageReader`/`AImage`; its AHB pointer is left
-informational and is deliberately **not** used as the MNN binding, because that
-buffer is owned and recycled by the reader.
+The camera still uses MediaNDK `AImageReader`/`AImage`. Its reader-owned AHB is
+deliberately not exposed or bound: `AImage_delete` recycles it immediately after
+`next_frame()`, and a stale pointer is what made the reverted change read zeros.
 
 ## Correctness invariants
 

@@ -47,9 +47,13 @@ impl std::fmt::Debug for AhbInputSlot {
 }
 
 fn slot_capacity_bytes(width: u32, height: u32) -> usize {
+    // MNN's Vulkan backend sizes int tensors as four bytes per element even
+    // when the host tensor is u16, so the AHB needs 4x the staged byte count.
+    // A further 2x margin covers padded/fused graph variants without a swap.
     (width as usize)
         .saturating_mul(height as usize)
-        .saturating_mul(2)
+        .saturating_mul(16)
+        .next_power_of_two()
         .max(4096)
 }
 

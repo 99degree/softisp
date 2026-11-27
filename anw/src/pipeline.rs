@@ -132,7 +132,6 @@ mod tests {
             width: 2,
             height: 1,
             timestamp_ns: 0,
-            ahb: None,
         };
         let mut stager = FrameStager::new();
         assert_eq!(stager.stage(&frame), &[0x02, 0x01, 0x00, 0xFF]);
@@ -146,7 +145,6 @@ mod tests {
             width: 8,
             height: 8,
             timestamp_ns: 0,
-            ahb: None,
         };
         stager.stage(&big);
         let capacity = stager.bytes.capacity();
@@ -155,7 +153,6 @@ mod tests {
             width: 2,
             height: 1,
             timestamp_ns: 0,
-            ahb: None,
         };
         assert_eq!(stager.stage(&small), &[1, 0, 2, 0]);
         assert_eq!(
@@ -172,7 +169,6 @@ mod tests {
             width: 0,
             height: 0,
             timestamp_ns: 0,
-            ahb: None,
         };
         assert!(FrameStager::new().stage(&frame).is_empty());
     }
