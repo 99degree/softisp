@@ -35,10 +35,17 @@ static pfnAHardwareBuffer_describe g_ahb_describe = nullptr;
 
 static void ensure_ahb_import_loaded() {
     std::call_once(g_ahb_import_load_flag, []() {
-        void* h = dlopen("libnativewindow.so", RTLD_NOW | RTLD_LOCAL);
-        if (h) {
-            g_ahb_get_fd = (pfnAHardwareBuffer_getFd)dlsym(h, "AHardwareBuffer_getFd");
-            g_ahb_describe = (pfnAHardwareBuffer_describe)dlsym(h, "AHardwareBuffer_describe");
+        // AHardwareBuffer_describe lives in libandroid.so; getFd lives in
+        // libnativewindow.so on some API levels. Resolve each independently.
+        for (const char* name : {"libnativewindow.so", "libandroid.so"}) {
+            void* h = dlopen(name, RTLD_NOW | RTLD_LOCAL);
+            if (!h) continue;
+            if (!g_ahb_get_fd) {
+                g_ahb_get_fd = (pfnAHardwareBuffer_getFd)dlsym(h, "AHardwareBuffer_getFd");
+            }
+            if (!g_ahb_describe) {
+                g_ahb_describe = (pfnAHardwareBuffer_describe)dlsym(h, "AHardwareBuffer_describe");
+            }
         }
     });
 }

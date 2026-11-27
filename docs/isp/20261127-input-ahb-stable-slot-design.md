@@ -25,6 +25,15 @@ Because both the host `data` and `staged` slices were empty, every fallback
 uploaded zeros and the preview went black. See
 `docs/isp/20261127-black-frame-destride-skip-root-cause.md`.
 
+A second, independent blocker showed up while validating the stable slot: the
+wrapper's `ahb_capacity_bytes()` rejected every real AHB with `rc=-2`, and the
+output path reported `bytes=0`. `ensure_ahb_import_loaded()` only tried
+`dlsym("AHardwareBuffer_describe")` on `libnativewindow.so`, but that symbol is
+provided by `libandroid.so`. The resulting null function pointer made the
+capacity check fail before `setDevicePtr` was reached, so neither the input nor
+the output AHB could be imported. The fix resolves both AHB symbols from either
+library, with `libandroid.so` as the fallback.
+
 ## Better implementation
 
 Use a **stable, worker-owned input AHB slot** instead of binding the camera's
