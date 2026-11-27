@@ -10,7 +10,7 @@ Raw → Unpack → BLC → WB → Demosaic → CCM → Tone → Denoise → Disp
 Pipeline stages are `IspBlock`s composable into ONNX, fused into GPU `isp.*` ops, executed on CPU (`CpuEngine`) or GPU (`MnnEngine`/Vulkan).
 
 ## MNN repo relationship
-- MNN source lives at `/data/data/com.termux/files/home/MNN/` (separate repo, not part of softisp).
+- MNN source is a separate local checkout, optionally linked at `third_party/MNN`; build scripts fall back to `MNN_DIR` or `$HOME/MNN`.
 - SoftISP only consumes prebuilt MNN libs: `cam-rust/lib/aarch64-v8a/libMNN.so`, `libMNN_Vulkan.so`, `libvulkan.so`, `libMNNConvertDeps.so`.
 - MNN C++ FFI wrapper lives in `cam-rust/cam-isp/mnn_sys/` (`mnn_wrapper.cpp/h`), compiled against `libMNN.so`/`libMNN_Vulkan.so`.
 

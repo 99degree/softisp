@@ -93,6 +93,9 @@ test_*.onnx
 # Session files
 pi-session-*.html
 
+# Optional local MNN checkout link (points outside this repository)
+third_party/
+
 # Local scratch dir (Termux: /tmp unavailable, use repo-local .tmp/)
 .tmp/
 

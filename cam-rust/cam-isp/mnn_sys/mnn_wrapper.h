@@ -108,11 +108,6 @@ void mnn_session_release(MnnInterpreter interpreter, MnnSession session);
 int mnn_session_resize(MnnInterpreter interpreter, MnnSession session);
 
 /**
- * Force tensor re-acquisition after rebinding an AHB without a shape change.
- */
-int mnn_session_resize_for_rebind(MnnInterpreter interpreter, MnnSession session);
-
-/**
  * Run the session (forward inference).
  * @return 0 on success, non-zero on failure.
  */
@@ -193,6 +188,13 @@ int mnn_tensor_get_type(MnnTensor tensor);
  * Get the element bit width of a tensor (8, 16, 32, 64), 0 on error.
  */
 int mnn_tensor_get_bits(MnnTensor tensor);
+
+/**
+ * Report the tensor's raw device binding. `out_ptr` receives the device
+ * pointer (an AHardwareBuffer* when memory type is 14) and `out_memory_type`
+ * receives MNN's memory type flags.
+ */
+int mnn_tensor_get_device_binding(MnnTensor tensor, void** out_ptr, int* out_memory_type);
 
 /**
  * Get a mutable pointer to the tensor's host data.
@@ -368,6 +370,29 @@ int mnn_import_ahb_as_device_memory(
     void* ahb,
     const char* tensor_name,
     int read_only);
+
+/**
+ * Rebind an already-resized tensor to a different AHardwareBuffer (or clear
+ * the binding when `ahb` is NULL) and re-acquire only that tensor's backend
+ * memory. This avoids a session-wide `tryResizeSession`, which reallocates the
+ * whole pipeline and has failed with OUT_OF_MEMORY on camera AHB swaps.
+ *
+ * `storage_type`: 0 = DYNAMIC_SEPERATE (session inputs), 1 = DYNAMIC (session
+ * outputs), 2 = STATIC.
+ */
+int mnn_rebind_ahb_device_memory(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    void* ahb,
+    const char* tensor_name,
+    int storage_type);
+
+/**
+ * Report the byte capacity of an AHardwareBuffer as MNN's Vulkan importer sees
+ * it. BLOB buffers encode capacity in width; pixel formats use their real
+ * bytes-per-pixel. Returns 0 on success and -1 when `ahb` is not usable.
+ */
+int mnn_ahb_capacity_bytes(void* ahb, uint64_t* out_bytes);
 
 /**
  * Release a previously imported AHardwareBuffer device memory binding.

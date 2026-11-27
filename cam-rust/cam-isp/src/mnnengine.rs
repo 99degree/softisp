@@ -2575,75 +2575,67 @@ impl MnnEngine {
 
         // A camera AHB is a different buffer on every capture. `prepare()` may
         // have bound the pooled slot while the frame arrived with the reader's
-        // AHB, so detect pointer changes here and force MNN to re-acquire.
-        // Without `needMalloc=1` VulkanBackend::onAcquire() keeps the old import.
+        // AHB. Re-acquire only the frame-input tensor after changing its device
+        // pointer: a full `resizeSession` reallocates every pipeline tensor and
+        // fails with OUT_OF_MEMORY on Vulkan.
         let pool = self
             .pool
             .as_ref()
             .ok_or(crate::error::IspError::Config("no pool".into()))?;
         let interp = &pool.interp;
-        let sess_ptr = slot.sess.as_ptr();
         let frame_name_ptr = self
             .frame_input_c
             .as_ref()
             .map_or(std::ptr::null(), |c| c.as_ptr());
         let frame_input_ptr = p.input_ahb.map_or(null_mut(), |binding| binding.ptr);
         if frame_input_ptr != meta.input_ahb_ptr {
-            let rebind_ok = if let Some(binding) = p.input_ahb.as_ref() {
-                let required = self.expected_input_elements.unwrap_or(0) as usize;
-                if required > 0 && binding.len < required.saturating_mul(2) {
-                    warn!(
-                        "camera AHB {}B is smaller than model input {}B; using host upload",
-                        binding.len,
-                        required.saturating_mul(2)
-                    );
-                    false
-                } else if frame_name_ptr.is_null() {
-                    warn!("input AHB rebind skipped: frame input name is unknown");
-                    false
+            if frame_name_ptr.is_null() {
+                warn!("input AHB rebind skipped: frame input name is unknown");
+            } else {
+                let capacity_ok = match p.input_ahb.as_ref() {
+                    Some(binding) => {
+                        let required = self.expected_input_elements.unwrap_or(0) as usize;
+                        let needed = required.saturating_mul(4);
+                        let mut described = 0u64;
+                        let actual = if unsafe {
+                            crate::mnn_sys::mnn_ahb_capacity_bytes(binding.ptr, &mut described)
+                        } == 0
+                        {
+                            described as usize
+                        } else {
+                            binding.len
+                        };
+                        if needed > 0 && actual < needed {
+                            warn!(
+                                "camera AHB {}B cannot back a {}B Vulkan tensor; using host upload",
+                                actual, needed
+                            );
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    None => true,
+                };
+                let next_ptr = if capacity_ok {
+                    frame_input_ptr
                 } else {
-                    let rc = unsafe {
-                        crate::mnn_sys::mnn_import_ahb_as_device_memory(
-                            interp.as_ptr(),
-                            sess_ptr,
-                            binding.ptr,
-                            frame_name_ptr,
-                            1,
-                        )
-                    };
-                    if rc != 0 {
-                        warn!(
-                            "AHB input rebind for '{}' failed: rc={rc}; using host upload",
-                            self.frame_input_name.as_deref().unwrap_or("")
-                        );
-                        false
-                    } else {
-                        true
+                    null_mut()
+                };
+                match slot.sess.rebind_ahb(next_ptr, frame_name_ptr, 0) {
+                    Ok(()) => {
+                        meta.input_ahb_ptr = next_ptr;
+                        slot.refresh_tensors(interp);
+                    }
+                    Err((rc, detail)) => {
+                        if rc == -7 {
+                            return Err(crate::error::IspError::Config(format!(
+                                "input AHB rebind left tensor without device memory: {detail}"
+                            )));
+                        }
+                        warn!("input AHB rebind failed: rc={rc}; {detail}; using host upload");
                     }
                 }
-            } else {
-                true
-            };
-            if rebind_ok && !frame_name_ptr.is_null() {
-                if let Err(e) = slot.sess.resize_for_rebind() {
-                    warn!("input AHB rebind resize failed: {e}; using host upload");
-                } else {
-                    meta.input_ahb_ptr = frame_input_ptr;
-                    slot.refresh_tensors(interp);
-                }
-            }
-            if meta.input_ahb_ptr != frame_input_ptr && !frame_name_ptr.is_null() {
-                // Remove the old AHB flag so the upload in mnn_run_* takes the
-                // host path instead of reading stale device memory.
-                unsafe {
-                    crate::mnn_sys::mnn_release_ahb_device_memory(
-                        interp.as_ptr(),
-                        sess_ptr,
-                        frame_name_ptr,
-                    );
-                }
-                let _ = slot.sess.resize_for_rebind();
-                slot.refresh_tensors(interp);
             }
         }
         let sess = &slot.sess;
@@ -2810,7 +2802,6 @@ impl MnnEngine {
             input_shape[2],
             input_shape[3]
         );
-
         let t_infer_start = Instant::now();
         let t_infer_end: Instant;
         let mut n: i32;

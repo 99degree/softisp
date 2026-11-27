@@ -65,7 +65,6 @@ extern "C" {
     ) -> *mut c_void;
     pub fn mnn_session_release(interpreter: *mut c_void, session: *mut c_void);
     pub fn mnn_session_resize(interpreter: *mut c_void, session: *mut c_void) -> c_int;
-    pub fn mnn_session_resize_for_rebind(interpreter: *mut c_void, session: *mut c_void) -> c_int;
     pub fn mnn_session_run(interpreter: *mut c_void, session: *mut c_void) -> c_int;
     pub fn mnn_session_get_input_v2(
         interpreter: *mut c_void,
@@ -99,6 +98,11 @@ extern "C" {
     pub fn mnn_tensor_get_shape(tensor: *mut c_void, dims: *mut c_int, max_dims: c_int) -> c_int;
     pub fn mnn_tensor_get_type(tensor: *mut c_void) -> c_int;
     pub fn mnn_tensor_get_bits(tensor: *mut c_void) -> c_int;
+    pub fn mnn_tensor_get_device_binding(
+        tensor: *mut c_void,
+        out_ptr: *mut *mut c_void,
+        out_memory_type: *mut c_int,
+    ) -> c_int;
     pub fn mnn_tensor_get_host_data(tensor: *mut c_void) -> *mut f32;
     pub fn mnn_tensor_get_host_data_raw(tensor: *mut c_void) -> *mut c_void;
     pub fn mnn_tensor_get_data_size(tensor: *mut c_void) -> usize;
@@ -159,6 +163,21 @@ extern "C" {
         tensor_name: *const c_char,
         read_only: c_int,
     ) -> c_int;
+
+    /// Rebind a resized tensor to a different AHB and re-acquire only that
+    /// tensor's backend memory. Passing a null AHB clears the binding.
+    pub fn mnn_rebind_ahb_device_memory(
+        interpreter: *mut c_void,
+        session: *mut c_void,
+        ahb: *const c_void,
+        tensor_name: *const c_char,
+        storage_type: c_int,
+    ) -> c_int;
+
+    /// Query the true byte capacity of an AHardwareBuffer. Unlike a caller's
+    /// inferred length, this uses `AHardwareBuffer_describe` and mirrors the
+    /// format-aware capacity calculation used by the Vulkan importer.
+    pub fn mnn_ahb_capacity_bytes(ahb: *mut c_void, out_bytes: *mut u64) -> c_int;
 
     /// Release a previously imported AHardwareBuffer device memory binding.
     pub fn mnn_release_ahb_device_memory(
@@ -531,13 +550,35 @@ impl MnnSessionSafe {
         }
     }
 
-    /// Re-acquire session tensors after rebinding an AHB without a shape change.
-    pub fn resize_for_rebind(&self) -> Result<(), String> {
-        let ret = unsafe { mnn_session_resize_for_rebind(self.interpreter, self.inner) };
+    /// Rebind one resized tensor to a different AHB (or clear it with null)
+    /// and re-acquire only that tensor's backend memory.
+    pub fn rebind_ahb(
+        &self,
+        ahb: *mut c_void,
+        tensor_name: *const c_char,
+        storage_type: c_int,
+    ) -> Result<(), (i32, String)> {
+        let ret = unsafe {
+            mnn_rebind_ahb_device_memory(
+                self.interpreter,
+                self.inner,
+                ahb,
+                tensor_name,
+                storage_type,
+            )
+        };
         if ret == 0 {
             Ok(())
         } else {
-            Err("Session rebind resize failed".to_string())
+            let detail = unsafe {
+                let p = mnn_last_error();
+                if p.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(p).to_string_lossy().into_owned()
+                }
+            };
+            Err((ret, detail))
         }
     }
 
@@ -630,6 +671,11 @@ unsafe impl Send for MnnTensorSafe {}
 unsafe impl Sync for MnnTensorSafe {}
 
 impl MnnTensorSafe {
+    /// Get the raw MNN tensor handle.
+    pub fn handle(&self) -> *mut c_void {
+        self.inner
+    }
+
     /// Get the shape of the tensor.
     pub fn shape(&self) -> Vec<i32> {
         let mut dims = [0i32; 8];
@@ -640,6 +686,19 @@ impl MnnTensorSafe {
     /// Get the data type code: 4=float32, 5=int32, 6=uint32, 0=unknown.
     pub fn data_type(&self) -> i32 {
         unsafe { mnn_tensor_get_type(self.inner) }
+    }
+
+    /// Get the raw device pointer and MNN memory type bound to this tensor.
+    /// Memory type `14` is `MNN_MEMORY_AHARDWAREBUFFER`.
+    pub fn device_binding(&self) -> Result<(*mut c_void, i32), String> {
+        let mut ptr = std::ptr::null_mut();
+        let mut memory_type = 0;
+        let ret = unsafe { mnn_tensor_get_device_binding(self.inner, &mut ptr, &mut memory_type) };
+        if ret == 0 {
+            Ok((ptr, memory_type))
+        } else {
+            Err("Tensor device binding query failed".to_string())
+        }
     }
 
     /// Get the element bit width: 8, 16, 32, 64, or 0 if unknown.

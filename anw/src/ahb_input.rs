@@ -12,7 +12,6 @@ use cam_types::{AhbBinding, AhbFenceTokens};
 use ndk_sys as sys;
 
 use crate::camera::RawFrame;
-use crate::pipeline::stage_into;
 
 /// One CPU-mapped AHB bound to a worker's frame input tensor.
 ///
@@ -45,14 +44,23 @@ impl std::fmt::Debug for AhbInputSlot {
 }
 
 fn slot_capacity_bytes(width: u32, height: u32) -> usize {
-    // MNN's Vulkan backend sizes int tensors as four bytes per element even
-    // when the host tensor is u16, so the AHB needs 4x the staged byte count.
-    // A further 2x margin covers padded/fused graph variants without a swap.
-    (width as usize)
+    let bytes = (width as usize)
         .saturating_mul(height as usize)
-        .saturating_mul(16)
-        .next_power_of_two()
-        .max(4096)
+        .saturating_mul(2);
+    #[cfg(feature = "direct_vulkan")]
+    {
+        // The direct shader consumes exactly one packed RAW16 word per pixel
+        // pair. A small alignment margin is enough, so the whole frame stays
+        // cache-friendly and the AHB import remains stable.
+        bytes.next_power_of_two().max(4096)
+    }
+    #[cfg(not(feature = "direct_vulkan"))]
+    {
+        // MNN's Vulkan backend sizes int tensors as four bytes per element
+        // even when the host tensor is u16, so the AHB needs 4x the staged
+        // byte count. A further 2x margin covers padded/fused graph variants.
+        bytes.saturating_mul(8).next_power_of_two().max(4096)
+    }
 }
 
 impl AhbInputSlot {
@@ -122,17 +130,23 @@ impl AhbInputSlot {
                 self.width, self.height, frame.width, frame.height
             ));
         }
-        let needed = frame.data.len().saturating_mul(2);
+        let source = frame.data_bytes();
         let bytes = unsafe { std::slice::from_raw_parts_mut(self.map, self.capacity) };
-        stage_into(frame, &mut bytes[..self.capacity]).map_err(|e| {
-            format!(
-                "input AHB capacity {}B too small for frame {needed}B: {e}",
-                self.capacity
-            )
-        })
+        if bytes.len() < source.len() {
+            return Err(format!(
+                "input AHB capacity {}B too small for frame {}B",
+                self.capacity,
+                source.len()
+            ));
+        }
+        bytes[..source.len()].copy_from_slice(source);
+        Ok(())
     }
 
     pub(crate) fn bytes(&self) -> &[u8] {
+        if self.map.is_null() {
+            return &[];
+        }
         let len = (self.width as usize)
             .saturating_mul(self.height as usize)
             .saturating_mul(2)

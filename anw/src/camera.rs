@@ -29,6 +29,14 @@ pub fn take_fatal_camera_error() -> bool {
 /// time to bound ISP latency and per-frame memory.
 pub const MAX_RAW_DIM: i32 = 1920;
 
+/// The camera AHB must be GPU-readable before MNN can import it as a Vulkan
+/// `VkBuffer`. Gralloc rejects `GPU_DATA_BUFFER` for private RAW16 on this
+/// device, but a `GPU_SAMPLED_IMAGE` RAW16 AHB imports through the same
+/// external-memory path, so that is the usage the reader must request.
+const DIRECT_INPUT_USAGE: u64 =
+    sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0
+        | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE.0;
+
 /// A capture geometry the sensor can actually deliver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaptureSize {
@@ -462,9 +470,32 @@ impl CameraSession {
             "YUV_420_888"
         };
         let mut reader: *mut sys::AImageReader = null_mut();
-        let status = unsafe {
-            sys::AImageReader_new(width, height, format.0 as i32, MAX_IMAGES, &mut reader)
+        let mut status = if format == sys::AIMAGE_FORMATS::AIMAGE_FORMAT_RAW16 {
+            unsafe {
+                sys::AImageReader_newWithUsage(
+                    width,
+                    height,
+                    format.0 as i32,
+                    DIRECT_INPUT_USAGE,
+                    MAX_IMAGES,
+                    &mut reader,
+                )
+            }
+        } else {
+            sys::media_status_t::AMEDIA_OK
         };
+        if (status != sys::media_status_t::AMEDIA_OK || reader.is_null())
+            && format == sys::AIMAGE_FORMATS::AIMAGE_FORMAT_RAW16
+        {
+            log::warn!(
+                "AImageReader_newWithUsage({name} {width}x{height}) -> {}; retrying default usage",
+                status.0
+            );
+            reader = null_mut();
+            status = unsafe {
+                sys::AImageReader_new(width, height, format.0 as i32, MAX_IMAGES, &mut reader)
+            };
+        }
         if status != sys::media_status_t::AMEDIA_OK || reader.is_null() {
             return Err(format!(
                 "AImageReader_new({name} {width}x{height}) -> {}",
@@ -608,16 +639,56 @@ impl CameraSession {
         // Every path below drops the guard, which closes the image exactly once.
         let guard = ImageGuard(image);
 
-        let copied = self.copy_pixels(guard.0);
-        let mut ahb: *mut sys::AHardwareBuffer = null_mut();
-        let ahb = match copied {
-            Ok(ref frame) if Self::direct_ahb_usable(guard.0, frame.width, self.raw) => {
-                if unsafe { sys::AImage_getHardwareBuffer(image, &mut ahb) }
+        let skip_cpu = self.raw
+            && (std::env::var_os("SOFTISP_RAW_AHB_SKIP_CPU").is_some()
+                || std::path::Path::new("/sdcard/download/softisp-raw-ahb-skip-cpu").exists());
+        if skip_cpu {
+            let mut width = 0i32;
+            let mut height = 0i32;
+            let mut candidate: *mut sys::AHardwareBuffer = null_mut();
+            let dimensions_ok = unsafe {
+                sys::AImage_getWidth(image, &mut width) == sys::media_status_t::AMEDIA_OK
+                    && sys::AImage_getHeight(image, &mut height) == sys::media_status_t::AMEDIA_OK
+                    && width > 0
+                    && height > 0
+            };
+            let ahb_ok = dimensions_ok
+                && unsafe { sys::AImage_getHardwareBuffer(image, &mut candidate) }
                     == sys::media_status_t::AMEDIA_OK
-                    && !ahb.is_null()
+                && !candidate.is_null()
+                && Self::direct_ahb_usable(guard.0, width as u32, height as u32, candidate);
+            if ahb_ok {
+                unsafe { sys::AHardwareBuffer_acquire(candidate) };
+                let mut ts = 0i64;
+                let ts_ok = unsafe { sys::AImage_getTimestamp(image, &mut ts) };
+                return Ok(Some(RawFrame {
+                    timestamp_ns: if ts_ok == sys::media_status_t::AMEDIA_OK {
+                        ts.max(0) as u64
+                    } else {
+                        0
+                    },
+                    data: vec![0u16; (width as usize).saturating_mul(height as usize)],
+                    width: width as u32,
+                    height: height as u32,
+                    ahb: Some(AhbRef(candidate)),
+                }));
+            }
+        }
+
+        let copied = self.copy_pixels(guard.0);
+        let ahb = match copied {
+            Ok(ref frame) if self.raw => {
+                let mut candidate: *mut sys::AHardwareBuffer = null_mut();
+                if unsafe { sys::AImage_getHardwareBuffer(image, &mut candidate) }
+                    == sys::media_status_t::AMEDIA_OK
+                    && !candidate.is_null()
                 {
-                    unsafe { sys::AHardwareBuffer_acquire(ahb) };
-                    Some(AhbRef(ahb))
+                    if Self::direct_ahb_usable(guard.0, frame.width, frame.height, candidate) {
+                        unsafe { sys::AHardwareBuffer_acquire(candidate) };
+                        Some(AhbRef(candidate))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -632,10 +703,16 @@ impl CameraSession {
     }
 
     /// A media AHB can be bound as MNN input only when its plane is already the
-    /// tight RAW16 layout the model expects. YUV needs 8→16-bit expansion and a
-    /// Bayer mosaic, so it must keep the host staging path.
-    fn direct_ahb_usable(image: *mut sys::AImage, width: u32, raw: bool) -> bool {
-        if !raw || width == 0 {
+    /// tight RAW16 layout the model expects and the allocation can be imported
+    /// as a Vulkan `VkBuffer`. YUV needs 8→16-bit expansion and a Bayer mosaic,
+    /// so it must keep the host staging path.
+    fn direct_ahb_usable(
+        image: *mut sys::AImage,
+        width: u32,
+        height: u32,
+        ahb: *mut sys::AHardwareBuffer,
+    ) -> bool {
+        if width == 0 || height == 0 {
             return false;
         }
         let mut row_stride = 0i32;
@@ -646,7 +723,15 @@ impl CameraSession {
                 && sys::AImage_getPlanePixelStride(image, 0, &mut pixel_stride)
                     == sys::media_status_t::AMEDIA_OK
         };
-        strides_ok && pixel_stride == 2 && row_stride == (width as i32).saturating_mul(2)
+        if !strides_ok || pixel_stride != 2 || row_stride != (width as i32).saturating_mul(2) {
+            return false;
+        }
+
+        let mut desc: sys::AHardwareBuffer_Desc = unsafe { std::mem::zeroed() };
+        unsafe { sys::AHardwareBuffer_describe(ahb, &mut desc) };
+        let gpu_sampled =
+            sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE.0;
+        desc.usage & gpu_sampled == gpu_sampled && desc.width >= width && desc.height >= height
     }
 
     /// Read plane 0 into a tightly packed `u16` Bayer buffer.
@@ -817,6 +902,23 @@ pub struct RawFrame {
     /// Acquired MediaNDK AHB to bind directly as MNN input. Only set for a
     /// tight RAW16 plane; YUV and padded RAW frames stay on the host path.
     pub(crate) ahb: Option<AhbRef>,
+}
+
+impl RawFrame {
+    /// View the samples as the little-endian byte stream MNN expects.
+    ///
+    /// The pipeline runs only on little-endian Android targets, so the in-memory
+    /// `u16` representation is already the required byte order. Callers that
+    /// need a stable upload buffer borrow this slice directly instead of
+    /// widening every sample a second time.
+    pub(crate) fn data_bytes(&self) -> &[u8] {
+        unsafe {
+            std::slice::from_raw_parts(
+                self.data.as_ptr() as *const u8,
+                self.data.len().saturating_mul(2),
+            )
+        }
+    }
 }
 
 /// Closes an `AImage` exactly once when dropped.

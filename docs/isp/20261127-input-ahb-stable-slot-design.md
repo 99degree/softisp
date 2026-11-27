@@ -49,17 +49,25 @@ re-lock for the next worker. No lock is added on the pure GPU path itself.
 
 ## Better implementation
 
-Camera frames use the MediaNDK AHB **directly** when the plane is already the
-tight RAW16 layout the model expects. `next_frame()` calls
+Camera frames attempt to use the MediaNDK AHB **directly**. `next_frame()` calls
 `AHardwareBuffer_acquire()` before `AImage_delete`, so the pointer stays valid
 through inference regardless of the reader's recycling. Padded RAW and YUV
 frames keep the host path because their plane layout is not the model input.
-The worker binds the acquired pointer to the frame input tensor. Since MNN's
-Vulkan backend caches the imported AHB per tensor, every pointer change triggers
-`setDevicePtr` plus `tryResizeSession(..., needMalloc=1)` so `onAcquire()`
-re-imports the new buffer. The host `data` slice remains valid and non-empty as
-a fallback if the import fails; it is never the sole source when an AHB is
-present.
+Before rebinding, the worker asks `mnn_ahb_capacity_bytes()` for the real
+`AHardwareBuffer` capacity instead of trusting a length inferred from the host
+staging buffer. An AHB too small for MNN's 32-bit Vulkan tensor storage is
+rejected before it can produce an import error or a stale binding.
+
+When the AHB is accepted, the worker binds it to the session-owned frame input
+tensor. MNN's Vulkan backend caches the imported AHB per tensor, so every pointer
+change uses `mnn_rebind_ahb_device_memory()`: `setDevicePtr(new_ahb,
+MNN_MEMORY_AHARDWAREBUFFER)`, then `Backend::onReleaseBuffer()` /
+`Backend::onAcquireBuffer()` on that one tensor. No session resize is performed
+per frame: `tryResizeSession(..., needMalloc=1)` reallocates the whole pipeline
+and returned OUT_OF_MEMORY on the device (see
+`docs/isp/20261127-camera-ahb-rebind-session-error.md`). The host `data` slice
+remains valid and non-empty as a fallback if the import fails; it is never the
+sole source when an AHB is present.
 
 For inputs **not** supplied by MediaNDK (control tensors and host-generated
 frames), a worker-owned AHB pool is still used. It is allocated once per
@@ -82,7 +90,9 @@ geometry and reused, never per frame:
 - A camera AHB is released only after inference; the pooled AHB is released only
   when the worker exits or the geometry changes.
 - `PreparedMeta` records the exact bound input AHB pointer; `run_prepared()`
-  rebinds and forces re-acquire when it changes.
+  rebinds and re-acquires that one session tensor when it changes. Failed
+  rebinds restore backend-owned memory so the host upload path cannot sample a
+  stale import.
 - Generation still guards pooled-slot recreation; camera bindings use generation
   `0` and are distinguished by pointer.
 - The host fallback bytes are always non-empty, so a rejected AHB import can
@@ -92,12 +102,20 @@ geometry and reused, never per frame:
 
 ## Verification
 
+MNN is used as a local checkout when `third_party/MNN` exists; otherwise
+`build.rs` and `scripts/build_mnn_libs.sh` fall back to `MNN_DIR` or `$HOME/MNN`.
+The Vulkan AHB import patch lives there, so a full rebuild (not `--core-only`)
+is required after changing it.
+
 ```bash
 cargo fmt --all -- --check
 cargo check -p softisp-anw --all-features
 cargo test -p softisp-anw --lib --all-features
 cargo clippy -p softisp-anw --all-features --no-deps -- -D warnings
-./build-test-libs.sh --core-only
+LD_LIBRARY_PATH=$PWD/cam-rust/lib/aarch64-v8a \
+  cargo test -p cam-isp --test test_ahb_rebind_glue --features mnn \
+  -- --ignored --nocapture --test-threads=1
+./build-test-libs.sh
 ./push-test-libs.sh
 ./shim-debug.sh reload
 ./shim-debug.sh logs

@@ -19,8 +19,12 @@
 
 set -euo pipefail
 
-MNN_ROOT="/data/data/com.termux/files/home/MNN"
-SOFTISP_ROOT="/data/data/com.termux/files/home/softisp"
+SOFTISP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -d "$SOFTISP_ROOT/third_party/MNN" ]; then
+    MNN_ROOT="$SOFTISP_ROOT/third_party/MNN"
+else
+    MNN_ROOT="${MNN_DIR:-$HOME/MNN}"
+fi
 RUNTIME_DIR="${SOFTISP_ROOT}/cam-rust/lib"
 
 ABI_TARGET="${1:-arm64-v8a}"

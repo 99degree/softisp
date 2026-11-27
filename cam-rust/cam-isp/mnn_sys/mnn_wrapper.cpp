@@ -12,6 +12,12 @@
 #include <MNN/Interpreter.hpp>
 #include <MNN/Tensor.hpp>
 #include <MNN/HalideRuntime.h>
+// Private upstream header emits -Wunused-parameter notes under cc-rs -Wall.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#include "Backend.hpp"
+#include "TensorUtils.hpp"
+#pragma GCC diagnostic pop
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
@@ -50,6 +56,21 @@ static void ensure_ahb_import_loaded() {
     });
 }
 
+static size_t ahb_format_bytes_per_pixel(uint32_t format) {
+    // 0x20 is HAL_PIXEL_FORMAT_RAW16. AImageReader RAW16 buffers report this
+    // private format even though it is absent from the public AHB enum.
+    constexpr uint32_t kRaw16Format = 0x20;
+    switch (format) {
+        case kRaw16Format:
+        case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:
+            return 2;
+        case AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT:
+            return 8;
+        default:
+            return 4;
+    }
+}
+
 static bool ahb_capacity_bytes(void* ahb, size_t* out_bytes) {
     ensure_ahb_import_loaded();
     if (ahb == nullptr || g_ahb_describe == nullptr || out_bytes == nullptr) {
@@ -57,11 +78,12 @@ static bool ahb_capacity_bytes(void* ahb, size_t* out_bytes) {
     }
     AHardwareBuffer_Desc desc{};
     g_ahb_describe(static_cast<AHardwareBuffer*>(ahb), &desc);
-    // BLOB buffers encode byte capacity in `width`; RGBA buffers are 4 B/px.
+    // BLOB buffers encode byte capacity in `width`; pixel formats need bpp.
     if (desc.format == AHARDWAREBUFFER_FORMAT_BLOB) {
         *out_bytes = (size_t)desc.width * desc.height * desc.layers;
     } else {
-        *out_bytes = (size_t)desc.width * desc.height * desc.layers * 4;
+        *out_bytes = (size_t)desc.width * desc.height * desc.layers *
+                     ahb_format_bytes_per_pixel(desc.format);
     }
     return *out_bytes > 0;
 }
@@ -83,7 +105,6 @@ static void set_last_error(const char* fmt, ...) {
     va_end(args);
     std::lock_guard<std::mutex> lock(g_last_error_mutex);
     g_last_error = buf;
-    MNN_PRINT("[mnn_run] %s\n", buf);
 }
 
 /// Returns the message from the most recent `mnn_run_with_output` failure,
@@ -268,15 +289,6 @@ int mnn_session_resize(MnnInterpreter interpreter, MnnSession session) {
     return 0;
 }
 
-int mnn_session_resize_for_rebind(MnnInterpreter interpreter, MnnSession session) {
-    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
-    auto* sess = reinterpret_cast<MNN::Session*>(session);
-    if (!net || !sess) return -1;
-
-    net->tryResizeSession(sess, 1);
-    return 0;
-}
-
 int mnn_session_run(MnnInterpreter interpreter, MnnSession session) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);
@@ -431,6 +443,14 @@ int mnn_tensor_get_bits(MnnTensor tensor) {
     auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
     if (!t) return 0;
     return (int)t->getType().bits;
+}
+
+int mnn_tensor_get_device_binding(MnnTensor tensor, void** out_ptr, int* out_memory_type) {
+    auto* t = reinterpret_cast<MNN::Tensor*>(tensor);
+    if (!t) return -1;
+    if (out_ptr) *out_ptr = (void*)t->buffer().device;
+    if (out_memory_type) *out_memory_type = (int)t->buffer().flags;
+    return 0;
 }
 
 float* mnn_tensor_get_host_data(MnnTensor tensor) {
@@ -983,6 +1003,17 @@ extern "C" int mnn_import_ahb_as_device_memory(
         set_last_error("pointer %p is not a usable AHardwareBuffer", ahb);
         return -2;
     }
+    // AHardwareBuffer BLOB is an opaque byte container, not an implied u8
+    // tensor. The graph type decides how those bytes are read: ONNX UINT32 is
+    // converted to MNN INT32 because VulkanBackend only accepts float or int
+    // Halide types. Validate raw capacity instead of assuming a pixel format.
+    size_t needed_bytes = tensor->usize();
+    if (ahb_bytes < needed_bytes) {
+        set_last_error("AHB '%s' too small: %llu bytes, tensor needs %llu",
+                       tensor_name, (unsigned long long)ahb_bytes,
+                       (unsigned long long)needed_bytes);
+        return -4;
+    }
 
     // Once MNN has allocated normal device memory for a tensor it cannot be
     // converted in place. The binding must be installed before resizeSession.
@@ -1010,9 +1041,105 @@ extern "C" int mnn_import_ahb_as_device_memory(
         set_last_error("Tensor::setDevicePtr(AHB) failed for '%s'", tensor_name);
         return -1;
     }
-    set_last_error("AHB '%s' imported: ptr=%p bytes=%llu (memoryType=%d)",
+    // `setDevicePtr` only replaces the device pointer/flags. If resizeTensor has
+    // already installed a host MemObj, Pipeline::_allocTensor skips
+    // onAcquireBuffer and the AHB is never imported. Drop that MemObj so the
+    // next resize acquires the tensor through VulkanBackend.
+    MNN::TensorUtils::getDescribeOrigin(tensor)->mem = nullptr;
+    MNN::TensorUtils::setSharedMem(tensor, nullptr);
+    set_last_error("AHB '%s' imported: tensor=%p ptr=%p bytes=%llu (memoryType=%d flags=%d)",
+                   tensor_name, (void*)tensor, ahb, (unsigned long long)ahb_bytes,
+                   MNN_MEMORY_AHARDWAREBUFFER, (int)tensor->buffer().flags);
+    return 0;
+}
+
+extern "C" int mnn_rebind_ahb_device_memory(
+    MnnInterpreter interpreter,
+    MnnSession session,
+    void* ahb,
+    const char* tensor_name,
+    int storage_type)
+{
+    ensure_ahb_import_loaded();
+    if (!interpreter || !session || !tensor_name) return -100;
+
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    auto* tensor = net->getSessionInput(sess, tensor_name);
+    if (!tensor) {
+        tensor = net->getSessionOutput(sess, tensor_name);
+    }
+    if (!tensor) {
+        set_last_error("rebind: tensor '%s' not found in session", tensor_name);
+        return -1;
+    }
+
+    MNN::Backend::StorageType type;
+    switch (storage_type) {
+        case 0: type = MNN::Backend::DYNAMIC_SEPERATE; break;
+        case 1: type = MNN::Backend::DYNAMIC; break;
+        case 2: type = MNN::Backend::STATIC; break;
+        default:
+            set_last_error("rebind: invalid storage type %d", storage_type);
+            return -4;
+    }
+
+    size_t ahb_bytes = 0;
+    if (ahb != nullptr && !ahb_capacity_bytes(ahb, &ahb_bytes)) {
+        set_last_error("rebind: pointer %p is not a usable AHardwareBuffer", ahb);
+        return -2;
+    }
+    if (ahb != nullptr) {
+        size_t needed_bytes = tensor->usize();
+        if (ahb_bytes < needed_bytes) {
+            set_last_error("rebind: AHB '%s' too small: %llu bytes, tensor needs %llu",
+                           tensor_name, (unsigned long long)ahb_bytes,
+                           (unsigned long long)needed_bytes);
+            return -3;
+        }
+    }
+
+    auto* describe = MNN::TensorUtils::getDescribeOrigin(tensor);
+    auto* backend = describe == nullptr ? nullptr : describe->getBackend();
+    if (backend == nullptr || backend->type() != MNN_FORWARD_VULKAN) {
+        set_last_error("rebind: tensor '%s' has no Vulkan backend", tensor_name);
+        return -5;
+    }
+
+    // Re-acquire only this session tensor. The session stays resized and every
+    // other tensor keeps its backend memory; Vulkan's onAcquire() imports the
+    // new AHardwareBuffer into the tensor's device memory.
+    backend->onReleaseBuffer(tensor, type);
+    MNN::TensorUtils::setSharedMem(tensor, nullptr);
+    if (ahb != nullptr) {
+        tensor->setDevicePtr(ahb, MNN_MEMORY_AHARDWAREBUFFER);
+    } else {
+        tensor->setDevicePtr(nullptr, 0);
+    }
+    if (!backend->onAcquireBuffer(tensor, type)) {
+        MNN::TensorUtils::setSharedMem(tensor, nullptr);
+        tensor->setDevicePtr(nullptr, 0);
+        if (!backend->onAcquireBuffer(tensor, type)) {
+            set_last_error("rebind: failed to restore backend memory for '%s'", tensor_name);
+            return -7;
+        }
+        set_last_error("rebind: AHB import failed for '%s'; restored backend memory", tensor_name);
+        return -6;
+    }
+
+    set_last_error("AHB '%s' rebound: ptr=%p bytes=%llu (memoryType=%d)",
                    tensor_name, ahb, (unsigned long long)ahb_bytes,
-                   MNN_MEMORY_AHARDWAREBUFFER);
+                   (int)tensor->buffer().flags);
+    return 0;
+}
+
+extern "C" int mnn_ahb_capacity_bytes(void* ahb, uint64_t* out_bytes) {
+    ensure_ahb_import_loaded();
+    size_t bytes = 0;
+    if (out_bytes == nullptr || ahb == nullptr || !ahb_capacity_bytes(ahb, &bytes)) {
+        return -1;
+    }
+    *out_bytes = (uint64_t)bytes;
     return 0;
 }
 

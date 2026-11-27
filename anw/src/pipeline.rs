@@ -1,13 +1,11 @@
 //! Adapter between the camera capture path and the `cam-isp` pipeline.
 //!
 //! Frames arrive as little-endian `u16` Bayer samples; the engine's
-//! `ProcessParams` wants a byte buffer plus the sensor's full-well value. This
-//! module owns that conversion and keeps one reusable byte buffer alive so a
-//! preview loop does not allocate per frame.
+//! `ProcessParams` wants a byte buffer plus the sensor's full-well value. The
+//! frame exposes its samples as a byte slice directly, so this module only
+//! supplies the shared graph/display configuration.
 
 use cam_isp::engine::{OutputFormat, ProcessParams};
-
-use crate::camera::RawFrame;
 
 /// The output format both the graph and the engine must agree on.
 ///
@@ -22,57 +20,6 @@ use crate::camera::RawFrame;
 /// disagree: a mismatch is silent, because the frame keeps the right length and
 /// `present()` still returns `Ok`.
 pub const OUTPUT_FORMAT: OutputFormat = OutputFormat::PackedRgb;
-
-/// Reusable staging buffers for the `u16` → `Vec<u8>` widening the API needs.
-pub struct FrameStager {
-    bytes: Vec<u8>,
-}
-
-/// Widen `frame` into a caller-owned byte buffer as little-endian `u16` bytes.
-///
-/// Used both by the host fallback stager and by the AHB input slot, so the two
-/// paths cannot disagree on sample order.
-pub fn stage_into(frame: &RawFrame, dest: &mut [u8]) -> Result<(), String> {
-    let needed = frame.data.len().saturating_mul(2);
-    if dest.len() < needed {
-        return Err(format!(
-            "staging buffer {}B is too small for frame {needed}B",
-            dest.len()
-        ));
-    }
-    for (i, &sample) in frame.data.iter().enumerate() {
-        let pair = &mut dest[i * 2..i * 2 + 2];
-        pair[0] = (sample & 0xFF) as u8;
-        pair[1] = (sample >> 8) as u8;
-    }
-    Ok(())
-}
-
-impl FrameStager {
-    /// Create a stager with an empty staging buffer.
-    pub fn new() -> Self {
-        Self { bytes: Vec::new() }
-    }
-
-    /// Widen `frame` into the staging buffer as little-endian `u16` bytes.
-    ///
-    /// The returned slice borrows the stager, so it stays valid until the next
-    /// call — which is exactly the lifetime `ProcessParams` needs.
-    pub fn stage(&mut self, frame: &RawFrame) -> &[u8] {
-        let needed = frame.data.len().saturating_mul(2);
-        if self.bytes.len() < needed {
-            self.bytes.resize(needed, 0);
-        }
-        stage_into(frame, &mut self.bytes[..needed]).expect("sized staging buffer");
-        &self.bytes[..needed]
-    }
-}
-
-impl Default for FrameStager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Description of the sensor the pipeline is being driven from.
 #[derive(Debug, Clone, Copy)]
@@ -126,7 +73,7 @@ mod tests {
     use crate::camera::RawFrame;
 
     #[test]
-    fn stage_emits_little_endian_u16() {
+    fn frame_data_bytes_are_little_endian() {
         let frame = RawFrame {
             data: vec![0x0102, 0xFF00],
             width: 2,
@@ -134,39 +81,11 @@ mod tests {
             timestamp_ns: 0,
             ahb: None,
         };
-        let mut stager = FrameStager::new();
-        assert_eq!(stager.stage(&frame), &[0x02, 0x01, 0x00, 0xFF]);
+        assert_eq!(frame.data_bytes(), &[0x02, 0x01, 0x00, 0xFF]);
     }
 
     #[test]
-    fn stage_reuses_buffer_across_frames() {
-        let mut stager = FrameStager::new();
-        let big = RawFrame {
-            data: vec![7; 64],
-            width: 8,
-            height: 8,
-            timestamp_ns: 0,
-            ahb: None,
-        };
-        stager.stage(&big);
-        let capacity = stager.bytes.capacity();
-        let small = RawFrame {
-            data: vec![1, 2],
-            width: 2,
-            height: 1,
-            timestamp_ns: 0,
-            ahb: None,
-        };
-        assert_eq!(stager.stage(&small), &[1, 0, 2, 0]);
-        assert_eq!(
-            stager.bytes.capacity(),
-            capacity,
-            "buffer should not reallocate"
-        );
-    }
-
-    #[test]
-    fn stage_of_empty_frame_is_empty() {
+    fn frame_data_bytes_of_empty_frame_are_empty() {
         let frame = RawFrame {
             data: Vec::new(),
             width: 0,
@@ -174,7 +93,7 @@ mod tests {
             timestamp_ns: 0,
             ahb: None,
         };
-        assert!(FrameStager::new().stage(&frame).is_empty());
+        assert!(frame.data_bytes().is_empty());
     }
 
     #[test]
