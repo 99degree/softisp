@@ -613,58 +613,21 @@ impl CameraSession {
         // Every path below drops the guard, which closes the image exactly once.
         let guard = ImageGuard(image);
 
-        // Grab width/height/timestamp and the backing AHB *before* deciding
-        // whether to CPU de-stride. The AHB is producer-owned and valid while
-        // `image` (and thus `guard`) is alive.
-        let mut width = 0i32;
-        let mut height = 0i32;
-        media_check(
-            unsafe { sys::AImage_getWidth(image, &mut width) },
-            "AImage_getWidth",
-        )?;
-        media_check(
-            unsafe { sys::AImage_getHeight(image, &mut height) },
-            "AImage_getHeight",
-        )?;
-
-        // `AImage_getHardwareBuffer` is Android-only (API 26+) and only available
-        // on device (not in host test builds), so fall back to the CPU de-stride
-        // path otherwise.
-        #[cfg(all(target_os = "android", not(test)))]
-        let ahb_ptr: Option<*mut sys::AHardwareBuffer> = {
-            let mut ahb: *mut sys::AHardwareBuffer = null_mut();
-            let ahb_status = unsafe { sys::AImage_getHardwareBuffer(image, &mut ahb) };
-            if ahb_status == sys::media_status_t::AMEDIA_OK && !ahb.is_null() {
-                Some(ahb)
-            } else {
-                None
-            }
-        };
-        #[cfg(not(all(target_os = "android", not(test))))]
-        let ahb_ptr: Option<*mut sys::AHardwareBuffer> = None;
-
-        let mut ts = 0i64;
-        let ts_ok = unsafe { sys::AImage_getTimestamp(image, &mut ts) };
-
-        // Input AHB zero-copy: when the producer handed us an AHardwareBuffer,
-        // MNN reads the sensor frame directly from it via input_ahb, so the CPU
-        // de-stride / u16→LE widen in copy_pixels() is dead work. Skip it.
-        let frame = if ahb_ptr.is_some() {
-            RawFrame {
-                timestamp_ns: if ts_ok == sys::media_status_t::AMEDIA_OK {
-                    ts.max(0) as u64
-                } else {
-                    0
-                },
-                data: Vec::new(),
-                width: width as u32,
-                height: height as u32,
-                ahb: ahb_ptr,
-            }
+        // Grab the AHB backing this frame *before* copying pixels. The AHB is
+        // producer-owned and valid while `image` (and thus `guard`) is alive.
+        let mut ahb: *mut sys::AHardwareBuffer = null_mut();
+        let ahb_status = unsafe { sys::AImage_getHardwareBuffer(image, &mut ahb) };
+        let ahb_ptr = if ahb_status == sys::media_status_t::AMEDIA_OK && !ahb.is_null() {
+            Some(ahb)
         } else {
-            self.copy_pixels(guard.0)?
+            None
         };
-        Ok(Some(frame))
+
+        let frame = self.copy_pixels(guard.0)?;
+        Ok(Some(RawFrame {
+            ahb: ahb_ptr,
+            ..frame
+        }))
     }
 
     /// Read plane 0 into a tightly packed `u16` Bayer buffer.
