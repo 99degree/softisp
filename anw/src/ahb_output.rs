@@ -221,6 +221,7 @@ pub(crate) struct AhbOutputSlot {
     generation: u64,
     busy: Arc<AtomicBool>,
     handoff: Arc<(Mutex<()>, Condvar)>,
+    graphics: bool,
 }
 
 // The NDK handles are owned by this struct and only touched on the worker that
@@ -235,6 +236,7 @@ impl std::fmt::Debug for AhbOutputSlot {
             .field("height", &self.height)
             .field("capacity", &self.capacity)
             .field("generation", &self.generation)
+            .field("graphics", &self.graphics)
             .finish_non_exhaustive()
     }
 }
@@ -275,19 +277,48 @@ impl AhbOutputSlot {
     /// tensor and re-acquires them on resize; an AHB cannot be reallocated in
     /// place, so the binding is deliberately oversized and never swapped.
     pub(crate) fn new(width: u32, height: u32, generation: u64) -> Result<Self, String> {
-        let capacity = slot_capacity_bytes(width, height);
+        Self::allocate(width, height, generation, false)
+    }
+
+    /// A graphics-format slot for the direct Vulkan path. SurfaceFlinger can
+    /// take a hardware overlay instead of the slow BLOB software path, and the
+    /// GPU still imports the AHB as a linear storage buffer on this device.
+    pub(crate) fn new_graphics(width: u32, height: u32, generation: u64) -> Result<Self, String> {
+        Self::allocate(width, height, generation, true)
+    }
+
+    fn allocate(width: u32, height: u32, generation: u64, graphics: bool) -> Result<Self, String> {
+        let capacity = if graphics {
+            (width as usize)
+                .saturating_mul(height as usize)
+                .saturating_mul(4)
+        } else {
+            slot_capacity_bytes(width, height)
+        };
         if capacity == 0 || capacity > u32::MAX as usize {
             return Err(format!("invalid AHB output capacity {capacity}"));
         }
 
         let mut desc: sys::AHardwareBuffer_Desc = unsafe { std::mem::zeroed() };
-        desc.width = capacity as u32;
-        desc.height = 1;
         desc.layers = 1;
-        desc.format = sys::AHardwareBuffer_Format::AHARDWAREBUFFER_FORMAT_BLOB.0;
-        desc.usage = sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0
-            | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN.0
-            | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER.0;
+        desc.format = if graphics {
+            sys::AHardwareBuffer_Format::AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM.0
+        } else {
+            sys::AHardwareBuffer_Format::AHARDWAREBUFFER_FORMAT_BLOB.0
+        };
+        if graphics {
+            desc.width = width;
+            desc.height = height;
+            desc.usage = sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0
+                | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN.0
+                | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER.0;
+        } else {
+            desc.width = capacity as u32;
+            desc.height = 1;
+            desc.usage = sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0
+                | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN.0
+                | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER.0;
+        }
 
         let mut ahb: *mut sys::AHardwareBuffer = null_mut();
         let rc = unsafe { sys::AHardwareBuffer_allocate(&desc, &mut ahb) };
@@ -325,6 +356,7 @@ impl AhbOutputSlot {
             generation,
             busy: Arc::new(AtomicBool::new(false)),
             handoff: Arc::new((Mutex::new(()), Condvar::new())),
+            graphics,
         })
     }
 

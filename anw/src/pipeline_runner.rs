@@ -268,7 +268,15 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                     .as_ref()
                     .is_none_or(|s| s.width() != w || s.height() != h);
                 if stale {
-                    match AhbOutputSlot::new(w, h, 0) {
+                    #[cfg(feature = "direct_vulkan")]
+                    let created = if direct_active && mnn.is_none() {
+                        AhbOutputSlot::new_graphics(w, h, 0)
+                    } else {
+                        AhbOutputSlot::new(w, h, 0)
+                    };
+                    #[cfg(not(feature = "direct_vulkan"))]
+                    let created = AhbOutputSlot::new(w, h, 0);
+                    match created {
                         Ok(slot) => {
                             ahb_slot = Some(slot);
                             prepared = None;

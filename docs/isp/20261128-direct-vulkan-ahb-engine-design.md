@@ -103,16 +103,24 @@ input or output buffer changes. There is no MNN session, no host upload, no
 A device probe confirmed the gralloc contract that blocked the first version:
 
 - `BLOB` + `GPU_DATA_BUFFER` imports as a `VkBuffer` on Adreno 618.
-- `RAW16` + `GPU_SAMPLED_IMAGE` imports as a `VkBuffer` but Vulkan reports memory
-  types `0x18` (`DEVICE_LOCAL`, no `HOST_VISIBLE`) and `vkAllocateMemory` fails
-  with `VK_ERROR_FEATURE_NOT_PRESENT` for both the plain and dedicated chains.
-- `RAW16` + `GPU_DATA_BUFFER` is rejected by gralloc before Vulkan sees it.
+- `RAW16` + `GPU_SAMPLED_IMAGE` reports AHB Vulkan properties (`allocationSize`,
+  memory types `0x18`) but `vkAllocateMemory` fails for both plain and dedicated
+  chains with `VkResult=5`. It also has no Vulkan image format
+  (`format=0 externalFormat=0`), so it cannot be a `VkImage` either.
+- `RAW16` + `GPU_DATA_BUFFER` is rejected by gralloc 4.0 before Vulkan sees it.
+- Requesting only `CPU_READ_OFTEN` on the ImageReader does not change this: the
+  resulting RAW16 AHB still fails `VkBuffer` import.
+- `VK_EXT_external_memory_dma_buf` is not exposed by the device, so the fd
+  import path is unavailable.
 
-Live MediaNDK frames have no `GPU_DATA_BUFFER` bit, so the direct engine uses
-the worker-owned BLOB input slot. The single de-stride copy into that slot is
-the last CPU step; from that point the frame is a GPU-owned `VkBuffer`. The
-output is a BLOB AHB bound as a storage `VkBuffer`; SurfaceFlinger reads it
-after the fence wait through a CPU read window opened only for presentation.
+Live MediaNDK frames therefore cannot be imported as Vulkan memory by any
+supported route. The direct engine uses the worker-owned BLOB input slot. The
+single de-stride copy into that slot is the last CPU step; from that point the
+frame is a GPU-owned `VkBuffer`. The output is an `R8G8B8A8_UNORM` AHB with
+`GPU_FRAMEBUFFER` usage, bound as a storage `VkBuffer`. SurfaceFlinger reads it
+through a hardware overlay path (no CPU software blit), which cut presentation
+from ~60–80 ms to ~28 ms and end-to-end frame time roughly in half. See
+`20261128-direct-vulkan-latency-analysis.md`.
 
 ### Verification
 
