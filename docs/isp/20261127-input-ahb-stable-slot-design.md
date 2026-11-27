@@ -27,12 +27,17 @@ uploaded zeros and the preview went black. See
 
 A second, independent blocker showed up while validating the stable slot: the
 wrapper's `ahb_capacity_bytes()` rejected every real AHB with `rc=-2`, and the
-output path reported `bytes=0`. `ensure_ahb_import_loaded()` only tried
-`dlsym("AHardwareBuffer_describe")` on `libnativewindow.so`, but that symbol is
-provided by `libandroid.so`. The resulting null function pointer made the
-capacity check fail before `setDevicePtr` was reached, so neither the input nor
-the output AHB could be imported. The fix resolves both AHB symbols from either
-library, with `libandroid.so` as the fallback.
+output path reported `bytes=0`. Two defects were involved:
+
+1. `ensure_ahb_import_loaded()` only tried `dlsym("AHardwareBuffer_describe")`
+   on `libnativewindow.so`; the symbol is also exported by `libandroid.so`.
+2. More importantly, the function-pointer typedef declared `describe` as
+   returning `int`, while the NDK declares it as `void`. Calling a void function
+   through that pointer produced a garbage nonzero status, so the capacity
+   check failed even after the library lookup was fixed.
+
+The fix resolves each AHB symbol from either library and uses the correct
+`void` signature for `AHardwareBuffer_describe`.
 
 ## Better implementation
 

@@ -27,7 +27,7 @@
 #include <android/hardware_buffer.h>
 
 typedef int (*pfnAHardwareBuffer_getFd)(AHardwareBuffer* buffer, int* fd);
-typedef int (*pfnAHardwareBuffer_describe)(const AHardwareBuffer* buffer, AHardwareBuffer_Desc* outDesc);
+typedef void (*pfnAHardwareBuffer_describe)(const AHardwareBuffer* buffer, AHardwareBuffer_Desc* outDesc);
 
 static std::once_flag g_ahb_import_load_flag;
 static pfnAHardwareBuffer_getFd g_ahb_get_fd = nullptr;
@@ -56,9 +56,7 @@ static bool ahb_capacity_bytes(void* ahb, size_t* out_bytes) {
         return false;
     }
     AHardwareBuffer_Desc desc{};
-    if (g_ahb_describe(static_cast<AHardwareBuffer*>(ahb), &desc) != 0) {
-        return false;
-    }
+    g_ahb_describe(static_cast<AHardwareBuffer*>(ahb), &desc);
     // BLOB buffers encode byte capacity in `width`; RGBA buffers are 4 B/px.
     if (desc.format == AHARDWAREBUFFER_FORMAT_BLOB) {
         *out_bytes = (size_t)desc.width * desc.height * desc.layers;
