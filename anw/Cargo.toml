@@ -31,6 +31,10 @@ default = ["mnn"]
 # needed at launch.
 mnn = ["cam-isp/mnn"]
 
+# Standalone Vulkan compute path. This bypasses MNN and runs a direct
+# RAW16-word -> packed BGRA compute shader over VkBuffer-backed AHBs.
+direct_vulkan = ["cam-isp/direct_vulkan"]
+
 # ── APK packaging (cargo-apk2) ───────────────────────────────────────────
 
 [package.metadata.android]

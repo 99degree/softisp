@@ -704,7 +704,7 @@ impl Preview {
                 "WARN",
                 "loop",
                 &format!(
-                    "frame took {:.1} ms (media_ndk_capture {:.1} / stager {:.1} / mnn_prepare {:.1} / mnn_inference {:.1} / mnn_output {:.1} / present {:.1} ms)",
+                    "frame took {:.1} ms (media_ndk_capture {:.1} / input_stage {:.1} / mnn_prepare {:.1} / mnn_inference {:.1} / mnn_output {:.1} / present {:.1} ms)",
                     pipeline_ms,
                     done.t_capture_ns as f64 / 1_000_000.0,
                     done.t_stage_ns as f64 / 1_000_000.0,
@@ -825,9 +825,11 @@ pub(crate) fn raw_to_grayscale_bgra(frame: &RawFrame) -> Vec<u8> {
 /// `mnn` builds name the Vulkan MNN engine, whose runtime libraries are bundled
 /// into the APK's `lib/arm64-v8a` by `runtime_libs`; without that feature the
 /// crate has no MNN code compiled in, so the CPU engine is the only choice.
-#[cfg(feature = "mnn")]
+#[cfg(feature = "direct_vulkan")]
+const ENGINE_NAME: &str = "direct_vulkan";
+#[cfg(all(feature = "mnn", not(feature = "direct_vulkan")))]
 const ENGINE_NAME: &str = "mnn_vulkan";
-#[cfg(not(feature = "mnn"))]
+#[cfg(not(any(feature = "mnn", feature = "direct_vulkan")))]
 const ENGINE_NAME: &str = "cpu";
 
 /// Log where the loader's `$ORIGIN` actually resolves at runtime.

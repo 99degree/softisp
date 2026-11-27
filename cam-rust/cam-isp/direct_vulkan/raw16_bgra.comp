@@ -1,0 +1,57 @@
+#version 450
+
+// Opaque RAW16 words -> packed BGRA words.
+// One invocation consumes two little-endian u16 samples packed into a u32 and
+// writes two BGRA8888 pixels. The RAW word is never interpreted as float.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer InBuf {
+    uint words[];
+} in_buf;
+
+layout(std430, set = 0, binding = 1) writeonly buffer OutBuf {
+    uint words[];
+} out_buf;
+
+layout(push_constant) uniform Params {
+    uvec2 size;
+    uint mode;
+} params;
+
+uint grey(uint value) {
+    return (value * 255u + 511u) / 1023u;
+}
+
+uint bgra(uint value) {
+    uint g = grey(value);
+    return 0xff000000u | (g << 16u) | (g << 8u) | g;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uint pixels = params.size.x * params.size.y;
+    uint words_total = (pixels + 1u) / 2u;
+    if (index >= words_total) {
+        return;
+    }
+
+    uint word = in_buf.words[index];
+    uint lo = word & 0xffffu;
+    uint hi = (word >> 16u) & 0xffffu;
+    uint out_index = index * 2u;
+
+    if (params.mode == 0u) {
+        out_buf.words[out_index] = bgra(lo);
+        if (out_index + 1u < pixels) {
+            out_buf.words[out_index + 1u] = bgra(hi);
+        }
+    } else {
+        uint gl = grey((lo + hi) / 2u);
+        uint packed = 0xff000000u | (gl << 16u) | (gl << 8u) | gl;
+        out_buf.words[out_index] = packed;
+        if (out_index + 1u < pixels) {
+            out_buf.words[out_index + 1u] = packed;
+        }
+    }
+}

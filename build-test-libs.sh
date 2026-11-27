@@ -80,7 +80,12 @@ else
     echo "  keeping current MNN libs (--core-only)"
 fi
 
-cargo apk2 -- build -p softisp-anw
+EXTRA_FEATURES=()
+if [ "${DIRECT_VULKAN:-0}" = "1" ]; then
+    EXTRA_FEATURES=(--features direct_vulkan)
+fi
+
+cargo apk2 -- build -p softisp-anw "${EXTRA_FEATURES[@]}"
 sync
 
 if [ ! -f "$CORE_LIB" ]; then

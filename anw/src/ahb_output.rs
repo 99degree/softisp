@@ -30,7 +30,8 @@ use std::ffi::c_void;
 use std::ffi::{c_char, c_int, CStr};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use cam_types::{AhbBinding, AhbFenceTokens};
 use ndk_sys as sys;
@@ -149,6 +150,7 @@ pub(crate) struct AhbView {
     ahb: *mut std::ffi::c_void,
     len: usize,
     busy: Arc<AtomicBool>,
+    handoff: Arc<(Mutex<()>, Condvar)>,
 }
 
 // The pointer is owned by the worker's `AhbOutputSlot`, which outlives every
@@ -164,12 +166,16 @@ impl AhbView {
             ahb: slot.ahb as *mut std::ffi::c_void,
             len: slot.display_bytes(),
             busy: Arc::clone(&slot.busy),
+            handoff: Arc::clone(&slot.handoff),
         }
     }
 
     /// Bytes the presenter is allowed to read: one BGRA pixel per output pixel.
     pub(crate) fn bytes(&self) -> &[u8] {
         let ptr = self.map.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return &[];
+        }
         unsafe { std::slice::from_raw_parts(ptr, self.len) }
     }
 
@@ -194,7 +200,10 @@ impl AhbView {
     }
 
     pub(crate) fn mark_free(&self) {
+        let (lock, cv) = self.handoff.as_ref();
+        let _guard = lock.lock().unwrap();
         self.busy.store(false, Ordering::Release);
+        cv.notify_all();
     }
 }
 
@@ -211,6 +220,7 @@ pub(crate) struct AhbOutputSlot {
     height: u32,
     generation: u64,
     busy: Arc<AtomicBool>,
+    handoff: Arc<(Mutex<()>, Condvar)>,
 }
 
 // The NDK handles are owned by this struct and only touched on the worker that
@@ -314,6 +324,7 @@ impl AhbOutputSlot {
             height,
             generation,
             busy: Arc::new(AtomicBool::new(false)),
+            handoff: Arc::new((Mutex::new(()), Condvar::new())),
         })
     }
 
@@ -332,6 +343,23 @@ impl AhbOutputSlot {
             AhbFenceTokens::new(-1, -1, self.generation),
         );
         (binding, (self.map.load(Ordering::Acquire), self.capacity))
+    }
+
+    /// Close the CPU window before a direct Vulkan dispatch.
+    ///
+    /// The direct engine imports the AHB as `VkDeviceMemory` and writes from
+    /// the GPU. Keeping a CPU mapping open across that write violates the
+    /// zero-copy contract, so the slot is unmapped here and reopened by the
+    /// presenter after the fence wait.
+    pub(crate) fn begin_gpu_window(&self) -> Result<(), String> {
+        if !self.map.load(Ordering::Acquire).is_null() {
+            let rc = unsafe { sys::AHardwareBuffer_unlock(self.ahb, null_mut()) };
+            if rc != 0 {
+                return Err(format!("AHardwareBuffer_unlock(output) failed: rc={rc}"));
+            }
+            self.map.store(null_mut(), Ordering::Release);
+        }
+        Ok(())
     }
 
     /// Restore a CPU window for the worker before the next inference. The
@@ -363,32 +391,32 @@ impl AhbOutputSlot {
     }
 
     pub(crate) fn mark_free(&self) {
+        let (lock, cv) = self.handoff.as_ref();
+        let _guard = lock.lock().unwrap();
         self.busy.store(false, Ordering::Release);
+        cv.notify_all();
     }
 
     /// Block until the presenter has released this worker's slot.
     ///
-    /// This is a per-worker handoff, not a cross-engine lock: the other worker
-    /// keeps running. Spinning is bounded because the presenter only does a
-    /// blit; verbose mode records every occurrence so a slow surface is
-    /// visible in the diagnostic log.
+    /// The waiter sleeps on a condition variable instead of burning CPU: a
+    /// worker can outrun the presenter, and that backpressure is normal. The
+    /// busy flag still prevents the GPU from overwriting pixels in flight.
     pub(crate) fn wait_free(&self) {
-        let mut spins = 0u64;
-        while self.busy.load(Ordering::Acquire) && spins < 1_000_000 {
-            std::thread::yield_now();
-            spins += 1;
+        let (lock, cv) = self.handoff.as_ref();
+        let mut guard = lock.lock().unwrap();
+        let start = Instant::now();
+        while self.busy.load(Ordering::Acquire) {
+            let (next, _) = cv.wait_timeout(guard, Duration::from_millis(500)).unwrap();
+            guard = next;
         }
-        if spins > 0 {
+        drop(guard);
+        let waited = start.elapsed();
+        if waited >= Duration::from_millis(100) {
             slot_debug(format!(
-                "waited {spins} yields for generation {} presenter handoff",
+                "waited {waited:?} for generation {} presenter handoff",
                 self.generation
             ));
-        }
-        if self.busy.load(Ordering::Acquire) {
-            log::warn!(
-                "AHB output slot generation {} still busy after 1M yields; presenting may tear",
-                self.generation
-            );
         }
     }
 }

@@ -75,6 +75,10 @@ pub mod calibration;
 pub mod ccm_engine;
 pub mod demosaic;
 pub mod deshake;
+#[cfg(feature = "direct_vulkan")]
+pub mod direct_vulkan;
+#[cfg(feature = "direct_vulkan")]
+pub mod direct_vulkan_sys;
 pub mod eis;
 pub mod format_convert;
 pub mod genetic;
@@ -130,6 +134,10 @@ pub fn init() {
             simd::selector::active_backend_name()
         );
         cpu::register_cpu_engine();
+        #[cfg(feature = "direct_vulkan")]
+        {
+            direct_vulkan::DirectVulkanEngine::register_factories();
+        }
         #[cfg(feature = "mnn")]
         {
             mnnengine::MnnEngine::register_factories();

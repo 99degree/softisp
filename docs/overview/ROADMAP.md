@@ -191,7 +191,7 @@ at 4K:
 | 4 | Cache `get_output()` shape/type/channel derivation and `CString` names in `PreparedMeta` | per-frame metadata reconstruction | DONE — `docs/isp/20261126-output-meta-cache.md` |
 | 5 | Release the buffer-pool guard before `runSession`; reacquire only for the output copy | lock contention between workers | TODO — helps concurrency, not single-frame latency |
 | 6 | Resize/warm every session slot once at startup | first-frame stalls after a geometry change | TODO |
-| 7 | Bind the camera buffer directly instead of `FrameStager`'s CPU copy | input staging | PARTIAL — input AHB now bound before `resize()` in `mnnengine.rs::prepare()` and `copyFromHostTensor` is skipped when the input tensor carries `MNN_MEMORY_AHARDWAREBUFFER`; remaining work is the media-NDK side: `AImage_getHardwareBuffer` → `input_ahb`, skip `copy_pixels()` de-stride (`anw/src/camera.rs`, `anw/src/pipeline_runner.rs`). See `docs/guides/NDK_CAMERA_CAPTURE_STUDY.md` and `docs/isp/ZERO_COPY_NCNN_COMPARISON.md`. |
+| 7 | Bind the camera buffer directly instead of `FrameStager`'s CPU copy | input staging | PARTIAL — `FrameStager` is retired; `anw/src/camera.rs` acquires the MediaNDK RAW16 AHB and `mnnengine.rs` binds it to the session input with targeted rebind. The reader requests `GPU_SAMPLED_IMAGE`, and the host `u16` bytes remain only as a fallback for rejected imports. Pre-bound camera targets and acquire/release fences are still TODO. See `docs/isp/20261127-camera-ahb-rebind-session-error.md`. |
 | 8 | Lower preview resolution, fp16 storage, or a lighter profile (`MED`/`LITE`) | `runSession` itself | TODO — algorithmic, not plumbing |
 | 9 | Raise the session pool above two slots | `acquire()` blocking when more than two frames are in flight | Deferred — one-frame-ahead prep is already covered; extra slots cost Vulkan memory and a first-frame resize (four slots at 5 Mpx previously got the process killed) |
 | 10 | Copy the stats output into the next metadata input device-to-device | host round-trip | Rejected as stated — MNN tensor roles are fixed by the graph; output→host→input costs two copies plus a sync, and Vulkan `onCopyBuffer` still calls `_finish()` |
@@ -590,11 +590,14 @@ writes `tensor->buffer().device = dev` + `flags`, the two backends diverge compl
   shorten warm-up.
 - **Current state:** P2c already splits `MnnEngine` into `prepare()` /
   `run_prepared()` / `finish()`, and the workers prep before capture and call
-  `finish()` after presentation. However capture still goes through
-  `AImageReader_acquireLatestImage` plus a CPU copy, presentation still uses
-  `ANativeWindow_lock` and a CPU blit. The output AHB field is live by default
-  (the fork imports it in `onAcquire`), but the input AHB field is not wired for
-  the APK. The two overlap opportunities are therefore not yet live.
+  `finish()` after presentation. Capture still goes through
+  `AImageReader_acquireLatestImage` and keeps host bytes as a fallback, but the
+  RAW16 AHB is now acquired with `AHardwareBuffer_acquire()` and bound directly
+  to the session input when the reader grants `GPU_SAMPLED_IMAGE`; `FrameStager`
+  is gone. Presentation still uses `ANativeWindow_lock` and a CPU blit. The
+  output AHB field is live by default (the fork imports it in `onAcquire`).
+  Full overlap is not live because the camera target is still reader-owned and
+  the acquire/release fences are not consumed by Vulkan.
 - **Proposed input path:** allocate/bind the input AHB before capture and hand
   it to camera2 as the capture target. While the sensor writes that buffer,
   `prepare()` snapshots the already-current controller state and uploads the
@@ -763,6 +766,19 @@ New crates added to the workspace:
   tests, and the ignored `probe_isp_ccm_bindings`, `probe_wb_fused`, and
   `probe_isp_contract` MNN probes are clean. `RUNTIME_PARAMS.md`,
   `BAYER_WB_DESIGN.md`, and the perf-phase findings were updated with aliases.
+
+## Direct Vulkan AHB engine
+
+- **Status:** implemented behind `direct_vulkan` in `cam-isp` and `softisp-anw`,
+  selected with `ENGINE_NAME=direct_vulkan`. It bypasses MNN, imports
+  worker-owned BLOB AHBs as Vulkan storage buffers, runs a passthrough/grayscale
+  compute shader, and writes into a zero-copy output AHB. Live RAW16 camera AHBs
+  cannot be imported as storage buffers on this device, so one de-stride copy
+  into the BLOB input slot remains the final CPU step. Design and verification:
+  `docs/isp/20261128-direct-vulkan-ahb-engine-design.md`.
+- **Production check:** non-black frames (`rgb mean ~22`, `max 255`,
+  `non-black 100.0%`) with clean logs and matching MD5s for all eight uploaded
+  libraries.
 
 ## Build & Test
 

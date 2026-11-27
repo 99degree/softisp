@@ -12,11 +12,12 @@
 //!   - x86_64-linux  (Linux x86_64)
 //!
 //! Include priority:
-//!   1. $HOME/MNN (or MNN_DIR) when present — always used for the latest headers.
-//!   2. cam-isp/vendor/mnn — checked-in fallback headers copied from ~/MNN.
+//!   1. <repo>/third_party/MNN (symlink to the local MNN checkout) when present.
+//!   2. $HOME/MNN (or MNN_DIR) when present — legacy local checkout.
+//!   3. cam-isp/vendor/mnn — checked-in fallback headers.
 //!
 //! Override with:
-//!   MNN_DIR           — MNN source/build root (default: $HOME/MNN)
+//!   MNN_DIR           — MNN source/build root (default: <repo>/third_party/MNN)
 //!   MNN_INCLUDE_DIR   — MNN include directory (default: $MNN_DIR/include)
 //!   MNN_LIB_DIR       — libMNN.so build directory (default: $MNN_DIR/build_isp)
 //!   MNN_CONVERT_DIR   — libMNNConvertDeps.so build directory (default: $MNN_DIR/build_isp/tools/converter)
@@ -48,6 +49,9 @@ fn main() {
         link_mnn();
         link_mnnconvert();
     }
+
+    #[cfg(feature = "direct_vulkan")]
+    link_direct_vulkan();
 
     // No JNI library is linked: the app has no Java layer, and the crate
     // exposes only the C ABI in `cabi.rs` plus the Rust entry points.
@@ -332,6 +336,29 @@ fn abi_suffix() -> String {
 //  MNN / converter linking
 // ═══════════════════════════════════════════════════════════════════
 
+#[cfg(feature = "direct_vulkan")]
+fn link_direct_vulkan() {
+    println!("cargo:rerun-if-changed=direct_vulkan/direct_vulkan.cpp");
+    println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra.comp");
+    println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_spv.inc");
+
+    let mut build = cc::Build::new();
+    build
+        .cpp(true)
+        .std("c++17")
+        .file("direct_vulkan/direct_vulkan.cpp");
+    setup_cc_for_android(&mut build);
+    build.compile("direct_vulkan");
+
+    println!("cargo:rustc-link-lib=vulkan");
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "android" {
+        println!("cargo:rustc-link-lib=c++_shared");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
+}
+
 #[cfg(feature = "ort")]
 fn link_onnxruntime() {
     let abi_dir = abi_dir();
@@ -384,7 +411,15 @@ fn link_mnn() {
             .cpp(true)
             .std("c++17")
             .file(wrapper_src)
-            .include(&mnn_include);
+            .include(&mnn_include)
+            // Backend.hpp / TensorUtils.hpp are private MNN headers; the tensor
+            // re-acquire path needs them to drop and rebuild the cached Vulkan
+            // import without a full session resize. Their includes need the
+            // core, generated schema, and flatbuffers paths.
+            .include(mnn_root.join("source"))
+            .include(mnn_root.join("source/core"))
+            .include(mnn_root.join("schema/current"))
+            .include(mnn_root.join("3rd_party/flatbuffers/include"));
 
         // Android NDK cross-compilation: set compiler flags
         setup_cc_for_android(&mut build);
@@ -628,8 +663,13 @@ fn mnn_dir() -> PathBuf {
     if let Ok(path) = std::env::var("MNN_DIR") {
         PathBuf::from(path)
     } else {
-        let home = std::env::var("HOME").expect("HOME must be set");
-        PathBuf::from(home).join("MNN")
+        let subproject = repo_root().join("third_party/MNN");
+        if subproject.exists() {
+            subproject
+        } else {
+            let home = std::env::var("HOME").expect("HOME must be set");
+            PathBuf::from(home).join("MNN")
+        }
     }
 }
 

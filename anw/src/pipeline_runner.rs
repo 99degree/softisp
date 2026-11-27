@@ -16,6 +16,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "direct_vulkan")]
+use cam_isp::direct_vulkan::DirectVulkanEngine;
 use cam_isp::engine::{IspEngine, PrepareParams};
 use cam_isp::mnnengine::{MnnEngine, PreparedFrame};
 
@@ -23,7 +25,7 @@ use crate::ahb_input::AhbInputSlot;
 use crate::ahb_output::{self, AhbOutputSlot, AhbView};
 use crate::app::{raw_stats, raw_to_grayscale_bgra, FrameKind, RawStats};
 use crate::camera::{CameraSession, RawFrame};
-use crate::pipeline::{FrameStager, PipelineConfig};
+use crate::pipeline::PipelineConfig;
 
 /// Cloneable cancellation signal shared with code outside the workers.
 #[derive(Clone, Debug)]
@@ -237,8 +239,19 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         config,
         tx,
     } = shared;
-    let mut stager = FrameStager::new();
     let mnn = engine.as_any().downcast_ref::<MnnEngine>();
+    #[cfg(feature = "direct_vulkan")]
+    let direct = engine.as_any().downcast_ref::<DirectVulkanEngine>();
+    #[cfg(feature = "direct_vulkan")]
+    let direct_active = direct.is_some();
+    #[cfg(not(feature = "direct_vulkan"))]
+    let direct_active = false;
+    #[cfg(feature = "direct_vulkan")]
+    let uses_ahb = mnn.is_some() || direct.is_some();
+    #[cfg(not(feature = "direct_vulkan"))]
+    let uses_ahb = mnn.is_some();
+    let input_ahb_off = std::env::var_os("SOFTISP_INPUT_AHB_OFF").is_some()
+        || std::path::Path::new("/sdcard/download/softisp-input-ahb-off").exists();
     let mut geometry: Option<(u32, u32)> = None;
     let mut prepared: Option<PreparedFrame<'_>> = None;
     let mut ahb_slot: Option<AhbOutputSlot> = None;
@@ -249,7 +262,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         // for the session lifetime. Rebinding would leave MNN's imported
         // VkBuffer pointing at the old buffer, so a size change drops and
         // recreates the slot (and invalidates any staged prepare).
-        if ahb_output::output_ahb_enabled() && mnn.is_some() {
+        if ahb_output::output_ahb_enabled() && uses_ahb {
             if let Some((w, h)) = geometry {
                 let stale = ahb_slot
                     .as_ref()
@@ -269,7 +282,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         // MNN caches the imported AHB for a tensor/geometry, so the input slot
         // must stay stable until the geometry changes. A new slot invalidates
         // the prepared session; the binding is reinstalled before its resize.
-        if mnn.is_some() {
+        if uses_ahb && !input_ahb_off {
             if let Some((w, h)) = geometry {
                 let stale = input_ahb_slot
                     .as_ref()
@@ -345,21 +358,42 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         };
         geometry = Some((frame.width, frame.height));
 
+        #[cfg(feature = "direct_vulkan")]
+        if direct_active && mnn.is_none() && (input_ahb_slot.is_none() || ahb_slot.is_none()) {
+            if let Some(slot) = ahb_slot.as_ref() {
+                slot.mark_free();
+            }
+            log::debug!("direct Vulkan waiting for AHB slots; dropping warmup frame");
+            continue;
+        }
+
         // Assigned under the camera lock above, so sequence order == capture
-        // order even though the two workers finish in either order.
+        // order even though the two workers finish in either order. Every
+        // assigned sequence must reach the presenter: skipping one would stall
+        // `PipelineRunner::poll()` forever at that missing sequence.
         let s = seq.fetch_add(1, Ordering::SeqCst);
         let raw = raw_stats(&frame.data);
 
         let stage_t0 = Instant::now();
-        let camera_ahb = frame
-            .ahb
-            .as_ref()
-            .map(|ahb| ahb.ptr() as *mut std::ffi::c_void);
-        let (staged, pooled_ahb_staged) = if camera_ahb.is_some() {
-            // Keep valid host bytes as the fallback: a rejected AHB import must
-            // upload real pixels, never an empty slice.
-            (stager.stage(&frame), false)
+        // RAW16 camera AHBs on this device expose only sampled-image Vulkan
+        // memory types and cannot be imported as storage VkBuffers. The direct
+        // engine therefore uses its stable BLOB input slot instead; the single
+        // de-stride copy into that slot is the last CPU step before the GPU.
+        let camera_ahb = if input_ahb_off || direct_active {
+            None
         } else {
+            frame
+                .ahb
+                .as_ref()
+                .map(|ahb| ahb.ptr() as *mut std::ffi::c_void)
+        };
+        // The `u16` samples are already little-endian bytes in memory; expose
+        // them without a second widening pass. A camera AHB is bound directly
+        // to MNN, so this slice is only the fallback upload source.
+        let host_bytes = frame.data_bytes();
+        let (staged, pooled_ahb_staged) = if camera_ahb.is_some() {
+            (host_bytes, false)
+        } else if uses_ahb {
             match input_ahb_slot
                 .as_ref()
                 .filter(|slot| slot.matches(frame.width, frame.height))
@@ -368,11 +402,13 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                     Ok(()) => (slot.bytes(), true),
                     Err(e) => {
                         log::warn!("input AHB staging failed: {e}; using host staging");
-                        (stager.stage(&frame), false)
+                        (host_bytes, false)
                     }
                 },
-                None => (stager.stage(&frame), false),
+                None => (host_bytes, false),
             }
+        } else {
+            (host_bytes, false)
         };
 
         let (data, width, height, kind, error) = if show_raw.load(Ordering::Relaxed) {
@@ -411,19 +447,97 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                 // from overwriting pixels the surface may still be reading.
                 slot.wait_free();
                 slot.mark_busy();
-                match slot.begin_worker_window() {
-                    Ok(()) => {
-                        let (binding, buf) = slot.buffers();
-                        params.output_buffer = Some(buf);
-                        params.output_ahb = Some(binding);
+                if mnn.is_some() {
+                    match slot.begin_worker_window() {
+                        Ok(()) => {
+                            let (binding, buf) = slot.buffers();
+                            params.output_buffer = Some(buf);
+                            params.output_ahb = Some(binding);
+                        }
+                        Err(e) => {
+                            log::warn!("AHB output CPU window failed: {e}; using host copy");
+                            slot.mark_free();
+                            prepared = None;
+                        }
                     }
-                    Err(e) => {
-                        log::warn!("AHB output CPU window failed: {e}; using host copy");
-                        slot.mark_free();
-                        prepared = None;
+                } else {
+                    match slot.begin_gpu_window() {
+                        Ok(()) => {
+                            let (binding, _) = slot.buffers();
+                            params.output_ahb = Some(binding);
+                        }
+                        Err(e) => {
+                            log::warn!("AHB output GPU window failed: {e}; using host copy");
+                            slot.mark_free();
+                        }
                     }
                 }
             }
+            #[cfg(feature = "direct_vulkan")]
+            if direct.is_some() && mnn.is_none() {
+                match engine.process(&params) {
+                    Ok(out) => {
+                        let kind = if config.float_output() {
+                            FrameKind::PlanarRgbF32
+                        } else {
+                            FrameKind::Bgra
+                        };
+                        let done = Done {
+                            seq: s,
+                            worker,
+                            raw,
+                            t_capture_ns: capture_t0.elapsed().as_nanos() as u64,
+                            t_stage_ns: stage_t0.elapsed().as_nanos() as u64,
+                            t_mnn_prepare_ns: 0,
+                            t_mnn_inference_ns: out.inference_duration_ns,
+                            t_mnn_output_ns: 0,
+                            error: None,
+                            data: out.data,
+                            ahb: ahb_slot.as_ref().map(|slot| slot.view()),
+                            width: out.width,
+                            height: out.height,
+                            kind,
+                        };
+                        let ok = tx.send(done).is_ok();
+                        if !ok {
+                            if let Some(slot) = ahb_slot.as_ref() {
+                                slot.mark_free();
+                            }
+                        }
+                        if !ok || stop.load(Ordering::Acquire) {
+                            break;
+                        }
+                        continue;
+                    }
+                    Err(e) => {
+                        if let Some(slot) = ahb_slot.as_ref() {
+                            slot.mark_free();
+                        }
+                        let done = Done {
+                            seq: s,
+                            worker,
+                            raw,
+                            t_capture_ns: capture_t0.elapsed().as_nanos() as u64,
+                            t_stage_ns: stage_t0.elapsed().as_nanos() as u64,
+                            t_mnn_prepare_ns: 0,
+                            t_mnn_inference_ns: 0,
+                            t_mnn_output_ns: 0,
+                            error: Some(e.to_string()),
+                            data: Vec::new(),
+                            ahb: None,
+                            width: frame.width,
+                            height: frame.height,
+                            kind: FrameKind::Bgra,
+                        };
+                        let ok = tx.send(done).is_ok();
+                        if !ok || stop.load(Ordering::Acquire) {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            }
+
             let expected = PrepareParams::from(&params);
             let staged_result = match (mnn, prepared.take()) {
                 (Some(mnn), Some(prep)) if prep.prepare_params() == expected => {

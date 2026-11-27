@@ -73,6 +73,7 @@ name = "test_conv_pack"
 required-features = ["mnn"]
 
 [features]
+direct_vulkan = []
 mnn_buffer = []
 ort = ["dep:ort"]
 mnn = ["mnn_buffer"]
