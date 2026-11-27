@@ -324,7 +324,6 @@ impl Preview {
             session,
             has_raw,
             sensor_max,
-            black_level,
             bayer_pattern,
             sensor_width,
             sensor_height,
@@ -332,19 +331,17 @@ impl Preview {
         ) = match CameraSession::open_default() {
             Ok(s) => {
                 log::info!(
-                        "Camera supports RAW16={}, sensor_max={}, bayer={}, sensor={}x{} orientation={}, black_level={:?}",
+                        "Camera supports RAW16={}, sensor_max={}, bayer={}, sensor={}x{} orientation={}",
                         s.is_raw(),
                         s.sensor_max(),
                         s.bayer_pattern(),
                         s.sensor_width(),
                         s.sensor_height(),
-                        s.sensor_orientation(),
-                        s.black_level()
+                        s.sensor_orientation()
                     );
                 let props = (
                     s.is_raw(),
                     s.sensor_max(),
-                    s.black_level(),
                     s.bayer_pattern(),
                     s.sensor_width(),
                     s.sensor_height(),
@@ -358,21 +355,11 @@ impl Preview {
                     props.3,
                     props.4,
                     props.5,
-                    props.6,
                 )
             }
             Err(e) => {
                 log::warn!("Could not open camera for capability check: {e}");
-                (
-                    None,
-                    false,
-                    1023.0,
-                    [0.0; 4],
-                    crate::camera::BGGR,
-                    1600,
-                    1200,
-                    0,
-                )
+                (None, false, 1023.0, crate::camera::BGGR, 1600, 1200, 0)
             }
         };
 
@@ -499,7 +486,6 @@ impl Preview {
         let show_raw = Arc::new(AtomicBool::new(false));
         let config = PipelineConfig {
             sensor_max,
-            black_level,
             bayer_pattern,
         };
         let runner =
@@ -557,7 +543,6 @@ impl Preview {
                 // actually saturates higher.
                 self.config = PipelineConfig {
                     sensor_max: s.sensor_max(),
-                    black_level: s.black_level(),
                     bayer_pattern: s.bayer_pattern(),
                 };
                 log::info!(

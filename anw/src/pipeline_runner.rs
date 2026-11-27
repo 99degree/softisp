@@ -550,7 +550,6 @@ mod tests {
             [make_engine(), make_engine()],
             PipelineConfig {
                 sensor_max: 1023.0,
-                black_level: [0.0; 4],
                 bayer_pattern: 0,
             },
             Arc::new(AtomicBool::new(false)),
@@ -582,7 +581,6 @@ mod tests {
         let drops = Arc::new(AtomicUsize::new(0));
         let config = PipelineConfig {
             sensor_max: 1023.0,
-            black_level: [0.0; 4],
             bayer_pattern: 0,
         };
         let show_raw = Arc::new(AtomicBool::new(false));
