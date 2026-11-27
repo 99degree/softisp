@@ -73,9 +73,6 @@ pub const BGGR: i32 = 3;
 /// the common case among phones that omit `SENSOR_INFO_WHITE_LEVEL`.
 const DEFAULT_WHITE_LEVEL: i32 = 1023;
 
-/// Black level assumed when the sensor does not report one.
-const DEFAULT_BLACK_LEVEL: f32 = 0.0;
-
 /// Sensor properties that shape how frames must be interpreted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SensorInfo {
@@ -91,8 +88,6 @@ pub struct SensorInfo {
     pub sensor_orientation: i32,
     /// Full-well capacity: the sample value the sensor saturates at.
     pub sensor_max: f32,
-    /// Black level per Bayer channel `[R, Gr, Gb, B]` in raw sensor counts.
-    pub black_level: [f32; 4],
     /// `true` when the camera advertises the RAW capability.
     pub raw_supported: bool,
     /// Stream geometry to create the reader at, chosen from the camera's own
@@ -132,7 +127,6 @@ pub struct CameraSession {
     output_container: *mut sys::ACaptureSessionOutputContainer,
     bayer_pattern: i32,
     sensor_max: f32,
-    black_level: [f32; 4],
     raw: bool,
     sensor_width: u32,
     sensor_height: u32,
@@ -162,7 +156,6 @@ impl CameraSession {
             output_container: null_mut(),
             bayer_pattern: BGGR,
             sensor_max: DEFAULT_WHITE_LEVEL as f32,
-            black_level: [DEFAULT_BLACK_LEVEL; 4],
             raw: true,
             sensor_width: 0,
             sensor_height: 0,
@@ -332,7 +325,6 @@ impl CameraSession {
                         self.raw = true;
                         self.bayer_pattern = info.bayer_pattern;
                         self.sensor_max = info.sensor_max;
-                        self.black_level = info.black_level;
                         // Record the *capture* geometry, not the sensor's
                         // active array: the reader is created at this size, so
                         // frames arrive at these dimensions and the ISP chain
@@ -412,22 +404,6 @@ impl CameraSession {
         let white_level = entry_i32(chars, white_tag)
             .and_then(|v| v.first().copied())
             .unwrap_or(DEFAULT_WHITE_LEVEL);
-        // `ACAMERA_SENSOR_BLACK_LEVEL_PATTERN` is `[4]` i32 per Bayer channel
-        // `[R, Gr, Gb, B]` in raw sensor counts; `ACAMERA_SENSOR_DYNAMIC_BLACK_LEVEL`
-        // is a single scalar fallback if the pattern is absent.
-        let black_level = match entry_i32(
-            chars,
-            sys::acamera_metadata_tag::ACAMERA_SENSOR_BLACK_LEVEL_PATTERN.0,
-        ) {
-            Some(v) if v.len() >= 4 => [v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32],
-            _ => match entry_i32(
-                chars,
-                sys::acamera_metadata_tag::ACAMERA_SENSOR_DYNAMIC_BLACK_LEVEL.0,
-            ) {
-                Some(v) if !v.is_empty() => [v[0] as f32; 4],
-                _ => [DEFAULT_BLACK_LEVEL; 4],
-            },
-        };
         let raw_supported = has_raw_capability(chars);
         // Resolve the stream geometry while the metadata is still alive: the
         // configuration list is the only authority on which reader sizes the
@@ -442,7 +418,6 @@ impl CameraSession {
             bayer_pattern,
             sensor_orientation,
             sensor_max: white_level.max(1) as f32,
-            black_level,
             raw_supported,
             capture: sizes[0],
             sizes,
@@ -555,12 +530,6 @@ impl CameraSession {
         self.sensor_max
     }
 
-    /// Black level per Bayer channel `[R, Gr, Gb, B]` reported by the sensor,
-    /// or zeros when the sensor does not report one.
-    pub fn black_level(&self) -> [f32; 4] {
-        self.black_level
-    }
-
     /// Active array width of the sensor.
     pub fn sensor_width(&self) -> u32 {
         self.sensor_width
@@ -613,58 +582,21 @@ impl CameraSession {
         // Every path below drops the guard, which closes the image exactly once.
         let guard = ImageGuard(image);
 
-        // Grab width/height/timestamp and the backing AHB *before* deciding
-        // whether to CPU de-stride. The AHB is producer-owned and valid while
-        // `image` (and thus `guard`) is alive.
-        let mut width = 0i32;
-        let mut height = 0i32;
-        media_check(
-            unsafe { sys::AImage_getWidth(image, &mut width) },
-            "AImage_getWidth",
-        )?;
-        media_check(
-            unsafe { sys::AImage_getHeight(image, &mut height) },
-            "AImage_getHeight",
-        )?;
-
-        // `AImage_getHardwareBuffer` is Android-only (API 26+) and only available
-        // on device (not in host test builds), so fall back to the CPU de-stride
-        // path otherwise.
-        #[cfg(all(target_os = "android", not(test)))]
-        let ahb_ptr: Option<*mut sys::AHardwareBuffer> = {
-            let mut ahb: *mut sys::AHardwareBuffer = null_mut();
-            let ahb_status = unsafe { sys::AImage_getHardwareBuffer(image, &mut ahb) };
-            if ahb_status == sys::media_status_t::AMEDIA_OK && !ahb.is_null() {
-                Some(ahb)
-            } else {
-                None
-            }
-        };
-        #[cfg(not(all(target_os = "android", not(test))))]
-        let ahb_ptr: Option<*mut sys::AHardwareBuffer> = None;
-
-        let mut ts = 0i64;
-        let ts_ok = unsafe { sys::AImage_getTimestamp(image, &mut ts) };
-
-        // Input AHB zero-copy: when the producer handed us an AHardwareBuffer,
-        // MNN reads the sensor frame directly from it via input_ahb, so the CPU
-        // de-stride / u16→LE widen in copy_pixels() is dead work. Skip it.
-        let frame = if ahb_ptr.is_some() {
-            RawFrame {
-                timestamp_ns: if ts_ok == sys::media_status_t::AMEDIA_OK {
-                    ts.max(0) as u64
-                } else {
-                    0
-                },
-                data: Vec::new(),
-                width: width as u32,
-                height: height as u32,
-                ahb: ahb_ptr,
-            }
+        // Grab the AHB backing this frame *before* copying pixels. The AHB is
+        // producer-owned and valid while `image` (and thus `guard`) is alive.
+        let mut ahb: *mut sys::AHardwareBuffer = null_mut();
+        let ahb_status = unsafe { sys::AImage_getHardwareBuffer(image, &mut ahb) };
+        let ahb_ptr = if ahb_status == sys::media_status_t::AMEDIA_OK && !ahb.is_null() {
+            Some(ahb)
         } else {
-            self.copy_pixels(guard.0)?
+            None
         };
-        Ok(Some(frame))
+
+        let frame = self.copy_pixels(guard.0)?;
+        Ok(Some(RawFrame {
+            ahb: ahb_ptr,
+            ..frame
+        }))
     }
 
     /// Read plane 0 into a tightly packed `u16` Bayer buffer.
