@@ -65,6 +65,7 @@ extern "C" {
     ) -> *mut c_void;
     pub fn mnn_session_release(interpreter: *mut c_void, session: *mut c_void);
     pub fn mnn_session_resize(interpreter: *mut c_void, session: *mut c_void) -> c_int;
+    pub fn mnn_session_resize_for_rebind(interpreter: *mut c_void, session: *mut c_void) -> c_int;
     pub fn mnn_session_run(interpreter: *mut c_void, session: *mut c_void) -> c_int;
     pub fn mnn_session_get_input_v2(
         interpreter: *mut c_void,
@@ -527,6 +528,16 @@ impl MnnSessionSafe {
             Ok(())
         } else {
             Err("Session resize failed".to_string())
+        }
+    }
+
+    /// Re-acquire session tensors after rebinding an AHB without a shape change.
+    pub fn resize_for_rebind(&self) -> Result<(), String> {
+        let ret = unsafe { mnn_session_resize_for_rebind(self.interpreter, self.inner) };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err("Session rebind resize failed".to_string())
         }
     }
 

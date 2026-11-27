@@ -268,6 +268,15 @@ int mnn_session_resize(MnnInterpreter interpreter, MnnSession session) {
     return 0;
 }
 
+int mnn_session_resize_for_rebind(MnnInterpreter interpreter, MnnSession session) {
+    auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
+    auto* sess = reinterpret_cast<MNN::Session*>(session);
+    if (!net || !sess) return -1;
+
+    net->tryResizeSession(sess, 1);
+    return 0;
+}
+
 int mnn_session_run(MnnInterpreter interpreter, MnnSession session) {
     auto* net = reinterpret_cast<MNN::Interpreter*>(interpreter);
     auto* sess = reinterpret_cast<MNN::Session*>(session);

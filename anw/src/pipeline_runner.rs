@@ -243,7 +243,6 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
     let mut prepared: Option<PreparedFrame<'_>> = None;
     let mut ahb_slot: Option<AhbOutputSlot> = None;
     let mut input_ahb_slot: Option<AhbInputSlot> = None;
-    let mut input_generation = 0u64;
 
     while !stop.load(Ordering::Acquire) {
         // One AHB per worker, allocated once the geometry is known and reused
@@ -276,8 +275,7 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                     .as_ref()
                     .is_none_or(|slot| !slot.matches(w, h));
                 if stale {
-                    input_generation += 1;
-                    match AhbInputSlot::new(w, h, input_generation) {
+                    match AhbInputSlot::new(w, h, 0) {
                         Ok(slot) => {
                             input_ahb_slot = Some(slot);
                             prepared = None;
@@ -353,18 +351,28 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         let raw = raw_stats(&frame.data);
 
         let stage_t0 = Instant::now();
-        let (staged, input_ahb_staged) = match input_ahb_slot
+        let camera_ahb = frame
+            .ahb
             .as_ref()
-            .filter(|slot| slot.matches(frame.width, frame.height))
-        {
-            Some(slot) => match slot.stage(&frame) {
-                Ok(()) => (slot.bytes(), true),
-                Err(e) => {
-                    log::warn!("input AHB staging failed: {e}; using host staging");
-                    (stager.stage(&frame), false)
-                }
-            },
-            None => (stager.stage(&frame), false),
+            .map(|ahb| ahb.ptr() as *mut std::ffi::c_void);
+        let (staged, pooled_ahb_staged) = if camera_ahb.is_some() {
+            // Keep valid host bytes as the fallback: a rejected AHB import must
+            // upload real pixels, never an empty slice.
+            (stager.stage(&frame), false)
+        } else {
+            match input_ahb_slot
+                .as_ref()
+                .filter(|slot| slot.matches(frame.width, frame.height))
+            {
+                Some(slot) => match slot.stage(&frame) {
+                    Ok(()) => (slot.bytes(), true),
+                    Err(e) => {
+                        log::warn!("input AHB staging failed: {e}; using host staging");
+                        (stager.stage(&frame), false)
+                    }
+                },
+                None => (stager.stage(&frame), false),
+            }
         };
 
         let (data, width, height, kind, error) = if show_raw.load(Ordering::Relaxed) {
@@ -378,11 +386,16 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             )
         } else {
             let mut params = config.params(frame.width, frame.height, staged, frame.timestamp_ns);
-            // The worker-owned input slot is stable for the session geometry, so
-            // MNN's cached Vulkan import always reads the bytes staged above.
-            // Never bind the transient `AImage` AHB: it is recycled by the
-            // reader as soon as `next_frame()` deletes the image.
-            if input_ahb_staged {
+            if let Some(ahb) = camera_ahb {
+                // MediaNDK owns the frame AHB; `AhbRef` keeps it alive through
+                // inference. `run_prepared` rebinds when this pointer changes.
+                let capacity = frame.data.len().saturating_mul(2);
+                params.input_ahb = Some(cam_types::AhbBinding::new(
+                    ahb,
+                    capacity,
+                    cam_types::AhbFenceTokens::new(-1, -1, 0),
+                ));
+            } else if pooled_ahb_staged {
                 if let Some(slot) = input_ahb_slot
                     .as_ref()
                     .filter(|slot| slot.matches(frame.width, frame.height))
@@ -398,9 +411,18 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
                 // from overwriting pixels the surface may still be reading.
                 slot.wait_free();
                 slot.mark_busy();
-                let (binding, buf) = slot.buffers();
-                params.output_buffer = Some(buf);
-                params.output_ahb = Some(binding);
+                match slot.begin_worker_window() {
+                    Ok(()) => {
+                        let (binding, buf) = slot.buffers();
+                        params.output_buffer = Some(buf);
+                        params.output_ahb = Some(binding);
+                    }
+                    Err(e) => {
+                        log::warn!("AHB output CPU window failed: {e}; using host copy");
+                        slot.mark_free();
+                        prepared = None;
+                    }
+                }
             }
             let expected = PrepareParams::from(&params);
             let staged_result = match (mnn, prepared.take()) {

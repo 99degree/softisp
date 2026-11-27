@@ -108,6 +108,11 @@ void mnn_session_release(MnnInterpreter interpreter, MnnSession session);
 int mnn_session_resize(MnnInterpreter interpreter, MnnSession session);
 
 /**
+ * Force tensor re-acquisition after rebinding an AHB without a shape change.
+ */
+int mnn_session_resize_for_rebind(MnnInterpreter interpreter, MnnSession session);
+
+/**
  * Run the session (forward inference).
  * @return 0 on success, non-zero on failure.
  */

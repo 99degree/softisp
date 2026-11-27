@@ -1,11 +1,9 @@
-//! Stable worker-owned AHB slots for MNN input tensors.
+//! Reusable worker-owned AHB slots for non-camera MNN input tensors.
 //!
-//! Binding the camera's `AImage` AHB directly is not safe: the image is deleted
-//! as soon as `next_frame()` returns, and MNN's Vulkan backend caches the
-//! imported AHB for a tensor/geometry instead of re-importing a swapped pointer.
-//! This module keeps one `AHardwareBuffer` per worker and stages camera pixels
-//! straight into its CPU mapping. MNN imports that same buffer once, before the
-//! first resize, so every subsequent frame is already in device memory.
+//! MediaNDK frames carry their own `AHardwareBuffer`; those are acquired and
+//! bound directly by the worker. Inputs that do not come from MediaNDK (control
+//! tensors and host-generated frames) use the pool here: one buffer per worker,
+//! allocated once per geometry and reused so MNN's Vulkan import stays stable.
 
 use std::ffi::c_void;
 use std::ptr::null_mut;

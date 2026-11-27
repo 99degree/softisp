@@ -39,39 +39,56 @@ output path reported `bytes=0`. Two defects were involved:
 The fix resolves each AHB symbol from either library and uses the correct
 `void` signature for `AHardwareBuffer_describe`.
 
+With the descriptor fixed, the output import stops falling back, but the
+renderer reads zeros from the CPU mapping: the Vulkan write into the AHB is not
+visible to the permanently mapped CPU pointer. This is the coherency gap already
+recorded in `docs/mnn/20261126-mnn-vulkan-ahb-handling-study.md`. The output
+slot therefore needs a CPU read window opened **after** MNN's fence wait: unlock
+the worker mapping, `AHardwareBuffer_lock(CPU_READ)` to invalidate, blit, then
+re-lock for the next worker. No lock is added on the pure GPU path itself.
+
 ## Better implementation
 
-Use a **stable, worker-owned input AHB slot** instead of binding the camera's
-transient `AImage` buffer directly:
+Camera frames use the MediaNDK AHB **directly** when the plane is already the
+tight RAW16 layout the model expects. `next_frame()` calls
+`AHardwareBuffer_acquire()` before `AImage_delete`, so the pointer stays valid
+through inference regardless of the reader's recycling. Padded RAW and YUV
+frames keep the host path because their plane layout is not the model input.
+The worker binds the acquired pointer to the frame input tensor. Since MNN's
+Vulkan backend caches the imported AHB per tensor, every pointer change triggers
+`setDevicePtr` plus `tryResizeSession(..., needMalloc=1)` so `onAcquire()`
+re-imports the new buffer. The host `data` slice remains valid and non-empty as
+a fallback if the import fails; it is never the sole source when an AHB is
+present.
+
+For inputs **not** supplied by MediaNDK (control tensors and host-generated
+frames), a worker-owned AHB pool is still used. It is allocated once per
+geometry and reused, never per frame:
 
 - One `AHardwareBuffer` per worker, allocated as `BLOB` with
   `CPU_READ_OFTEN | CPU_WRITE_OFTEN | GPU_DATA_BUFFER` and mapped for the
   worker's lifetime. Capacity is `w*h*16` rounded to a power of two: MNN's
   Vulkan backend sizes int tensor storage at four bytes per element, and the
   extra margin covers padded/fused graph variants without swapping the binding.
-- Camera pixels are de-strided directly into that mapping, so there is no
-  second `Vec<u8>` staging buffer and no host→device tensor upload.
-- The slot is bound to the frame input tensor before `resizeSession()` and is
-  never swapped while the geometry is unchanged. MNN's cached Vulkan import
-  therefore always points at the buffer the CPU just filled.
+- Non-camera pixels are de-strided into that mapping, which is bound before
+  `resizeSession()` and never swapped while the geometry is unchanged.
 - A geometry change drops and recreates the slot, invalidates the prepared
   frame, and re-binds before the next resize.
 - If allocation or binding fails, the normal host staging path remains
   available, so a fallback can never produce an empty tensor.
 
-The camera still uses MediaNDK `AImageReader`/`AImage`. Its reader-owned AHB is
-deliberately not exposed or bound: `AImage_delete` recycles it immediately after
-`next_frame()`, and a stale pointer is what made the reverted change read zeros.
-
 ## Correctness invariants
 
-- `ProcessParams.buf` and `ProcessParams.input_ahb` refer to the same mapping
-  for a given frame.
-- `PrepareParams::from(&params)` includes the input AHB generation, so a stale
-  prepared frame is rejected after a slot recreation.
-- The slot stays mapped and alive until the worker exits; `Drop` unlocks and
-  releases it.
-- No `AHardwareBuffer_lock`/`unlock` is added to the pure GPU output path.
+- A camera AHB is released only after inference; the pooled AHB is released only
+  when the worker exits or the geometry changes.
+- `PreparedMeta` records the exact bound input AHB pointer; `run_prepared()`
+  rebinds and forces re-acquire when it changes.
+- Generation still guards pooled-slot recreation; camera bindings use generation
+  `0` and are distinguished by pointer.
+- The host fallback bytes are always non-empty, so a rejected AHB import can
+  never reproduce the black-frame failure.
+- No `AHardwareBuffer_lock`/`unlock` is added on the pure GPU inference path;
+  the only new CPU window is after MNN's fence wait for output presentation.
 
 ## Verification
 

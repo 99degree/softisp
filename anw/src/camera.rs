@@ -581,10 +581,10 @@ impl CameraSession {
     /// Returns `Ok(None)` when the queue is empty — the caller should redraw
     /// the previous frame rather than stall.
     ///
-    /// The returned `RawFrame` carries de-strided `u16` pixels. The worker
-    /// stages them into its own AHB input slot, which is the buffer bound to
-    /// MNN; the reader-owned AHB is never exposed because it is recycled as
-    /// soon as the `AImage` is deleted.
+    /// The returned `RawFrame` carries de-strided `u16` pixels as a valid host
+    /// fallback. For a tight RAW16 plane it also carries an acquired reference
+    /// to the reader's AHB, which the worker binds directly; the reference
+    /// outlives `AImage_delete`.
     pub fn next_frame(&self) -> CamResult<Option<RawFrame>> {
         let mut image: *mut sys::AImage = null_mut();
         // `acquireLatestImage` drops everything but the newest queued frame, so
@@ -608,7 +608,45 @@ impl CameraSession {
         // Every path below drops the guard, which closes the image exactly once.
         let guard = ImageGuard(image);
 
-        self.copy_pixels(guard.0).map(Some)
+        let copied = self.copy_pixels(guard.0);
+        let mut ahb: *mut sys::AHardwareBuffer = null_mut();
+        let ahb = match copied {
+            Ok(ref frame) if Self::direct_ahb_usable(guard.0, frame.width, self.raw) => {
+                if unsafe { sys::AImage_getHardwareBuffer(image, &mut ahb) }
+                    == sys::media_status_t::AMEDIA_OK
+                    && !ahb.is_null()
+                {
+                    unsafe { sys::AHardwareBuffer_acquire(ahb) };
+                    Some(AhbRef(ahb))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        copied.map(|mut frame| {
+            frame.ahb = ahb;
+            Some(frame)
+        })
+    }
+
+    /// A media AHB can be bound as MNN input only when its plane is already the
+    /// tight RAW16 layout the model expects. YUV needs 8→16-bit expansion and a
+    /// Bayer mosaic, so it must keep the host staging path.
+    fn direct_ahb_usable(image: *mut sys::AImage, width: u32, raw: bool) -> bool {
+        if !raw || width == 0 {
+            return false;
+        }
+        let mut row_stride = 0i32;
+        let mut pixel_stride = 0i32;
+        let strides_ok = unsafe {
+            sys::AImage_getPlaneRowStride(image, 0, &mut row_stride)
+                == sys::media_status_t::AMEDIA_OK
+                && sys::AImage_getPlanePixelStride(image, 0, &mut pixel_stride)
+                    == sys::media_status_t::AMEDIA_OK
+        };
+        strides_ok && pixel_stride == 2 && row_stride == (width as i32).saturating_mul(2)
     }
 
     /// Read plane 0 into a tightly packed `u16` Bayer buffer.
@@ -693,6 +731,7 @@ impl CameraSession {
             data: out,
             width: w as u32,
             height: h as u32,
+            ahb: None,
         })
     }
 
@@ -742,6 +781,29 @@ impl Drop for CameraSession {
     }
 }
 
+/// An acquired reference to the reader's `AHardwareBuffer`.
+///
+/// `AImage_delete()` only drops the reader's reference; acquiring keeps the
+/// buffer alive until inference has consumed the frame.
+pub(crate) struct AhbRef(*mut sys::AHardwareBuffer);
+
+impl AhbRef {
+    pub(crate) fn ptr(&self) -> *mut sys::AHardwareBuffer {
+        self.0
+    }
+}
+
+unsafe impl Send for AhbRef {}
+
+impl Drop for AhbRef {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { sys::AHardwareBuffer_release(self.0) };
+            self.0 = std::ptr::null_mut();
+        }
+    }
+}
+
 /// A tightly packed Bayer frame ready for the ISP.
 pub struct RawFrame {
     /// `width * height` samples, little-endian `u16` regardless of source.
@@ -752,6 +814,9 @@ pub struct RawFrame {
     pub height: u32,
     /// Capture timestamp in nanoseconds, or 0 when the sensor gave none.
     pub timestamp_ns: u64,
+    /// Acquired MediaNDK AHB to bind directly as MNN input. Only set for a
+    /// tight RAW16 plane; YUV and padded RAW frames stay on the host path.
+    pub(crate) ahb: Option<AhbRef>,
 }
 
 /// Closes an `AImage` exactly once when dropped.

@@ -29,7 +29,7 @@ use std::ffi::c_void;
 #[cfg(target_os = "android")]
 use std::ffi::{c_char, c_int, CStr};
 use std::ptr::null_mut;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use cam_types::{AhbBinding, AhbFenceTokens};
@@ -145,7 +145,7 @@ pub(crate) fn slot_debug(message: impl std::fmt::Display) {
 /// the surface is still reading.
 #[derive(Clone)]
 pub(crate) struct AhbView {
-    ptr: *mut u8,
+    map: Arc<AtomicPtr<u8>>,
     ahb: *mut std::ffi::c_void,
     len: usize,
     busy: Arc<AtomicBool>,
@@ -160,7 +160,7 @@ unsafe impl Sync for AhbView {}
 impl AhbView {
     fn new(slot: &AhbOutputSlot) -> Self {
         Self {
-            ptr: slot.map,
+            map: Arc::clone(&slot.map),
             ahb: slot.ahb as *mut std::ffi::c_void,
             len: slot.display_bytes(),
             busy: Arc::clone(&slot.busy),
@@ -169,13 +169,24 @@ impl AhbView {
 
     /// Bytes the presenter is allowed to read: one BGRA pixel per output pixel.
     pub(crate) fn bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+        let ptr = self.map.load(Ordering::Acquire);
+        unsafe { std::slice::from_raw_parts(ptr, self.len) }
     }
 
     /// Raw `AHardwareBuffer*` backing this view, for `ASurfaceTransaction_setBuffer`
     /// (Path B presentation — no CPU blit).
     pub(crate) fn ahb_ptr(&self) -> *mut std::ffi::c_void {
         self.ahb
+    }
+
+    /// Open a CPU read window after MNN's fence wait so GPU writes into the
+    /// AHB are visible to the presenter. No lock is taken on the GPU path.
+    pub(crate) fn begin_cpu_read(&self) -> Result<(), String> {
+        relock_cpu_window(
+            self.ahb as *mut sys::AHardwareBuffer,
+            &self.map,
+            sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0,
+        )
     }
 
     pub(crate) fn is_busy(&self) -> bool {
@@ -194,7 +205,7 @@ impl AhbView {
 /// whole lifetime so the pointer handed to MNN and to the presenter is stable.
 pub(crate) struct AhbOutputSlot {
     ahb: *mut sys::AHardwareBuffer,
-    map: *mut u8,
+    map: Arc<AtomicPtr<u8>>,
     capacity: usize,
     width: u32,
     height: u32,
@@ -216,6 +227,27 @@ impl std::fmt::Debug for AhbOutputSlot {
             .field("generation", &self.generation)
             .finish_non_exhaustive()
     }
+}
+
+fn relock_cpu_window(
+    ahb: *mut sys::AHardwareBuffer,
+    map: &AtomicPtr<u8>,
+    usage: u64,
+) -> Result<(), String> {
+    if !map.load(Ordering::Acquire).is_null() {
+        let rc = unsafe { sys::AHardwareBuffer_unlock(ahb, null_mut()) };
+        if rc != 0 {
+            return Err(format!("AHardwareBuffer_unlock(output) failed: rc={rc}"));
+        }
+        map.store(null_mut(), Ordering::Release);
+    }
+    let mut ptr = null_mut();
+    let rc = unsafe { sys::AHardwareBuffer_lock(ahb, usage, -1, null_mut(), &mut ptr) };
+    if rc != 0 || ptr.is_null() {
+        return Err(format!("AHardwareBuffer_lock(output) failed: rc={rc}"));
+    }
+    map.store(ptr as *mut u8, Ordering::Release);
+    Ok(())
 }
 
 fn slot_capacity_bytes(width: u32, height: u32) -> usize {
@@ -244,6 +276,7 @@ impl AhbOutputSlot {
         desc.layers = 1;
         desc.format = sys::AHardwareBuffer_Format::AHARDWAREBUFFER_FORMAT_BLOB.0;
         desc.usage = sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0
+            | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN.0
             | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER.0;
 
         let mut ahb: *mut sys::AHardwareBuffer = null_mut();
@@ -258,7 +291,8 @@ impl AhbOutputSlot {
         let rc = unsafe {
             sys::AHardwareBuffer_lock(
                 ahb,
-                sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0,
+                sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0
+                    | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN.0,
                 -1,
                 null_mut(),
                 &mut map,
@@ -274,7 +308,7 @@ impl AhbOutputSlot {
         ));
         Ok(Self {
             ahb,
-            map: map as *mut u8,
+            map: Arc::new(AtomicPtr::new(map as *mut u8)),
             capacity,
             width,
             height,
@@ -297,7 +331,19 @@ impl AhbOutputSlot {
             self.capacity,
             AhbFenceTokens::new(-1, -1, self.generation),
         );
-        (binding, (self.map, self.capacity))
+        (binding, (self.map.load(Ordering::Acquire), self.capacity))
+    }
+
+    /// Restore a CPU window for the worker before the next inference. The
+    /// presenter leaves the slot mapped for reads; re-locking here invalidates
+    /// stale mappings before MNN can write into the same AHB again.
+    pub(crate) fn begin_worker_window(&self) -> Result<(), String> {
+        relock_cpu_window(
+            self.ahb,
+            &self.map,
+            sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN.0
+                | sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN.0,
+        )
     }
 
     pub(crate) fn view(&self) -> AhbView {
@@ -349,11 +395,11 @@ impl AhbOutputSlot {
 
 impl Drop for AhbOutputSlot {
     fn drop(&mut self) {
-        if !self.map.is_null() {
+        if !self.map.load(Ordering::Acquire).is_null() {
             unsafe {
                 sys::AHardwareBuffer_unlock(self.ahb, null_mut());
             }
-            self.map = null_mut();
+            self.map.store(null_mut(), Ordering::Release);
         }
         if !self.ahb.is_null() {
             unsafe {

@@ -13,6 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
+use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
@@ -85,6 +86,9 @@ pub(crate) struct PreparedMeta {
     /// so inference must skip `copyToHostTensor` and read from the AHB mapping.
     output_ahb: bool,
     input_generation: u64,
+    /// Exact AHB pointer bound before resize. Camera frames change this every
+    /// capture, so `run_prepared()` must rebind and force tensor re-acquisition.
+    input_ahb_ptr: *mut std::ffi::c_void,
     output_generation: u64,
     prep_setup_ns: u64,
     prep_tensors_ns: u64,
@@ -2507,6 +2511,7 @@ impl MnnEngine {
                 zero_copy,
                 output_ahb,
                 input_generation: p.input_ahb.map_or(0, |binding| binding.fences.generation),
+                input_ahb_ptr: p.input_ahb.map_or(null_mut(), |binding| binding.ptr),
                 output_generation: p.output_ahb.map_or(0, |binding| binding.fences.generation),
                 prep_setup_ns,
                 prep_tensors_ns,
@@ -2531,8 +2536,8 @@ impl MnnEngine {
         p: &ProcessParams,
     ) -> crate::error::IspResult<(IspFrame, PendingStats<'a>)> {
         let PreparedFrame {
-            slot,
-            meta,
+            mut slot,
+            mut meta,
             t_prep_start,
             t_prep_end,
         } = prepared;
@@ -2567,6 +2572,81 @@ impl MnnEngine {
                 )));
             }
         }
+
+        // A camera AHB is a different buffer on every capture. `prepare()` may
+        // have bound the pooled slot while the frame arrived with the reader's
+        // AHB, so detect pointer changes here and force MNN to re-acquire.
+        // Without `needMalloc=1` VulkanBackend::onAcquire() keeps the old import.
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or(crate::error::IspError::Config("no pool".into()))?;
+        let interp = &pool.interp;
+        let sess_ptr = slot.sess.as_ptr();
+        let frame_name_ptr = self
+            .frame_input_c
+            .as_ref()
+            .map_or(std::ptr::null(), |c| c.as_ptr());
+        let frame_input_ptr = p.input_ahb.map_or(null_mut(), |binding| binding.ptr);
+        if frame_input_ptr != meta.input_ahb_ptr {
+            let rebind_ok = if let Some(binding) = p.input_ahb.as_ref() {
+                let required = self.expected_input_elements.unwrap_or(0) as usize;
+                if required > 0 && binding.len < required.saturating_mul(2) {
+                    warn!(
+                        "camera AHB {}B is smaller than model input {}B; using host upload",
+                        binding.len,
+                        required.saturating_mul(2)
+                    );
+                    false
+                } else if frame_name_ptr.is_null() {
+                    warn!("input AHB rebind skipped: frame input name is unknown");
+                    false
+                } else {
+                    let rc = unsafe {
+                        crate::mnn_sys::mnn_import_ahb_as_device_memory(
+                            interp.as_ptr(),
+                            sess_ptr,
+                            binding.ptr,
+                            frame_name_ptr,
+                            1,
+                        )
+                    };
+                    if rc != 0 {
+                        warn!(
+                            "AHB input rebind for '{}' failed: rc={rc}; using host upload",
+                            self.frame_input_name.as_deref().unwrap_or("")
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                }
+            } else {
+                true
+            };
+            if rebind_ok && !frame_name_ptr.is_null() {
+                if let Err(e) = slot.sess.resize_for_rebind() {
+                    warn!("input AHB rebind resize failed: {e}; using host upload");
+                } else {
+                    meta.input_ahb_ptr = frame_input_ptr;
+                    slot.refresh_tensors(interp);
+                }
+            }
+            if meta.input_ahb_ptr != frame_input_ptr && !frame_name_ptr.is_null() {
+                // Remove the old AHB flag so the upload in mnn_run_* takes the
+                // host path instead of reading stale device memory.
+                unsafe {
+                    crate::mnn_sys::mnn_release_ahb_device_memory(
+                        interp.as_ptr(),
+                        sess_ptr,
+                        frame_name_ptr,
+                    );
+                }
+                let _ = slot.sess.resize_for_rebind();
+                slot.refresh_tensors(interp);
+            }
+        }
+        let sess = &slot.sess;
         if meta.zero_copy {
             let (ptr, len) = p.output_buffer.ok_or(crate::error::IspError::Config(
                 "prepared zero-copy frame lost its output buffer".into(),
@@ -2588,8 +2668,6 @@ impl MnnEngine {
 
         let w = meta.w;
         let h = meta.h;
-        let interp = slot.interp();
-        let sess = &slot.sess;
         let mut buf_guard = self.buf_pool.lock().unwrap();
         let out_ptr = if meta.zero_copy {
             meta.out_ptr
@@ -2736,15 +2814,10 @@ impl MnnEngine {
         let t_infer_start = Instant::now();
         let t_infer_end: Instant;
         let mut n: i32;
-        let frame_name_ptr = self
-            .frame_input_c
-            .as_ref()
-            .map_or(std::ptr::null(), |c| c.as_ptr());
         unsafe {
             if meta.zero_copy {
-                // Input AHB was already bound before resize in prepare(); do not
-                // re-import per frame. The binding persists for the worker
-                // lifetime like the output binding.
+                // A camera AHB was rebound above when its pointer changed; a
+                // stable pooled input AHB remains bound from prepare().
                 let mut imported_output = false;
                 if !meta.output_ahb {
                     // Without the prepared AHB binding the output tensor owns

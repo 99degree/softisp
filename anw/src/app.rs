@@ -648,7 +648,17 @@ impl Preview {
         // blit returns, whether it succeeded or not, so the worker is never
         // held behind a broken surface.
         let (bytes, ahb_view) = match done.ahb.as_ref() {
-            Some(view) => (view.bytes(), Some(view.clone())),
+            Some(view) => {
+                // MNN's fence wait has returned; re-open the mapping for CPU
+                // reads so the GPU's AHB writes are actually visible here.
+                match view.begin_cpu_read() {
+                    Ok(()) => (view.bytes(), Some(view.clone())),
+                    Err(e) => {
+                        write_line("ERROR", "display", &format!("AHB read window failed: {e}"));
+                        (&[] as &[u8], Some(view.clone()))
+                    }
+                }
+            }
             None => (done.data.as_slice(), None),
         };
 
