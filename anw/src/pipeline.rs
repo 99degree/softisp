@@ -28,6 +28,26 @@ pub struct FrameStager {
     bytes: Vec<u8>,
 }
 
+/// Widen `frame` into a caller-owned byte buffer as little-endian `u16` bytes.
+///
+/// Used both by the host fallback stager and by the AHB input slot, so the two
+/// paths cannot disagree on sample order.
+pub fn stage_into(frame: &RawFrame, dest: &mut [u8]) -> Result<(), String> {
+    let needed = frame.data.len().saturating_mul(2);
+    if dest.len() < needed {
+        return Err(format!(
+            "staging buffer {}B is too small for frame {needed}B",
+            dest.len()
+        ));
+    }
+    for (i, &sample) in frame.data.iter().enumerate() {
+        let pair = &mut dest[i * 2..i * 2 + 2];
+        pair[0] = (sample & 0xFF) as u8;
+        pair[1] = (sample >> 8) as u8;
+    }
+    Ok(())
+}
+
 impl FrameStager {
     /// Create a stager with an empty staging buffer.
     pub fn new() -> Self {
@@ -39,13 +59,12 @@ impl FrameStager {
     /// The returned slice borrows the stager, so it stays valid until the next
     /// call — which is exactly the lifetime `ProcessParams` needs.
     pub fn stage(&mut self, frame: &RawFrame) -> &[u8] {
-        self.bytes.clear();
-        self.bytes.reserve(frame.data.len() * 2);
-        for &sample in &frame.data {
-            self.bytes.push((sample & 0xFF) as u8);
-            self.bytes.push((sample >> 8) as u8);
+        let needed = frame.data.len().saturating_mul(2);
+        if self.bytes.len() < needed {
+            self.bytes.resize(needed, 0);
         }
-        &self.bytes
+        stage_into(frame, &mut self.bytes[..needed]).expect("sized staging buffer");
+        &self.bytes[..needed]
     }
 }
 

@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use cam_isp::engine::{IspEngine, PrepareParams};
 use cam_isp::mnnengine::{MnnEngine, PreparedFrame};
 
+use crate::ahb_input::AhbInputSlot;
 use crate::ahb_output::{self, AhbOutputSlot, AhbView};
 use crate::app::{raw_stats, raw_to_grayscale_bgra, FrameKind, RawStats};
 use crate::camera::{CameraSession, RawFrame};
@@ -241,6 +242,8 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
     let mut geometry: Option<(u32, u32)> = None;
     let mut prepared: Option<PreparedFrame<'_>> = None;
     let mut ahb_slot: Option<AhbOutputSlot> = None;
+    let mut input_ahb_slot: Option<AhbInputSlot> = None;
+    let mut input_generation = 0u64;
 
     while !stop.load(Ordering::Acquire) {
         // One AHB per worker, allocated once the geometry is known and reused
@@ -264,12 +267,41 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             }
         }
 
+        // MNN caches the imported AHB for a tensor/geometry, so the input slot
+        // must stay stable until the geometry changes. A new slot invalidates
+        // the prepared session; the binding is reinstalled before its resize.
+        if mnn.is_some() {
+            if let Some((w, h)) = geometry {
+                let stale = input_ahb_slot
+                    .as_ref()
+                    .is_none_or(|slot| !slot.matches(w, h));
+                if stale {
+                    input_generation += 1;
+                    match AhbInputSlot::new(w, h, input_generation) {
+                        Ok(slot) => {
+                            input_ahb_slot = Some(slot);
+                            prepared = None;
+                        }
+                        Err(e) => {
+                            input_ahb_slot = None;
+                            log::warn!("AHB input slot unavailable: {e}; using host staging");
+                        }
+                    }
+                }
+            }
+        }
+
         // Prep the next frame while the camera is still filling its buffer.
         // The controller already holds the values this frame will consume, so
         // no sensor pixels are needed for the tensor uploads or session resize.
         if prepared.is_none() {
             if let (Some(mnn), Some((w, h))) = (mnn, geometry) {
                 let mut prepare_params = config.params(w, h, &[], 0);
+                if let Some(slot) = input_ahb_slot.as_ref().filter(|s| s.matches(w, h)) {
+                    let (binding, buf) = slot.buffers();
+                    prepare_params.input_buffer = Some(buf);
+                    prepare_params.input_ahb = Some(binding);
+                }
                 if let Some(slot) = ahb_slot.as_ref() {
                     let (binding, buf) = slot.buffers();
                     prepare_params.output_buffer = Some(buf);
@@ -321,7 +353,19 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         let raw = raw_stats(&frame.data);
 
         let stage_t0 = Instant::now();
-        let staged = stager.stage(&frame);
+        let (staged, input_ahb_staged) = match input_ahb_slot
+            .as_ref()
+            .filter(|slot| slot.matches(frame.width, frame.height))
+        {
+            Some(slot) => match slot.stage(&frame) {
+                Ok(()) => (slot.bytes(), true),
+                Err(e) => {
+                    log::warn!("input AHB staging failed: {e}; using host staging");
+                    (stager.stage(&frame), false)
+                }
+            },
+            None => (stager.stage(&frame), false),
+        };
 
         let (data, width, height, kind, error) = if show_raw.load(Ordering::Relaxed) {
             prepared = None;
@@ -334,18 +378,19 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
             )
         } else {
             let mut params = config.params(frame.width, frame.height, staged, frame.timestamp_ns);
-            // Zero-copy input: hand the camera's AHB-backed frame directly to
-            // MNN via `input_ahb`, bound before resize in `prepare()`. The
-            // frame's `ahb` is producer-owned and valid while the `AImage`
-            // (kept alive by `PipelineRunner`) is not deleted. Falls back to
-            // `input_buffer`/`p.buf` host upload when no AHB is available.
-            if let Some(ahb) = frame.ahb {
-                let capacity = (frame.width as usize) * (frame.height as usize) * 2;
-                params.input_ahb = Some(cam_types::AhbBinding::new(
-                    ahb as *mut std::ffi::c_void,
-                    capacity,
-                    cam_types::AhbFenceTokens::new(-1, -1, 0),
-                ));
+            // The worker-owned input slot is stable for the session geometry, so
+            // MNN's cached Vulkan import always reads the bytes staged above.
+            // Never bind the transient `AImage` AHB: it is recycled by the
+            // reader as soon as `next_frame()` deletes the image.
+            if input_ahb_staged {
+                if let Some(slot) = input_ahb_slot
+                    .as_ref()
+                    .filter(|slot| slot.matches(frame.width, frame.height))
+                {
+                    let (binding, buf) = slot.buffers();
+                    params.input_buffer = Some(buf);
+                    params.input_ahb = Some(binding);
+                }
             }
             if let Some(slot) = ahb_slot.as_ref() {
                 // Wait only for this worker's presenter handoff; the other

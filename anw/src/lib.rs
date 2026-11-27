@@ -16,6 +16,7 @@ use ndk_sys::ANativeWindow;
 use std::sync::Mutex;
 
 pub mod ahb_display;
+pub mod ahb_input;
 pub mod ahb_output;
 pub mod camera;
 pub mod crashlog;
