@@ -19,7 +19,6 @@ CORE="target/aarch64-linux-android/debug/libsoftisp.so"
 MNN_DIR="cam-rust/lib/arm64-v8a"
 TERMUX_LIB_DIR="/data/data/com.termux/files/usr/lib"
 TERMUX_LIBCPP="$TERMUX_LIB_DIR/libc++_shared.so"
-TERMUX_VULKAN="$TERMUX_LIB_DIR/libvulkan.so"
 LOG="/sdcard/download/softisp-app.log"
 OUT=".tmp/shim-debug"
 WAIT_SECS="${WAIT_SECS:-12}"
@@ -32,7 +31,7 @@ Commands:
   build          Build the shim-only softisp-test.apk
   libs [--core-only]
                  Build MNN + core runtime libs (strip + patchelf, no APK)
-  push           Push core + MNN libs + Termux Vulkan/libc++ runtime libs
+  push           Push core + MNN libs + project Vulkan loader + Termux libc++
   core           Rebuild only the core, then push (fast ISP iteration)
   reload         Ask the app to clean legacy staged libs, stop, then relaunch
   deploy         core + reload
@@ -42,7 +41,8 @@ Commands:
   clean          Ask the app to delete legacy .so files from its private cache
   stop           Ask the app to finish itself (no shell force-stop needed)
   logs           Dump logcat + app log into .tmp/shim-debug and print a tail
-  verify         Compare logged MD5s with local md5sum of build outputs
+  verify         Compare logged MD5s with local md5sum of core, libc++, and
+                 all uploaded .so files
   cycle          core -> reload -> wait -> verify
   help           Show this message
 
@@ -129,25 +129,16 @@ do_logs() {
 }
 
 expected_sums() {
-    if [ -f "$TERMUX_VULKAN" ]; then
-        if command -v patchelf >/dev/null 2>&1; then
-            tmp_vulkan="$(mktemp /data/data/com.termux/files/usr/tmp/vulkan-expected.XXXXXX.so)"
-            cp -f "$TERMUX_VULKAN" "$tmp_vulkan"
-            patchelf --set-soname libvulkan.so "$tmp_vulkan"
-            printf '%s %s\n' libvulkan.so "$(md5sum "$tmp_vulkan" | cut -d' ' -f1)"
-            rm -f "$tmp_vulkan"
-        else
-            printf '%s %s\n' libvulkan.so "$(md5sum "$TERMUX_VULKAN" | cut -d' ' -f1)"
-        fi
-    fi
-    for file in "$CORE" "$TERMUX_LIBCPP" "$MNN_DIR"/lib*.so; do
+    local file name libcpp
+    declare -A seen=()
+    libcpp="$TERMUX_LIBCPP"
+    [ -f "$libcpp" ] || libcpp="$MNN_DIR/libc++_shared.so"
+    for file in "$CORE" "$MNN_DIR"/lib*.so "$libcpp"; do
         [ -f "$file" ] || continue
-        # push-test-libs.sh selects plain libc++ from Termux, so an incidental
-        # cam-rust/lib copy must not create a duplicate expected hash.
-        if [ "$file" = "$MNN_DIR/libc++_shared.so" ]; then
-            continue
-        fi
-        printf '%s %s\n' "$(basename "$file")" "$(md5sum "$file" | cut -d' ' -f1)"
+        name="$(basename "$file")"
+        [ -z "${seen[$name]:-}" ] || continue
+        seen[$name]=1
+        printf '%s %s\n' "$name" "$(md5sum "$file" | cut -d' ' -f1)"
     done
 }
 
@@ -174,14 +165,32 @@ do_verify() {
             }
         }
     ' "$OUT/app.log" | sort > "$OUT/actual.txt"
-    if diff -u "$OUT/expected.txt" "$OUT/actual.txt" > "$OUT/diff.txt"; then
-        echo "  md5 verification: PASS ($(wc -l < "$OUT/actual.txt") libraries)"
-        return 0
+    awk '{ print $1 }' "$OUT/expected.txt" | sort > "$OUT/expected_names.txt"
+    awk '{ print $1 }' "$OUT/actual.txt" | sort > "$OUT/actual_names.txt"
+
+    awk '
+        NR == FNR { want[$1] = $2; next }
+        $1 in want { got[$1] = $2 }
+        END {
+            for (name in want) {
+                print name, (name in got ? got[name] : "<missing>")
+            }
+        }
+    ' "$OUT/expected.txt" "$OUT/actual.txt" | sort > "$OUT/matched.txt"
+    if diff -u "$OUT/expected.txt" "$OUT/matched.txt" > "$OUT/diff.txt"; then
+        echo "  md5 verification: PASS ($(wc -l < "$OUT/expected.txt") uploaded libraries)"
+    else
+        echo "  md5 verification: FAIL" >&2
+        cat "$OUT/diff.txt" >&2
+        echo "  details: $OUT/diff.txt" >&2
+        return 1
     fi
-    echo "  md5 verification: FAIL" >&2
-    cat "$OUT/diff.txt" >&2
-    echo "  details: $OUT/diff.txt" >&2
-    return 1
+    local extras
+    extras="$(comm -13 "$OUT/expected_names.txt" "$OUT/actual_names.txt")"
+    if [ -n "$extras" ]; then
+        echo "  WARN: unrelated .so files present outside the uploaded set:" >&2
+        echo "$extras" >&2
+    fi
 }
 
 do_cycle() {

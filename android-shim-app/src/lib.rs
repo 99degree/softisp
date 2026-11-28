@@ -38,6 +38,7 @@ const CORE_NAMES: &[&str] = &["libsoftisp.so", "libsoftisp_core.so", "libsoftisp
 const RUNTIME_DEPENDENCIES: &[&str] = &[
     "libc++_shared.so",
     "libsoftisp_cpp_shared.so",
+    "libvulkan.so",
     "libMNN.so",
     "libMNN_Express.so",
     "libMNN_Vulkan.so",
@@ -963,7 +964,10 @@ fn android_main(app: AndroidApp) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_roots, md5::hex_of_bytes, search_roots, CORE_NAMES, RUNTIME_DEPENDENCIES};
+    use super::{
+        format_roots, md5::hex_of_bytes, search_roots, ShimLog, CORE_NAMES, LOG_MEM_CAP_BYTES,
+        RUNTIME_DEPENDENCIES,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -1016,6 +1020,10 @@ mod tests {
         assert!(!RUNTIME_DEPENDENCIES
             .iter()
             .any(|name| CORE_NAMES.contains(name)));
+        let vulkan = RUNTIME_DEPENDENCIES
+            .iter()
+            .position(|name| *name == "libvulkan.so")
+            .unwrap();
         let mnn = RUNTIME_DEPENDENCIES
             .iter()
             .position(|name| *name == "libMNN.so")
@@ -1024,6 +1032,7 @@ mod tests {
             .iter()
             .position(|name| *name == "libMNNConvertDeps.so")
             .unwrap();
+        assert!(vulkan < mnn);
         assert!(mnn < convert);
     }
 

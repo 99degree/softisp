@@ -92,6 +92,10 @@ if [ ! -f "$CORE_LIB" ]; then
     echo "ERROR: expected core cdylib $CORE_LIB was not produced" >&2
     exit 1
 fi
+if [ ! -f "$MNN_DIR/libvulkan.so" ]; then
+    echo "ERROR: expected Vulkan loader $MNN_DIR/libvulkan.so was not produced" >&2
+    exit 1
+fi
 
 if readelf -d "$CORE_LIB" | grep -q '\[libc++_shared\.so\]'; then
     if command -v patchelf >/dev/null 2>&1; then

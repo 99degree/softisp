@@ -117,4 +117,37 @@ if command -v unzip >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; the
     fi
     rm -f "$tmp_apk_lib"
     echo "  verified: $APK_LIB sha256 $apk_sha"
+
+    APK_LOADER="lib/arm64-v8a/libvulkan.so"
+    if ! unzip -Z1 "$APK" | grep -Fxq "$APK_LOADER"; then
+        echo "ERROR: $APK is missing $APK_LOADER" >&2
+        exit 1
+    fi
+    loader_sha=$(unzip -p "$APK" "$APK_LOADER" | sha256sum | awk '{print $1}')
+    local_loader_sha=$(sha256sum "cam-rust/lib/arm64-v8a/libvulkan.so" | awk '{print $1}')
+    if [ "$local_loader_sha" != "$loader_sha" ]; then
+        echo "ERROR: $APK_LOADER hash mismatch (target $local_loader_sha, APK $loader_sha)" >&2
+        exit 1
+    fi
+    echo "  verified: $APK_LOADER sha256 $loader_sha"
+
+    if [ -f /vendor/lib64/hw/vulkan.adreno.so ]; then
+        APK_HAL="lib/arm64-v8a/libsoftisp_vulkan_adreno.so"
+        LOCAL_HAL="cam-rust/lib/arm64-v8a/libsoftisp_vulkan_adreno.so"
+        if ! unzip -Z1 "$APK" | grep -Fxq "$APK_HAL"; then
+            echo "ERROR: $APK is missing $APK_HAL" >&2
+            exit 1
+        fi
+        if [ ! -f "$LOCAL_HAL" ]; then
+            echo "ERROR: expected staged Adreno HAL $LOCAL_HAL is missing" >&2
+            exit 1
+        fi
+        hal_sha=$(unzip -p "$APK" "$APK_HAL" | sha256sum | awk '{print $1}')
+        local_hal_sha=$(sha256sum "$LOCAL_HAL" | awk '{print $1}')
+        if [ "$local_hal_sha" != "$hal_sha" ]; then
+            echo "ERROR: $APK_HAL hash mismatch (target $local_hal_sha, APK $hal_sha)" >&2
+            exit 1
+        fi
+        echo "  verified: $APK_HAL sha256 $hal_sha"
+    fi
 fi

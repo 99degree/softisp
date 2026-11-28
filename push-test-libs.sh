@@ -13,11 +13,10 @@
 #
 # for a quick core-only update; no APK rebuild or reinstall is needed.
 #
-# Device system libs (libvulkan.so and plain libc++_shared.so) are NOT bundled
-# in the APK by design. Instead they are pushed from Termux so the developer
-# manages them directly:
-#   - libvulkan.so: copied from /data/data/com.termux/files/usr/lib/libvulkan.so
-#     (SONAME patched to libvulkan.so so MNN's NEEDED entry resolves)
+# Device system libs (plain libc++_shared.so) are NOT bundled in the APK by
+# design. The shim stages these from /sdcard/download:
+#   - libvulkan.so: the project's Adreno/generic loader, built by anw/build.rs
+#     into cam-rust/lib/arm64-v8a/ (MNN's NEEDED entry resolves to this file)
 #   - libc++_shared.so: copied unchanged from Termux; the shim preloads it
 #     before libsoftisp_cpp_shared.so and the MNN libs
 #   - libsoftisp_cpp_shared.so: built by scripts/build_mnn_libs.sh from Termux
@@ -70,21 +69,14 @@ fi
 # ── Push the app core ──
 cp -f "$CORE" "$DEST/libsoftisp.so"
 
-# ── Push libvulkan.so from Termux (developer-managed, not system-provided) ──
-if command -v patchelf >/dev/null 2>&1; then
-    # Patchelf SONAME to libvulkan.so so MNN's NEEDED [libvulkan.so] resolves.
-    # Termux's libvulkan.so ships with SONAME libvulkan.so.1 which does not match.
-    tmp_vulkan="$(mktemp /data/data/com.termux/files/usr/tmp/libvulkan.XXXXXX.so)"
-    cp -f "$TERMUX_LIB_DIR/libvulkan.so" "$tmp_vulkan"
-    patchelf --set-soname libvulkan.so "$tmp_vulkan"
-    cp -f "$tmp_vulkan" "$DEST/libvulkan.so"
-    rm -f "$tmp_vulkan"
-    echo "  pushed libvulkan.so (from Termux, SONAME=libvulkan.so) -> $DEST/libvulkan.so"
-else
-    echo "WARN: patchelf not found; copying Termux libvulkan.so without SONAME patch" >&2
-    cp -f "$TERMUX_LIB_DIR/libvulkan.so" "$DEST/libvulkan.so"
-    echo "  pushed libvulkan.so (from Termux, SONAME may be libvulkan.so.1) -> $DEST/libvulkan.so"
+# ── Push the project Vulkan loader ──
+PROJECT_VULKAN="$MNN_DIR/libvulkan.so"
+if [ ! -f "$PROJECT_VULKAN" ]; then
+    echo "ERROR: missing $PROJECT_VULKAN; rebuild with ./build-test-libs.sh" >&2
+    exit 1
 fi
+cp -f "$PROJECT_VULKAN" "$DEST/libvulkan.so"
+echo "  pushed libvulkan.so (project loader) -> $DEST/libvulkan.so"
 
 # ── Push plain libc++_shared.so from the selected developer source ──
 if readelf -d "$LIBCPP_SOURCE" | grep -Fq 'Library soname: [libc++_shared.so]'; then
@@ -107,7 +99,8 @@ echo "  pushed libc++_shared.so ($LIBCPP_SOURCE, md5=$(md5sum "$DEST/libc++_shar
 count=0
 for so in "$MNN_DIR"/lib*.so; do
     [ -f "$so" ] || continue
-    if [ "$(basename "$so")" = "libc++_shared.so" ]; then
+    if [ "$(basename "$so")" = "libc++_shared.so" ] \
+        || [ "$(basename "$so")" = "libvulkan.so" ]; then
         continue
     fi
     cp -f "$so" "$DEST/"
