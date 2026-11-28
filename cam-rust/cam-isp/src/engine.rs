@@ -554,9 +554,9 @@ pub fn select_engine_by_name(name: &str) -> Option<Box<dyn IspEngine>> {
                 "Selected engine: {} (priority={})",
                 factory.name, factory.priority
             );
-            if engine.priority() > 0 {
-                return Some(engine);
-            }
+            // Named selection is an explicit opt-in and must not apply the
+            // auto-selection priority gate (direct Vulkan is opt-in only).
+            return Some(engine);
         }
     }
     None
@@ -685,5 +685,20 @@ mod tests {
         crate::init();
         let engine = select_engine();
         assert!(engine.is_some());
+    }
+
+    #[cfg(feature = "direct_vulkan")]
+    #[test]
+    fn test_direct_vulkan_is_explicit_opt_in_only() {
+        crate::init();
+        let auto = select_engine().expect("auto selection should find an engine");
+        assert_ne!(
+            auto.backend_name(),
+            "direct_vulkan",
+            "direct Vulkan must not win auto selection"
+        );
+        let named = select_engine_by_name("direct_vulkan")
+            .expect("named selection should find direct Vulkan");
+        assert_eq!(named.backend_name(), "direct_vulkan");
     }
 }

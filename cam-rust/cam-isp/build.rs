@@ -79,9 +79,9 @@ fn main() {
     // Emit NDK linker flags for Android targets
     #[cfg(target_os = "android")]
     {
-        // Only call setup_ndk_linker when mnn or ort features are enabled
-        // because they require C++ standard library and NDK libraries
-        #[cfg(any(feature = "mnn", feature = "ort"))]
+        // Direct Vulkan imports AHardwareBuffer handles through libandroid just
+        // like the MNN/ORT bridges need the NDK runtime libraries.
+        #[cfg(any(feature = "mnn", feature = "ort", feature = "direct_vulkan"))]
         {
             setup_ndk_linker();
         }
@@ -343,6 +343,9 @@ fn link_direct_vulkan() {
     println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_spv.inc");
     println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_image.comp");
     println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_image_spv.inc");
+    println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_strided.comp");
+    println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_strided.spv");
+    println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_strided_spv.inc");
 
     let mut build = cc::Build::new();
     build

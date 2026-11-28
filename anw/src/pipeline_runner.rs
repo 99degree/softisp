@@ -247,6 +247,13 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
     #[cfg(not(feature = "direct_vulkan"))]
     let direct_active = false;
     #[cfg(feature = "direct_vulkan")]
+    let direct_fd_input = direct.is_some_and(|engine| engine.supports_dma_buf())
+        && std::env::var("SOFTISP_DIRECT_VULKAN_FD_INPUT")
+            .ok()
+            .is_none_or(|v| v != "0" && v != "false");
+    #[cfg(not(feature = "direct_vulkan"))]
+    let direct_fd_input = false;
+    #[cfg(feature = "direct_vulkan")]
     let uses_ahb = mnn.is_some() || direct.is_some();
     #[cfg(not(feature = "direct_vulkan"))]
     let uses_ahb = mnn.is_some();
@@ -383,11 +390,11 @@ fn worker_loop(worker: usize, engine: Box<dyn IspEngine>, shared: WorkerShared) 
         let raw = raw_stats(&frame.data);
 
         let stage_t0 = Instant::now();
-        // RAW16 camera AHBs on this device expose only sampled-image Vulkan
-        // memory types and cannot be imported as storage VkBuffers. The direct
-        // engine therefore uses its stable BLOB input slot instead; the single
-        // de-stride copy into that slot is the last CPU step before the GPU.
-        let camera_ahb = if input_ahb_off || direct_active {
+        // On dma_buf-capable drivers the camera AHB fd is imported straight
+        // into Vulkan and the shader follows its row stride. Drivers without
+        // that extension still need the stable BLOB input slot and its single
+        // de-stride copy.
+        let camera_ahb = if input_ahb_off || (direct_active && !direct_fd_input) {
             None
         } else {
             frame

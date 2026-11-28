@@ -5,6 +5,7 @@
 // fence. Imports are cached per AHardwareBuffer pointer so the per-frame path
 // is descriptor writes + one dispatch, with no host upload and no AHB lock.
 
+#include <android/hardware_buffer.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_android.h>
 
@@ -14,12 +15,23 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "raw16_bgra_image_spv.inc"
 #include "raw16_bgra_spv.inc"
+#include "raw16_bgra_strided_spv.inc"
+
+struct NativeHandleLite {
+    int version;
+    int numFds;
+    int numInts;
+    int data[1];
+};
+
+extern "C" const NativeHandleLite* AHardwareBuffer_getNativeHandle(const AHardwareBuffer* buffer);
 
 namespace {
 
@@ -43,6 +55,38 @@ bool fail(const char* fmt, ...) {
         }                                                                        \
     } while (0)
 
+int ahb_native_fd(void* ahb) {
+    auto* handle = static_cast<AHardwareBuffer*>(ahb);
+    const NativeHandleLite* native = handle ? AHardwareBuffer_getNativeHandle(handle) : nullptr;
+    if (!native || native->numFds < 1 || native->data[0] < 0) {
+        return -1;
+    }
+    return native->data[0];
+}
+
+struct AhbLayout {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t stride = 0;
+    uint32_t format = 0;
+};
+
+// `AHardwareBuffer_describe` is API 26+, but this module also compiles against
+// lower-API headers, so the RAW16 gralloc layout is read from the native handle.
+bool ahb_layout(void* ahb, AhbLayout* out) {
+    auto* handle = static_cast<AHardwareBuffer*>(ahb);
+    const NativeHandleLite* native = handle ? AHardwareBuffer_getNativeHandle(handle) : nullptr;
+    if (!native || native->numFds < 1 || native->numInts < 7) {
+        return false;
+    }
+    const int* ints = native->data + native->numFds;
+    out->width = (uint32_t)ints[2];
+    out->height = (uint32_t)ints[3];
+    out->stride = (uint32_t)ints[4];
+    out->format = (uint32_t)ints[6];
+    return true;
+}
+
 struct Buffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -52,6 +96,14 @@ struct Buffer {
 
 struct AhbCacheEntry {
     void* ahb = nullptr;
+    Buffer buffer;
+};
+
+struct FdCacheEntry {
+    void* ahb = nullptr;
+    int fd = -1;
+    VkExternalMemoryHandleTypeFlagBits handle_type =
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_FLAG_BITS_MAX_ENUM;
     Buffer buffer;
 };
 
@@ -75,6 +127,10 @@ struct Context {
     VkQueue queue = VK_NULL_HANDLE;
     uint32_t queue_family = 0;
     bool ahb_supported = false;
+    bool fd_supported = false;
+    bool dma_buf_supported = false;
+    VkExternalMemoryHandleTypeFlagBits fd_handle_type =
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
 
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkCommandBuffer command_buffer = VK_NULL_HANDLE;
@@ -84,6 +140,8 @@ struct Context {
     VkDescriptorSetLayout descriptor_layout = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipelineLayout strided_pipeline_layout = VK_NULL_HANDLE;
+    VkPipeline strided_pipeline = VK_NULL_HANDLE;
 
     VkDescriptorPool image_descriptor_pool = VK_NULL_HANDLE;
     VkDescriptorSet image_descriptor_set = VK_NULL_HANDLE;
@@ -96,16 +154,18 @@ struct Context {
     VkBuffer bound_image_input = VK_NULL_HANDLE;
     VkImage bound_image = VK_NULL_HANDLE;
     std::vector<AhbCacheEntry> ahb_cache;
+    std::vector<FdCacheEntry> fd_cache;
     std::vector<AhbImageCacheEntry> image_cache;
 
     PFN_vkGetAndroidHardwareBufferPropertiesANDROID get_ahb_properties = nullptr;
+    PFN_vkGetMemoryFdPropertiesKHR get_fd_properties = nullptr;
+    PFN_vkGetBufferMemoryRequirements2KHR get_buffer_requirements2 = nullptr;
     PFN_vkGetImageMemoryRequirements2KHR get_image_memory_requirements2 = nullptr;
     PFN_vkBindImageMemory2KHR bind_image_memory2 = nullptr;
 };
 
 const char* required_device_extensions[] = {
     VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-    VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
     VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
     VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
     VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
@@ -144,6 +204,11 @@ uint32_t device_score(VkPhysicalDevice physical) {
         if (!has_device_extension(physical, name)) {
             return 0;
         }
+    }
+    if (!has_device_extension(physical,
+                              VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) &&
+        !has_device_extension(physical, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) {
+        return 0;
     }
     switch (props.deviceType) {
         case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
@@ -264,6 +329,124 @@ Buffer* get_ahb_buffer(Context* ctx, void* ahb, VkDeviceSize logical_size) {
     }
     ctx->ahb_cache.push_back(AhbCacheEntry{ahb, fresh});
     return &ctx->ahb_cache.back().buffer;
+}
+
+bool create_fd_buffer(Context* ctx, void* ahb, VkDeviceSize logical_size,
+                      VkExternalMemoryHandleTypeFlagBits handle_type, Buffer* out) {
+    if (!ctx->fd_supported || !ctx->get_fd_properties || !ctx->get_buffer_requirements2) {
+        return fail("fd external-memory Vulkan extensions unavailable");
+    }
+    const int ahb_fd = ahb_native_fd(ahb);
+    if (ahb_fd < 0 || logical_size == 0) {
+        return fail("invalid AHardwareBuffer fd or zero size");
+    }
+
+    VkMemoryFdPropertiesKHR fd_props{};
+    fd_props.sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR;
+    VkResult rc = ctx->get_fd_properties(ctx->device, handle_type, ahb_fd, &fd_props);
+    if (rc != VK_SUCCESS || fd_props.memoryTypeBits == 0) {
+        return fail("vkGetMemoryFdPropertiesKHR failed: handle=%u rc=%d mask=0x%x",
+                    (unsigned)handle_type, (int)rc, (unsigned)fd_props.memoryTypeBits);
+    }
+
+    VkExternalMemoryBufferCreateInfo external{};
+    external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+    external.handleTypes = handle_type;
+    VkBufferCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    info.pNext = &external;
+    info.size = logical_size;
+    info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    DV_CHECK(vkCreateBuffer(ctx->device, &info, nullptr, &out->buffer), "vkCreateBuffer(fd)");
+
+    VkBufferMemoryRequirementsInfo2 req_info{};
+    req_info.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2;
+    req_info.buffer = out->buffer;
+    VkMemoryRequirements2 req{};
+    req.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+    ctx->get_buffer_requirements2(ctx->device, &req_info, &req);
+
+    uint32_t candidates = fd_props.memoryTypeBits & req.memoryRequirements.memoryTypeBits;
+    int import_fd = dup(ahb_fd);
+    if (import_fd < 0 || candidates == 0) {
+        if (import_fd >= 0) {
+            close(import_fd);
+        }
+        vkDestroyBuffer(ctx->device, out->buffer, nullptr);
+        out->buffer = VK_NULL_HANDLE;
+        return fail("fd import unavailable: fd=%d mask=0x%x", import_fd, candidates);
+    }
+
+    VkImportMemoryFdInfoKHR import{};
+    import.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR;
+    import.handleType = handle_type;
+    import.fd = import_fd;
+    VkMemoryDedicatedAllocateInfo dedicated{};
+    dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+    dedicated.pNext = &import;
+    dedicated.buffer = out->buffer;
+    VkDeviceSize allocation_size = std::max<VkDeviceSize>(req.memoryRequirements.size, logical_size);
+    bool allocated = false;
+    for (uint32_t i = 0; i < 32 && !allocated; ++i) {
+        if ((candidates & (1u << i)) == 0) {
+            continue;
+        }
+        VkMemoryAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        alloc.pNext = &dedicated;
+        alloc.allocationSize = allocation_size;
+        alloc.memoryTypeIndex = i;
+        allocated = vkAllocateMemory(ctx->device, &alloc, nullptr, &out->memory) == VK_SUCCESS;
+    }
+    if (allocated) {
+        import_fd = -1; // ownership moved to Vulkan
+    } else if (import_fd >= 0) {
+        close(import_fd);
+    }
+    if (!allocated) {
+        vkDestroyBuffer(ctx->device, out->buffer, nullptr);
+        out->buffer = VK_NULL_HANDLE;
+        return fail("fd import failed: handle=%u size=%llu types=0x%x", (unsigned)handle_type,
+                    (unsigned long long)allocation_size, candidates);
+    }
+
+    DV_CHECK(vkBindBufferMemory(ctx->device, out->buffer, out->memory, 0),
+             "vkBindBufferMemory(fd)");
+    out->logical_size = logical_size;
+    out->alloc_size = allocation_size;
+    return true;
+}
+
+Buffer* get_fd_buffer(Context* ctx, void* ahb, VkDeviceSize logical_size) {
+    const int ahb_fd = ahb_native_fd(ahb);
+    const VkExternalMemoryHandleTypeFlagBits handle_type = ctx->fd_handle_type;
+    if (ahb_fd < 0) {
+        return nullptr;
+    }
+    for (auto& entry : ctx->fd_cache) {
+        if (entry.ahb == ahb && entry.fd == ahb_fd && entry.handle_type == handle_type &&
+            entry.buffer.alloc_size >= logical_size) {
+            entry.buffer.logical_size = logical_size;
+            return &entry.buffer;
+        }
+    }
+    Buffer fresh;
+    if (!create_fd_buffer(ctx, ahb, logical_size, handle_type, &fresh)) {
+        return nullptr;
+    }
+    for (auto& entry : ctx->fd_cache) {
+        if (entry.ahb == ahb) {
+            destroy_buffer(ctx, &entry.buffer);
+            entry.buffer = fresh;
+            entry.fd = ahb_fd;
+            entry.handle_type = handle_type;
+            return &entry.buffer;
+        }
+    }
+    ctx->fd_cache.push_back(FdCacheEntry{ahb, ahb_fd, handle_type, fresh});
+    return &ctx->fd_cache.back().buffer;
 }
 
 void destroy_image(Context* ctx, Image* image) {
@@ -490,6 +673,72 @@ bool submit_image(Context* ctx, const Buffer& input, const Image& output, uint32
     DV_CHECK(vkQueueSubmit(ctx->queue, 1, &submit_info, ctx->fence), "vkQueueSubmit(image)");
     DV_CHECK(vkWaitForFences(ctx->device, 1, &ctx->fence, VK_TRUE, UINT64_MAX),
              "vkWaitForFences(image)");
+    return true;
+}
+
+bool submit_strided_image(Context* ctx, const Buffer& input, const Image& output, uint32_t width,
+                          uint32_t height, uint32_t input_stride_bytes, uint32_t mode) {
+    VkWriteDescriptorSet writes[2]{};
+    VkDescriptorBufferInfo in_info{};
+    VkDescriptorImageInfo out_info{};
+    uint32_t write_count = 0;
+
+    if (ctx->bound_image_input != input.buffer) {
+        in_info.buffer = input.buffer;
+        in_info.range = input.logical_size;
+        writes[write_count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[write_count].dstSet = ctx->image_descriptor_set;
+        writes[write_count].dstBinding = 0;
+        writes[write_count].descriptorCount = 1;
+        writes[write_count].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[write_count].pBufferInfo = &in_info;
+        ++write_count;
+        ctx->bound_image_input = input.buffer;
+    }
+    if (ctx->bound_image != output.image) {
+        out_info.imageView = output.view;
+        out_info.sampler = VK_NULL_HANDLE;
+        out_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        writes[write_count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[write_count].dstSet = ctx->image_descriptor_set;
+        writes[write_count].dstBinding = 1;
+        writes[write_count].descriptorCount = 1;
+        writes[write_count].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[write_count].pImageInfo = &out_info;
+        ++write_count;
+        ctx->bound_image = output.image;
+    }
+    if (write_count != 0) {
+        vkUpdateDescriptorSets(ctx->device, write_count, writes, 0, nullptr);
+    }
+
+    uint32_t params[4] = {width, height, input_stride_bytes, mode};
+    DV_CHECK(vkResetFences(ctx->device, 1, &ctx->fence), "vkResetFences(strided image)");
+    DV_CHECK(vkResetCommandBuffer(ctx->command_buffer, 0), "vkResetCommandBuffer(strided image)");
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    DV_CHECK(vkBeginCommandBuffer(ctx->command_buffer, &begin),
+             "vkBeginCommandBuffer(strided image)");
+    vkCmdBindPipeline(ctx->command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                      ctx->strided_pipeline);
+    vkCmdPushConstants(ctx->command_buffer, ctx->strided_pipeline_layout,
+                       VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(params), params);
+    vkCmdBindDescriptorSets(ctx->command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            ctx->strided_pipeline_layout, 0, 1, &ctx->image_descriptor_set, 0,
+                            nullptr);
+    uint32_t pixels = width * height;
+    vkCmdDispatch(ctx->command_buffer, (pixels + 255u) / 256u, 1, 1);
+    DV_CHECK(vkEndCommandBuffer(ctx->command_buffer), "vkEndCommandBuffer(strided image)");
+
+    VkSubmitInfo submit_info{};
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &ctx->command_buffer;
+    DV_CHECK(vkQueueSubmit(ctx->queue, 1, &submit_info, ctx->fence),
+             "vkQueueSubmit(strided image)");
+    DV_CHECK(vkWaitForFences(ctx->device, 1, &ctx->fence, VK_TRUE, UINT64_MAX),
+             "vkWaitForFences(strided image)");
     return true;
 }
 
@@ -729,6 +978,50 @@ bool create_image_pipeline(Context* ctx) {
     return true;
 }
 
+bool create_strided_image_pipeline(Context* ctx) {
+    VkShaderModuleCreateInfo shader_info{};
+    shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shader_info.codeSize = RAW16_BGRA_STRIDED_SPV_LEN;
+    shader_info.pCode = reinterpret_cast<const uint32_t*>(RAW16_BGRA_STRIDED_SPV);
+    VkShaderModule shader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(ctx->device, &shader_info, nullptr, &shader) != VK_SUCCESS) {
+        return fail("vkCreateShaderModule(strided image) failed");
+    }
+
+    VkPushConstantRange range{};
+    range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    range.offset = 0;
+    range.size = 16;
+    VkPipelineLayoutCreateInfo layout_info{};
+    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.setLayoutCount = 1;
+    layout_info.pSetLayouts = &ctx->image_descriptor_layout;
+    layout_info.pushConstantRangeCount = 1;
+    layout_info.pPushConstantRanges = &range;
+    if (vkCreatePipelineLayout(ctx->device, &layout_info, nullptr,
+                               &ctx->strided_pipeline_layout) != VK_SUCCESS) {
+        vkDestroyShaderModule(ctx->device, shader, nullptr);
+        return fail("vkCreatePipelineLayout(strided image) failed");
+    }
+
+    VkPipelineShaderStageCreateInfo stage{};
+    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = shader;
+    stage.pName = "main";
+    VkComputePipelineCreateInfo pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeline_info.stage = stage;
+    pipeline_info.layout = ctx->strided_pipeline_layout;
+    if (vkCreateComputePipelines(ctx->device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr,
+                                 &ctx->strided_pipeline) != VK_SUCCESS) {
+        vkDestroyShaderModule(ctx->device, shader, nullptr);
+        return fail("vkCreateComputePipelines(strided image) failed");
+    }
+    vkDestroyShaderModule(ctx->device, shader, nullptr);
+    return true;
+}
+
 } // namespace
 
 extern "C" {
@@ -750,6 +1043,10 @@ void dv_context_destroy(void* handle) {
             destroy_buffer(ctx, &entry.buffer);
         }
         ctx->ahb_cache.clear();
+        for (auto& entry : ctx->fd_cache) {
+            destroy_buffer(ctx, &entry.buffer);
+        }
+        ctx->fd_cache.clear();
         for (auto& entry : ctx->image_cache) {
             destroy_image(ctx, &entry.image);
         }
@@ -759,6 +1056,12 @@ void dv_context_destroy(void* handle) {
         }
         if (ctx->image_pipeline_layout != VK_NULL_HANDLE) {
             vkDestroyPipelineLayout(ctx->device, ctx->image_pipeline_layout, nullptr);
+        }
+        if (ctx->strided_pipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(ctx->device, ctx->strided_pipeline, nullptr);
+        }
+        if (ctx->strided_pipeline_layout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(ctx->device, ctx->strided_pipeline_layout, nullptr);
         }
         if (ctx->image_descriptor_pool != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(ctx->device, ctx->image_descriptor_pool, nullptr);
@@ -862,7 +1165,7 @@ void* dv_context_create(void) {
         }
     }
     if (ctx->physical == VK_NULL_HANDLE) {
-        fail("no Vulkan device with AHB external memory and a compute queue");
+        fail("no Vulkan device with external memory and a compute queue");
         vkDestroyInstance(ctx->instance, nullptr);
         delete ctx;
         return nullptr;
@@ -873,6 +1176,16 @@ void* dv_context_create(void) {
     std::vector<const char*> enabled;
     for (const char* name : required_device_extensions) {
         enabled.push_back(name);
+    }
+    if (has_device_extension(ctx->physical,
+                             VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME)) {
+        enabled.push_back(VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME);
+    }
+    if (has_device_extension(ctx->physical, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) {
+        enabled.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+    }
+    if (has_device_extension(ctx->physical, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME)) {
+        enabled.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
     }
     if (has_device_extension(ctx->physical, "VK_KHR_portability_subset")) {
         enabled.push_back("VK_KHR_portability_subset");
@@ -902,12 +1215,23 @@ void* dv_context_create(void) {
     ctx->get_ahb_properties = reinterpret_cast<PFN_vkGetAndroidHardwareBufferPropertiesANDROID>(
         vkGetDeviceProcAddr(ctx->device, "vkGetAndroidHardwareBufferPropertiesANDROID"));
     ctx->ahb_supported = ctx->get_ahb_properties != nullptr;
+    ctx->get_fd_properties = reinterpret_cast<PFN_vkGetMemoryFdPropertiesKHR>(
+        vkGetDeviceProcAddr(ctx->device, "vkGetMemoryFdPropertiesKHR"));
+    ctx->get_buffer_requirements2 = reinterpret_cast<PFN_vkGetBufferMemoryRequirements2KHR>(
+        vkGetDeviceProcAddr(ctx->device, "vkGetBufferMemoryRequirements2KHR"));
+    ctx->dma_buf_supported = has_device_extension(ctx->physical,
+                                                  VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) &&
+                             ctx->get_fd_properties != nullptr &&
+                             ctx->get_buffer_requirements2 != nullptr;
+    ctx->fd_supported = ctx->dma_buf_supported;
+    ctx->fd_handle_type = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
     ctx->get_image_memory_requirements2 = reinterpret_cast<PFN_vkGetImageMemoryRequirements2KHR>(
         vkGetDeviceProcAddr(ctx->device, "vkGetImageMemoryRequirements2KHR"));
     ctx->bind_image_memory2 = reinterpret_cast<PFN_vkBindImageMemory2KHR>(
         vkGetDeviceProcAddr(ctx->device, "vkBindImageMemory2KHR"));
 
-    if (!create_pipeline(ctx) || !create_image_pipeline(ctx)) {
+    if (!create_pipeline(ctx) || !create_image_pipeline(ctx) ||
+        !create_strided_image_pipeline(ctx)) {
         dv_context_destroy(ctx);
         return nullptr;
     }
@@ -999,6 +1323,61 @@ int dv_run_ahb_image(void* handle, void* input_ahb, size_t input_len, void* outp
         return -1;
     }
     if (!submit_image(ctx, *input, *output, width, height, mode)) {
+        return -1;
+    }
+    return 0;
+}
+
+int dv_supports_dma_buf_external_memory(void* handle) {
+    auto* ctx = static_cast<Context*>(handle);
+    return ctx != nullptr && ctx->dma_buf_supported && ctx->get_ahb_properties != nullptr ? 1 : 0;
+}
+
+int dv_run_ahb_fd_image(void* handle, void* input_ahb, size_t input_len, void* output_ahb,
+                        uint32_t width, uint32_t height, uint32_t mode) {
+    g_last_error.clear();
+    auto* ctx = static_cast<Context*>(handle);
+    if (!ctx || !ctx->device) {
+        fail("null direct Vulkan context");
+        return -1;
+    }
+    if (!ctx->dma_buf_supported || !ctx->fd_supported || !ctx->get_ahb_properties) {
+        fail("dma_buf external memory or AHB output import unavailable");
+        return -1;
+    }
+    if (!input_ahb || !output_ahb || width == 0 || height == 0) {
+        fail("null AHardwareBuffer or zero image geometry in fd run");
+        return -1;
+    }
+
+    AhbLayout desc{};
+    if (!ahb_layout(input_ahb, &desc)) {
+        fail("input AHB native handle has no layout ints");
+        return -1;
+    }
+    constexpr uint32_t kRaw16Format = 0x20;
+    if (desc.format != kRaw16Format || desc.width < width || desc.height < height ||
+        desc.stride < width) {
+        fail("input AHB is not a RAW16 plane: fmt=%u %ux%u stride=%u", (unsigned)desc.format,
+             desc.width, desc.height, desc.stride);
+        return -1;
+    }
+    VkDeviceSize need_in = (VkDeviceSize)desc.stride * height * 2u;
+    if (input_len < (size_t)need_in) {
+        fail("camera AHB too small: in=%zu need=%llu", input_len,
+             (unsigned long long)need_in);
+        return -1;
+    }
+
+    Buffer* input = get_fd_buffer(ctx, input_ahb, need_in);
+    if (input == nullptr) {
+        return -1;
+    }
+    Image* output = get_ahb_image(ctx, output_ahb, width, height);
+    if (output == nullptr) {
+        return -1;
+    }
+    if (!submit_strided_image(ctx, *input, *output, width, height, desc.stride * 2u, mode)) {
         return -1;
     }
     return 0;
@@ -1277,16 +1656,9 @@ int dv_probe_raw16_image_ahb(void* handle, void* ahb, uint32_t width, uint32_t h
 }
 
 namespace {
-struct NativeHandleLite {
-    int version;
-    int numFds;
-    int numInts;
-    int data[1];
-};
-}
-extern "C" const NativeHandleLite* AHardwareBuffer_getNativeHandle(const AHardwareBuffer* buffer);
 
-int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
+int probe_ahb_fd_import(void* ahb_ptr, VkExternalMemoryHandleTypeFlagBits handle_type,
+                        const char* label, char* out, size_t out_len) {
     if (!out_len) {
         return -1;
     }
@@ -1299,7 +1671,7 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
 
     const NativeHandleLite* handle = AHardwareBuffer_getNativeHandle(ahb);
     if (!handle || handle->numFds < 1 || handle->data[0] < 0) {
-        snprintf(out, out_len, "no native dmabuf fd (numFds=%d)",
+        snprintf(out, out_len, "%s: no native fd (numFds=%d)", label,
                  handle ? handle->numFds : -1);
         return -1;
     }
@@ -1316,7 +1688,7 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
     instance_info.ppEnabledExtensionNames = instance_exts;
     VkInstance instance = VK_NULL_HANDLE;
     if (vkCreateInstance(&instance_info, nullptr, &instance) != VK_SUCCESS) {
-        snprintf(out, out_len, "vkCreateInstance failed");
+        snprintf(out, out_len, "%s: vkCreateInstance failed", label);
         return -1;
     }
 
@@ -1325,11 +1697,13 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
     std::vector<VkPhysicalDevice> devices(device_count);
     vkEnumeratePhysicalDevices(instance, &device_count, devices.data());
 
-    const char* device_exts[] = {VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-                                 VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-                                 VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
-                                 VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
-                                 VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME};
+    std::vector<const char*> device_exts = {VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+                                            VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+                                            VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+                                            VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME};
+    if (handle_type == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
+        device_exts.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
+    }
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     uint32_t queue_family = UINT32_MAX;
     for (VkPhysicalDevice candidate : devices) {
@@ -1351,7 +1725,19 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
         }
     }
     if (physical == VK_NULL_HANDLE) {
-        snprintf(out, out_len, "no device with fd/dmabuf external memory + compute queue");
+        AhbLayout layout{};
+        ahb_layout(ahb_ptr, &layout);
+        std::string detail;
+        char entry[128];
+        for (int i = 0; i < handle->numInts && i < 12; ++i) {
+            snprintf(entry, sizeof(entry), "%d,", handle->data[handle->numFds + i]);
+            detail += entry;
+        }
+        snprintf(out, out_len,
+                 "%s: no device with required external memory + compute queue; "
+                 "layout=%ux%u stride=%u fmt=%u fds=%d ints=%d raw=[%s]",
+                 label, layout.width, layout.height, layout.stride, layout.format,
+                 handle->numFds, handle->numInts, detail.c_str());
         vkDestroyInstance(instance, nullptr);
         return -1;
     }
@@ -1366,11 +1752,11 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.queueCreateInfoCount = 1;
     device_info.pQueueCreateInfos = &queue_info;
-    device_info.enabledExtensionCount = sizeof(device_exts) / sizeof(device_exts[0]);
-    device_info.ppEnabledExtensionNames = device_exts;
+    device_info.enabledExtensionCount = (uint32_t)device_exts.size();
+    device_info.ppEnabledExtensionNames = device_exts.data();
     VkDevice device = VK_NULL_HANDLE;
     if (vkCreateDevice(physical, &device_info, nullptr, &device) != VK_SUCCESS) {
-        snprintf(out, out_len, "vkCreateDevice failed");
+        snprintf(out, out_len, "%s: vkCreateDevice failed", label);
         vkDestroyInstance(instance, nullptr);
         return -1;
     }
@@ -1380,7 +1766,7 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
     auto get_buffer_requirements2 = reinterpret_cast<PFN_vkGetBufferMemoryRequirements2KHR>(
         vkGetDeviceProcAddr(device, "vkGetBufferMemoryRequirements2KHR"));
     if (!get_fd_properties || !get_buffer_requirements2) {
-        snprintf(out, out_len, "external memory entrypoints unavailable");
+        snprintf(out, out_len, "%s: external memory entrypoints unavailable", label);
         vkDestroyDevice(device, nullptr);
         vkDestroyInstance(instance, nullptr);
         return -1;
@@ -1388,16 +1774,19 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
 
     std::string report;
     char entry[256];
+    AhbLayout layout{};
+    ahb_layout(ahb_ptr, &layout);
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(physical, &props);
-    snprintf(entry, sizeof(entry), "device=%s vendor=%x; ", props.deviceName,
-             (unsigned)props.vendorID);
+    snprintf(entry, sizeof(entry),
+             "%s device=%s vendor=%x layout=%ux%u stride=%u fmt=%u fds=%d ints=%d; ", label,
+             props.deviceName, (unsigned)props.vendorID, layout.width, layout.height,
+             layout.stride, layout.format, handle->numFds, handle->numInts);
     report += entry;
 
     VkMemoryFdPropertiesKHR fd_props{};
     fd_props.sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR;
-    VkResult rc = get_fd_properties(device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
-                                    ahb_fd, &fd_props);
+    VkResult rc = get_fd_properties(device, handle_type, ahb_fd, &fd_props);
     snprintf(entry, sizeof(entry), "fdProps=%d mask=0x%x; ", (int)rc,
              (unsigned)fd_props.memoryTypeBits);
     report += entry;
@@ -1410,7 +1799,7 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
 
     VkExternalMemoryBufferCreateInfo external{};
     external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
-    external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+    external.handleTypes = handle_type;
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.pNext = &external;
@@ -1445,7 +1834,7 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
     if (import_fd >= 0 && mask != 0) {
         VkImportMemoryFdInfoKHR import{};
         import.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR;
-        import.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+        import.handleType = handle_type;
         import.fd = import_fd;
         VkMemoryDedicatedAllocateInfo dedicated{};
         dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
@@ -1491,6 +1880,18 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
     return memory != VK_NULL_HANDLE && bind_rc == VK_SUCCESS ? 0 : -1;
+}
+
+} // namespace
+
+int dv_probe_opaque_fd_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
+    return probe_ahb_fd_import(ahb_ptr, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR,
+                               "opaque_fd", out, out_len);
+}
+
+int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
+    return probe_ahb_fd_import(ahb_ptr, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+                               "dma_buf", out, out_len);
 }
 
 } // extern "C"

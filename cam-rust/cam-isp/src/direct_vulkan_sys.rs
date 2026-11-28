@@ -53,6 +53,17 @@ extern "C" {
         out_len: usize,
     ) -> c_int;
     fn dv_probe_dmabuf_ahb_global(ahb: *mut c_void, out: *mut c_char, out_len: usize) -> c_int;
+    fn dv_probe_opaque_fd_ahb_global(ahb: *mut c_void, out: *mut c_char, out_len: usize) -> c_int;
+    fn dv_supports_dma_buf_external_memory(ctx: *mut c_void) -> c_int;
+    fn dv_run_ahb_fd_image(
+        ctx: *mut c_void,
+        input_ahb: *mut c_void,
+        input_len: usize,
+        output_ahb: *mut c_void,
+        width: u32,
+        height: u32,
+        mode: u32,
+    ) -> c_int;
 }
 
 fn last_error() -> String {
@@ -65,18 +76,34 @@ fn last_error() -> String {
     }
 }
 
+fn probe_ahb_fd(
+    probe: unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> c_int,
+    ahb: *mut c_void,
+) -> (bool, String) {
+    let mut buf = [0 as c_char; 1024];
+    let rc = unsafe { probe(ahb, buf.as_mut_ptr(), buf.len()) };
+    let text = unsafe { CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    (rc == 0, text)
+}
+
 /// Probe AHB → `VkBuffer` import through `VK_EXT_external_memory_dma_buf`.
 ///
 /// This works without `VK_ANDROID_external_memory_android_hardware_buffer`, so
 /// it can be used with ICDs such as Mesa Turnip that expose dma_buf import but
 /// not AHardwareBuffer import.
 pub fn probe_dmabuf_ahb(ahb: *mut c_void) -> (bool, String) {
-    let mut buf = [0 as c_char; 1024];
-    let rc = unsafe { dv_probe_dmabuf_ahb_global(ahb, buf.as_mut_ptr(), buf.len()) };
-    let text = unsafe { CStr::from_ptr(buf.as_ptr()) }
-        .to_string_lossy()
-        .into_owned();
-    (rc == 0, text)
+    probe_ahb_fd(dv_probe_dmabuf_ahb_global, ahb)
+}
+
+/// Probe AHB fd import as a Vulkan opaque fd.
+///
+/// The camera AHB fd is a dma_buf fd, so vendor drivers that expose only
+/// `VK_KHR_external_memory_fd` may reject it. This probe decides whether the
+/// built-in Adreno HAL can consume camera buffers without Turnip.
+pub fn probe_opaque_fd_ahb(ahb: *mut c_void) -> (bool, String) {
+    probe_ahb_fd(dv_probe_opaque_fd_ahb_global, ahb)
 }
 
 /// One Vulkan device/pipeline owned by a single ISP worker.
@@ -171,6 +198,36 @@ impl DirectVulkanContext {
             .to_string_lossy()
             .into_owned();
         (rc == 0, text)
+    }
+
+    /// Whether this Vulkan device can import camera AHB dma_buf fds directly.
+    pub fn supports_dma_buf(&self) -> bool {
+        unsafe { dv_supports_dma_buf_external_memory(self.ctx) != 0 }
+    }
+
+    /// Dispatch a strided RAW16 dma_buf fd into an AHB-backed storage `VkImage`.
+    ///
+    /// The input AHB stays opaque to the CPU: its native fd is imported as
+    /// `VkBuffer` device memory and the shader follows the plane's row stride.
+    pub fn run_ahb_fd_image(
+        &self,
+        input: *mut c_void,
+        input_len: usize,
+        output: *mut c_void,
+        width: u32,
+        height: u32,
+        mode: u32,
+    ) -> Result<(), String> {
+        if input.is_null() || output.is_null() {
+            return Err("null AHardwareBuffer in direct Vulkan fd run".to_string());
+        }
+        let rc =
+            unsafe { dv_run_ahb_fd_image(self.ctx, input, input_len, output, width, height, mode) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(last_error())
+        }
     }
 
     /// Dispatch one raw-word → packed-BGRA pass between two AHBs.

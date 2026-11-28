@@ -25,6 +25,7 @@ pub struct DirectVulkanEngine {
     loaded: bool,
     mode: u32,
     image_output: bool,
+    fd_input: bool,
 }
 
 impl DirectVulkanEngine {
@@ -36,12 +37,16 @@ impl DirectVulkanEngine {
         let image_output = std::env::var("SOFTISP_DIRECT_VULKAN_IMAGE_OUTPUT")
             .ok()
             .is_none_or(|v| v != "0" && v != "false");
+        let fd_input = std::env::var("SOFTISP_DIRECT_VULKAN_FD_INPUT")
+            .ok()
+            .is_none_or(|v| v != "0" && v != "false");
         Self {
             context: DirectVulkanContext::new().ok(),
             controller: Arc::new(Mutex::new(IspController::new())),
             loaded: false,
             mode,
             image_output,
+            fd_input,
         }
     }
 
@@ -66,6 +71,13 @@ impl DirectVulkanEngine {
         self.context
             .as_ref()
             .ok_or_else(|| IspError::Pipeline("direct Vulkan context was not created".to_string()))
+    }
+
+    /// Whether the camera AHB fd can be imported without a CPU de-stride copy.
+    pub fn supports_dma_buf(&self) -> bool {
+        self.context
+            .as_ref()
+            .is_some_and(|ctx| ctx.supports_dma_buf())
     }
 
     /// One-shot diagnostic used while evaluating a storage-image output path.
@@ -95,7 +107,9 @@ impl IspEngine for DirectVulkanEngine {
     }
 
     fn priority(&self) -> i32 {
-        98
+        // Explicit opt-in only: auto selection would pick this engine over MNN
+        // and then fail because host pipelines have no AHardwareBuffers.
+        0
     }
 
     fn is_loaded(&self) -> bool {
@@ -121,7 +135,10 @@ impl IspEngine for DirectVulkanEngine {
             self.context = Some(DirectVulkanContext::new().map_err(IspError::Pipeline)?);
         }
         self.loaded = true;
-        info!("DirectVulkanEngine ready (mode={})", self.mode);
+        info!(
+            "DirectVulkanEngine ready (mode={}, fd_input={})",
+            self.mode, self.fd_input
+        );
         Ok(())
     }
 
@@ -144,7 +161,11 @@ impl IspEngine for DirectVulkanEngine {
         let width = p.width.max(1);
         let height = p.height.max(1);
         let t0 = Instant::now();
-        if self.image_output {
+        let camera_fd = self.fd_input && ctx.supports_dma_buf() && p.input_buffer.is_none();
+        if self.image_output && camera_fd {
+            ctx.run_ahb_fd_image(input.ptr, input.len, output.ptr, width, height, self.mode)
+                .map_err(IspError::Pipeline)?;
+        } else if self.image_output {
             ctx.run_ahb_image(input.ptr, input.len, output.ptr, width, height, self.mode)
                 .map_err(IspError::Pipeline)?;
         } else {

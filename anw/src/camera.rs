@@ -659,6 +659,10 @@ impl CameraSession {
                 && Self::direct_ahb_usable(guard.0, width as u32, height as u32, candidate);
             if ahb_ok {
                 unsafe { sys::AHardwareBuffer_acquire(candidate) };
+                let mut desc: sys::AHardwareBuffer_Desc = unsafe { std::mem::zeroed() };
+                unsafe { sys::AHardwareBuffer_describe(candidate, &mut desc) };
+                let tight = (width as usize).saturating_mul(height as usize);
+                let padded = (desc.stride as usize).saturating_mul(height as usize);
                 let mut ts = 0i64;
                 let ts_ok = unsafe { sys::AImage_getTimestamp(image, &mut ts) };
                 return Ok(Some(RawFrame {
@@ -667,7 +671,7 @@ impl CameraSession {
                     } else {
                         0
                     },
-                    data: vec![0u16; (width as usize).saturating_mul(height as usize)],
+                    data: vec![0u16; padded.max(tight)],
                     width: width as u32,
                     height: height as u32,
                     ahb: Some(AhbRef(candidate)),
@@ -702,10 +706,10 @@ impl CameraSession {
         })
     }
 
-    /// A media AHB can be bound as MNN input only when its plane is already the
-    /// tight RAW16 layout the model expects and the allocation can be imported
-    /// as a Vulkan `VkBuffer`. YUV needs 8→16-bit expansion and a Bayer mosaic,
-    /// so it must keep the host staging path.
+    /// A media AHB can be bound as MNN input only when its plane is RAW16 with
+    /// two-byte samples; row padding is handled by the direct Vulkan shader.
+    /// YUV needs 8→16-bit expansion and a Bayer mosaic, so it must keep the
+    /// host staging path.
     fn direct_ahb_usable(
         image: *mut sys::AImage,
         width: u32,
@@ -723,7 +727,7 @@ impl CameraSession {
                 && sys::AImage_getPlanePixelStride(image, 0, &mut pixel_stride)
                     == sys::media_status_t::AMEDIA_OK
         };
-        if !strides_ok || pixel_stride != 2 || row_stride != (width as i32).saturating_mul(2) {
+        if !strides_ok || pixel_stride != 2 || row_stride < (width as i32).saturating_mul(2) {
             return false;
         }
 
@@ -731,7 +735,11 @@ impl CameraSession {
         unsafe { sys::AHardwareBuffer_describe(ahb, &mut desc) };
         let gpu_sampled =
             sys::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE.0;
-        desc.usage & gpu_sampled == gpu_sampled && desc.width >= width && desc.height >= height
+        desc.format == 0x20
+            && desc.usage & gpu_sampled == gpu_sampled
+            && desc.width >= width
+            && desc.height >= height
+            && desc.stride >= width
     }
 
     /// Read plane 0 into a tightly packed `u16` Bayer buffer.
@@ -891,7 +899,8 @@ impl Drop for AhbRef {
 
 /// A tightly packed Bayer frame ready for the ISP.
 pub struct RawFrame {
-    /// `width * height` samples, little-endian `u16` regardless of source.
+    /// At least `width * height` little-endian `u16` samples; AHB zero-copy
+    /// frames include row padding and expose only a zero-filled placeholder.
     pub data: Vec<u16>,
     /// Frame width in pixels.
     pub width: u32,

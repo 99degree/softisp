@@ -11,7 +11,7 @@
 //!   -- --ignored --nocapture --test-threads=1
 //! ```
 
-use cam_isp::direct_vulkan_sys::{probe_dmabuf_ahb, DirectVulkanContext};
+use cam_isp::direct_vulkan_sys::{probe_dmabuf_ahb, probe_opaque_fd_ahb, DirectVulkanContext};
 use std::ffi::c_void;
 use std::os::raw::{c_int, c_uint};
 use std::ptr::null_mut;
@@ -186,4 +186,90 @@ fn raw16_ahb_dmabuf_import() {
     let (ok, detail) = probe_dmabuf_ahb(raw.0);
     println!("RAW16 dma_buf AHB import: ok={ok} {detail}");
     // Capability probe: vendor ICD and Mesa Turnip differ here.
+}
+
+#[test]
+#[ignore = "requires an Android device with Vulkan and AHardwareBuffer support"]
+fn raw16_ahb_opaque_fd_import() {
+    let raw = TestAhb::allocate(W, H, FORMAT_RAW16, USAGE_CPU_READ | USAGE_GPU_SAMPLED_IMAGE);
+    let (ok, detail) = probe_opaque_fd_ahb(raw.0);
+    println!("RAW16 opaque_fd AHB import: ok={ok} {detail}");
+    // Cheap experiment: the camera fd is dma_buf, not a Vulkan-opaque fd.
+}
+
+#[test]
+#[ignore = "requires an Android device with Vulkan and AHardwareBuffer support"]
+fn raw16_ahb_fd_image_run() {
+    const FD_W: u32 = 80;
+    const FD_H: u32 = 60;
+    const PIXELS: usize = (FD_W as usize) * (FD_H as usize);
+    let input = TestAhb::allocate(
+        FD_W,
+        FD_H,
+        FORMAT_RAW16,
+        USAGE_CPU_RW | USAGE_GPU_SAMPLED_IMAGE,
+    );
+    let output = TestAhb::allocate(
+        FD_W,
+        FD_H,
+        FORMAT_RGBA8888,
+        USAGE_CPU_RW | USAGE_GPU_FRAMEBUFFER,
+    );
+
+    let input_ptr = input.map(USAGE_CPU_RW);
+    let words = unsafe { slice::from_raw_parts_mut(input_ptr as *mut u32, PIXELS / 2) };
+    for (index, word) in words.iter_mut().enumerate() {
+        let lo = (index % 1024) as u32;
+        let hi = ((index * 3 + 7) % 1024) as u32;
+        *word = lo | (hi << 16);
+    }
+    input.unmap();
+
+    let ctx = match DirectVulkanContext::new() {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            println!("skip fd image run (no Vulkan compute context): {err}");
+            return;
+        }
+    };
+    if !ctx.supports_dma_buf() {
+        println!("skip fd image run (ICD lacks VK_EXT_external_memory_dma_buf)");
+        return;
+    }
+
+    let iterations = 32;
+    let t0 = Instant::now();
+    for _ in 0..iterations {
+        ctx.run_ahb_fd_image(input.0, PIXELS * 4, output.0, FD_W, FD_H, 0)
+            .expect("RAW16 dma_buf fd -> storage VkImage run should succeed");
+    }
+    let elapsed = t0.elapsed();
+    println!(
+        "fd image output: {} dispatches in {:?} ({:.3} ms/run)",
+        iterations,
+        elapsed,
+        elapsed.as_secs_f64() * 1000.0 / iterations as f64,
+    );
+
+    let output_ptr = output.map(USAGE_CPU_RW);
+    let out_words = unsafe { slice::from_raw_parts(output_ptr as *const u32, PIXELS) };
+    assert!(
+        out_words.iter().any(|word| *word & 0x00ff_ffff != 0),
+        "fd image output must contain non-black pixels"
+    );
+    output.unmap();
+}
+
+#[test]
+#[ignore = "requires an Android device with Vulkan and AHardwareBuffer support"]
+fn raw16_ahb_native_handle_layout() {
+    let raw = TestAhb::allocate(
+        80,
+        60,
+        FORMAT_RAW16,
+        USAGE_CPU_READ | USAGE_GPU_SAMPLED_IMAGE,
+    );
+    let (ok, detail) = probe_dmabuf_ahb(raw.0);
+    println!("RAW16 80x60 native-handle layout: ok={ok} {detail}");
+    // Confirms where width/height/stride/format live in the private handle.
 }
