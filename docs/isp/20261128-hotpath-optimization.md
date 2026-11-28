@@ -180,9 +180,10 @@ LD_LIBRARY_PATH=$PWD/cam-rust/lib/aarch64-v8a:/data/data/com.termux/files/usr/li
   `slot.wait_free()` against the earlier 120–150 ms.
 - If the slot wait is still large, add a second output slot per worker so the
   GPU can start frame N+1 while SurfaceFlinger still owns N's AHB.
-- The input still needs one CPU de-stride copy into the BLOB AHB; the RAW16
-  camera AHB cannot be imported as Vulkan memory on this device (see
-  `20261128-raw16-ahb-image-copy-probe.md`).
+- The input needs one CPU de-stride copy on drivers without dma_buf fd import;
+  the built-in Adreno 618 HAL cannot import the RAW16 camera AHB as Vulkan
+  memory (see `20261128-raw16-ahb-image-copy-probe.md`). Mesa Turnip can, and
+  the strided fd path is wired up below.
 
 ## hwvulkan loader survey (2026-11-28 follow-up)
 
@@ -217,3 +218,52 @@ back to the system `libvulkan.so`; the existing MNN/direct Vulkan path then uses
 the SIMD de-stride copy into a BLOB AHB and Vulkan buffer/image, as before.
 This keeps the default engine at `mnn_vulkan`; the loader choice is orthogonal
 to engine selection.
+
+### Implementation
+
+The generated loader source lives at
+`vulkan_loader/softisp_vulkan_loader.cpp` and is reproducible
+with `scripts/gen_vulkan_loader.py` from the pinned NDK Vulkan headers.
+`anw/build.rs` compiles it to `cam-rust/lib/<abi>/libvulkan.so`, copies the
+same loader into both ABI directories used by APK packaging, and stages a local
+copy of `/vendor/lib64/hw/vulkan.adreno.so` as
+`libsoftisp_vulkan_adreno.so` when the build host is Adreno. The APK verifier
+hashes both packaged files; `push-test-libs.sh` / `shim-debug.sh verify` now use
+the project loader instead of the Termux `/system` loader.
+
+Two environment overrides are available for bring-up:
+`SOFTISP_VULKAN_PLATFORM=generic` forces the system-loader fallback, and
+`SOFTISP_VULKAN_DRIVER=<path>` selects a specific hwvulkan HAL. By default the
+loader checks `ro.hardware.vulkan`, `ro.hardware`, and `ro.board.platform`; on
+Adreno it prefers the staged app-private HAL, then the vendor HAL path. It has
+no Android WSI/swapchain translation, so it is intended for the compute-only
+MNN/direct-Vulkan path, not general graphics presentation.
+
+Enabling the `direct_vulkan` feature also exposed an engine-selection bug: the
+engine registered with auto priority 98, so host `UnifiedPipeline` tests
+selected it instead of MNN/CPU and failed without AHBs. It is now opt-in only:
+auto selection skips it, while `select_engine_by_name("direct_vulkan")` still
+resolves it. See `docs/isp/20261128-direct-vulkan-engine-selection-fix.md`.
+
+## RAW16 fd zero-copy follow-up
+
+The cheap `OPAQUE_FD` experiment failed on the built-in Adreno HAL, but Turnip
+exposes `VK_EXT_external_memory_dma_buf` and can import the camera AHB's
+dma_buf fd. The direct Vulkan engine now enables that extension when present,
+imports the fd as a cached `VkBuffer`, and runs
+`raw16_bgra_strided.comp` into the same AHB-backed storage image used by the
+graphics-output path. The shader follows the plane's byte stride, so no CPU
+de-stride copy is needed on capable drivers.
+
+On-device `raw16_ahb_fd_image_run` results through the project loader:
+
+| driver | result |
+|--------|--------|
+| Turnip 710/720/722 v4.7 unified | 32 dispatches, 0.571 ms/run |
+| Turnip 26.3.1 EMULATOR | 32 dispatches, 0.895 ms/run |
+| built-in Adreno 618 | skipped, dma_buf extension absent |
+
+`SOFTISP_DIRECT_VULKAN_FD_INPUT=0|false` keeps the BLOB-input fallback, and
+`SOFTISP_RAW_AHB_SKIP_CPU` is still required for the camera layer to expose the
+media AHB. Full root-cause notes are in
+`docs/isp/20261128-raw16-fd-zero-copy.md`.

@@ -1,6 +1,30 @@
 # Project Roadmap & Outstanding Work
 
-> Last updated: 2026-11-26. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
+> Last updated: 2026-11-28. See [`AGENTS.md`](../AGENTS.md) §14 for the canonical pointer.
+
+## Status (2026-11-28) — Vulkan loader integration
+
+- **Project Vulkan loader landed**: `anw/build.rs` builds
+  `vulkan_loader/softisp_vulkan_loader.cpp` into
+  `libvulkan.so`, stages the installed Adreno hwvulkan HAL as
+  `libsoftisp_vulkan_adreno.so` when available, and both APK and shim-test
+  packaging verify the hashes. On Adreno the loader uses hwvulkan directly; on
+  every other platform it forwards to the Android system loader, keeping the
+  SIMD copy into worker-owned BLOB AHB/Vulkan memory. See
+  `docs/guides/SOFTISP_VULKAN_LOADER.md` and the driver survey in
+  `docs/isp/20261128-hotpath-optimization.md`.
+- **Direct Vulkan is now explicit opt-in only**: enabling the feature no longer
+  lets it win `auto` engine selection in host tests.
+  `select_engine_by_name("direct_vulkan")` still resolves it. 863 `cam-isp`
+  lib tests pass with `rectifier,direct_vulkan`; 51 `softisp-anw` tests pass.
+  See `docs/isp/20261128-direct-vulkan-engine-selection-fix.md`.
+- **RAW16 camera AHB dma_buf zero-copy path landed for capable ICDs**: direct
+  Vulkan enables `VK_KHR_external_memory_fd` /
+  `VK_EXT_external_memory_dma_buf`, imports the camera AHB fd as a cached
+  `VkBuffer`, and dispatches `raw16_bgra_strided.comp` into the AHB-backed
+  storage image. The built-in Adreno HAL lacks dma_buf and keeps the BLOB
+  de-stride fallback; Turnip measured 0.571 ms/run and 0.895 ms/run in the
+  ignored on-device test. See `docs/isp/20261128-raw16-fd-zero-copy.md`.
 
 ## Status (2026-11-26) — packed-preview perf work
 
