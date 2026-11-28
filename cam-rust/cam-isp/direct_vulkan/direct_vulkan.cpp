@@ -99,6 +99,8 @@ struct Context {
     std::vector<AhbImageCacheEntry> image_cache;
 
     PFN_vkGetAndroidHardwareBufferPropertiesANDROID get_ahb_properties = nullptr;
+    PFN_vkGetImageMemoryRequirements2KHR get_image_memory_requirements2 = nullptr;
+    PFN_vkBindImageMemory2KHR bind_image_memory2 = nullptr;
 };
 
 const char* required_device_extensions[] = {
@@ -319,7 +321,7 @@ bool create_ahb_image(Context* ctx, void* ahb, uint32_t width, uint32_t height, 
     requirements_info.image = out->image;
     VkMemoryRequirements2 requirements{};
     requirements.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-    vkGetImageMemoryRequirements2(ctx->device, &requirements_info, &requirements);
+    ctx->get_image_memory_requirements2(ctx->device, &requirements_info, &requirements);
 
     VkImportAndroidHardwareBufferInfoANDROID import{};
     import.sType = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID;
@@ -356,7 +358,7 @@ bool create_ahb_image(Context* ctx, void* ahb, uint32_t width, uint32_t height, 
     bind.image = out->image;
     bind.memory = out->memory;
     bind.memoryOffset = 0;
-    DV_CHECK(vkBindImageMemory2(ctx->device, 1, &bind), "vkBindImageMemory2(AHB)");
+    DV_CHECK(ctx->bind_image_memory2(ctx->device, 1, &bind), "vkBindImageMemory2(AHB)");
 
     VkImageViewCreateInfo view_info{};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -900,6 +902,10 @@ void* dv_context_create(void) {
     ctx->get_ahb_properties = reinterpret_cast<PFN_vkGetAndroidHardwareBufferPropertiesANDROID>(
         vkGetDeviceProcAddr(ctx->device, "vkGetAndroidHardwareBufferPropertiesANDROID"));
     ctx->ahb_supported = ctx->get_ahb_properties != nullptr;
+    ctx->get_image_memory_requirements2 = reinterpret_cast<PFN_vkGetImageMemoryRequirements2KHR>(
+        vkGetDeviceProcAddr(ctx->device, "vkGetImageMemoryRequirements2KHR"));
+    ctx->bind_image_memory2 = reinterpret_cast<PFN_vkBindImageMemory2KHR>(
+        vkGetDeviceProcAddr(ctx->device, "vkBindImageMemory2KHR"));
 
     if (!create_pipeline(ctx) || !create_image_pipeline(ctx)) {
         dv_context_destroy(ctx);
@@ -1058,7 +1064,7 @@ int dv_probe_image_ahb(void* handle, void* ahb, uint32_t width, uint32_t height,
     mreq.image = image;
     VkMemoryRequirements2 req{};
     req.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-    vkGetImageMemoryRequirements2(ctx->device, &mreq, &req);
+    ctx->get_image_memory_requirements2(ctx->device, &mreq, &req);
 
     VkImportAndroidHardwareBufferInfoANDROID import{};
     import.sType = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID;
@@ -1092,7 +1098,7 @@ int dv_probe_image_ahb(void* handle, void* ahb, uint32_t width, uint32_t height,
         bind.image = image;
         bind.memory = memory;
         bind.memoryOffset = 0;
-        bind_rc = vkBindImageMemory2(ctx->device, 1, &bind);
+        bind_rc = ctx->bind_image_memory2(ctx->device, 1, &bind);
     }
     snprintf(out, out_len,
              "fmt=%u ext=%llu feat=0x%x storage=0x%x types=0x%x reqMask=0x%x mask=0x%x "
@@ -1217,7 +1223,7 @@ int dv_probe_raw16_image_ahb(void* handle, void* ahb, uint32_t width, uint32_t h
         mreq.image = image;
         VkMemoryRequirements2 req{};
         req.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-        vkGetImageMemoryRequirements2(ctx->device, &mreq, &req);
+        ctx->get_image_memory_requirements2(ctx->device, &mreq, &req);
 
         VkImportAndroidHardwareBufferInfoANDROID import{};
         import.sType = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID;
@@ -1249,7 +1255,7 @@ int dv_probe_raw16_image_ahb(void* handle, void* ahb, uint32_t width, uint32_t h
             bind.image = image;
             bind.memory = memory;
             bind.memoryOffset = 0;
-            bind_rc = vkBindImageMemory2(ctx->device, 1, &bind);
+            bind_rc = ctx->bind_image_memory2(ctx->device, 1, &bind);
         }
         snprintf(entry, sizeof(entry),
                  "fmt=%u feat=0x%x storage=0x%x mask=0x%x alloc=%u bind=%d; ",
@@ -1371,8 +1377,10 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
 
     auto get_fd_properties = reinterpret_cast<PFN_vkGetMemoryFdPropertiesKHR>(
         vkGetDeviceProcAddr(device, "vkGetMemoryFdPropertiesKHR"));
-    if (!get_fd_properties) {
-        snprintf(out, out_len, "vkGetMemoryFdPropertiesKHR unavailable");
+    auto get_buffer_requirements2 = reinterpret_cast<PFN_vkGetBufferMemoryRequirements2KHR>(
+        vkGetDeviceProcAddr(device, "vkGetBufferMemoryRequirements2KHR"));
+    if (!get_fd_properties || !get_buffer_requirements2) {
+        snprintf(out, out_len, "external memory entrypoints unavailable");
         vkDestroyDevice(device, nullptr);
         vkDestroyInstance(instance, nullptr);
         return -1;
@@ -1425,7 +1433,7 @@ int dv_probe_dmabuf_ahb_global(void* ahb_ptr, char* out, size_t out_len) {
     req_info.buffer = buffer;
     VkMemoryRequirements2 req{};
     req.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-    vkGetBufferMemoryRequirements2(device, &req_info, &req);
+    get_buffer_requirements2(device, &req_info, &req);
     uint32_t mask = fd_props.memoryTypeBits & req.memoryRequirements.memoryTypeBits;
     snprintf(entry, sizeof(entry), "reqMask=0x%x mask=0x%x; ",
              (unsigned)req.memoryRequirements.memoryTypeBits, (unsigned)mask);

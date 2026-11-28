@@ -116,6 +116,14 @@ the Mesa probe is a capability/run comparison only. The AHB-backed storage-image
 output test is skipped under Mesa because that ICD lacks the AHB extension
 required to import the display AHB.
 
+The `libvulkan_freedreno.so` copied into the repo root is **not** a usable ICD:
+`nm -D --defined-only` shows none of the required exported entry points
+(`vk_icdGetInstanceProcAddr`, `vk_icdNegotiateLoaderICDInterfaceVersion`,
+`vk_icdGetPhysicalDeviceProcAddr`). Loading it through an ICD JSON fails at
+`vkCreateInstance`. Use the installed
+`/data/data/com.termux/files/usr/lib/libvulkan_freedreno.so`, which exports all
+three and is paired with `freedreno_icd.aarch64.json`.
+
 ## Applied changes
 
 1. **`dv_run_ahb_image()` / `DirectVulkanContext::run_ahb_image()`.** A second
