@@ -183,3 +183,37 @@ LD_LIBRARY_PATH=$PWD/cam-rust/lib/aarch64-v8a:/data/data/com.termux/files/usr/li
 - The input still needs one CPU de-stride copy into the BLOB AHB; the RAW16
   camera AHB cannot be imported as Vulkan memory on this device (see
   `20261128-raw16-ahb-image-copy-probe.md`).
+
+## hwvulkan loader survey (2026-11-28 follow-up)
+
+The generic loader cannot consume Android vendor drivers directly: they export
+`HMI` (`hw_module_t`), not `vk_icdGetInstanceProcAddr`. A small HAL-adapter
+loader was prototyped and tested against the built-in Adreno HAL and three
+extracted Turnip HALs.
+
+| driver | HAL id | RAW16 explicit AHB | RAW16 dma_buf | storage image |
+|--------|--------|--------------------|---------------|---------------|
+| `/vendor/lib64/hw/vulkan.adreno.so` | `vulkan` | fail | unavailable | 0.455 ms/run via system loader, 0.769 ms/run via adapter |
+| Turnip 26.3.1 EMULATOR | `vulkan` | fail | ok | 0.269 ms/run |
+| Turnip 710/720/722 v4.7 unified | `vulkan` | fail | ok | 0.201 ms/run |
+| Turnip v26.3.0 V5.0 | `vk0` | fail + hang | ok | aborts in `align64()` |
+
+A deeper format probe tried `R16_UNORM`, `R16_UINT`, `R16_SFLOAT`,
+`R16G16_UNORM`, `R16G16_UINT`, `R16G16_SFLOAT`, the driver-reported format and
+the external-format path. Built-in Adreno reports `allocationSize=8192`,
+`memoryTypeBits=0x18`, `format=0`, `externalFormat=0`, but every dedicated AHB
+allocation fails with `VK_ERROR_TOO_MANY_OBJECTS`. The Turnip HALs reject
+`vkGetAndroidHardwareBufferPropertiesANDROID` for RAW16 outright
+(`rc=-1000072003`, `memoryTypeBits=0`). There is no hidden RAW16 format that
+turns the camera AHB into Vulkan memory; the CPU de-stride copy remains.
+
+### Decision
+
+Make the HAL-adapter loader part of the project. On Adreno platforms it loads
+the hwvulkan HAL (a device-local copy when available, otherwise the installed
+`/vendor/lib64/hw/vulkan.adreno.so`) and exposes the full Vulkan entry-point set
+without ICD extension filtering. On every other platform the same loader falls
+back to the system `libvulkan.so`; the existing MNN/direct Vulkan path then uses
+the SIMD de-stride copy into a BLOB AHB and Vulkan buffer/image, as before.
+This keeps the default engine at `mnn_vulkan`; the loader choice is orthogonal
+to engine selection.
