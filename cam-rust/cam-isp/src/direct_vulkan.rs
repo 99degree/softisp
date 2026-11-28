@@ -24,6 +24,7 @@ pub struct DirectVulkanEngine {
     controller: Arc<Mutex<IspController>>,
     loaded: bool,
     mode: u32,
+    image_output: bool,
 }
 
 impl DirectVulkanEngine {
@@ -32,11 +33,15 @@ impl DirectVulkanEngine {
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(0);
+        let image_output = std::env::var("SOFTISP_DIRECT_VULKAN_IMAGE_OUTPUT")
+            .ok()
+            .is_none_or(|v| v != "0" && v != "false");
         Self {
             context: DirectVulkanContext::new().ok(),
             controller: Arc::new(Mutex::new(IspController::new())),
             loaded: false,
             mode,
+            image_output,
         }
     }
 
@@ -61,6 +66,20 @@ impl DirectVulkanEngine {
         self.context
             .as_ref()
             .ok_or_else(|| IspError::Pipeline("direct Vulkan context was not created".to_string()))
+    }
+
+    /// One-shot diagnostic used while evaluating a storage-image output path.
+    pub fn probe_image_ahb(
+        &self,
+        ahb: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+    ) -> (bool, String) {
+        self.context
+            .as_ref()
+            .map_or((false, "no Vulkan context".to_string()), |ctx| {
+                ctx.probe_image_ahb(ahb, width, height)
+            })
     }
 }
 
@@ -122,17 +141,18 @@ impl IspEngine for DirectVulkanEngine {
             ));
         };
         let ctx = self.context()?;
+        let width = p.width.max(1);
+        let height = p.height.max(1);
         let t0 = Instant::now();
-        ctx.run_ahb(
-            input.ptr,
-            input.len,
-            output.ptr,
-            output.len,
-            p.width.max(1),
-            p.height.max(1),
-            self.mode,
-        )
-        .map_err(IspError::Pipeline)?;
+        if self.image_output {
+            ctx.run_ahb_image(input.ptr, input.len, output.ptr, width, height, self.mode)
+                .map_err(IspError::Pipeline)?;
+        } else {
+            ctx.run_ahb(
+                input.ptr, input.len, output.ptr, output.len, width, height, self.mode,
+            )
+            .map_err(IspError::Pipeline)?;
+        }
 
         let mut frame =
             IspFrame::new_external(p.width.max(1), p.height.max(1), FrameFormat::Rgba8888);

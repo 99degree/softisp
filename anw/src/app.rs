@@ -647,17 +647,26 @@ impl Preview {
         // point of the zero-copy path. Release the handoff flag as soon as the
         // blit returns, whether it succeeded or not, so the worker is never
         // held behind a broken surface.
+        // SurfaceFlinger consumes the AHB handle, not a CPU blit. Opening a
+        // mapping on every frame made the previous slot's release wait on that
+        // window; only the periodic stats line actually needs pixels on the CPU.
+        let log_stats = self.frames == 0 || (self.frames + 1).is_multiple_of(STATS_INTERVAL_FRAMES);
         let (bytes, ahb_view) = match done.ahb.as_ref() {
             Some(view) => {
-                // MNN's fence wait has returned; re-open the mapping for CPU
-                // reads so the GPU's AHB writes are actually visible here.
-                match view.begin_cpu_read() {
-                    Ok(()) => (view.bytes(), Some(view.clone())),
-                    Err(e) => {
-                        write_line("ERROR", "display", &format!("AHB read window failed: {e}"));
-                        (&[] as &[u8], Some(view.clone()))
+                let bytes = if self.ahb_display.is_some() && !log_stats {
+                    &[] as &[u8]
+                } else {
+                    // The GPU fence has retired: re-open the mapping so the
+                    // stats scan sees the pixels the shader just wrote.
+                    match view.begin_cpu_read() {
+                        Ok(()) => view.bytes(),
+                        Err(e) => {
+                            write_line("ERROR", "display", &format!("AHB read window failed: {e}"));
+                            &[] as &[u8]
+                        }
                     }
-                }
+                };
+                (bytes, Some(view.clone()))
             }
             None => (done.data.as_slice(), None),
         };
@@ -759,16 +768,26 @@ impl Preview {
     }
 
     /// Repaint the last good frame when no new result is ready.
-    fn repaint_last(&self, target: &WindowTarget<'_>) {
-        if let Some((data, w, h, kind, ahb)) = self.last_frame.as_ref() {
-            // The worker marks its slot busy before the next inference. Reading
-            // it now would tear, so leave the surface showing the previous
-            // buffer until that frame is presented.
-            if ahb.as_ref().is_some_and(|v| v.is_busy()) {
+    fn repaint_last(&mut self, target: &WindowTarget<'_>) {
+        let Some((data, w, h, kind, ahb)) = self.last_frame.as_ref() else {
+            return;
+        };
+        // The worker marks its slot busy before the next inference. Reading it
+        // now would tear, so leave the surface showing the previous buffer.
+        if ahb.as_ref().is_some_and(|v| v.is_busy()) {
+            return;
+        }
+        let (w, h, kind) = (*w, *h, *kind);
+        let view = ahb.clone();
+        let fallback = data.clone();
+        if let Some(view) = view {
+            if let Some(display) = self.ahb_display.as_mut() {
+                let _ = unsafe { display.present_ahb_raw(view.ahb_ptr(), &[], w, h) };
                 return;
             }
-            let bytes = ahb.as_ref().map_or(data.as_slice(), |v| v.bytes());
-            let _ = present_frame(target, bytes, *w, *h, *kind);
+            let _ = present_frame(target, view.bytes(), w, h, kind);
+        } else {
+            let _ = present_frame(target, &fallback, w, h, kind);
         }
     }
 }

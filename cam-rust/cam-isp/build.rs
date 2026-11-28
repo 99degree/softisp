@@ -341,6 +341,8 @@ fn link_direct_vulkan() {
     println!("cargo:rerun-if-changed=direct_vulkan/direct_vulkan.cpp");
     println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra.comp");
     println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_spv.inc");
+    println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_image.comp");
+    println!("cargo:rerun-if-changed=direct_vulkan/raw16_bgra_image_spv.inc");
 
     let mut build = cc::Build::new();
     build

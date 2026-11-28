@@ -21,6 +21,38 @@ extern "C" {
         mode: u32,
     ) -> c_int;
     fn dv_last_error() -> *const c_char;
+    fn dv_run_ahb_image(
+        ctx: *mut c_void,
+        input_ahb: *mut c_void,
+        input_len: usize,
+        output_ahb: *mut c_void,
+        width: u32,
+        height: u32,
+        mode: u32,
+    ) -> c_int;
+    fn dv_probe_image_ahb(
+        ctx: *mut c_void,
+        ahb: *mut c_void,
+        width: u32,
+        height: u32,
+        out: *mut c_char,
+        out_len: usize,
+    ) -> c_int;
+    fn dv_probe_raw16_image_ahb(
+        ctx: *mut c_void,
+        ahb: *mut c_void,
+        width: u32,
+        height: u32,
+        out: *mut c_char,
+        out_len: usize,
+    ) -> c_int;
+    fn dv_probe_external_memory_extensions(
+        ctx: *mut c_void,
+        ahb: *mut c_void,
+        out: *mut c_char,
+        out_len: usize,
+    ) -> c_int;
+    fn dv_probe_dmabuf_ahb_global(ahb: *mut c_void, out: *mut c_char, out_len: usize) -> c_int;
 }
 
 fn last_error() -> String {
@@ -31,6 +63,20 @@ fn last_error() -> String {
         }
         CStr::from_ptr(ptr).to_string_lossy().into_owned()
     }
+}
+
+/// Probe AHB → `VkBuffer` import through `VK_EXT_external_memory_dma_buf`.
+///
+/// This works without `VK_ANDROID_external_memory_android_hardware_buffer`, so
+/// it can be used with ICDs such as Mesa Turnip that expose dma_buf import but
+/// not AHardwareBuffer import.
+pub fn probe_dmabuf_ahb(ahb: *mut c_void) -> (bool, String) {
+    let mut buf = [0 as c_char; 1024];
+    let rc = unsafe { dv_probe_dmabuf_ahb_global(ahb, buf.as_mut_ptr(), buf.len()) };
+    let text = unsafe { CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    (rc == 0, text)
 }
 
 /// One Vulkan device/pipeline owned by a single ISP worker.
@@ -54,6 +100,77 @@ impl DirectVulkanContext {
             ));
         }
         Ok(Self { ctx })
+    }
+
+    /// Dispatch one RAW16 word pass into an AHB-backed storage `VkImage`.
+    ///
+    /// No CPU mapping is opened on the output AHB, so the same handle can be
+    /// handed to SurfaceFlinger immediately after the fence wait.
+    pub fn run_ahb_image(
+        &self,
+        input: *mut c_void,
+        input_len: usize,
+        output: *mut c_void,
+        width: u32,
+        height: u32,
+        mode: u32,
+    ) -> Result<(), String> {
+        if input.is_null() || output.is_null() {
+            return Err("null AHardwareBuffer in direct Vulkan image run".to_string());
+        }
+        let rc =
+            unsafe { dv_run_ahb_image(self.ctx, input, input_len, output, width, height, mode) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(last_error())
+        }
+    }
+
+    /// One-shot probe: can this AHB be imported as a storage `VkImage`?
+    pub fn probe_image_ahb(&self, ahb: *mut c_void, width: u32, height: u32) -> (bool, String) {
+        let mut buf = [0 as c_char; 512];
+        let rc = unsafe {
+            dv_probe_image_ahb(self.ctx, ahb, width, height, buf.as_mut_ptr(), buf.len())
+        };
+        let text = unsafe { CStr::from_ptr(buf.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        (rc == 0, text)
+    }
+
+    /// Which external-memory fd extensions the device exposes.
+    pub fn probe_external_memory_extensions(&self, ahb: *mut c_void) -> String {
+        let mut buf = [0 as c_char; 1024];
+        let rc = unsafe {
+            dv_probe_external_memory_extensions(self.ctx, ahb, buf.as_mut_ptr(), buf.len())
+        };
+        if rc != 0 {
+            return "probe failed".to_string();
+        }
+        unsafe { CStr::from_ptr(buf.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Probe explicit 16-bit Vulkan formats against a RAW16 AHardwareBuffer.
+    ///
+    /// The AHB property query reports `VK_FORMAT_UNDEFINED` on this device, but
+    /// some drivers still accept an explicit `R16_UINT`/`R16_UNORM` import.
+    pub fn probe_raw16_image_ahb(
+        &self,
+        ahb: *mut c_void,
+        width: u32,
+        height: u32,
+    ) -> (bool, String) {
+        let mut buf = [0 as c_char; 1024];
+        let rc = unsafe {
+            dv_probe_raw16_image_ahb(self.ctx, ahb, width, height, buf.as_mut_ptr(), buf.len())
+        };
+        let text = unsafe { CStr::from_ptr(buf.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        (rc == 0, text)
     }
 
     /// Dispatch one raw-word → packed-BGRA pass between two AHBs.

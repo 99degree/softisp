@@ -1,0 +1,61 @@
+#version 450
+
+// Opaque RAW16 words -> packed BGRA pixels written through a storage image.
+// The output AHB is imported as R8G8B8A8_UNORM VkImage, so SurfaceFlinger can
+// scan it out without any CPU mapping or lock/unlock window.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer InBuf {
+    uint words[];
+} in_buf;
+
+layout(rgba8, set = 0, binding = 1) writeonly uniform image2D out_img;
+
+layout(push_constant) uniform Params {
+    uvec2 size;
+    uint mode;
+} params;
+
+uint grey(uint value) {
+    return (value * 255u + 511u) / 1023u;
+}
+
+vec4 pixel(uint value) {
+    float g = float(grey(value)) / 255.0;
+    return vec4(g, g, g, 1.0);
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uint pixels = params.size.x * params.size.y;
+    uint words_total = (pixels + 1u) / 2u;
+    if (index >= words_total) {
+        return;
+    }
+
+    uint word = in_buf.words[index];
+    uint lo = word & 0xffffu;
+    uint hi = (word >> 16u) & 0xffffu;
+    uint out_index = index * 2u;
+    uint y = out_index / params.size.x;
+    uint x = out_index - y * params.size.x;
+
+    if (params.mode == 0u) {
+        imageStore(out_img, ivec2(int(x), int(y)), pixel(lo));
+        if (out_index + 1u < pixels) {
+            uint y2 = (out_index + 1u) / params.size.x;
+            uint x2 = (out_index + 1u) - y2 * params.size.x;
+            imageStore(out_img, ivec2(int(x2), int(y2)), pixel(hi));
+        }
+    } else {
+        uint gl = grey((lo + hi) / 2u);
+        vec4 p = vec4(float(gl) / 255.0, float(gl) / 255.0, float(gl) / 255.0, 1.0);
+        imageStore(out_img, ivec2(int(x), int(y)), p);
+        if (out_index + 1u < pixels) {
+            uint y2 = (out_index + 1u) / params.size.x;
+            uint x2 = (out_index + 1u) - y2 * params.size.x;
+            imageStore(out_img, ivec2(int(x2), int(y2)), p);
+        }
+    }
+}
