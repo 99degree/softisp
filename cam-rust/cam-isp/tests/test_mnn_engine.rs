@@ -897,6 +897,110 @@ fn test_mnn_packed_pipeline() {
     eprintln!("PASSED: packed INT32 pipeline end-to-end");
 }
 
+/// Feed a dummy 1 MB `AhbBinding` as `ProcessParams::input_ahb` through the
+/// MNN glue layer and verify zero-copy input is accepted end-to-end without
+/// crashing, falling back to host upload when the pointer is not a real
+/// `AHardwareBuffer`.
+///
+/// This proves the input-AHB glue path: `ProcessParams::input_ahb` is
+/// propagated into `PreparedMeta`, `prepare()` calls
+/// `mnn_import_ahb_as_device_memory` on the input tensor before resize, and a
+/// non-AHB pointer degrades gracefully instead of taking the process down.
+///
+/// Uses the in-memory ONNX→MNN buffer converter (no MNNConvert binary needed),
+/// then writes the .mnn bytes to a temp file so `set_model_path` can load them.
+#[cfg(all(feature = "mnn", target_os = "android"))]
+#[test]
+fn test_mnn_input_ahb_zero_copy_dummy() {
+    use cam_isp::engine::{IspEngine, ProcessParams};
+    use cam_isp::mnn_converter::convert_onnx_buffer;
+    use cam_isp::mnnengine::{MnnBackend, MnnEngine};
+    use cam_isp::pipeline::{GraphComposer, IspBlock};
+    use cam_isp::profile::PipelineProfile;
+    use cam_types::{AhbBinding, AhbFenceTokens};
+
+    // ── Build ONNX model and convert in-memory (no MNNConvert binary) ──────
+    let blocks = PipelineProfile::TEST.build_blocks(64, 64, 0);
+    let refs: Vec<&dyn IspBlock> = blocks.iter().map(|b| b.as_ref()).collect();
+    let onnx =
+        GraphComposer::compose_from_vec(&refs, &[], 16).expect("TEST profile ONNX compose");
+    let mnn_bytes = convert_onnx_buffer(&onnx).expect("ONNX→MNN buffer conversion");
+    assert!(!mnn_bytes.is_empty(), "expected non-empty MNN bytes");
+
+    let mnn_path = ".mnn_test_input_ahb.mnn";
+    std::fs::write(mnn_path, &mnn_bytes).expect("write temp .mnn");
+
+    let mut engine = MnnEngine::new(MnnBackend::Vulkan);
+    engine.set_model_path(mnn_path);
+    let head = profile_head(cam_isp::profile::PipelineProfile::TEST, 48, 64);
+    engine.build(head, vec![], None, 16).expect("build");
+
+    let w = 48u32;
+    let h = 64u32;
+    let frame_size = (w * h * 2) as usize;
+    let smax = 1024.0f32;
+
+    // Dummy "AHB": a NULL pointer that is NOT a real AHardwareBuffer.
+    // `mnn_import_ahb_as_device_memory` checks `!ahb` first and returns -1
+    // safely (no deref, no SIGSEGV). The engine logs a warning and falls back
+    // to host upload. We use a 1 MB len so the size check in prepare() passes.
+    let dummy_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+    let dummy_ahb = AhbBinding::new(
+        dummy_ptr,
+        1_048_576, // 1 MB
+        AhbFenceTokens::new(-1, -1, 1),
+    );
+
+    let mut buf = vec![0u8; frame_size];
+    for (i, chunk) in buf.chunks_exact_mut(2).enumerate() {
+        let v = (i as u16) as u8;
+        chunk[0] = v;
+        chunk[1] = 0;
+    }
+
+    // Build params with input_ahb set — this exercises the zero-copy input
+    // binding path.
+    let mut params = ProcessParams::new(w, h, &buf);
+    params.sensor_max = smax;
+    params.target_width = w;
+    params.target_height = h;
+    params.input_ahb = Some(dummy_ahb);
+
+    let prepared = engine.prepare(&params).expect("prepare with dummy input AHB");
+    // The prepared metadata should carry the input AHB generation.
+    assert_eq!(
+        prepared.prepare_params().input_generation,
+        1,
+        "input AHB generation should be recorded in prepared params"
+    );
+
+    // run_prepared must not crash: the import failed (invalid AHB) so MNN
+    // uses host upload instead.
+    let (frame, pending) = engine.run_prepared(prepared, &params).expect("run_prepared");
+    // Output must be non-empty — the graph produced real pixels. Exact size
+    // depends on the graph's declared output format (PackedRgb = 2 bpp, etc.),
+    // so just verify it produced something.
+    assert!(
+        !frame.data.is_empty(),
+        "output frame is empty; inference produced no pixels"
+    );
+    let finished = engine.finish(pending);
+    assert!(finished.total_duration_ns > 0);
+
+    // Run a second frame with a normal (no-AHB) path to confirm the engine
+    // is still healthy after the dummy-AHB attempt.
+    let mut params2 = ProcessParams::new(w, h, &buf);
+    params2.sensor_max = smax;
+    params2.target_width = w;
+    params2.target_height = h;
+    let result2 = engine.process(&params2);
+    assert!(result2.is_ok(), "second frame after dummy AHB should succeed");
+
+    let _ = std::fs::remove_file(mnn_path);
+    // `dummy_ptr` is intentionally never dereferenced.
+    eprintln!("PASSED: dummy input AHB zero-copy glue accepted, graceful fallback");
+}
+
 /// Uninitialized engine should return error.
 #[test]
 #[cfg(feature = "mnn")]

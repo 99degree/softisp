@@ -551,11 +551,36 @@ fn setup_cc_for_android(build: &mut cc::Build) {
         target_os, host
     );
     if host.contains("android") {
-        // Building for Android on an Android host (e.g., Termux): use the system compiler.
+        // Building for Android on an Android host (e.g., Termux): use clang++
+        // (the system g++ wrapper rejects versioned target triples like
+        // `aarch64-linux-android-24`). The Termux clang requires a *versioned*
+        // target triple (`aarch64-linux-android24`, not bare
+        // `aarch64-linux-android`) — otherwise its system headers reject
+        // "Unversioned target triples are not supported!".
+        //
+        // `build.target()` must stay a valid rustc target triple (unversioned),
+        // while `--target` (passed to clang) gets the versioned triple.
         let target_triple = std::env::var("TARGET").unwrap_or_default();
+        let api = ndk_api_level();
+        // clang wants `--target=aarch64-linux-android24` (API level concatenated,
+        // not hyphen-separated). `build.target()` stays unversioned for rustc.
+        let versioned = format!("{}{}", target_triple, api);
+        let clangpp = std::env::var_os("CXX")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/data/data/com.termux/files/usr/bin/clang++"));
+        if clangpp.exists() {
+            build.compiler(&clangpp);
+        }
         build.target(&target_triple);
-        // The system compiler is already configured for the Android target.
-        // No additional sysroot or library flags needed here as the compiler driver handles them.
+        build.flag(format!("--target={}", versioned));
+        // Point at the Termux sysroot so android/hardware_buffer.h etc. resolve.
+        let sysroot = match std::env::var_os("ANDROID_SYSROOT") {
+            Some(v) => PathBuf::from(v),
+            None => PathBuf::from("/data/data/com.termux/files/usr/sysroot"),
+        };
+        if sysroot.exists() {
+            build.flag(format!("--sysroot={}", sysroot.display()));
+        }
         return;
     }
 
